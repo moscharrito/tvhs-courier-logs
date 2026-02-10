@@ -327,13 +327,13 @@
                 <div class="filter-row">
                     <div class="form-group">
                         <label>Driver</label>
-                        <select id="filterDriver">
+                        <select id="filterDriver" onchange="applyFilters()">
                             <option value="all">All Drivers</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Route</label>
-                        <select id="filterRoute">
+                        <select id="filterRoute" onchange="applyFilters()">
                             <option value="all">All Routes</option>
                             <option value="northbound">NorthBound</option>
                             <option value="southbound">SouthBound</option>
@@ -397,7 +397,6 @@
     <div id="toast" class="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

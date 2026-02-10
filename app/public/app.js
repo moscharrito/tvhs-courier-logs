@@ -256,7 +256,7 @@ function renderDriverHistory(logs, title) {
     document.getElementById('histDays').textContent = dates.length;
 }
 
-async function exportDriverLogs() {
+function exportDriverLogs() {
     const fp = document.getElementById('historyDatePicker')._flatpickr;
     if (!fp || fp.selectedDates.length === 0) {
         showToast('Select a period first', 'error');
@@ -282,39 +282,9 @@ async function exportDriverLogs() {
         endDate = formatDate(new Date(d.getFullYear(), d.getMonth() + 1, 0));
     }
 
-    try {
-        const logs = await api(`/api/logs?startDate=${startDate}&endDate=${endDate}`);
-        const route = routeDefs[currentUser.route];
-        const rows = [['Date', 'Day', 'Route Leg', 'Start Time', 'End Time', 'Sterile', 'Soiled', 'Total Totes', 'Miles']];
-
-        logs.forEach(log => {
-            if (!log.start_time && !log.end_time && !log.sterile && !log.soiled && !log.miles) return;
-            const routeLeg = route.legs[log.leg_index];
-            if (!routeLeg) return;
-
-            const d = new Date(log.date + 'T00:00:00');
-            const totes = (parseInt(log.sterile) || 0) + (parseInt(log.soiled) || 0);
-            rows.push([
-                log.date,
-                d.toLocaleDateString('en-US', { weekday: 'long' }),
-                `${routeLeg.from} to ${routeLeg.to}`,
-                log.start_time || '', log.end_time || '',
-                log.sterile || 0, log.soiled || 0, totes, log.miles || 0
-            ]);
-        });
-
-        if (rows.length <= 1) { showToast('No data to export', 'error'); return; }
-
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws['!cols'] = [{ wch: 12 },{ wch: 12 },{ wch: 30 },{ wch: 10 },{ wch: 10 },{ wch: 8 },{ wch: 8 },{ wch: 10 },{ wch: 8 }];
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'My Logs');
-        const filename = `My_Logs_${startDate}_to_${endDate}.xlsx`;
-        XLSX.writeFile(wb, filename);
-        showToast(`Exported as ${filename}`, 'success');
-    } catch (err) {
-        showToast('Export failed: ' + err.message, 'error');
-    }
+    // Download from server-side ExcelJS endpoint
+    window.location.href = `/api/logs/export?startDate=${startDate}&endDate=${endDate}`;
+    showToast('Downloading Excel...', 'success');
 }
 
 async function selectWeek(date) {
@@ -584,7 +554,10 @@ async function initAdmin() {
     flatpickr('#adminDateRange', {
         mode: 'range',
         dateFormat: 'Y-m-d',
-        maxDate: 'today'
+        maxDate: 'today',
+        onClose: function(selectedDates) {
+            if (selectedDates.length >= 2) applyFilters();
+        }
     });
 
     flatpickr('#adminPeriodDate', {
@@ -617,6 +590,12 @@ function setAdminPeriod(period) {
     });
     document.getElementById('adminDateGroup').style.display = period === 'custom' ? '' : 'none';
     document.getElementById('adminPeriodDateGroup').style.display = period !== 'custom' ? '' : 'none';
+
+    // Auto-apply if a date was already picked
+    if (period !== 'custom') {
+        const fp = document.getElementById('adminPeriodDate')._flatpickr;
+        if (fp && fp.selectedDates.length > 0) applyFilters();
+    }
 }
 
 function getAdminDateRange() {
@@ -673,41 +652,102 @@ async function applyFilters() {
         document.getElementById('statMiles').textContent = stats.totalMiles.toFixed(1);
         document.getElementById('statTotes').textContent = stats.totalTotes;
 
-        // Render table
+        // Filter out empty rows
+        const nonEmpty = logs.filter(l => l.start_time || l.end_time || l.sterile || l.soiled || l.miles);
+
+        // Group by driver then by date
+        const byDriver = {};
+        nonEmpty.forEach(log => {
+            const key = log.username;
+            if (!byDriver[key]) byDriver[key] = { name: log.driver_name, route: log.driver_route, days: {} };
+            if (!byDriver[key].days[log.date]) byDriver[key].days[log.date] = [];
+            byDriver[key].days[log.date].push(log);
+        });
+
         const tbody = document.getElementById('adminLogBody');
         tbody.innerHTML = '';
 
-        logs.forEach(log => {
-            const route = routeDefs[log.driver_route];
-            if (!route) return;
-            const routeLeg = route.legs[log.leg_index];
-            if (!routeLeg) return;
+        for (const [username, driverData] of Object.entries(byDriver)) {
+            const route = routeDefs[driverData.route];
+            if (!route) continue;
+            const routeClass = driverData.route === 'northbound' ? 'north' : 'south';
+            const dates = Object.keys(driverData.days).sort();
 
-            // Skip empty rows
-            if (!log.start_time && !log.end_time && !log.sterile && !log.soiled && !log.miles) return;
+            // Driver header row
+            const driverRow = document.createElement('tr');
+            driverRow.className = 'driver-group-header';
+            driverRow.innerHTML = `<td colspan="11"><strong>${driverData.name}</strong> <span class="route-tag ${routeClass}">${route.label}</span></td>`;
+            tbody.appendChild(driverRow);
 
-            const date = new Date(log.date + 'T00:00:00');
-            const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-            const dateFormatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-            const totes = (parseInt(log.sterile) || 0) + (parseInt(log.soiled) || 0);
-            const routeClass = log.driver_route === 'northbound' ? 'north' : 'south';
+            let driverTotalMiles = 0, driverTotalTotes = 0;
 
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td class="driver-name">${log.driver_name}</td>
-                <td><span class="route-tag ${routeClass}">${route.label}</span></td>
-                <td>${dateFormatted}</td>
-                <td>${dayName}</td>
-                <td>${routeLeg.from} &rarr; ${routeLeg.to}</td>
-                <td>${log.start_time || '-'}</td>
-                <td>${log.end_time || '-'}</td>
-                <td style="text-align:center">${log.sterile || 0}</td>
-                <td style="text-align:center">${log.soiled || 0}</td>
-                <td style="text-align:center;font-weight:600">${totes}</td>
-                <td style="text-align:center">${log.miles || 0}</td>
+            dates.forEach(dateStr => {
+                const dayLogs = driverData.days[dateStr];
+                const dateObj = new Date(dateStr + 'T00:00:00');
+                const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+                const dateFormatted = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+                // Day separator
+                const sepTr = document.createElement('tr');
+                sepTr.className = 'day-separator';
+                sepTr.innerHTML = `<td colspan="11">${dayName}, ${dateFormatted}</td>`;
+                tbody.appendChild(sepTr);
+
+                let dayMiles = 0, daySterile = 0, daySoiled = 0, dayTotes = 0;
+
+                dayLogs.forEach(log => {
+                    const routeLeg = route.legs[log.leg_index];
+                    if (!routeLeg) return;
+                    const totes = (parseInt(log.sterile) || 0) + (parseInt(log.soiled) || 0);
+                    const miles = parseFloat(log.miles) || 0;
+                    dayMiles += miles;
+                    daySterile += (parseInt(log.sterile) || 0);
+                    daySoiled += (parseInt(log.soiled) || 0);
+                    dayTotes += totes;
+
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td></td>
+                        <td></td>
+                        <td>${dateFormatted}</td>
+                        <td>${dayName}</td>
+                        <td>${routeLeg.from} &rarr; ${routeLeg.to}</td>
+                        <td>${log.start_time || '-'}</td>
+                        <td>${log.end_time || '-'}</td>
+                        <td style="text-align:center">${log.sterile || 0}</td>
+                        <td style="text-align:center">${log.soiled || 0}</td>
+                        <td style="text-align:center;font-weight:600">${totes}</td>
+                        <td style="text-align:center">${miles}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+                // Daily subtotal row
+                const totalTr = document.createElement('tr');
+                totalTr.className = 'daily-subtotal';
+                totalTr.innerHTML = `
+                    <td colspan="7" style="text-align:right;font-weight:700;">Daily Totals:</td>
+                    <td style="text-align:center;font-weight:700;">${daySterile}</td>
+                    <td style="text-align:center;font-weight:700;">${daySoiled}</td>
+                    <td style="text-align:center;font-weight:700;">${dayTotes}</td>
+                    <td style="text-align:center;font-weight:700;">${dayMiles.toFixed(1)}</td>
+                `;
+                tbody.appendChild(totalTr);
+
+                driverTotalMiles += dayMiles;
+                driverTotalTotes += dayTotes;
+            });
+
+            // Driver grand total row
+            const grandTr = document.createElement('tr');
+            grandTr.className = 'driver-grand-total';
+            grandTr.innerHTML = `
+                <td colspan="9" style="text-align:right;font-weight:700;">${driverData.name} — Period Total:</td>
+                <td style="text-align:center;font-weight:700;">${driverTotalTotes}</td>
+                <td style="text-align:center;font-weight:700;">${driverTotalMiles.toFixed(1)}</td>
             `;
-            tbody.appendChild(tr);
-        });
+            tbody.appendChild(grandTr);
+        }
 
         document.getElementById('noLogsMessage').style.display = tbody.children.length === 0 ? '' : 'none';
 
@@ -717,70 +757,20 @@ async function applyFilters() {
 }
 
 // ---- Excel Export ----
-async function exportToExcel() {
+function exportToExcel() {
     const driverFilter = document.getElementById('filterDriver').value;
     const routeFilter = document.getElementById('filterRoute').value;
-    const dateRangeEl = document.getElementById('adminDateRange');
-    const dateRange = dateRangeEl._flatpickr?.selectedDates || [];
+    const { startDate, endDate } = getAdminDateRange();
 
     const params = new URLSearchParams();
     if (driverFilter !== 'all') params.set('driver', driverFilter);
     if (routeFilter !== 'all') params.set('route', routeFilter);
-    if (dateRange.length >= 1) params.set('startDate', formatDate(dateRange[0]));
-    if (dateRange.length >= 2) params.set('endDate', formatDate(dateRange[1]));
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
 
-    try {
-        const logs = await api(`/api/admin/logs?${params.toString()}`);
-
-        const rows = [['Driver', 'Route', 'Date', 'Day', 'Route Leg', 'Start Time', 'End Time', 'Sterile', 'Soiled', 'Total Totes', 'Miles']];
-
-        logs.forEach(log => {
-            const route = routeDefs[log.driver_route];
-            if (!route) return;
-            const routeLeg = route.legs[log.leg_index];
-            if (!routeLeg) return;
-            if (!log.start_time && !log.end_time && !log.sterile && !log.soiled && !log.miles) return;
-
-            const date = new Date(log.date + 'T00:00:00');
-            const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-            const totes = (parseInt(log.sterile) || 0) + (parseInt(log.soiled) || 0);
-
-            rows.push([
-                log.driver_name,
-                route.label,
-                log.date,
-                dayName,
-                `${routeLeg.from} to ${routeLeg.to}`,
-                log.start_time || '',
-                log.end_time || '',
-                log.sterile || 0,
-                log.soiled || 0,
-                totes,
-                log.miles || 0
-            ]);
-        });
-
-        if (rows.length <= 1) {
-            showToast('No data to export', 'error');
-            return;
-        }
-
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws['!cols'] = [
-            { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-            { wch: 30 }, { wch: 10 }, { wch: 10 },
-            { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 8 }
-        ];
-
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Driver Logs');
-
-        const filename = `TVHS_Courier_Logs_${new Date().toISOString().slice(0, 10)}.xlsx`;
-        XLSX.writeFile(wb, filename);
-        showToast(`Exported as ${filename}`, 'success');
-    } catch (err) {
-        showToast('Failed to export: ' + err.message, 'error');
-    }
+    // Download from server-side ExcelJS endpoint (matching original Excel format)
+    window.location.href = `/api/admin/export?${params.toString()}`;
+    showToast('Downloading Excel...', 'success');
 }
 
 // ---- Utilities ----

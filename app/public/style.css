@@ -709,6 +709,37 @@ body::before {
     border-bottom: 2px solid var(--green-200);
 }
 
+/* ---- Admin Grouped Table ---- */
+.driver-group-header td {
+    background: var(--gray-900);
+    color: var(--white);
+    padding: 10px 14px;
+    font-size: 14px;
+    border-bottom: none;
+}
+
+.driver-group-header .route-tag {
+    margin-left: 10px;
+    vertical-align: middle;
+}
+
+.daily-subtotal td {
+    background: var(--green-50);
+    border-top: 2px solid var(--green-300);
+    border-bottom: 2px solid var(--green-200);
+    padding: 8px 12px;
+    color: var(--green-800);
+}
+
+.driver-grand-total td {
+    background: var(--gray-100);
+    border-top: 2px solid var(--gray-400);
+    border-bottom: 3px solid var(--gray-900);
+    padding: 10px 12px;
+    color: var(--gray-900);
+    font-size: 13px;
+}
+
 /* ---- Empty State ---- */
 .empty-state {
     text-align: center;
@@ -749,24 +780,197 @@ body::before {
 }
 
 /* ---- Responsive ---- */
+
+/* Tablet */
 @media (max-width: 768px) {
     .main-content { padding: 16px; }
     .glass-card { padding: 16px; }
-    .form-row, .filter-row { flex-direction: column; }
-    .glass-nav { padding: 0 16px; }
-    .nav-info { gap: 8px; }
+    .form-row, .filter-row { flex-direction: column; gap: 12px; }
+    .glass-nav {
+        padding: 10px 16px;
+        height: auto;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .nav-brand span { font-size: 13px; }
+    .nav-info {
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
     .stats-grid { grid-template-columns: 1fr 1fr; }
     .summary-grid { grid-template-columns: 1fr 1fr; }
     .day-tabs { gap: 0; }
     .day-tab { padding: 8px 12px; font-size: 12px; }
     .login-card { padding: 28px 20px; }
+    .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .card-actions { width: 100%; }
+    .card-actions .btn { flex: 1; justify-content: center; }
+    .page-header h2 { font-size: 18px; }
+    .page-header p { font-size: 13px; }
+    .stat-card { padding: 14px; }
+    .stat-value { font-size: 20px; }
+    .stat-icon { width: 36px; height: 36px; }
+    .stat-icon svg { width: 20px; height: 20px; }
+    .toggle-group { flex-wrap: wrap; }
+    .toggle-btn { padding: 7px 14px; font-size: 12px; }
+
+    /* Table adjustments */
+    .log-table { font-size: 12px; }
+    .log-table thead th { padding: 8px 6px; font-size: 11px; }
+    .log-table tbody td { padding: 4px 4px; }
+    .log-table .col-route { min-width: 160px; }
+    .log-table .col-time { min-width: 90px; }
+    .log-table .col-num { min-width: 60px; }
+    .route-label { font-size: 12px; gap: 6px; }
+    .route-label .route-index { width: 18px; height: 18px; font-size: 10px; }
+
+    .log-table input[type="time"],
+    .log-table input[type="number"] {
+        padding: 5px 4px;
+        font-size: 12px;
+    }
+
+    .auto-cell, .miles-cell { padding: 5px 4px; font-size: 12px; }
+    .total-cell { font-size: 13px; }
+    .totals-row td { padding: 8px 6px; }
+    .summary-value { font-size: 18px; }
+
+    .week-display { font-size: 13px; padding: 8px 12px; }
 }
 
+/* Mobile */
 @media (max-width: 480px) {
-    .stats-grid { grid-template-columns: 1fr; }
-    .nav-badge { display: none; }
-    .nav-tabs { order: 10; }
-    .toggle-group { flex-wrap: wrap; }
+    .main-content { padding: 10px; }
+    .glass-card { padding: 12px; border-radius: 10px; }
+
+    /* Navbar stacks vertically */
+    .glass-nav {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px 12px;
+        gap: 8px;
+    }
+    .nav-brand {
+        justify-content: center;
+        font-size: 13px;
+    }
+    .nav-brand svg { width: 22px; height: 22px; }
+    .nav-info {
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .nav-user { font-size: 12px; }
+    .nav-badge { font-size: 10px; padding: 2px 8px; }
+    .nav-tabs { width: 100%; justify-content: center; }
+    .nav-tab { flex: 1; text-align: center; padding: 6px 10px; font-size: 12px; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+
+    /* Stats single column */
+    .stats-grid { grid-template-columns: 1fr; gap: 10px; }
+    .stat-card { padding: 12px; gap: 12px; }
+
+    /* Summary grid */
+    .summary-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .summary-item { padding: 10px; }
+    .summary-label { font-size: 10px; }
+    .summary-value { font-size: 16px; }
+
+    /* Day tabs scroll */
+    .day-tabs {
+        gap: 0;
+        -webkit-overflow-scrolling: touch;
+    }
+    .day-tab { padding: 7px 10px; font-size: 11px; }
+
+    /* Table compact */
+    .table-wrapper {
+        margin: 0 -12px;
+        padding: 0 4px;
+        -webkit-overflow-scrolling: touch;
+    }
+    .log-table { font-size: 11px; }
+    .log-table thead th { padding: 6px 4px; font-size: 10px; letter-spacing: 0.3px; }
+    .log-table tbody td { padding: 3px 3px; }
+    .log-table .col-route { min-width: 140px; }
+    .log-table .col-time { min-width: 80px; }
+    .log-table .col-num { min-width: 50px; }
+
+    .route-label { font-size: 11px; gap: 4px; padding: 4px 0; }
+    .route-label .route-index { width: 16px; height: 16px; font-size: 9px; }
+    .route-label .route-arrow { font-size: 9px; }
+
+    .log-table input[type="time"],
+    .log-table input[type="number"] {
+        padding: 4px 3px;
+        font-size: 11px;
+        border-radius: 4px;
+    }
+    .auto-cell, .miles-cell { padding: 4px 3px; font-size: 11px; border-radius: 4px; }
+
+    .totals-row td { padding: 6px 4px; }
+    .total-cell { font-size: 12px; }
+
+    /* Card header */
+    .card-header h3 { font-size: 14px; }
+
+    /* Week display */
+    .week-display { font-size: 12px; padding: 8px 10px; }
+
+    /* Filter section */
+    .filter-row { gap: 10px; }
+    .form-group label { font-size: 12px; }
+    .form-group input,
+    .form-group select { padding: 8px 10px; font-size: 13px; }
+    .toggle-group { width: 100%; }
+    .toggle-btn { flex: 1; text-align: center; padding: 7px 10px; font-size: 12px; }
+
+    /* Page header */
+    .page-header h2 { font-size: 16px; }
+    .page-header p { font-size: 12px; }
+
+    /* Login */
+    .login-card { padding: 24px 16px; }
+    .logo-section h1 { font-size: 17px; }
+    .logo-section .subtitle { font-size: 12px; }
+    .logo-icon { width: 44px; height: 44px; }
+
+    /* Admin grouped rows */
+    .driver-group-header td { padding: 8px 10px; font-size: 12px; }
+    .day-separator td { padding: 6px 10px; font-size: 12px; }
+    .daily-subtotal td { padding: 6px 8px; font-size: 11px; }
+    .driver-grand-total td { padding: 8px 8px; font-size: 12px; }
+
+    /* Toast */
+    .toast {
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        max-width: none;
+        text-align: center;
+    }
+}
+
+/* Extra small screens */
+@media (max-width: 360px) {
+    .glass-nav { padding: 8px 10px; }
+    .nav-brand span { font-size: 11px; }
+    .main-content { padding: 8px; }
+    .glass-card { padding: 10px; }
+    .summary-grid { grid-template-columns: 1fr; }
+    .log-table { font-size: 10px; }
+    .log-table thead th { font-size: 9px; padding: 5px 3px; }
+    .log-table .col-route { min-width: 120px; }
+    .log-table .col-time { min-width: 70px; }
+    .log-table .col-num { min-width: 44px; }
+    .route-label { font-size: 10px; }
+    .login-card { padding: 20px 12px; }
+    .logo-section h1 { font-size: 15px; }
 }
 
 /* Flatpickr overrides */
