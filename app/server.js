@@ -50,8 +50,8 @@ const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
 if (userCount === 0) {
     const insert = db.prepare('INSERT INTO users (username, password, name, role, route) VALUES (?, ?, ?, ?, ?)');
     const salt = bcrypt.genSaltSync(10);
-    insert.run('djemai', bcrypt.hashSync('driver123', salt), 'Mohamed Djemai', 'driver', 'northbound');
-    insert.run('ramic', bcrypt.hashSync('driver123', salt), 'Muhammed Ramic', 'driver', 'southbound');
+    insert.run('djemai', bcrypt.hashSync('driver123', salt), 'Mohamed Djemai', 'driver', 'southbound');
+    insert.run('ramic', bcrypt.hashSync('driver123', salt), 'Muhammed Ramic', 'driver', 'northbound');
     insert.run('admin', bcrypt.hashSync('admin123', salt), 'Administrator', 'admin', null);
     console.log('Default users seeded.');
 }
@@ -84,21 +84,21 @@ const ROUTES = {
     northbound: {
         label: 'NorthBound',
         legs: [
-            { from: 'Murfreesboro', to: 'Chattanooga', defaultMiles: 122.6 },
-            { from: 'Chattanooga', to: 'Murfreesboro', defaultMiles: 123.0 },
-            { from: 'Murfreesboro', to: 'Chattanooga', defaultMiles: 122.6 },
-            { from: 'Chattanooga', to: 'Murfreesboro', defaultMiles: 123.0 },
-        ]
-    },
-    southbound: {
-        label: 'SouthBound',
-        legs: [
             { from: 'Murfreesboro', to: 'Clarksville', defaultMiles: 80 },
             { from: 'Clarksville', to: 'Fort Campbell', defaultMiles: 15 },
             { from: 'Fort Campbell', to: 'Clarksville', defaultMiles: 15 },
             { from: 'Clarksville', to: 'Murfreesboro', defaultMiles: 80 },
             { from: 'Nashville', to: 'Murfreesboro', defaultMiles: 35 },
             { from: 'Murfreesboro', to: 'Nashville', defaultMiles: 35 },
+        ]
+    },
+    southbound: {
+        label: 'SouthBound',
+        legs: [
+            { from: 'Murfreesboro', to: 'Chattanooga', defaultMiles: 122.6 },
+            { from: 'Chattanooga', to: 'Murfreesboro', defaultMiles: 123.0 },
+            { from: 'Murfreesboro', to: 'Chattanooga', defaultMiles: 122.6 },
+            { from: 'Chattanooga', to: 'Murfreesboro', defaultMiles: 123.0 },
         ]
     }
 };
