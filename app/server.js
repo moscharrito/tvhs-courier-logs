@@ -1,12 +1,12 @@
 /* ============================================
    TVHS RMD Courier Log System — Backend Server
-   Express + SQLite + Session Auth
+   Express + libSQL (Turso / SQLite) + Session Auth
    ============================================ */
 
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const Database = require('better-sqlite3');
+const { createClient } = require('@libsql/client');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -33,15 +33,35 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---- Database Setup ----
-// DB_PATH lets you point at a Render persistent disk (e.g. /data/courier_logs.db)
-// so logs and check-ins survive deploys/restarts. Defaults to a local file.
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'courier_logs.db');
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
+// ---- Database (libSQL) ----
+// In production set TURSO_DATABASE_URL (libsql://...) + TURSO_AUTH_TOKEN so data
+// persists in Turso — required on hosts with an ephemeral disk (e.g. Render free).
+// With no URL set, it falls back to a local SQLite file for development.
+const dbUrl = process.env.TURSO_DATABASE_URL
+    || `file:${path.join(__dirname, process.env.DB_FILE || 'courier_logs.db')}`;
+const db = createClient({
+    url: dbUrl,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+    intMode: 'number' // ids/counts as JS numbers (JSON-safe)
+});
 
-db.exec(`
+// Small async query helpers returning plain objects (safe for res.json + field access)
+async function dbAll(sql, args = []) {
+    const rs = await db.execute({ sql, args });
+    return rs.rows.map(row => {
+        const o = {};
+        for (const c of rs.columns) o[c] = row[c];
+        return o;
+    });
+}
+async function dbGet(sql, args = []) {
+    return (await dbAll(sql, args))[0];
+}
+async function dbRun(sql, args = []) {
+    return db.execute({ sql, args });
+}
+
+const SCHEMA = `
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -76,7 +96,7 @@ db.exec(`
         UNIQUE(username, date),
         FOREIGN KEY(username) REFERENCES users(username)
     );
-`);
+`;
 
 // ---- Seed / sync users from environment ----
 // Runs on every boot and is idempotent. Accounts are identified by a stable key
@@ -85,52 +105,50 @@ db.exec(`
 // wiping data. A username change cascades to logs/checkins so records stay linked.
 // If an env credential is absent, the existing value is left untouched — never
 // reset to a placeholder.
-function ensureUser(existing, envUser, envPass, name, role, route, fallbackUser) {
+async function ensureUser(existing, envUser, envPass, name, role, route, fallbackUser) {
     const wantUser = envUser ? String(envUser).toLowerCase().trim() : null;
 
     if (!existing) {
         const uname = wantUser || fallbackUser;
         const pass = envPass || 'changeme';
-        db.prepare('INSERT INTO users (username, password, name, role, route) VALUES (?, ?, ?, ?, ?)')
-            .run(uname, bcrypt.hashSync(pass, 10), name, role, route);
+        await dbRun('INSERT INTO users (username, password, name, role, route) VALUES (?, ?, ?, ?, ?)',
+            [uname, bcrypt.hashSync(pass, 10), name, role, route]);
         console.log(`User created: ${role}${route ? '/' + route : ''} -> ${uname}`);
         return;
     }
 
     let username = existing.username;
 
-    // Rename (and cascade to data) if the env username changed.
-    // defer_foreign_keys delays FK enforcement to commit, so the parent + child
-    // updates can happen in one transaction without a transient FK violation.
+    // Rename (and cascade to data) if the env username changed — atomic batch
     if (wantUser && wantUser !== username) {
-        const rename = db.transaction(() => {
-            db.pragma('defer_foreign_keys = ON');
-            db.prepare('UPDATE users SET username = ? WHERE username = ?').run(wantUser, username);
-            db.prepare('UPDATE logs SET username = ? WHERE username = ?').run(wantUser, username);
-            db.prepare('UPDATE checkins SET username = ? WHERE username = ?').run(wantUser, username);
-        });
-        rename();
+        await db.batch([
+            { sql: 'UPDATE users SET username = ? WHERE username = ?', args: [wantUser, username] },
+            { sql: 'UPDATE logs SET username = ? WHERE username = ?', args: [wantUser, username] },
+            { sql: 'UPDATE checkins SET username = ? WHERE username = ?', args: [wantUser, username] },
+        ], 'write');
         console.log(`User renamed: ${username} -> ${wantUser}`);
         username = wantUser;
     }
 
     // Update password only when one is supplied
     if (envPass) {
-        db.prepare('UPDATE users SET password = ? WHERE username = ?').run(bcrypt.hashSync(envPass, 10), username);
+        await dbRun('UPDATE users SET password = ? WHERE username = ?', [bcrypt.hashSync(envPass, 10), username]);
     }
 
     // Keep display name / route current
-    db.prepare('UPDATE users SET name = ?, route = ? WHERE username = ?').run(name, route, username);
+    await dbRun('UPDATE users SET name = ?, route = ? WHERE username = ?', [name, route, username]);
 }
 
-const adminRow = db.prepare("SELECT * FROM users WHERE role = 'admin' LIMIT 1").get();
-ensureUser(adminRow, process.env.ADMIN_USER, process.env.ADMIN_PASS, 'Administrator', 'admin', null, 'admin');
+async function syncUsers() {
+    const adminRow = await dbGet("SELECT * FROM users WHERE role = 'admin' LIMIT 1");
+    await ensureUser(adminRow, process.env.ADMIN_USER, process.env.ADMIN_PASS, 'Administrator', 'admin', null, 'admin');
 
-const southRow = db.prepare("SELECT * FROM users WHERE role = 'driver' AND route = 'southbound' LIMIT 1").get();
-ensureUser(southRow, process.env.DRIVER1_USER, process.env.DRIVER1_PASS, 'Mohamed Djemai', 'driver', 'southbound', 'driver1');
+    const southRow = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = 'southbound' LIMIT 1");
+    await ensureUser(southRow, process.env.DRIVER1_USER, process.env.DRIVER1_PASS, 'Mohamed Djemai', 'driver', 'southbound', 'driver1');
 
-const northRow = db.prepare("SELECT * FROM users WHERE role = 'driver' AND route = 'northbound' LIMIT 1").get();
-ensureUser(northRow, process.env.DRIVER2_USER, process.env.DRIVER2_PASS, 'Bereket Nigusse', 'driver', 'northbound', 'driver2');
+    const northRow = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = 'northbound' LIMIT 1");
+    await ensureUser(northRow, process.env.DRIVER2_USER, process.env.DRIVER2_PASS, 'Bereket Nigusse', 'driver', 'northbound', 'driver2');
+}
 
 // ---- Middleware ----
 app.use(express.json());
@@ -203,11 +221,11 @@ const ROUTES = {
 // ---- API Routes ----
 
 // Auth
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.toLowerCase().trim());
+    const user = await dbGet('SELECT * FROM users WHERE username = ?', [username.toLowerCase().trim()]);
     if (!user || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -256,31 +274,31 @@ app.get('/api/config', (req, res) => {
 // Driver: check in (clock in) for the day. Idempotent — one check-in per driver per day.
 // The day is always the server's current date in APP_TIMEZONE, never client-supplied,
 // so a driver can only check in for "today" and can't backdate.
-app.post('/api/checkin', requireAuth, (req, res) => {
+app.post('/api/checkin', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can check in' });
 
     const date = localDate();
-    const existing = db.prepare('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?').get(user.username, date);
+    const existing = await dbGet('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?', [user.username, date]);
     if (existing) {
         return res.json({ checkedIn: true, checkin_at: existing.checkin_at, date, alreadyCheckedIn: true });
     }
 
     const checkinAt = new Date().toISOString();
-    db.prepare('INSERT INTO checkins (username, date, checkin_at) VALUES (?, ?, ?)').run(user.username, date, checkinAt);
+    await dbRun('INSERT INTO checkins (username, date, checkin_at) VALUES (?, ?, ?)', [user.username, date, checkinAt]);
     res.json({ checkedIn: true, checkin_at: checkinAt, date });
 });
 
 // Driver: own check-in status for a date (defaults to today)
-app.get('/api/checkin', requireAuth, (req, res) => {
+app.get('/api/checkin', requireAuth, async (req, res) => {
     const user = req.session.user;
     const date = req.query.date || localDate();
-    const row = db.prepare('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?').get(user.username, date);
+    const row = await dbGet('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?', [user.username, date]);
     res.json({ checkedIn: !!row, checkin_at: row ? row.checkin_at : null, date });
 });
 
 // Driver: own check-in history within a date range
-app.get('/api/checkins/history', requireAuth, (req, res) => {
+app.get('/api/checkins/history', requireAuth, async (req, res) => {
     const user = req.session.user;
     const { startDate, endDate } = req.query;
 
@@ -290,14 +308,14 @@ app.get('/api/checkins/history', requireAuth, (req, res) => {
     if (endDate) { query += ' AND date <= ?'; params.push(endDate); }
     query += ' ORDER BY date ASC';
 
-    res.json(db.prepare(query).all(...params));
+    res.json(await dbAll(query, params));
 });
 
 // Admin: check-in roster for all drivers on a given date (defaults to today)
-app.get('/api/admin/checkins', requireAdmin, (req, res) => {
+app.get('/api/admin/checkins', requireAdmin, async (req, res) => {
     const date = req.query.date || localDate();
-    const drivers = db.prepare("SELECT username, name, route FROM users WHERE role = 'driver' ORDER BY name").all();
-    const rows = db.prepare('SELECT username, checkin_at FROM checkins WHERE date = ?').all(date);
+    const drivers = await dbAll("SELECT username, name, route FROM users WHERE role = 'driver' ORDER BY name");
+    const rows = await dbAll('SELECT username, checkin_at FROM checkins WHERE date = ?', [date]);
     const byUser = {};
     rows.forEach(r => { byUser[r.username] = r.checkin_at; });
 
@@ -312,7 +330,7 @@ app.get('/api/admin/checkins', requireAdmin, (req, res) => {
 });
 
 // Admin: check-in history with driver + date-range filters
-app.get('/api/admin/checkins/history', requireAdmin, (req, res) => {
+app.get('/api/admin/checkins/history', requireAdmin, async (req, res) => {
     const { driver, route, startDate, endDate } = req.query;
 
     let query = `
@@ -329,11 +347,11 @@ app.get('/api/admin/checkins/history', requireAdmin, (req, res) => {
     if (endDate) { query += ' AND c.date <= ?'; params.push(endDate); }
 
     query += ' ORDER BY u.name, c.date ASC';
-    res.json(db.prepare(query).all(...params));
+    res.json(await dbAll(query, params));
 });
 
 // Get logs for a specific user and date range
-app.get('/api/logs', requireAuth, (req, res) => {
+app.get('/api/logs', requireAuth, async (req, res) => {
     const { username, startDate, endDate } = req.query;
     const user = req.session.user;
 
@@ -353,60 +371,58 @@ app.get('/api/logs', requireAuth, (req, res) => {
     }
 
     query += ' ORDER BY date ASC, leg_index ASC';
-    const logs = db.prepare(query).all(...params);
-    res.json(logs);
+    res.json(await dbAll(query, params));
 });
 
 // Save/update logs for a day
-app.post('/api/logs', requireAuth, (req, res) => {
+app.post('/api/logs', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can submit logs' });
 
     const { date, legs } = req.body;
     if (!date || !Array.isArray(legs)) return res.status(400).json({ error: 'date and legs array required' });
 
-    const upsert = db.prepare(`
+    const sql = `
         INSERT INTO logs (username, date, leg_index, start_time, end_time, sterile, soiled, miles, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(username, date, leg_index)
         DO UPDATE SET start_time=excluded.start_time, end_time=excluded.end_time,
                       sterile=excluded.sterile, soiled=excluded.soiled,
                       miles=excluded.miles, updated_at=CURRENT_TIMESTAMP
-    `);
+    `;
 
-    const transaction = db.transaction(() => {
-        legs.forEach((leg, i) => {
-            upsert.run(
-                user.username,
-                date,
-                i,
-                leg.startTime || '',
-                leg.endTime || '',
-                parseInt(leg.sterile) || 0,
-                parseInt(leg.soiled) || 0,
-                parseFloat(leg.miles) || 0
-            );
-        });
-    });
+    const stmts = legs.map((leg, i) => ({
+        sql,
+        args: [
+            user.username,
+            date,
+            i,
+            leg.startTime || '',
+            leg.endTime || '',
+            parseInt(leg.sterile) || 0,
+            parseInt(leg.soiled) || 0,
+            parseFloat(leg.miles) || 0
+        ]
+    }));
 
-    transaction();
+    if (stmts.length) await db.batch(stmts, 'write');
     res.json({ ok: true });
 });
 
 // Clear logs for a specific day
-app.delete('/api/logs', requireAuth, (req, res) => {
+app.delete('/api/logs', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can modify logs' });
 
     const { date } = req.body;
     if (!date) return res.status(400).json({ error: 'date required' });
 
-    db.prepare('DELETE FROM logs WHERE username = ? AND date = ?').run(user.username, date);
+    await dbRun('DELETE FROM logs WHERE username = ? AND date = ?', [user.username, date]);
     res.json({ ok: true });
 });
 
 // Admin: get all logs with filters
-app.get('/api/admin/logs', requireAdmin, (req, res) => {
+app.get('/api/admin/logs', requireAdmin, async (req, res) => {
     const { driver, route, startDate, endDate } = req.query;
 
     let query = `
@@ -435,15 +451,14 @@ app.get('/api/admin/logs', requireAdmin, (req, res) => {
     }
 
     query += ' ORDER BY l.date ASC, l.username, l.leg_index ASC';
-    const logs = db.prepare(query).all(...params);
-    res.json(logs);
+    res.json(await dbAll(query, params));
 });
 
 // Admin: get stats
-app.get('/api/admin/stats', requireAdmin, (req, res) => {
-    const drivers = db.prepare("SELECT COUNT(*) as cnt FROM users WHERE role = 'driver'").get().cnt;
-    const logDays = db.prepare('SELECT COUNT(DISTINCT username || date) as cnt FROM logs').get().cnt;
-    const totals = db.prepare('SELECT COALESCE(SUM(miles),0) as miles, COALESCE(SUM(sterile + soiled),0) as totes FROM logs').get();
+app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+    const drivers = (await dbGet("SELECT COUNT(*) as cnt FROM users WHERE role = 'driver'")).cnt;
+    const logDays = (await dbGet('SELECT COUNT(DISTINCT username || date) as cnt FROM logs')).cnt;
+    const totals = await dbGet('SELECT COALESCE(SUM(miles),0) as miles, COALESCE(SUM(sterile + soiled),0) as totes FROM logs');
     res.json({
         drivers,
         logEntries: logDays,
@@ -453,8 +468,8 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
 });
 
 // Admin: get drivers list
-app.get('/api/admin/drivers', requireAdmin, (req, res) => {
-    const drivers = db.prepare("SELECT username, name, route FROM users WHERE role = 'driver' ORDER BY name").all();
+app.get('/api/admin/drivers', requireAdmin, async (req, res) => {
+    const drivers = await dbAll("SELECT username, name, route FROM users WHERE role = 'driver' ORDER BY name");
     res.json(drivers);
 });
 
@@ -476,7 +491,7 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
     if (endDate) { query += ' AND l.date <= ?'; params.push(endDate); }
     query += ' ORDER BY l.username, l.date ASC, l.leg_index ASC';
 
-    const logs = db.prepare(query).all(...params);
+    const logs = await dbAll(query, params);
     if (logs.length === 0) return res.status(404).json({ error: 'No data to export' });
 
     // Group by driver
@@ -697,11 +712,11 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
 
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
 
-    const userInfo = db.prepare('SELECT * FROM users WHERE username = ?').get(user.username);
+    const userInfo = await dbGet('SELECT * FROM users WHERE username = ?', [user.username]);
     if (!userInfo) return res.status(404).json({ error: 'User not found' });
 
-    const logs = db.prepare('SELECT * FROM logs WHERE username = ? AND date >= ? AND date <= ? ORDER BY date ASC, leg_index ASC')
-        .all(user.username, startDate, endDate);
+    const logs = await dbAll('SELECT * FROM logs WHERE username = ? AND date >= ? AND date <= ? ORDER BY date ASC, leg_index ASC',
+        [user.username, startDate, endDate]);
 
     if (logs.length === 0) return res.status(404).json({ error: 'No data to export' });
 
@@ -834,6 +849,16 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
 });
 
 // ---- Start ----
-app.listen(PORT, () => {
-    console.log(`TVHS RMD Courier Log System running at http://localhost:${PORT}`);
-});
+(async function start() {
+    try {
+        await db.executeMultiple(SCHEMA);
+        await syncUsers();
+        app.listen(PORT, () => {
+            console.log(`TVHS RMD Courier Log System running at http://localhost:${PORT}`);
+            console.log(`Database: ${process.env.TURSO_DATABASE_URL ? 'Turso (remote)' : dbUrl}`);
+        });
+    } catch (err) {
+        console.error('Failed to start:', err);
+        process.exit(1);
+    }
+})();

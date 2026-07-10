@@ -1,0 +1,53 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Auto-deploys on every push to the repo's default branch.
+#
+# Secrets (Turso connection + all logins) are marked `sync: false`, so Render
+# PROMPTS you for them the first time you apply this blueprint and stores them
+# securely in the service — they are NEVER written to this file or to git.
+#
+# Changing any credential later: edit its value in the Render dashboard
+# (Environment tab) and redeploy. On boot the app reconciles the users from
+# these env vars (see syncUsers() in app/server.js), so the login updates
+# WITHOUT wiping data. A username change cascades to that driver's logs/checkins.
+#
+# Persistence: this app stores data in Turso (libSQL). Render's free plan has no
+# persistent disk, so TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are required for data
+# to survive restarts/deploys. Create a free database at https://turso.tech.
+
+services:
+  - type: web
+    name: tvhs-courier-logs
+    runtime: node
+    plan: free
+    rootDir: app
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    healthCheckPath: /api/config
+    envVars:
+      # --- Non-secret config ---
+      - key: APP_TIMEZONE
+        value: America/Chicago
+      - key: SESSION_SECRET
+        generateValue: true            # Render generates a strong random value
+
+      # --- Turso database (create at turso.tech; paste when prompted) ---
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+
+      # --- Credentials (entered in dashboard on first apply; never committed) ---
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
+      - key: DRIVER1_USER
+        sync: false
+      - key: DRIVER1_PASS
+        sync: false
+      - key: DRIVER2_USER
+        sync: false
+      - key: DRIVER2_PASS
+        sync: false
