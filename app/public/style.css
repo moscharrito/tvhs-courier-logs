@@ -740,6 +740,204 @@ body::before {
     font-size: 13px;
 }
 
+/* ---- Driver Check-In Card ---- */
+.checkin-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    background: linear-gradient(135deg, rgba(22, 163, 74, 0.06), rgba(255, 255, 255, 0.6));
+    border: 1px solid var(--green-200);
+    flex-wrap: wrap;
+}
+
+.checkin-card.is-checked-in {
+    background: linear-gradient(135deg, var(--green-100), rgba(255, 255, 255, 0.6));
+    border-color: var(--green-300);
+}
+
+.checkin-left { display: flex; flex-direction: column; }
+
+.checkin-eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--green-600);
+}
+
+.checkin-date {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gray-900);
+    margin-top: 2px;
+}
+
+.checkin-clock {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-500);
+    font-variant-numeric: tabular-nums;
+    margin-top: 2px;
+}
+
+.checkin-right { flex-shrink: 0; }
+
+.btn-checkin {
+    padding: 14px 28px;
+    font-size: 15px;
+    border-radius: var(--radius);
+}
+
+.checkin-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 18px;
+    background: var(--white);
+    border: 1px solid var(--green-300);
+    border-radius: var(--radius);
+    color: var(--green-700);
+}
+
+.checkin-status svg { flex-shrink: 0; }
+
+.checkin-status-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--gray-500);
+}
+
+.checkin-status-time {
+    display: block;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--green-700);
+    line-height: 1.1;
+}
+
+/* ---- Admin Check-In Roster ---- */
+.checkin-admin-controls {
+    align-items: center;
+    gap: 12px;
+}
+
+.checkin-date-input {
+    padding: 7px 12px;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    background: rgba(255, 255, 255, 0.8);
+    outline: none;
+    max-width: 150px;
+}
+
+.checkin-date-input:focus {
+    border-color: var(--green-500);
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+}
+
+.checkin-summary {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-600);
+    white-space: nowrap;
+}
+
+.checkin-roster {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+}
+
+.checkin-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gray-200);
+    background: var(--white);
+}
+
+.checkin-row.in {
+    border-color: var(--green-200);
+    background: var(--green-50);
+}
+
+.checkin-row-driver {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.checkin-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--gray-300);
+    flex-shrink: 0;
+}
+
+.checkin-row.in .checkin-dot {
+    background: var(--green-500);
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
+}
+
+.checkin-row-name {
+    display: block;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--gray-900);
+    margin-bottom: 3px;
+}
+
+.checkin-row-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: right;
+}
+
+.checkin-time {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--green-700);
+    font-variant-numeric: tabular-nums;
+}
+
+.checkin-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+}
+
+.checkin-badge.in {
+    background: var(--green-100);
+    color: var(--green-700);
+    border: 1px solid var(--green-200);
+}
+
+.checkin-badge.out {
+    background: var(--gray-100);
+    color: var(--gray-500);
+    border: 1px solid var(--gray-200);
+}
+
+.checkin-count {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--green-300);
+    opacity: 0.9;
+}
+
 /* ---- Empty State ---- */
 .empty-state {
     text-align: center;
@@ -954,6 +1152,15 @@ body::before {
         max-width: none;
         text-align: center;
     }
+
+    /* Check-in card stacks */
+    .checkin-card { flex-direction: column; align-items: stretch; gap: 14px; }
+    .checkin-right { width: 100%; }
+    .btn-checkin { width: 100%; justify-content: center; }
+    .checkin-status { justify-content: center; }
+    .checkin-roster { grid-template-columns: 1fr; }
+    .checkin-admin-controls { width: 100%; }
+    .checkin-date-input { flex: 1; max-width: none; }
 }
 
 /* Extra small screens */
@@ -971,6 +1178,149 @@ body::before {
     .route-label { font-size: 10px; }
     .login-card { padding: 20px 12px; }
     .logo-section h1 { font-size: 15px; }
+}
+
+/* Sticky mobile save bar — hidden on desktop */
+.mobile-save-bar { display: none; }
+
+/* ============================================
+   Mobile-first driver entry (phones)
+   Turns the log table into touch-friendly cards
+   ============================================ */
+@media (max-width: 640px) {
+    /* iOS zooms in when focusing inputs < 16px — force 16px to prevent it */
+    input, select, textarea { font-size: 16px !important; }
+
+    /* --- Log entry table → stacked per-leg cards --- */
+    #logEntrySection .table-wrapper { margin: 0; padding: 0; overflow: visible; }
+    #logTable thead { display: none; }
+    #logTable, #logTable tbody, #logTable tfoot { display: block; width: 100%; }
+
+    #logTable tbody tr {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 16px;
+        margin-bottom: 14px;
+        border: 1px solid var(--gray-200);
+        border-radius: 14px;
+        background: var(--white);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+    #logTable tbody tr:hover { background: var(--white); }
+
+    #logTable tbody td {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 0;
+        border: none;
+    }
+
+    #logTable tbody td.cell-input::before {
+        content: attr(data-label);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--gray-500);
+    }
+
+    /* Route leg = full-width card header */
+    #logTable tbody td.cell-route {
+        grid-column: 1 / -1;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--gray-100);
+    }
+    #logTable .route-label { font-size: 15px; font-weight: 600; padding: 0; }
+    #logTable .route-label .route-index { width: 24px; height: 24px; font-size: 12px; }
+    #logTable .route-label .route-arrow { font-size: 12px; }
+
+    /* Bigger touch targets for inputs */
+    #logTable input[type="time"],
+    #logTable input[type="number"],
+    #logTable .auto-cell {
+        min-height: 50px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        font-size: 16px;
+    }
+    #logTable input[type="number"] { text-align: center; }
+    #logTable .auto-cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Daily totals → highlighted summary card */
+    #logTable tfoot .totals-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 16px;
+        border-radius: 14px;
+        background: var(--green-50);
+        border: 1px solid var(--green-200);
+        border-top: 1px solid var(--green-200);
+    }
+    #logTable tfoot .totals-row td {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 0;
+        border: none;
+        text-align: center;
+        align-items: center;
+    }
+    #logTable tfoot .totals-row td.total-cell::before {
+        content: attr(data-label);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--gray-600);
+    }
+    #logTable tfoot .totals-row td:first-child {
+        grid-column: 1 / -1;
+        font-size: 13px;
+        color: var(--green-800);
+        align-items: flex-start;
+    }
+    #logTable tfoot .totals-row td.total-empty { display: none; }
+
+    /* Hide the top action buttons — the sticky bar replaces them */
+    .entry-actions { display: none; }
+
+    /* Sticky bottom save bar */
+    .mobile-save-bar {
+        display: flex;
+        gap: 10px;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-top: 1px solid var(--gray-200);
+        box-shadow: 0 -2px 14px rgba(0, 0, 0, 0.08);
+        z-index: 200;
+    }
+    .mobile-save-bar .btn {
+        flex: 1;
+        justify-content: center;
+        padding: 14px;
+        font-size: 15px;
+    }
+    /* Leave room so the sticky bar never covers content */
+    .main-content { padding-bottom: 88px; }
+
+    /* Roomier day tabs for thumbs */
+    .day-tab { padding: 11px 16px; font-size: 13px; }
+
+    /* Bigger primary check-in target */
+    .btn-checkin { padding: 16px 28px; font-size: 16px; }
 }
 
 /* Flatpickr overrides */

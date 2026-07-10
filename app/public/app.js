@@ -11,6 +11,25 @@ let currentWeekStart = null;
 let currentDayIndex = 0;
 let routeDefs = {};      // Loaded from server
 let weekLogCache = {};   // { "YYYY-MM-DD": [ {legIndex, startTime, endTime, sterile, soiled, miles}, ... ] }
+let appTimezone = 'America/Chicago';  // Overwritten by /api/config
+let serverToday = null;               // Server's current date (YYYY-MM-DD) in appTimezone
+
+// Load app config (operating timezone + server's "today")
+async function loadConfig() {
+    try {
+        const c = await api('/api/config');
+        if (c.timezone) appTimezone = c.timezone;
+        if (c.today) serverToday = c.today;
+    } catch (e) { /* keep defaults */ }
+}
+
+// Format an ISO timestamp as a time in the operating timezone (e.g. "8:42 AM")
+function fmtTime(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleTimeString('en-US', {
+        timeZone: appTimezone, hour: 'numeric', minute: '2-digit', hour12: true
+    });
+}
 
 // ---- API Helper ----
 async function api(url, options = {}) {
@@ -85,16 +104,21 @@ let driverHistoryPeriod = 'week';
 function showDriverView(view) {
     document.getElementById('navTabEntry').classList.toggle('active', view === 'entry');
     document.getElementById('navTabHistory').classList.toggle('active', view === 'history');
+    document.getElementById('navTabCheckins').classList.toggle('active', view === 'checkins');
     document.getElementById('driverEntryView').style.display = view === 'entry' ? '' : 'none';
     document.getElementById('driverHistoryView').style.display = view === 'history' ? '' : 'none';
+    document.getElementById('driverCheckinView').style.display = view === 'checkins' ? '' : 'none';
 
     if (view === 'history') {
         initHistoryPicker();
+    } else if (view === 'checkins') {
+        initMyCheckinPicker();
     }
 }
 
 // ---- Driver Interface ----
 async function initDriver() {
+    await loadConfig();
     if (!routeDefs || !Object.keys(routeDefs).length) {
         routeDefs = await api('/api/routes');
     }
@@ -102,6 +126,8 @@ async function initDriver() {
     document.getElementById('driverNameDisplay').textContent = currentUser.name;
     const route = routeDefs[currentUser.route];
     document.getElementById('driverRouteDisplay').textContent = route.label;
+
+    initDriverCheckin();
 
     flatpickr('#weekPicker', {
         dateFormat: 'Y-m-d',
@@ -112,6 +138,81 @@ async function initDriver() {
             }
         }
     });
+}
+
+// ---- Driver Check-In / Clock-In ----
+let checkinClockTimer = null;
+let checkedInToday = false;
+
+function initDriverCheckin() {
+    // Live clock + today's date, shown in the operating timezone
+    const dateEl = document.getElementById('checkinDate');
+    if (dateEl) {
+        dateEl.textContent = new Date().toLocaleDateString('en-US', {
+            timeZone: appTimezone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+        });
+    }
+    if (checkinClockTimer) clearInterval(checkinClockTimer);
+    const tick = () => {
+        const clockEl = document.getElementById('checkinClock');
+        if (clockEl) clockEl.textContent = new Date().toLocaleTimeString('en-US', {
+            timeZone: appTimezone, hour12: true, timeZoneName: 'short'
+        });
+    };
+    tick();
+    checkinClockTimer = setInterval(tick, 1000);
+
+    // Fetch today's status (server decides "today" in the operating timezone)
+    refreshCheckinStatus();
+}
+
+async function refreshCheckinStatus() {
+    try {
+        const status = await api('/api/checkin');
+        renderCheckinState(status.checkedIn, status.checkin_at);
+    } catch (e) {
+        renderCheckinState(false, null);
+    }
+}
+
+function renderCheckinState(checkedIn, checkinAt) {
+    checkedInToday = checkedIn;
+    const card = document.getElementById('checkinCard');
+    const action = document.getElementById('checkinAction');
+    if (!card || !action) return;
+
+    card.classList.toggle('is-checked-in', checkedIn);
+
+    if (checkedIn) {
+        const timeStr = fmtTime(checkinAt);
+        action.innerHTML = `
+            <div class="checkin-status">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <div>
+                    <span class="checkin-status-label">Checked in</span>
+                    <span class="checkin-status-time">${timeStr}</span>
+                </div>
+            </div>`;
+    } else {
+        action.innerHTML = `
+            <button class="btn btn-primary btn-checkin" id="checkinBtn" onclick="doCheckin()">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+                Start My Day
+            </button>`;
+    }
+}
+
+async function doCheckin() {
+    const btn = document.getElementById('checkinBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking in…'; }
+    try {
+        const res = await api('/api/checkin', { method: 'POST' });
+        renderCheckinState(true, res.checkin_at);
+        showToast(res.alreadyCheckedIn ? 'Already checked in today' : 'Checked in — have a safe day!', 'success');
+    } catch (err) {
+        showToast('Check-in failed: ' + err.message, 'error');
+        renderCheckinState(false, null);
+    }
 }
 
 let historyPickerInit = false;
@@ -287,6 +388,77 @@ function exportDriverLogs() {
     showToast('Downloading Excel...', 'success');
 }
 
+// ---- Driver: My Check-In History ----
+let myCheckinPeriod = 'week';
+let myCheckinPickerInit = false;
+
+function initMyCheckinPicker() {
+    if (myCheckinPickerInit) return;
+    myCheckinPickerInit = true;
+    flatpickr('#myCheckinDate', {
+        dateFormat: 'Y-m-d',
+        maxDate: 'today',
+        defaultDate: serverToday || 'today',
+        onChange: function(dates) { if (dates.length > 0) loadMyCheckins(dates[0]); }
+    });
+    // Show the current period straight away
+    loadMyCheckins(new Date());
+}
+
+function setMyCheckinPeriod(period) {
+    myCheckinPeriod = period;
+    document.querySelectorAll('[data-mycheckin-period]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mycheckinPeriod === period);
+    });
+    const fp = document.getElementById('myCheckinDate')._flatpickr;
+    const picked = (fp && fp.selectedDates.length > 0) ? fp.selectedDates[0] : new Date();
+    loadMyCheckins(picked);
+}
+
+async function loadMyCheckins(date) {
+    const { startDate, endDate, label } = periodRange(myCheckinPeriod, date);
+    document.getElementById('myCheckinPeriodDisplay').textContent = label;
+
+    try {
+        const rows = await api(`/api/checkins/history?startDate=${startDate}&endDate=${endDate}`);
+        renderMyCheckins(rows);
+    } catch (err) {
+        showToast('Failed to load check-ins: ' + err.message, 'error');
+    }
+}
+
+function renderMyCheckins(rows) {
+    const card = document.getElementById('myCheckinTableCard');
+    const tbody = document.getElementById('myCheckinBody');
+    const empty = document.getElementById('noMyCheckins');
+    const summary = document.getElementById('myCheckinSummary');
+
+    card.style.display = '';
+    tbody.innerHTML = '';
+
+    if (!rows.length) {
+        empty.style.display = '';
+        if (summary) summary.textContent = '';
+        return;
+    }
+    empty.style.display = 'none';
+    if (summary) summary.textContent = `${rows.length} check-in${rows.length === 1 ? '' : 's'}`;
+
+    rows.forEach(r => {
+        const dateObj = new Date(r.date + 'T00:00:00');
+        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+        const dateFormatted = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${dateFormatted}</td>
+            <td>${dayName}</td>
+            <td style="font-weight:600;color:var(--green-700);">${fmtTime(r.checkin_at)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
 async function selectWeek(date) {
     const d = new Date(date);
     const day = d.getDay();
@@ -385,18 +557,18 @@ function buildLogTable(dateStr) {
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>
+            <td class="cell-route">
                 <div class="route-label">
                     <span class="route-index">${i + 1}</span>
                     ${leg.from} <span class="route-arrow">&#9654;</span> ${leg.to}
                 </div>
             </td>
-            <td><input type="time" value="${startTime}" data-leg="${i}" data-field="startTime" onchange="onCellChange(this)"></td>
-            <td><input type="time" value="${endTime}" data-leg="${i}" data-field="endTime" onchange="onCellChange(this)"></td>
-            <td><input type="number" min="0" value="${sterile}" data-leg="${i}" data-field="sterile" onchange="onCellChange(this)" oninput="updateTotals()"></td>
-            <td><input type="number" min="0" value="${soiled}" data-leg="${i}" data-field="soiled" onchange="onCellChange(this)" oninput="updateTotals()"></td>
-            <td><div class="auto-cell" id="totes-${i}">${totalTotes}</div></td>
-            <td><input type="number" min="0" step="0.1" value="${miles}" data-leg="${i}" data-field="miles" onchange="onCellChange(this)" oninput="updateTotals()"></td>
+            <td class="cell-input" data-label="Start Time"><input type="time" value="${startTime}" data-leg="${i}" data-field="startTime" onchange="onCellChange(this)"></td>
+            <td class="cell-input" data-label="End Time"><input type="time" value="${endTime}" data-leg="${i}" data-field="endTime" onchange="onCellChange(this)"></td>
+            <td class="cell-input" data-label="Sterile"><input type="number" min="0" inputmode="numeric" value="${sterile}" data-leg="${i}" data-field="sterile" onchange="onCellChange(this)" oninput="updateTotals()"></td>
+            <td class="cell-input" data-label="Soiled"><input type="number" min="0" inputmode="numeric" value="${soiled}" data-leg="${i}" data-field="soiled" onchange="onCellChange(this)" oninput="updateTotals()"></td>
+            <td class="cell-input" data-label="Total Totes"><div class="auto-cell" id="totes-${i}">${totalTotes}</div></td>
+            <td class="cell-input" data-label="Miles"><input type="number" min="0" step="0.1" inputmode="decimal" value="${miles}" data-leg="${i}" data-field="miles" onchange="onCellChange(this)" oninput="updateTotals()"></td>
         `;
         tbody.appendChild(tr);
     });
@@ -473,6 +645,8 @@ async function saveLog() {
 }
 
 async function clearCurrentDay() {
+    if (!confirm('Clear all entries for this day? This cannot be undone.')) return;
+
     const route = routeDefs[currentUser.route];
     const dayDate = new Date(currentWeekStart);
     dayDate.setDate(dayDate.getDate() + currentDayIndex);
@@ -547,6 +721,7 @@ function updateWeeklySummary() {
 let adminPeriod = 'custom';
 
 async function initAdmin() {
+    await loadConfig();
     if (!routeDefs || !Object.keys(routeDefs).length) {
         routeDefs = await api('/api/routes');
     }
@@ -566,21 +741,44 @@ async function initAdmin() {
         onChange: function() { applyFilters(); }
     });
 
-    // Populate driver filter dynamically
+    // Check-in roster date picker (defaults to server's today in the operating timezone)
+    flatpickr('#checkinDatePicker', {
+        dateFormat: 'Y-m-d',
+        maxDate: 'today',
+        defaultDate: serverToday || 'today',
+        onChange: function(dates) {
+            if (dates.length > 0) loadAdminCheckins(formatDate(dates[0]));
+        }
+    });
+    loadAdminCheckins();
+
+    // Check-in history date picker (defaults to server's today)
+    flatpickr('#checkinHistoryDate', {
+        dateFormat: 'Y-m-d',
+        maxDate: 'today',
+        defaultDate: serverToday || 'today',
+        onChange: function() { applyCheckinFilters(); }
+    });
+
+    // Populate driver filters dynamically (logs + check-in history)
     try {
         const drivers = await api('/api/admin/drivers');
-        const select = document.getElementById('filterDriver');
-        select.innerHTML = '<option value="all">All Drivers</option>';
-        drivers.forEach(d => {
-            const routeLabel = routeDefs[d.route]?.label || d.route;
-            const opt = document.createElement('option');
-            opt.value = d.username;
-            opt.textContent = `${d.name} (${routeLabel})`;
-            select.appendChild(opt);
+        const selects = [document.getElementById('filterDriver'), document.getElementById('checkinFilterDriver')];
+        selects.forEach(select => {
+            if (!select) return;
+            select.innerHTML = '<option value="all">All Drivers</option>';
+            drivers.forEach(d => {
+                const routeLabel = routeDefs[d.route]?.label || d.route;
+                const opt = document.createElement('option');
+                opt.value = d.username;
+                opt.textContent = `${d.name} (${routeLabel})`;
+                select.appendChild(opt);
+            });
         });
     } catch (e) { /* fallback: just "All Drivers" */ }
 
     applyFilters();
+    applyCheckinFilters();
 }
 
 function setAdminPeriod(period) {
@@ -756,6 +954,137 @@ async function applyFilters() {
     }
 }
 
+// ---- Admin: Daily Check-In Roster ----
+async function loadAdminCheckins(date) {
+    const roster = document.getElementById('checkinRoster');
+    const summary = document.getElementById('checkinSummary');
+    if (!roster) return;
+
+    try {
+        const data = await api('/api/admin/checkins' + (date ? `?date=${date}` : ''));
+        const isToday = data.date === (serverToday || data.date);
+        const checkedInCount = data.drivers.filter(d => d.checkedIn).length;
+
+        if (summary) {
+            summary.textContent = `${checkedInCount}/${data.drivers.length} checked in${isToday ? ' today' : ''}`;
+        }
+
+        roster.innerHTML = '';
+        data.drivers.forEach(d => {
+            const routeLabel = routeDefs[d.route]?.label || d.route;
+            const routeClass = d.route === 'northbound' ? 'north' : 'south';
+            const timeStr = d.checkin_at ? fmtTime(d.checkin_at) : null;
+
+            const item = document.createElement('div');
+            item.className = `checkin-row ${d.checkedIn ? 'in' : 'out'}`;
+            item.innerHTML = `
+                <div class="checkin-row-driver">
+                    <span class="checkin-dot"></span>
+                    <div>
+                        <span class="checkin-row-name">${d.name}</span>
+                        <span class="route-tag ${routeClass}">${routeLabel}</span>
+                    </div>
+                </div>
+                <div class="checkin-row-status">
+                    ${d.checkedIn
+                        ? `<span class="checkin-time">${timeStr}</span><span class="checkin-badge in">Checked in</span>`
+                        : `<span class="checkin-badge out">Not checked in</span>`}
+                </div>`;
+            roster.appendChild(item);
+        });
+    } catch (err) {
+        roster.innerHTML = `<div class="empty-state">Unable to load check-ins.</div>`;
+    }
+}
+
+// ---- Admin: Check-In History (filter + Daily/Weekly/Monthly) ----
+let checkinPeriod = 'day';
+
+function setCheckinPeriod(period) {
+    checkinPeriod = period;
+    document.querySelectorAll('[data-checkin-period]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.checkinPeriod === period);
+    });
+    applyCheckinFilters();
+}
+
+// Resolve the picked date + period into a { startDate, endDate, label } range
+function getCheckinRange() {
+    const fp = document.getElementById('checkinHistoryDate')._flatpickr;
+    const picked = (fp && fp.selectedDates.length > 0) ? fp.selectedDates[0] : new Date();
+    return periodRange(checkinPeriod, picked);
+}
+
+async function applyCheckinFilters() {
+    const { startDate, endDate, label } = getCheckinRange();
+    const driver = document.getElementById('checkinFilterDriver').value;
+    const route = document.getElementById('checkinFilterRoute').value;
+
+    const display = document.getElementById('checkinPeriodDisplay');
+    if (display) display.textContent = label;
+
+    const params = new URLSearchParams();
+    if (driver !== 'all') params.set('driver', driver);
+    if (route !== 'all') params.set('route', route);
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+
+    try {
+        const rows = await api(`/api/admin/checkins/history?${params.toString()}`);
+        renderCheckinHistory(rows);
+    } catch (err) {
+        showToast('Failed to load check-in history: ' + err.message, 'error');
+    }
+}
+
+function renderCheckinHistory(rows) {
+    const tbody = document.getElementById('checkinHistoryBody');
+    const empty = document.getElementById('noCheckinHistory');
+    const summary = document.getElementById('checkinHistorySummary');
+    tbody.innerHTML = '';
+
+    if (!rows.length) {
+        empty.style.display = '';
+        if (summary) summary.textContent = '';
+        return;
+    }
+    empty.style.display = 'none';
+    if (summary) summary.textContent = `${rows.length} check-in${rows.length === 1 ? '' : 's'}`;
+
+    // Group by driver
+    const byDriver = {};
+    rows.forEach(r => {
+        if (!byDriver[r.username]) byDriver[r.username] = { name: r.driver_name, route: r.driver_route, items: [] };
+        byDriver[r.username].items.push(r);
+    });
+
+    for (const driverData of Object.values(byDriver)) {
+        const routeLabel = routeDefs[driverData.route]?.label || driverData.route;
+        const routeClass = driverData.route === 'northbound' ? 'north' : 'south';
+
+        const header = document.createElement('tr');
+        header.className = 'driver-group-header';
+        header.innerHTML = `<td colspan="5"><strong>${driverData.name}</strong> <span class="route-tag ${routeClass}">${routeLabel}</span> <span class="checkin-count">${driverData.items.length} day${driverData.items.length === 1 ? '' : 's'}</span></td>`;
+        tbody.appendChild(header);
+
+        driverData.items.forEach(r => {
+            const dateObj = new Date(r.date + 'T00:00:00');
+            const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+            const dateFormatted = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td></td>
+                <td></td>
+                <td>${dateFormatted}</td>
+                <td>${dayName}</td>
+                <td style="font-weight:600;color:var(--green-700);">${fmtTime(r.checkin_at)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+}
+
 // ---- Excel Export ----
 function exportToExcel() {
     const driverFilter = document.getElementById('filterDriver').value;
@@ -771,6 +1100,42 @@ function exportToExcel() {
     // Download from server-side ExcelJS endpoint (matching original Excel format)
     window.location.href = `/api/admin/export?${params.toString()}`;
     showToast('Downloading Excel...', 'success');
+}
+
+// Resolve a period ('day' | 'week' | 'month') + a date into { startDate, endDate, label }.
+// Week is Monday–Friday to match the rest of the system.
+function periodRange(period, dateInput) {
+    const picked = dateInput ? new Date(dateInput) : new Date();
+
+    if (period === 'week') {
+        const d = new Date(picked);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
+        const monday = new Date(d.setDate(diff));
+        monday.setHours(0, 0, 0, 0);
+        const friday = new Date(monday);
+        friday.setDate(friday.getDate() + 4);
+        const fmt = (dt) => dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return { startDate: formatDate(monday), endDate: formatDate(friday), label: `Week: ${fmt(monday)} — ${fmt(friday)}` };
+    }
+
+    if (period === 'month') {
+        const d = new Date(picked);
+        const first = new Date(d.getFullYear(), d.getMonth(), 1);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        return {
+            startDate: formatDate(first),
+            endDate: formatDate(last),
+            label: `Month: ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`
+        };
+    }
+
+    const ds = formatDate(picked);
+    return {
+        startDate: ds,
+        endDate: ds,
+        label: `Day: ${picked.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}`
+    };
 }
 
 // ---- Utilities ----

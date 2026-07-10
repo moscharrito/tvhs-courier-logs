@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TVHS RMD Courier Log System - IZY GLOBAL SERVICES LLC</title>
+    <title>TVHS RMD Courier Log — IZY Global Services LLC</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 </head>
@@ -22,8 +22,8 @@
                             <path d="M21 24L23 26L27 22" stroke="#16a34a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
                     </div>
-                    <h1>TVHS RMD Courier Log System -IZYGLOBALSERVLLC</h1>
-                    <p class="subtitle">Weekly Driver Log Management System</p>
+                    <h1>TVHS RMD Courier Log</h1>
+                    <p class="subtitle">IZY Global Services LLC · Weekly Driver Log Management</p>
                 </div>
                 <form id="loginForm" onsubmit="return handleLogin(event)">
                     <div class="form-group">
@@ -52,7 +52,7 @@
                     <circle cx="24" cy="24" r="6" fill="#16a34a" opacity="0.15" stroke="#16a34a" stroke-width="1.5"/>
                     <path d="M21 24L23 26L27 22" stroke="#16a34a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span>TVHS RMD Courier- IZYGLOBALSERVLLC</span>
+                <span>TVHS RMD Courier · IZY Global</span>
             </div>
             <div class="nav-info">
                 <span id="driverNameDisplay" class="nav-user"></span>
@@ -60,6 +60,7 @@
                 <div class="nav-tabs">
                     <button class="nav-tab active" id="navTabEntry" onclick="showDriverView('entry')">New Entry</button>
                     <button class="nav-tab" id="navTabHistory" onclick="showDriverView('history')">My Logs</button>
+                    <button class="nav-tab" id="navTabCheckins" onclick="showDriverView('checkins')">Check-Ins</button>
                 </div>
                 <button class="btn btn-outline btn-sm" onclick="logout()">Sign Out</button>
             </div>
@@ -70,7 +71,22 @@
             <div id="driverEntryView">
             <div class="page-header">
                 <h2>Driver Log Entry</h2>
-                <p>Select a week to enter your daily route logs</p>
+                <p>Check in to start your day, then enter your daily route logs</p>
+            </div>
+
+            <!-- Daily Check-In -->
+            <div class="glass-card checkin-card" id="checkinCard">
+                <div class="checkin-left">
+                    <span class="checkin-eyebrow">Today</span>
+                    <div class="checkin-date" id="checkinDate">—</div>
+                    <div class="checkin-clock" id="checkinClock">--:--:--</div>
+                </div>
+                <div class="checkin-right" id="checkinAction">
+                    <button class="btn btn-primary btn-checkin" id="checkinBtn" onclick="doCheckin()">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+                        Start My Day
+                    </button>
+                </div>
             </div>
 
             <!-- Week Selector -->
@@ -96,7 +112,7 @@
             <div id="logEntrySection" class="glass-card" style="display:none;">
                 <div class="card-header">
                     <h3 id="logTableTitle">Daily Log</h3>
-                    <div class="card-actions">
+                    <div class="card-actions entry-actions">
                         <button class="btn btn-outline btn-sm" onclick="clearCurrentDay()">Clear Day</button>
                         <button class="btn btn-primary btn-sm" onclick="saveLog()">Save Log</button>
                     </div>
@@ -123,12 +139,12 @@
                         <tfoot>
                             <tr class="totals-row">
                                 <td><strong>Daily Totals</strong></td>
-                                <td></td>
-                                <td></td>
-                                <td id="totalSterile" class="total-cell">0</td>
-                                <td id="totalSoiled" class="total-cell">0</td>
-                                <td id="totalTotes" class="total-cell">0</td>
-                                <td id="totalMiles" class="total-cell">0</td>
+                                <td class="total-empty"></td>
+                                <td class="total-empty"></td>
+                                <td id="totalSterile" class="total-cell" data-label="Sterile">0</td>
+                                <td id="totalSoiled" class="total-cell" data-label="Soiled">0</td>
+                                <td id="totalTotes" class="total-cell" data-label="Totes">0</td>
+                                <td id="totalMiles" class="total-cell" data-label="Miles">0</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -157,6 +173,12 @@
                             <span class="summary-value" id="weeklyDays">0</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Sticky action bar (mobile only) -->
+                <div class="mobile-save-bar">
+                    <button class="btn btn-outline" onclick="clearCurrentDay()">Clear</button>
+                    <button class="btn btn-primary" onclick="saveLog()">Save Log</button>
                 </div>
             </div>
             </div><!-- /driverEntryView -->
@@ -247,6 +269,60 @@
                     </div>
                 </div>
             </div><!-- /driverHistoryView -->
+
+            <!-- Check-In History View -->
+            <div id="driverCheckinView" style="display:none;">
+                <div class="page-header">
+                    <h2>My Check-Ins</h2>
+                    <p>Review the days you checked in to start work</p>
+                </div>
+
+                <div class="glass-card">
+                    <div class="card-header">
+                        <h3>View By</h3>
+                        <span class="checkin-summary" id="myCheckinSummary"></span>
+                    </div>
+                    <div class="filter-row">
+                        <div class="form-group">
+                            <label>Period</label>
+                            <div class="toggle-group">
+                                <button class="toggle-btn active" data-mycheckin-period="day" onclick="setMyCheckinPeriod('day')">Daily</button>
+                                <button class="toggle-btn" data-mycheckin-period="week" onclick="setMyCheckinPeriod('week')">Weekly</button>
+                                <button class="toggle-btn" data-mycheckin-period="month" onclick="setMyCheckinPeriod('month')">Monthly</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Select Date</label>
+                            <input type="text" id="myCheckinDate" placeholder="Pick a date">
+                        </div>
+                        <div class="form-group">
+                            <label>Selected Period</label>
+                            <div id="myCheckinPeriodDisplay" class="week-display">No period selected</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card" id="myCheckinTableCard" style="display:none;">
+                    <div class="card-header">
+                        <h3 id="myCheckinTableTitle">Check-Ins</h3>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="log-table admin-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Day</th>
+                                    <th>Check-In Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="myCheckinBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="noMyCheckins" class="empty-state" style="display:none;">
+                        <p>No check-ins found for this period.</p>
+                    </div>
+                </div>
+            </div><!-- /driverCheckinView -->
         </main>
     </div>
 
@@ -311,6 +387,18 @@
                         <span class="stat-label">Total Totes</span>
                     </div>
                 </div>
+            </div>
+
+            <!-- Daily Check-Ins -->
+            <div class="glass-card">
+                <div class="card-header">
+                    <h3>Driver Check-Ins</h3>
+                    <div class="card-actions checkin-admin-controls">
+                        <input type="text" id="checkinDatePicker" class="checkin-date-input" placeholder="Today">
+                        <span class="checkin-summary" id="checkinSummary"></span>
+                    </div>
+                </div>
+                <div class="checkin-roster" id="checkinRoster"></div>
             </div>
 
             <!-- Filters -->
@@ -388,6 +476,66 @@
                 </div>
                 <div id="noLogsMessage" class="empty-state">
                     <p>No logs found. Logs will appear here once drivers submit them.</p>
+                </div>
+            </div>
+
+            <!-- Check-In History -->
+            <div class="glass-card">
+                <div class="card-header">
+                    <h3>Check-In History</h3>
+                    <span class="checkin-summary" id="checkinHistorySummary"></span>
+                </div>
+                <div class="filter-row">
+                    <div class="form-group">
+                        <label>Driver</label>
+                        <select id="checkinFilterDriver" onchange="applyCheckinFilters()">
+                            <option value="all">All Drivers</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Route</label>
+                        <select id="checkinFilterRoute" onchange="applyCheckinFilters()">
+                            <option value="all">All Routes</option>
+                            <option value="northbound">NorthBound</option>
+                            <option value="southbound">SouthBound</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>View By</label>
+                        <div class="toggle-group">
+                            <button class="toggle-btn active" data-checkin-period="day" onclick="setCheckinPeriod('day')">Daily</button>
+                            <button class="toggle-btn" data-checkin-period="week" onclick="setCheckinPeriod('week')">Weekly</button>
+                            <button class="toggle-btn" data-checkin-period="month" onclick="setCheckinPeriod('month')">Monthly</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Pick a date</label>
+                        <input type="text" id="checkinHistoryDate" placeholder="Select a date">
+                    </div>
+                    <div class="form-group">
+                        <label>Selected Period</label>
+                        <div id="checkinPeriodDisplay" class="week-display">Showing today</div>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline btn-sm" onclick="applyCheckinFilters()">Apply</button>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table class="log-table admin-table">
+                        <thead>
+                            <tr>
+                                <th>Driver</th>
+                                <th>Route</th>
+                                <th>Date</th>
+                                <th>Day</th>
+                                <th>Check-In Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="checkinHistoryBody"></tbody>
+                    </table>
+                </div>
+                <div id="noCheckinHistory" class="empty-state">
+                    <p>No check-ins found for this period.</p>
                 </div>
             </div>
         </main>
