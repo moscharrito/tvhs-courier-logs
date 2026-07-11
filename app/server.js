@@ -4,7 +4,7 @@
    ============================================ */
 
 const express = require('express');
-const session = require('express-session');
+const cookieSession = require('cookie-session');
 const bcrypt = require('bcryptjs');
 const { createClient } = require('@libsql/client');
 const path = require('path');
@@ -66,6 +66,7 @@ const SCHEMA = `
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
+        pin TEXT,
         name TEXT NOT NULL,
         role TEXT NOT NULL CHECK(role IN ('driver','admin')),
         route TEXT,
@@ -139,6 +140,15 @@ async function ensureUser(existing, envUser, envPass, name, role, route, fallbac
     await dbRun('UPDATE users SET name = ?, route = ? WHERE username = ?', [name, route, username]);
 }
 
+// Add columns that older databases may be missing (e.g. the driver PIN).
+async function migrate() {
+    const cols = await dbAll('PRAGMA table_info(users)');
+    if (!cols.some(c => c.name === 'pin')) {
+        await dbRun('ALTER TABLE users ADD COLUMN pin TEXT');
+        console.log('Migration: added users.pin');
+    }
+}
+
 async function syncUsers() {
     const adminRow = await dbGet("SELECT * FROM users WHERE role = 'admin' LIMIT 1");
     await ensureUser(adminRow, process.env.ADMIN_USER, process.env.ADMIN_PASS, 'Administrator', 'admin', null, 'admin');
@@ -153,13 +163,16 @@ async function syncUsers() {
 // ---- Middleware ----
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-// A fixed SESSION_SECRET keeps users logged in across restarts/deploys.
-// Falls back to a random per-boot secret (logs everyone out on restart) if unset.
-app.use(session({
-    secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-    resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+// Stateless cookie sessions: the session lives in a signed cookie, so logins
+// survive server restarts/deploys (no server-side store) — important on hosts
+// that restart often. A fixed SESSION_SECRET is required for this to persist;
+// without it a random per-boot key logs everyone out on restart.
+app.use(cookieSession({
+    name: 'tvhs_sess',
+    keys: [process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex')],
+    maxAge: 60 * 24 * 60 * 60 * 1000, // 60 days
+    httpOnly: true,
+    sameSite: 'lax'
 }));
 
 // Operating timezone — pinned in config so check-in dates don't depend on the host clock.
@@ -220,7 +233,30 @@ const ROUTES = {
 
 // ---- API Routes ----
 
-// Auth
+// Store the authenticated identity in the session and return the public profile
+function loginSession(req, user) {
+    const profile = { username: user.username, name: user.name, role: user.role, route: user.route };
+    req.session.user = profile;
+    return profile;
+}
+
+// Simple in-memory throttle for driver PIN attempts (per route). Slows brute
+// force of the short PIN; resets on restart, so it's a speed bump, not a vault.
+const pinAttempts = new Map();
+const PIN_MAX = 5, PIN_WINDOW = 15 * 60 * 1000;
+function pinBlocked(route) {
+    const rec = pinAttempts.get(route);
+    return !!(rec && rec.until > Date.now() && rec.count >= PIN_MAX);
+}
+function pinFail(route) {
+    const now = Date.now();
+    const rec = pinAttempts.get(route);
+    if (!rec || rec.until < now) pinAttempts.set(route, { count: 1, until: now + PIN_WINDOW });
+    else rec.count++;
+}
+function pinReset(route) { pinAttempts.delete(route); }
+
+// Auth — username + password (admin, and a fallback for drivers)
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -230,23 +266,48 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
 
-    req.session.user = {
-        username: user.username,
-        name: user.name,
-        role: user.role,
-        route: user.route
-    };
+    res.json(loginSession(req, user));
+});
 
-    res.json({
-        username: user.username,
-        name: user.name,
-        role: user.role,
-        route: user.route
-    });
+// Public: driver roster for the quick-login picker (no secrets; identifies
+// drivers by route so personal emails aren't exposed publicly).
+app.get('/api/drivers/list', async (req, res) => {
+    const drivers = await dbAll("SELECT name, route, pin FROM users WHERE role = 'driver' ORDER BY name");
+    res.json(drivers.map(d => ({ route: d.route, name: d.name, hasPin: !!d.pin })));
+});
+
+// Driver quick login with PIN
+app.post('/api/login/pin', async (req, res) => {
+    const { route, pin } = req.body;
+    if (!route || !pin) return res.status(400).json({ error: 'Route and PIN required' });
+    if (pinBlocked(route)) return res.status(429).json({ error: 'Too many attempts. Wait a bit or use your password.' });
+
+    const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = ?", [route]);
+    if (!user || !user.pin || !bcrypt.compareSync(String(pin), user.pin)) {
+        pinFail(route);
+        return res.status(401).json({ error: 'Incorrect PIN' });
+    }
+    pinReset(route);
+    res.json(loginSession(req, user));
+});
+
+// Driver first-time PIN setup / reset — gated by the driver's password
+app.post('/api/login/pin/setup', async (req, res) => {
+    const { route, password, pin } = req.body;
+    if (!route || !password || !pin) return res.status(400).json({ error: 'Route, password and PIN required' });
+    if (!/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ error: 'PIN must be 4–6 digits' });
+
+    const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = ?", [route]);
+    if (!user || !bcrypt.compareSync(password, user.password)) {
+        return res.status(401).json({ error: 'Incorrect password' });
+    }
+    await dbRun('UPDATE users SET pin = ? WHERE username = ?', [bcrypt.hashSync(String(pin), 10), user.username]);
+    pinReset(route);
+    res.json(loginSession(req, user));
 });
 
 app.post('/api/logout', (req, res) => {
-    req.session.destroy();
+    req.session = null;
     res.json({ ok: true });
 });
 
@@ -852,6 +913,7 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
 (async function start() {
     try {
         await db.executeMultiple(SCHEMA);
+        await migrate();
         await syncUsers();
         app.listen(PORT, () => {
             console.log(`TVHS RMD Courier Log System running at http://localhost:${PORT}`);

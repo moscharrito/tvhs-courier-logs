@@ -43,24 +43,139 @@ async function api(url, options = {}) {
 }
 
 // ---- Auth ----
+let loginDrivers = [];
+let selectedDriver = null;
+let pinMode = 'enter'; // 'enter' | 'setup'
+
+function initials(name) {
+    return name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+}
+function routeLabelOf(route) {
+    return route === 'northbound' ? 'NorthBound' : 'SouthBound';
+}
+
+function enterApp(user) {
+    currentUser = user;
+    if (user.role === 'admin') {
+        showScreen('adminScreen');
+        initAdmin();
+    } else {
+        showScreen('driverScreen');
+        initDriver();
+    }
+}
+
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+}
+
+function showLoginView(view) {
+    document.getElementById('loginPickView').style.display = view === 'pick' ? '' : 'none';
+    document.getElementById('loginPinView').style.display = view === 'pin' ? '' : 'none';
+    document.getElementById('loginAdminView').style.display = view === 'admin' ? '' : 'none';
+}
+
+async function initLoginScreen() {
+    showLoginView('pick');
+    const container = document.getElementById('driverCards');
+    try {
+        loginDrivers = await api('/api/drivers/list');
+        container.innerHTML = '';
+        if (!loginDrivers.length) {
+            container.innerHTML = '<div class="empty-state" style="padding:16px;">No drivers found.</div>';
+            return;
+        }
+        loginDrivers.forEach(d => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'driver-card';
+            btn.onclick = () => selectDriver(d);
+            btn.innerHTML = `
+                <span class="driver-card-avatar">${initials(d.name)}</span>
+                <span class="driver-card-info">
+                    <span class="driver-card-name">${d.name}</span>
+                    <span class="driver-card-route">${routeLabelOf(d.route)}${d.hasPin ? '' : ' · Set up PIN'}</span>
+                </span>
+                <span class="driver-card-arrow">&rsaquo;</span>`;
+            container.appendChild(btn);
+        });
+    } catch (e) {
+        container.innerHTML = '<div class="empty-state" style="padding:16px;">Unable to load drivers.</div>';
+    }
+}
+
+function selectDriver(d) {
+    selectedDriver = d;
+    pinMode = d.hasPin ? 'enter' : 'setup';
+    document.getElementById('pinAvatar').textContent = initials(d.name);
+    document.getElementById('pinDriverName').textContent = d.name;
+    document.getElementById('pinDriverRoute').textContent = routeLabelOf(d.route);
+    configurePinView();
+    showLoginView('pin');
+    setTimeout(() => {
+        const f = document.getElementById(pinMode === 'setup' ? 'pinSetupPass' : 'pinInput');
+        if (f) f.focus();
+    }, 60);
+}
+
+function configurePinView() {
+    const isSetup = pinMode === 'setup';
+    document.getElementById('pinSetupPassGroup').style.display = isSetup ? '' : 'none';
+    document.getElementById('pinLabel').textContent = isSetup ? 'Create a 4–6 digit PIN' : 'Enter your PIN';
+    document.getElementById('pinSubmitBtn').textContent = isSetup ? 'Set PIN & Sign In' : 'Sign In';
+    document.getElementById('forgotPinLink').style.display = isSetup ? 'none' : '';
+    document.getElementById('pinInput').value = '';
+    document.getElementById('pinSetupPass').value = '';
+}
+
+function startPinReset() {
+    pinMode = 'setup';
+    configurePinView();
+    setTimeout(() => document.getElementById('pinSetupPass').focus(), 60);
+}
+
+async function submitPin(e) {
+    e.preventDefault();
+    if (!selectedDriver) return false;
+    const pin = document.getElementById('pinInput').value.trim();
+    if (!/^\d{4,6}$/.test(pin)) { showToast('PIN must be 4–6 digits', 'error'); return false; }
+
+    try {
+        let user;
+        if (pinMode === 'setup') {
+            const password = document.getElementById('pinSetupPass').value;
+            if (!password) { showToast('Enter your password to set a PIN', 'error'); return false; }
+            user = await api('/api/login/pin/setup', {
+                method: 'POST',
+                body: JSON.stringify({ route: selectedDriver.route, password, pin })
+            });
+            showToast("PIN set — you're signed in", 'success');
+        } else {
+            user = await api('/api/login/pin', {
+                method: 'POST',
+                body: JSON.stringify({ route: selectedDriver.route, pin })
+            });
+        }
+        enterApp(user);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+    return false;
+}
+
 async function handleLogin(e) {
     e.preventDefault();
     const username = document.getElementById('loginUser').value.trim().toLowerCase();
     const password = document.getElementById('loginPass').value;
+    if (!username || !password) { showToast('Enter username and password', 'error'); return false; }
 
     try {
-        currentUser = await api('/api/login', {
+        const user = await api('/api/login', {
             method: 'POST',
             body: JSON.stringify({ username, password })
         });
-
-        if (currentUser.role === 'admin') {
-            showScreen('adminScreen');
-            initAdmin();
-        } else {
-            showScreen('driverScreen');
-            initDriver();
-        }
+        enterApp(user);
     } catch (err) {
         showToast(err.message, 'error');
     }
@@ -70,14 +185,10 @@ async function handleLogin(e) {
 async function logout() {
     try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
     currentUser = null;
-    document.getElementById('loginUser').value = '';
-    document.getElementById('loginPass').value = '';
+    const lu = document.getElementById('loginUser'); if (lu) lu.value = '';
+    const lp = document.getElementById('loginPass'); if (lp) lp.value = '';
     showScreen('loginScreen');
-}
-
-function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
+    initLoginScreen();
 }
 
 // ---- Session Check on Load ----
@@ -85,16 +196,10 @@ async function checkSession() {
     try {
         currentUser = await api('/api/session');
         routeDefs = await api('/api/routes');
-
-        if (currentUser.role === 'admin') {
-            showScreen('adminScreen');
-            initAdmin();
-        } else {
-            showScreen('driverScreen');
-            initDriver();
-        }
+        enterApp(currentUser);
     } catch (e) {
         showScreen('loginScreen');
+        initLoginScreen();
     }
 }
 
