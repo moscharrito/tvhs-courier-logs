@@ -333,13 +333,14 @@ app.get('/api/config', (req, res) => {
 // ---- Check-in / Clock-in ----
 
 // Driver: check in (clock in) for the day. Idempotent — one check-in per driver per day.
-// The day is always the server's current date in APP_TIMEZONE, never client-supplied,
-// so a driver can only check in for "today" and can't backdate.
+// The "day" is the driver's own local date (sent by the client) so it matches what
+// they see on their device; falls back to the server's date if none/invalid is sent.
 app.post('/api/checkin', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can check in' });
 
-    const date = localDate();
+    const bodyDate = req.body && req.body.date;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(bodyDate) ? bodyDate : localDate();
     const existing = await dbGet('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?', [user.username, date]);
     if (existing) {
         return res.json({ checkedIn: true, checkin_at: existing.checkin_at, date, alreadyCheckedIn: true });

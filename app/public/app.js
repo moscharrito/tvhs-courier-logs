@@ -11,19 +11,19 @@ let currentWeekStart = null;
 let currentDayIndex = 0;
 let routeDefs = {};      // Loaded from server
 let weekLogCache = {};   // { "YYYY-MM-DD": [ {legIndex, startTime, endTime, sterile, soiled, miles}, ... ] }
-let appTimezone = 'America/Chicago';  // Overwritten by /api/config
-let serverToday = null;               // Server's current date (YYYY-MM-DD) in appTimezone
+let appTimezone = 'America/Chicago';  // Auto-detected from the viewer's device
+let serverToday = null;               // Today's date (YYYY-MM-DD) in the viewer's timezone
 
-// Load app config (operating timezone + server's "today")
+// Detect the viewer's device timezone so all displayed times/dates follow it.
 async function loadConfig() {
     try {
-        const c = await api('/api/config');
-        if (c.timezone) appTimezone = c.timezone;
-        if (c.today) serverToday = c.today;
-    } catch (e) { /* keep defaults */ }
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) appTimezone = tz;
+    } catch (e) { /* keep default */ }
+    serverToday = formatDate(new Date()); // device-local "today"
 }
 
-// Format an ISO timestamp as a time in the operating timezone (e.g. "8:42 AM")
+// Format an ISO timestamp as a time in the viewer's timezone (e.g. "8:42 AM")
 function fmtTime(iso) {
     if (!iso) return '';
     return new Date(iso).toLocaleTimeString('en-US', {
@@ -273,7 +273,7 @@ function initDriverCheckin() {
 
 async function refreshCheckinStatus() {
     try {
-        const status = await api('/api/checkin');
+        const status = await api('/api/checkin?date=' + formatDate(new Date()));
         renderCheckinState(status.checkedIn, status.checkin_at);
     } catch (e) {
         renderCheckinState(false, null);
@@ -311,7 +311,10 @@ async function doCheckin() {
     const btn = document.getElementById('checkinBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Checking in…'; }
     try {
-        const res = await api('/api/checkin', { method: 'POST' });
+        const res = await api('/api/checkin', {
+            method: 'POST',
+            body: JSON.stringify({ date: formatDate(new Date()) })
+        });
         renderCheckinState(true, res.checkin_at);
         showToast(res.alreadyCheckedIn ? 'Already checked in today' : 'Checked in — have a safe day!', 'success');
     } catch (err) {
@@ -855,7 +858,7 @@ async function initAdmin() {
             if (dates.length > 0) loadAdminCheckins(formatDate(dates[0]));
         }
     });
-    loadAdminCheckins();
+    loadAdminCheckins(serverToday || formatDate(new Date()));
 
     // Check-in history date picker (defaults to server's today)
     flatpickr('#checkinHistoryDate', {
