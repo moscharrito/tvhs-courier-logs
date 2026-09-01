@@ -430,8 +430,8 @@ function renderDriverHistory(logs, title) {
         let dayMiles = 0, dayTotes = 0;
 
         grouped[dateStr].forEach(log => {
-            const routeLeg = route.legs[log.leg_index];
-            if (!routeLeg) return;
+            const legLabel = legLabelOf(route, log);
+            if (!legLabel) return;
 
             const totes = (parseInt(log.sterile) || 0) + (parseInt(log.soiled) || 0);
             const miles = parseFloat(log.miles) || 0;
@@ -444,7 +444,7 @@ function renderDriverHistory(logs, title) {
             tr.innerHTML = `
                 <td>${dateFormatted}</td>
                 <td>${dayName}</td>
-                <td>${routeLeg.from} &rarr; ${routeLeg.to}</td>
+                <td>${legLabel}</td>
                 <td>${log.start_time || '-'}</td>
                 <td>${log.end_time || '-'}</td>
                 <td style="text-align:center">${log.sterile || 0}</td>
@@ -646,42 +646,128 @@ function selectDay(index) {
     buildLogTable(dateStr);
 }
 
-function buildLogTable(dateStr) {
+// Row model for a day: every standard route leg, followed by any extra
+// (off-schedule) legs the driver added. Extras are stored at leg_index >=
+// route.legs.length and carry their own from/to labels.
+function rowsForDate(dateStr) {
     const route = routeDefs[currentUser.route];
     const dayLogs = weekLogCache[dateStr] || [];
 
+    const valuesOf = (log) => ({
+        startTime: log ? (log.start_time || '') : '',
+        endTime: log ? (log.end_time || '') : '',
+        sterile: log ? (log.sterile || 0) : 0,
+        soiled: log ? (log.soiled || 0) : 0,
+        miles: log ? (log.miles || 0) : 0
+    });
+
+    const rows = route.legs.map((leg, i) => ({
+        from: leg.from,
+        to: leg.to,
+        extra: false,
+        ...valuesOf(dayLogs.find(l => l.leg_index === i))
+    }));
+
+    dayLogs
+        .filter(l => l.leg_index >= route.legs.length)
+        .sort((a, b) => a.leg_index - b.leg_index)
+        .forEach(l => rows.push({
+            from: l.leg_from || '',
+            to: l.leg_to || '',
+            extra: true,
+            ...valuesOf(l)
+        }));
+
+    return rows;
+}
+
+function buildLogTable(dateStr) {
+    renderLogRows(rowsForDate(dateStr));
+}
+
+function renderLogRows(rows) {
     const tbody = document.getElementById('logTableBody');
     tbody.innerHTML = '';
 
-    route.legs.forEach((leg, i) => {
-        // Find existing log for this leg
-        const existing = dayLogs.find(l => l.leg_index === i);
-        const startTime = existing ? existing.start_time : '';
-        const endTime = existing ? existing.end_time : '';
-        const sterile = existing ? existing.sterile : 0;
-        const soiled = existing ? existing.soiled : 0;
-        const miles = existing ? existing.miles : 0;
-        const totalTotes = (parseInt(sterile) || 0) + (parseInt(soiled) || 0);
+    rows.forEach((row, i) => {
+        const totalTotes = (parseInt(row.sterile) || 0) + (parseInt(row.soiled) || 0);
+
+        const legCell = row.extra
+            ? `<div class="route-label route-label-extra">
+                    <span class="route-index extra">${i + 1}</span>
+                    <input type="text" class="leg-input" placeholder="From" maxlength="60" value="${escapeAttr(row.from)}" data-leg="${i}" data-field="legFrom">
+                    <span class="route-arrow">&#9654;</span>
+                    <input type="text" class="leg-input" placeholder="To" maxlength="60" value="${escapeAttr(row.to)}" data-leg="${i}" data-field="legTo">
+                    <button type="button" class="leg-remove" title="Remove this extra leg" aria-label="Remove this extra leg" onclick="removeExtraLeg(${i})">&times;</button>
+                    <span class="extra-badge">Extra</span>
+               </div>`
+            : `<div class="route-label">
+                    <span class="route-index">${i + 1}</span>
+                    ${row.from} <span class="route-arrow">&#9654;</span> ${row.to}
+               </div>`;
 
         const tr = document.createElement('tr');
+        if (row.extra) tr.className = 'extra-leg-row';
         tr.innerHTML = `
-            <td class="cell-route">
-                <div class="route-label">
-                    <span class="route-index">${i + 1}</span>
-                    ${leg.from} <span class="route-arrow">&#9654;</span> ${leg.to}
-                </div>
-            </td>
-            <td class="cell-input" data-label="Start Time"><input type="time" value="${startTime}" data-leg="${i}" data-field="startTime" onchange="onCellChange(this)"></td>
-            <td class="cell-input" data-label="End Time"><input type="time" value="${endTime}" data-leg="${i}" data-field="endTime" onchange="onCellChange(this)"></td>
-            <td class="cell-input" data-label="Sterile"><input type="number" min="0" inputmode="numeric" value="${sterile}" data-leg="${i}" data-field="sterile" onchange="onCellChange(this)" oninput="updateTotals()"></td>
-            <td class="cell-input" data-label="Soiled"><input type="number" min="0" inputmode="numeric" value="${soiled}" data-leg="${i}" data-field="soiled" onchange="onCellChange(this)" oninput="updateTotals()"></td>
-            <td class="cell-input" data-label="Total Totes"><div class="auto-cell" id="totes-${i}">${totalTotes}</div></td>
-            <td class="cell-input" data-label="Miles"><input type="number" min="0" step="0.1" inputmode="decimal" value="${miles}" data-leg="${i}" data-field="miles" onchange="onCellChange(this)" oninput="updateTotals()"></td>
+            <td class="cell-route">${legCell}</td>
+            <td class="cell-input" data-label="Start Time"><input type="time" value="${row.startTime}" data-leg="${i}" data-field="startTime" onchange="onCellChange(this)"></td>
+            <td class="cell-input" data-label="End Time"><input type="time" value="${row.endTime}" data-leg="${i}" data-field="endTime" onchange="onCellChange(this)"></td>
+            <td class="cell-input" data-label="Sterile"><input type="number" min="0" inputmode="numeric" value="${row.sterile}" data-leg="${i}" data-field="sterile" onchange="onCellChange(this)" oninput="updateTotals()"></td>
+            <td class="cell-input" data-label="Soiled"><input type="number" min="0" inputmode="numeric" value="${row.soiled}" data-leg="${i}" data-field="soiled" onchange="onCellChange(this)" oninput="updateTotals()"></td>
+            <td class="cell-input" data-label="Total Totes"><div class="auto-cell">${totalTotes}</div></td>
+            <td class="cell-input" data-label="Miles"><input type="number" min="0" step="0.1" inputmode="decimal" value="${row.miles}" data-leg="${i}" data-field="miles" onchange="onCellChange(this)" oninput="updateTotals()"></td>
         `;
         tbody.appendChild(tr);
     });
 
     updateTotals();
+}
+
+// Read the table back into the row model (the inputs are the source of truth
+// between saves, so adding/removing a leg never loses typed values).
+function collectRows() {
+    const route = routeDefs[currentUser.route];
+
+    return Array.from(document.querySelectorAll('#logTableBody tr')).map((tr, i) => {
+        const val = (field) => tr.querySelector(`[data-field="${field}"]`)?.value || '';
+        const extra = i >= route.legs.length;
+        return {
+            extra,
+            from: extra ? val('legFrom').trim() : route.legs[i].from,
+            to: extra ? val('legTo').trim() : route.legs[i].to,
+            startTime: val('startTime'),
+            endTime: val('endTime'),
+            sterile: parseInt(val('sterile')) || 0,
+            soiled: parseInt(val('soiled')) || 0,
+            miles: parseFloat(val('miles')) || 0
+        };
+    });
+}
+
+// Append a blank off-schedule leg to the current day
+function addExtraLeg() {
+    const rows = collectRows();
+    rows.push({ extra: true, from: '', to: '', startTime: '', endTime: '', sterile: 0, soiled: 0, miles: 0 });
+    renderLogRows(rows);
+
+    const input = document.querySelector(`[data-leg="${rows.length - 1}"][data-field="legFrom"]`);
+    if (input) {
+        input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        input.focus();
+    }
+}
+
+function removeExtraLeg(index) {
+    const rows = collectRows();
+    const row = rows[index];
+    if (!row || !row.extra) return;
+
+    const hasData = row.startTime || row.endTime || row.sterile || row.soiled || row.miles;
+    if (hasData && !confirm('Remove this extra leg and everything entered on it?')) return;
+
+    rows.splice(index, 1);
+    renderLogRows(rows);
+    showToast('Extra leg removed — tap Save Log to apply');
 }
 
 function onCellChange(input) {
@@ -691,16 +777,15 @@ function onCellChange(input) {
 }
 
 function updateTotals() {
-    const route = routeDefs[currentUser.route];
     let totalSterile = 0, totalSoiled = 0, totalTotes = 0, totalMiles = 0;
 
-    route.legs.forEach((leg, i) => {
-        const sterile = parseInt(document.querySelector(`[data-leg="${i}"][data-field="sterile"]`)?.value) || 0;
-        const soiled = parseInt(document.querySelector(`[data-leg="${i}"][data-field="soiled"]`)?.value) || 0;
-        const miles = parseFloat(document.querySelector(`[data-leg="${i}"][data-field="miles"]`)?.value) || 0;
+    document.querySelectorAll('#logTableBody tr').forEach(tr => {
+        const sterile = parseInt(tr.querySelector('[data-field="sterile"]')?.value) || 0;
+        const soiled = parseInt(tr.querySelector('[data-field="soiled"]')?.value) || 0;
+        const miles = parseFloat(tr.querySelector('[data-field="miles"]')?.value) || 0;
         const totes = sterile + soiled;
 
-        const totesCell = document.getElementById(`totes-${i}`);
+        const totesCell = tr.querySelector('.auto-cell');
         if (totesCell) totesCell.textContent = totes;
 
         totalSterile += sterile;
@@ -716,17 +801,24 @@ function updateTotals() {
 }
 
 async function saveLog() {
-    const route = routeDefs[currentUser.route];
     const dayDate = new Date(currentWeekStart);
     dayDate.setDate(dayDate.getDate() + currentDayIndex);
     const dateStr = formatDate(dayDate);
 
-    const legs = route.legs.map((leg, i) => ({
-        startTime: document.querySelector(`[data-leg="${i}"][data-field="startTime"]`)?.value || '',
-        endTime: document.querySelector(`[data-leg="${i}"][data-field="endTime"]`)?.value || '',
-        sterile: parseInt(document.querySelector(`[data-leg="${i}"][data-field="sterile"]`)?.value) || 0,
-        soiled: parseInt(document.querySelector(`[data-leg="${i}"][data-field="soiled"]`)?.value) || 0,
-        miles: parseFloat(document.querySelector(`[data-leg="${i}"][data-field="miles"]`)?.value) || 0,
+    const rows = collectRows();
+    if (rows.some(r => r.extra && (!r.from || !r.to))) {
+        showToast('Enter From and To for each extra leg', 'error');
+        return;
+    }
+
+    const legs = rows.map(r => ({
+        legFrom: r.extra ? r.from : '',
+        legTo: r.extra ? r.to : '',
+        startTime: r.startTime,
+        endTime: r.endTime,
+        sterile: r.sterile,
+        soiled: r.soiled,
+        miles: r.miles,
     }));
 
     try {
@@ -738,6 +830,8 @@ async function saveLog() {
         // Update local cache
         weekLogCache[dateStr] = legs.map((l, i) => ({
             leg_index: i,
+            leg_from: l.legFrom,
+            leg_to: l.legTo,
             start_time: l.startTime,
             end_time: l.endTime,
             sterile: l.sterile,
@@ -755,7 +849,6 @@ async function saveLog() {
 async function clearCurrentDay() {
     if (!confirm('Clear all entries for this day? This cannot be undone.')) return;
 
-    const route = routeDefs[currentUser.route];
     const dayDate = new Date(currentWeekStart);
     dayDate.setDate(dayDate.getDate() + currentDayIndex);
     const dateStr = formatDate(dayDate);
@@ -768,21 +861,8 @@ async function clearCurrentDay() {
 
         delete weekLogCache[dateStr];
 
-        // Reset UI fields
-        route.legs.forEach((_, i) => {
-            const st = document.querySelector(`[data-leg="${i}"][data-field="startTime"]`);
-            const et = document.querySelector(`[data-leg="${i}"][data-field="endTime"]`);
-            const se = document.querySelector(`[data-leg="${i}"][data-field="sterile"]`);
-            const so = document.querySelector(`[data-leg="${i}"][data-field="soiled"]`);
-            const mi = document.querySelector(`[data-leg="${i}"][data-field="miles"]`);
-            if (st) st.value = '';
-            if (et) et.value = '';
-            if (se) se.value = 0;
-            if (so) so.value = 0;
-            if (mi) mi.value = 0;
-        });
-
-        updateTotals();
+        // Rebuild the day back to the standard legs, all fields blank
+        buildLogTable(dateStr);
         buildDayTabs();
         showToast('Day cleared', 'success');
     } catch (err) {
@@ -1002,8 +1082,8 @@ async function applyFilters() {
                 let dayMiles = 0, daySterile = 0, daySoiled = 0, dayTotes = 0;
 
                 dayLogs.forEach(log => {
-                    const routeLeg = route.legs[log.leg_index];
-                    if (!routeLeg) return;
+                    const legLabel = legLabelOf(route, log);
+                    if (!legLabel) return;
                     const totes = (parseInt(log.sterile) || 0) + (parseInt(log.soiled) || 0);
                     const miles = parseFloat(log.miles) || 0;
                     dayMiles += miles;
@@ -1017,7 +1097,7 @@ async function applyFilters() {
                         <td></td>
                         <td>${dateFormatted}</td>
                         <td>${dayName}</td>
-                        <td>${routeLeg.from} &rarr; ${routeLeg.to}</td>
+                        <td>${legLabel}</td>
                         <td>${log.start_time || '-'}</td>
                         <td>${log.end_time || '-'}</td>
                         <td style="text-align:center">${log.sterile || 0}</td>
@@ -1247,6 +1327,28 @@ function periodRange(period, dateInput) {
 }
 
 // ---- Utilities ----
+
+// Driver-typed text (extra leg names) is escaped before it goes into markup.
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(value) {
+    return escapeHtml(value).replace(/"/g, '&quot;');
+}
+
+// Display label for a saved log row: standard legs come from the route
+// definition, extra legs carry their own from/to. Returns null for rows that
+// belong to neither (e.g. a leg removed from the schedule).
+function legLabelOf(route, log) {
+    const leg = route.legs[log.leg_index];
+    if (leg) return `${escapeHtml(leg.from)} &rarr; ${escapeHtml(leg.to)}`;
+    if (log.leg_from || log.leg_to) {
+        return `${escapeHtml(log.leg_from || '—')} &rarr; ${escapeHtml(log.leg_to || '—')} <span class="extra-badge">Extra</span>`;
+    }
+    return null;
+}
+
 function formatDate(date) {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');

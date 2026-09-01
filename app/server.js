@@ -78,6 +78,8 @@ const SCHEMA = `
         username TEXT NOT NULL,
         date TEXT NOT NULL,
         leg_index INTEGER NOT NULL,
+        leg_from TEXT DEFAULT '',
+        leg_to TEXT DEFAULT '',
         start_time TEXT DEFAULT '',
         end_time TEXT DEFAULT '',
         sterile INTEGER DEFAULT 0,
@@ -146,6 +148,16 @@ async function migrate() {
     if (!cols.some(c => c.name === 'pin')) {
         await dbRun('ALTER TABLE users ADD COLUMN pin TEXT');
         console.log('Migration: added users.pin');
+    }
+
+    // Extra (off-schedule) legs store their own from/to, since they have no
+    // entry in ROUTES. Standard legs leave these empty and read from ROUTES.
+    const logCols = await dbAll('PRAGMA table_info(logs)');
+    for (const col of ['leg_from', 'leg_to']) {
+        if (!logCols.some(c => c.name === col)) {
+            await dbRun(`ALTER TABLE logs ADD COLUMN ${col} TEXT DEFAULT ''`);
+            console.log(`Migration: added logs.${col}`);
+        }
     }
 }
 
@@ -230,6 +242,34 @@ const ROUTES = {
         ]
     }
 };
+
+// A day's rows for a driver: the route's standard legs (in schedule order),
+// followed by any extra legs the driver added for that day. Extra legs are
+// stored at leg_index >= legs.length and carry their own from/to labels.
+function dayRows(routeDef, dayLogs) {
+    const values = (log) => ({
+        startTime: log ? (log.start_time || '') : '',
+        endTime: log ? (log.end_time || '') : '',
+        sterile: log ? (log.sterile || 0) : 0,
+        soiled: log ? (log.soiled || 0) : 0,
+        miles: log ? (log.miles || 0) : 0
+    });
+
+    const rows = routeDef.legs.map((leg, i) => ({
+        label: `${leg.from} to ${leg.to}`,
+        ...values(dayLogs.find(l => l.leg_index === i))
+    }));
+
+    dayLogs
+        .filter(l => l.leg_index >= routeDef.legs.length)
+        .sort((a, b) => a.leg_index - b.leg_index)
+        .forEach(l => rows.push({
+            label: `${l.leg_from || '—'} to ${l.leg_to || '—'} (Extra)`,
+            ...values(l)
+        }));
+
+    return rows;
+}
 
 // ---- API Routes ----
 
@@ -445,13 +485,16 @@ app.post('/api/logs', requireAuth, async (req, res) => {
     if (!date || !Array.isArray(legs)) return res.status(400).json({ error: 'date and legs array required' });
 
     const sql = `
-        INSERT INTO logs (username, date, leg_index, start_time, end_time, sterile, soiled, miles, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO logs (username, date, leg_index, leg_from, leg_to, start_time, end_time, sterile, soiled, miles, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(username, date, leg_index)
-        DO UPDATE SET start_time=excluded.start_time, end_time=excluded.end_time,
+        DO UPDATE SET leg_from=excluded.leg_from, leg_to=excluded.leg_to,
+                      start_time=excluded.start_time, end_time=excluded.end_time,
                       sterile=excluded.sterile, soiled=excluded.soiled,
                       miles=excluded.miles, updated_at=CURRENT_TIMESTAMP
     `;
+
+    const label = (v) => String(v || '').trim().slice(0, 60);
 
     const stmts = legs.map((leg, i) => ({
         sql,
@@ -459,6 +502,8 @@ app.post('/api/logs', requireAuth, async (req, res) => {
             user.username,
             date,
             i,
+            label(leg.legFrom),
+            label(leg.legTo),
             leg.startTime || '',
             leg.endTime || '',
             parseInt(leg.sterile) || 0,
@@ -467,7 +512,14 @@ app.post('/api/logs', requireAuth, async (req, res) => {
         ]
     }));
 
-    if (stmts.length) await db.batch(stmts, 'write');
+    // Drop any extra legs the driver removed since the last save (rows beyond
+    // the submitted list), so deletions actually stick.
+    stmts.push({
+        sql: 'DELETE FROM logs WHERE username = ? AND date = ? AND leg_index >= ?',
+        args: [user.username, date, legs.length]
+    });
+
+    await db.batch(stmts, 'write');
     res.json({ ok: true });
 });
 
@@ -665,14 +717,13 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
             let dayMiles = 0, daySterile = 0, daySoiled = 0, dayTotes = 0, dayRoutes = 0;
             const firstDataRow = r + 1;
 
-            routeDef.legs.forEach((leg, legIdx) => {
+            dayRows(routeDef, dayLogs).forEach((row, legIdx) => {
                 r++;
-                const logEntry = dayLogs.find(l => l.leg_index === legIdx);
-                const st = logEntry ? logEntry.start_time : '';
-                const et = logEntry ? logEntry.end_time : '';
-                const sterile = logEntry ? logEntry.sterile : 0;
-                const soiled = logEntry ? logEntry.soiled : 0;
-                const miles = logEntry ? logEntry.miles : 0;
+                const st = row.startTime;
+                const et = row.endTime;
+                const sterile = row.sterile;
+                const soiled = row.soiled;
+                const miles = row.miles;
                 const totes = sterile + soiled;
 
                 // Date column: day name on first row, date on second, blank on rest
@@ -683,7 +734,7 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
                     ws.getCell(r, 1).value = dateStr;
                 }
 
-                ws.getCell(r, 2).value = `${leg.from} to ${leg.to}`;
+                ws.getCell(r, 2).value = row.label;
                 ws.getCell(r, 3).value = st;
                 ws.getCell(r, 3).alignment = { horizontal: 'center' };
                 ws.getCell(r, 4).value = et;
@@ -850,19 +901,18 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
 
         let dayMiles = 0, daySterile = 0, daySoiled = 0, dayTotes = 0, dayRoutes = 0;
 
-        routeDef.legs.forEach((leg, legIdx) => {
+        dayRows(routeDef, dayLogs).forEach((row, legIdx) => {
             r++;
-            const entry = dayLogs.find(l => l.leg_index === legIdx);
-            const st = entry ? entry.start_time : '';
-            const et = entry ? entry.end_time : '';
-            const sterile = entry ? entry.sterile : 0;
-            const soiled = entry ? entry.soiled : 0;
-            const miles = entry ? entry.miles : 0;
+            const st = row.startTime;
+            const et = row.endTime;
+            const sterile = row.sterile;
+            const soiled = row.soiled;
+            const miles = row.miles;
             const totes = sterile + soiled;
 
             if (legIdx === 0) { ws.getCell(r, 1).value = dayName; ws.getCell(r, 1).font = labelFont; }
             else if (legIdx === 1) { ws.getCell(r, 1).value = dateStr; }
-            ws.getCell(r, 2).value = `${leg.from} to ${leg.to}`;
+            ws.getCell(r, 2).value = row.label;
             ws.getCell(r, 3).value = st; ws.getCell(r, 3).alignment = { horizontal: 'center' };
             ws.getCell(r, 4).value = et; ws.getCell(r, 4).alignment = { horizontal: 'center' };
             ws.getCell(r, 5).value = sterile; ws.getCell(r, 5).alignment = { horizontal: 'center' };
