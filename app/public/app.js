@@ -185,10 +185,47 @@ async function handleLogin(e) {
 async function logout() {
     try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
     currentUser = null;
+    resetDriverState();
     const lu = document.getElementById('loginUser'); if (lu) lu.value = '';
     const lp = document.getElementById('loginPass'); if (lp) lp.value = '';
     showScreen('loginScreen');
     initLoginScreen();
+}
+
+// Wipe per-driver client state so a fresh session (logout + new login on the
+// same browser) never renders the previous driver's cached rows or lingering
+// DOM. The server already scopes all data by username; this closes the
+// display-only leak that let one driver's saved extra leg appear on the next
+// driver's log view before they picked a week.
+function resetDriverState() {
+    weekLogCache = {};
+    currentWeekStart = null;
+    currentDayIndex = 0;
+
+    const logBody = document.getElementById('logTableBody');
+    if (logBody) logBody.innerHTML = '';
+    const logSection = document.getElementById('logEntrySection');
+    if (logSection) logSection.style.display = 'none';
+    const weekLabel = document.getElementById('selectedWeekDisplay');
+    if (weekLabel) weekLabel.textContent = 'No week selected';
+
+    const weekPicker = document.getElementById('weekPicker');
+    if (weekPicker) {
+        if (weekPicker._flatpickr) weekPicker._flatpickr.clear();
+        weekPicker.value = '';
+    }
+
+    ['totalSterile', 'totalSoiled', 'totalTotes'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '0';
+    });
+    const totalMiles = document.getElementById('totalMiles');
+    if (totalMiles) totalMiles.textContent = '0.0';
+
+    ['historyLogBody', 'checkinHistoryBody'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
 }
 
 // ---- Session Check on Load ----
@@ -223,6 +260,10 @@ function showDriverView(view) {
 
 // ---- Driver Interface ----
 async function initDriver() {
+    // Belt-and-suspenders: also wipe on entering a driver session, in case a
+    // fresh login lands here without first going through logout (e.g. session
+    // restored on page reload for a different user).
+    resetDriverState();
     await loadConfig();
     if (!routeDefs || !Object.keys(routeDefs).length) {
         routeDefs = await api('/api/routes');
