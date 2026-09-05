@@ -56,6 +56,7 @@ function routeLabelOf(route) {
 
 function enterApp(user) {
     currentUser = user;
+    initSidebar();
     if (user.role === 'admin') {
         showScreen('adminScreen');
         initAdmin();
@@ -186,6 +187,7 @@ async function logout() {
     try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
     currentUser = null;
     resetDriverState();
+    closeSidebar();
     const lu = document.getElementById('loginUser'); if (lu) lu.value = '';
     const lp = document.getElementById('loginPass'); if (lp) lp.value = '';
     showScreen('loginScreen');
@@ -240,22 +242,82 @@ async function checkSession() {
     }
 }
 
-// ---- Driver View Toggle ----
+// ---- Dashboard shell: sidebar navigation ----
 let driverHistoryPeriod = 'week';
 
-function showDriverView(view) {
-    document.getElementById('navTabEntry').classList.toggle('active', view === 'entry');
-    document.getElementById('navTabHistory').classList.toggle('active', view === 'history');
-    document.getElementById('navTabCheckins').classList.toggle('active', view === 'checkins');
-    document.getElementById('driverEntryView').style.display = view === 'entry' ? '' : 'none';
-    document.getElementById('driverHistoryView').style.display = view === 'history' ? '' : 'none';
-    document.getElementById('driverCheckinView').style.display = view === 'checkins' ? '' : 'none';
+// Each menu item maps to its nav button, its panel, and the topbar heading.
+const VIEW_META = {
+    driver: {
+        entry:    { nav: 'navTabEntry',      panel: 'driverEntryView',   title: 'New Entry',    sub: "Check in and log today's routes" },
+        history:  { nav: 'navTabHistory',    panel: 'driverHistoryView', title: 'My Logs',      sub: 'Your saved logs by week or month' },
+        checkins: { nav: 'navTabCheckins',   panel: 'driverCheckinView', title: 'My Check-Ins', sub: 'Days you checked in to start work' }
+    },
+    admin: {
+        overview: { nav: 'navAdminOverview', panel: 'adminOverviewView', title: 'Overview',    sub: 'Fleet activity at a glance' },
+        logs:     { nav: 'navAdminLogs',     panel: 'adminLogsView',     title: 'Driver Logs', sub: 'Filter, review and export submitted logs' },
+        checkins: { nav: 'navAdminCheckins', panel: 'adminCheckinsView', title: 'Check-Ins',   sub: 'Driver check-in history' }
+    }
+};
 
+function switchView(role, key) {
+    const group = VIEW_META[role];
+    if (!group || !group[key]) return;
+
+    Object.entries(group).forEach(([k, meta]) => {
+        document.getElementById(meta.nav)?.classList.toggle('active', k === key);
+        const panel = document.getElementById(meta.panel);
+        if (panel) panel.style.display = k === key ? '' : 'none';
+    });
+
+    const meta = group[key];
+    const prefix = role === 'admin' ? 'admin' : 'driver';
+    document.getElementById(prefix + 'ViewTitle').textContent = meta.title;
+    document.getElementById(prefix + 'ViewSub').textContent = meta.sub;
+
+    // Replay the panel's entry animation on every switch
+    const panel = document.getElementById(meta.panel);
+    if (panel) { panel.style.animation = 'none'; void panel.offsetWidth; panel.style.animation = ''; }
+
+    closeSidebar();                      // tapping a menu item closes the mobile drawer
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showDriverView(view) {
+    switchView('driver', view);
     if (view === 'history') {
         initHistoryPicker();
     } else if (view === 'checkins') {
         initMyCheckinPicker();
     }
+}
+
+function showAdminView(view) {
+    switchView('admin', view);
+}
+
+// ---- Sidebar: icon rail on desktop, off-canvas drawer on phones ----
+const isMobileNav = () => window.matchMedia('(max-width: 900px)').matches;
+
+function toggleSidebar() {
+    if (isMobileNav()) {
+        document.body.classList.toggle('nav-open');
+        return;
+    }
+    const collapsed = document.body.classList.toggle('nav-collapsed');
+    try { localStorage.setItem('tvhsNavCollapsed', collapsed ? '1' : '0'); } catch (e) { /* private mode */ }
+}
+
+function closeSidebar() {
+    document.body.classList.remove('nav-open');
+}
+
+function initSidebar() {
+    try {
+        if (localStorage.getItem('tvhsNavCollapsed') === '1') document.body.classList.add('nav-collapsed');
+    } catch (e) { /* private mode: start expanded */ }
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSidebar(); });
+    window.addEventListener('resize', () => { if (!isMobileNav()) closeSidebar(); });
 }
 
 // ---- Driver Interface ----
@@ -269,10 +331,13 @@ async function initDriver() {
         routeDefs = await api('/api/routes');
     }
 
-    document.getElementById('driverNameDisplay').textContent = currentUser.name;
     const route = routeDefs[currentUser.route];
+    document.getElementById('driverNameDisplay').textContent = currentUser.name;
+    document.getElementById('driverAvatar').textContent = initials(currentUser.name);
     document.getElementById('driverRouteDisplay').textContent = route.label;
+    document.getElementById('driverRouteBadge').textContent = route.label;
 
+    showDriverView('entry');
     initDriverCheckin();
 
     flatpickr('#weekPicker', {
@@ -954,6 +1019,8 @@ async function initAdmin() {
     if (!routeDefs || !Object.keys(routeDefs).length) {
         routeDefs = await api('/api/routes');
     }
+
+    showAdminView('overview');
 
     flatpickr('#adminDateRange', {
         mode: 'range',
