@@ -9,26 +9,9 @@ const bcrypt = require('bcryptjs');
 const { createClient } = require('@libsql/client');
 const path = require('path');
 const crypto = require('crypto');
-const fs = require('fs');
 
-// ---- Minimal .env loader (no external dependency) ----
-// Loads KEY=VALUE lines from app/.env into process.env (values kept literal).
-// .env is gitignored so real credentials never enter tracked source.
-(function loadEnv() {
-    try {
-        const envPath = path.join(__dirname, '.env');
-        if (!fs.existsSync(envPath)) return;
-        for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-            const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*)$/);
-            if (!m || line.trim().startsWith('#')) continue;
-            let val = m[2].trim();
-            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-                val = val.slice(1, -1);
-            }
-            if (!(m[1] in process.env)) process.env[m[1]] = val;
-        }
-    } catch (e) { /* ignore malformed .env */ }
-})();
+// Environment loading and validation live in src/index.ts (dotenv outside
+// production, then loadConfig()). This file expects process.env to be ready.
 
 const app = express();
 const PORT = process.env.PORT || 3000;

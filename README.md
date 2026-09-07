@@ -22,12 +22,12 @@ npm run typecheck
 npm test
 npm run build          # compile server/src to server/dist
 npm start              # run the compiled server
-npm run dev            # run server/src/index.ts directly with file watching (Node 20+)
+npm run dev            # run server/src/index.ts with tsx and file watching
 ```
 
 ## Local configuration
 
-Copy `server/.env.example` to `server/.env` (gitignored) and fill in the values. With no `TURSO_DATABASE_URL` the server uses a local SQLite file at `server/courier_logs.db`.
+Copy `server/.env.example` to `server/.env` (gitignored) and fill in the values. The entry point loads `.env` outside production, then validates the environment (`server/src/config.ts`) and refuses to start with a message naming every missing or invalid variable. With no `TURSO_DATABASE_URL` the server uses a local SQLite file at `server/courier_logs.db`.
 
 ## Tests
 
