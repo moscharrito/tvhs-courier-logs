@@ -3,3 +3,4 @@ courier_logs.db
 courier_logs.db-wal
 courier_logs.db-shm
 .env
+test/.tmp/
