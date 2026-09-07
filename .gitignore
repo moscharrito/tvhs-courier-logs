@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Local databases and secrets live under server/ (see server/.gitignore)

@@ -1,0 +1,21 @@
+{
+  "name": "izy-ops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Izy Global Services operations platform: one login, one user directory, a module per courier contract",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "ci": "npm run typecheck && npm run test",
+    "start": "npm start -w server",
+    "dev": "npm run dev -w server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

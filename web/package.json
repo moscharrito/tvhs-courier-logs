@@ -1,0 +1,10 @@
+{
+  "name": "@izy/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Izy Ops Platform frontend shell. Placeholder until ticket 0.9 adds the Vite + React app.",
+  "scripts": {
+    "typecheck": "echo \"web: no sources yet (ticket 0.9)\"",
+    "test": "echo \"web: no tests yet (ticket 0.9)\""
+  }
+}

@@ -961,17 +961,34 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
 });
 
 // ---- Start ----
-(async function start() {
-    try {
-        await db.executeMultiple(SCHEMA);
-        await migrate();
-        await syncUsers();
-        app.listen(PORT, () => {
-            console.log(`TVHS RMD Courier Log System running at http://localhost:${PORT}`);
+// `ready` resolves once the schema, migrations and user sync have run. It is
+// kicked off on require so the boot sequence is identical whether this file is
+// run directly (node server.js), started by src/index.ts, or imported by tests.
+const ready = (async function init() {
+    await db.executeMultiple(SCHEMA);
+    await migrate();
+    await syncUsers();
+})();
+
+// Bind the HTTP listener. Resolves with the http.Server once listening.
+function start(port = PORT) {
+    return ready.then(() => new Promise((resolve, reject) => {
+        const server = app.listen(port, () => {
+            const addr = server.address();
+            const shown = typeof addr === 'object' && addr ? addr.port : port;
+            console.log(`TVHS RMD Courier Log System running at http://localhost:${shown}`);
             console.log(`Database: ${process.env.TURSO_DATABASE_URL ? 'Turso (remote)' : dbUrl}`);
+            resolve(server);
         });
-    } catch (err) {
+        server.on('error', reject);
+    }));
+}
+
+module.exports = { app, ready, start, db };
+
+if (require.main === module) {
+    start().catch((err) => {
         console.error('Failed to start:', err);
         process.exit(1);
-    }
-})();
+    });
+}
