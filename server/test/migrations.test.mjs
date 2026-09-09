@@ -83,6 +83,15 @@ const OLD_SCHEMA = `
 
 const norm = (s) => String(s).replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
 
+// What SQLite stores after `ALTER TABLE ADD COLUMN`: the new column definition
+// is spliced in after the last column, before the table constraints.
+const PROJECT_ID_COL = '`project_id` integer DEFAULT 1 NOT NULL';
+function withProjectId(sql) {
+    return String(sql)
+        .replace('updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,', `updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, ${PROJECT_ID_COL},`)
+        .replace('checkin_at DATETIME NOT NULL,', `checkin_at DATETIME NOT NULL, ${PROJECT_ID_COL},`);
+}
+
 const dirs = [];
 function freshDb() {
     const t = tempDb('mig-');
@@ -111,27 +120,42 @@ describe('migrations folder', () => {
     it('resolves to server/drizzle and has the baseline in the journal', () => {
         expect(MIGRATIONS_FOLDER).toBe(path.join(SERVER_DIR, 'drizzle'));
         const journal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'));
-        expect(journal.entries.map((e) => e.tag)).toEqual(['0000_baseline']);
-        expect(fs.existsSync(path.join(MIGRATIONS_FOLDER, '0000_baseline.sql'))).toBe(true);
+        expect(journal.entries.map((e) => e.tag)).toEqual(['0000_baseline', '0001_projects']);
+        for (const tag of journal.entries.map((e) => e.tag)) {
+            expect(fs.existsSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`))).toBe(true);
+        }
     });
 });
 
 describe('fresh database', () => {
-    it('creates the three legacy tables exactly and records the baseline', async () => {
+    it('creates the legacy tables exactly (plus project_id), the core tables, and records both migrations', async () => {
         const { absolute } = freshDb();
         const database = createDatabase({ db: { url: `file:${absolute}`, authToken: undefined, kind: 'file' } });
         try {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual([]);
-            expect(result.appliedCount).toBe(1);
+            expect(result.appliedCount).toBe(2);
 
-            for (const t of ['users', 'logs', 'checkins']) {
-                expect(norm(await tableSql(database.client, t))).toBe(norm(LEGACY_SQL[t]));
+            // users is untouched by 0001; logs and checkins get project_id appended.
+            expect(norm(await tableSql(database.client, 'users'))).toBe(norm(LEGACY_SQL.users));
+            for (const t of ['logs', 'checkins']) {
+                expect(norm(await tableSql(database.client, t))).toBe(norm(withProjectId(LEGACY_SQL[t])));
+                const pid = (await database.client.execute(`PRAGMA table_info(${t})`)).rows.find((r) => r.name === 'project_id');
+                expect(pid).toMatchObject({ notnull: 1, dflt_value: '1' });
             }
-            // Inline UNIQUE constraints become autoindexes; no extra named indexes.
-            const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%'");
-            expect(idx.rows).toHaveLength(0);
-            expect(await migrationRows(database.client)).toBe(1);
+            expect(await columnNames(database.client, 'projects')).toEqual(['id', 'code', 'name', 'timezone', 'settings', 'created_at']);
+            expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'created_at']);
+
+            // Legacy inline UNIQUE constraints stay autoindexes; only the named indexes from 0001 exist.
+            const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
+            expect(idx.rows.map((r) => r.name)).toEqual([
+                'checkins_project_id_idx', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique', 'projects_code_unique',
+            ]);
+            expect(await migrationRows(database.client)).toBe(2);
+
+            // tvhs is seeded as project 1 so the project_id default points at it.
+            const projects = (await database.client.execute('SELECT id, code, name, timezone, settings FROM projects')).rows.map((r) => ({ ...r }));
+            expect(projects).toEqual([{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', settings: '{}' }]);
         } finally {
             database.client.close();
         }
@@ -143,8 +167,9 @@ describe('fresh database', () => {
         try {
             await runMigrations(database);
             const again = await runMigrations(database);
-            expect(again.appliedCount).toBe(1);
-            expect(await migrationRows(database.client)).toBe(1);
+            expect(again.appliedCount).toBe(2);
+            expect(await migrationRows(database.client)).toBe(2);
+            expect(await count(database.client, 'projects')).toBe(1);
         } finally {
             database.client.close();
         }
@@ -167,15 +192,23 @@ describe('database created by the legacy server', () => {
         try {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual([]);
-            expect(result.appliedCount).toBe(1);
-            for (const t of ['users', 'logs', 'checkins']) {
-                expect(await tableSql(database.client, t)).toBe(before[t]);
+            expect(result.appliedCount).toBe(2);
+            expect(await tableSql(database.client, 'users')).toBe(before.users);
+            for (const t of ['logs', 'checkins']) {
+                // Only the project_id column is added to the legacy definition.
+                expect(norm(await tableSql(database.client, t))).toBe(norm(withProjectId(before[t])));
             }
             expect(await count(database.client, 'users')).toBe(1);
             expect(await count(database.client, 'logs')).toBe(1);
             expect(await count(database.client, 'checkins')).toBe(1);
             const log = (await database.client.execute('SELECT * FROM logs')).rows[0];
             expect(log.miles).toBe(122.6);
+            expect(log.project_id).toBe(1);
+            expect((await database.client.execute('SELECT project_id FROM checkins')).rows[0].project_id).toBe(1);
+
+            // The existing driver is enrolled in tvhs as a courier.
+            const members = (await database.client.execute('SELECT user_id, project_id, role FROM memberships')).rows.map((r) => ({ ...r }));
+            expect(members).toEqual([{ user_id: 1, project_id: 1, role: 'courier' }]);
         } finally {
             database.client.close();
         }
@@ -193,15 +226,16 @@ describe('database created by the legacy server', () => {
         try {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual(['users.pin', 'logs.leg_from', 'logs.leg_to']);
-            expect(result.appliedCount).toBe(1);
+            expect(result.appliedCount).toBe(2);
 
             expect(await columnNames(database.client, 'users')).toContain('pin');
             const logCols = await columnNames(database.client, 'logs');
             expect(logCols).toContain('leg_from');
             expect(logCols).toContain('leg_to');
+            expect(logCols).toContain('project_id');
 
             const log = (await database.client.execute('SELECT * FROM logs')).rows[0];
-            expect(log).toMatchObject({ username: 'd2', date: '2026-01-06', start_time: '05:00', end_time: '06:30', sterile: 4, miles: 80, leg_from: '', leg_to: '' });
+            expect(log).toMatchObject({ username: 'd2', date: '2026-01-06', start_time: '05:00', end_time: '06:30', sterile: 4, miles: 80, leg_from: '', leg_to: '', project_id: 1 });
 
             // Second run: nothing more to add.
             const again = await runMigrations(database);
@@ -246,14 +280,20 @@ describe('the real local development database', () => {
         const database = createDatabase({ db: { url: `file:${absolute}`, authToken: undefined, kind: 'file' } });
         try {
             const result = await runMigrations(database);
-            expect(result.appliedCount).toBe(1);
+            expect(result.appliedCount).toBe(2);
             for (const t of ['users', 'logs', 'checkins']) {
                 expect(await count(database.client, t)).toBe(before[t].rows);
-                expect(await columnNames(database.client, t)).toEqual(before[t].cols);
-                expect(await tableSql(database.client, t)).toBe(before[t].sql);
+            }
+            // users untouched; logs and checkins gain exactly one column.
+            expect(await columnNames(database.client, 'users')).toEqual(before.users.cols);
+            expect(await tableSql(database.client, 'users')).toBe(before.users.sql);
+            for (const t of ['logs', 'checkins']) {
+                expect(await columnNames(database.client, t)).toEqual([...before[t].cols, 'project_id']);
             }
             const usersAfter = (await database.client.execute('SELECT username, name, role, route, pin FROM users ORDER BY id')).rows;
             expect(usersAfter).toEqual(usersBefore);
+            // Every existing user became a tvhs member.
+            expect(await count(database.client, 'memberships')).toBe(before.users.rows);
         } finally {
             database.client.close();
         }

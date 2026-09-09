@@ -6,8 +6,13 @@
  *
  * Ticket 0.5 adds project_id to logs and checkins. */
 
-import { sqliteTable, integer, text, real, unique, check } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text, real, unique, check, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+
+// project_id on logs and checkins was added by ALTER TABLE in migration 0001
+// with NOT NULL DEFAULT 1 (the seeded tvhs project) so existing rows are
+// backfilled in place. SQLite cannot add a REFERENCES clause that way, so the
+// relation is enforced by requireProject in the API rather than the database.
 
 export const users = sqliteTable(
     'users',
@@ -40,8 +45,12 @@ export const logs = sqliteTable(
         miles: real('miles').default(0),
         createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
         updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+        projectId: integer('project_id').notNull().default(1),
     },
-    (t) => [unique('logs_username_date_leg_index_unique').on(t.username, t.date, t.legIndex)],
+    (t) => [
+        unique('logs_username_date_leg_index_unique').on(t.username, t.date, t.legIndex),
+        index('logs_project_id_idx').on(t.projectId),
+    ],
 );
 
 export const checkins = sqliteTable(
@@ -51,8 +60,12 @@ export const checkins = sqliteTable(
         username: text('username').notNull().references(() => users.username),
         date: text('date').notNull(),
         checkinAt: text('checkin_at').notNull(),
+        projectId: integer('project_id').notNull().default(1),
     },
-    (t) => [unique('checkins_username_date_unique').on(t.username, t.date)],
+    (t) => [
+        unique('checkins_username_date_unique').on(t.username, t.date),
+        index('checkins_project_id_idx').on(t.projectId),
+    ],
 );
 
 export type User = typeof users.$inferSelect;

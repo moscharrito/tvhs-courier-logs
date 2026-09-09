@@ -6,7 +6,7 @@ let srv;
 beforeAll(async () => {
     srv = await startServer();
     const north = await srv.login('north');
-    await north.post('/api/logs').send({
+    await north.post('/api/projects/tvhs/tvhs/logs').send({
         date: '2026-01-05', // a Monday
         legs: [
             { startTime: '05:00', endTime: '06:30', sterile: 4, soiled: 0, miles: 80 },
@@ -19,7 +19,7 @@ beforeAll(async () => {
         ]
     });
     const south = await srv.login('south');
-    await south.post('/api/logs').send({
+    await south.post('/api/projects/tvhs/tvhs/logs').send({
         date: '2026-01-06',
         legs: [
             { startTime: '06:00', endTime: '08:30', sterile: 6, soiled: 0, miles: 122.6 },
@@ -39,13 +39,13 @@ const v = (ws, addr) => ws.getCell(addr).value;
 describe('admin Excel export', () => {
     it('404s when the filter matches nothing', async () => {
         const admin = await srv.login('admin');
-        const res = await admin.get('/api/admin/export?startDate=2030-01-01&endDate=2030-01-02');
+        const res = await admin.get('/api/projects/tvhs/tvhs/admin/export?startDate=2030-01-01&endDate=2030-01-02');
         expect(res.status).toBe(404);
     });
 
     it('produces one worksheet per driver in the original log and invoice layout', async () => {
         const admin = await srv.login('admin');
-        const res = await admin.get('/api/admin/export?startDate=2026-01-01&endDate=2026-01-31').buffer().parse(binaryParser);
+        const res = await admin.get('/api/projects/tvhs/tvhs/admin/export?startDate=2026-01-01&endDate=2026-01-31').buffer().parse(binaryParser);
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toMatch(/spreadsheetml/);
         expect(res.headers['content-disposition']).toMatch(/TVHS_Courier_Logs_2026-01-01_to_2026-01-31\.xlsx/);
@@ -104,7 +104,7 @@ describe('admin Excel export', () => {
 
     it('honours the route filter', async () => {
         const admin = await srv.login('admin');
-        const res = await admin.get('/api/admin/export?route=southbound').buffer().parse(binaryParser);
+        const res = await admin.get('/api/projects/tvhs/tvhs/admin/export?route=southbound').buffer().parse(binaryParser);
         const wb = await workbookFrom(res);
         expect(wb.worksheets.map(w => w.name)).toEqual(['Mohamed Djemai']);
     });
@@ -113,18 +113,18 @@ describe('admin Excel export', () => {
 describe('driver self export', () => {
     it('requires a date range', async () => {
         const a = await srv.login('north');
-        expect((await a.get('/api/logs/export')).status).toBe(400);
-        expect((await a.get('/api/logs/export?startDate=2026-01-01')).status).toBe(400);
+        expect((await a.get('/api/projects/tvhs/tvhs/logs/export')).status).toBe(400);
+        expect((await a.get('/api/projects/tvhs/tvhs/logs/export?startDate=2026-01-01')).status).toBe(400);
     });
 
     it('404s when the driver has no data in the range', async () => {
         const a = await srv.login('north');
-        expect((await a.get('/api/logs/export?startDate=2030-01-01&endDate=2030-01-31')).status).toBe(404);
+        expect((await a.get('/api/projects/tvhs/tvhs/logs/export?startDate=2030-01-01&endDate=2030-01-31')).status).toBe(404);
     });
 
     it('exports only the calling driver, in their route layout', async () => {
         const a = await srv.login('south');
-        const res = await a.get('/api/logs/export?startDate=2026-01-01&endDate=2026-01-31').buffer().parse(binaryParser);
+        const res = await a.get('/api/projects/tvhs/tvhs/logs/export?startDate=2026-01-01&endDate=2026-01-31').buffer().parse(binaryParser);
         expect(res.status).toBe(200);
         expect(res.headers['content-disposition']).toMatch(/Driver_Invoice_Mohamed_Djemai_2026-01-01_to_2026-01-31\.xlsx/);
         const wb = await workbookFrom(res);

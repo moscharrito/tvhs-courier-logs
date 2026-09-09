@@ -32,8 +32,18 @@ function fmtTime(iso) {
 }
 
 // ---- API Helper ----
+// TVHS module endpoints live under the tvhs project (ticket 0.5). Core auth
+// and config endpoints stay at /api/*.
+const TVHS_API_PREFIX = '/api/projects/tvhs/tvhs';
+function apiUrl(url) {
+    const rest = url.startsWith('/api/') ? url.slice(4) : '';
+    const first = rest.split(/[/?]/)[1] || '';
+    const scoped = ['routes', 'checkin', 'checkins', 'logs', 'admin'].includes(first);
+    return scoped ? TVHS_API_PREFIX + rest : url;
+}
+
 async function api(url, options = {}) {
-    const res = await fetch(url, {
+    const res = await fetch(apiUrl(url), {
         headers: { 'Content-Type': 'application/json' },
         ...options
     });
@@ -598,7 +608,7 @@ function exportDriverLogs() {
     }
 
     // Download from server-side ExcelJS endpoint
-    window.location.href = `/api/logs/export?startDate=${startDate}&endDate=${endDate}`;
+    window.location.href = apiUrl(`/api/logs/export?startDate=${startDate}&endDate=${endDate}`);
     showToast('Downloading Excel...', 'success');
 }
 
@@ -1394,7 +1404,7 @@ function exportToExcel() {
     if (endDate) params.set('endDate', endDate);
 
     // Download from server-side ExcelJS endpoint (matching original Excel format)
-    window.location.href = `/api/admin/export?${params.toString()}`;
+    window.location.href = apiUrl(`/api/admin/export?${params.toString()}`);
     showToast('Downloading Excel...', 'success');
 }
 

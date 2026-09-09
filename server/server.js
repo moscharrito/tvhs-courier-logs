@@ -97,6 +97,14 @@ async function syncUsers() {
 
     const northRow = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = 'northbound' LIMIT 1");
     await ensureUser(northRow, process.env.DRIVER2_USER, process.env.DRIVER2_PASS, 'Bereket Nigusse', 'driver', 'northbound', 'driver2');
+
+    // Every bootstrap account is a member of the tvhs project: admins as
+    // project admins, drivers as couriers. Idempotent (unique user + project).
+    await dbRun(`
+        INSERT OR IGNORE INTO memberships (user_id, project_id, role)
+        SELECT u.id, p.id, CASE u.role WHEN 'admin' THEN 'admin' ELSE 'courier' END
+        FROM users u, projects p WHERE p.code = ?
+    `, [TVHS_PROJECT_CODE]);
 }
 
 // ---- Middleware ----
@@ -145,6 +153,71 @@ function requireAdmin(req, res, next) {
     }
     next();
 }
+
+// ---- Projects ----
+// Every project-scoped route lives under /api/projects/:pid/... where :pid is
+// the project code (tvhs) or numeric id. The caller must be a member of that
+// project; the project and membership are attached to the request.
+const TVHS_PROJECT_CODE = 'tvhs';
+
+async function findProject(pid) {
+    const byId = /^\d+$/.test(String(pid));
+    return dbGet(
+        `SELECT id, code, name, timezone, settings FROM projects WHERE ${byId ? 'id = ?' : 'code = ?'}`,
+        [byId ? Number(pid) : String(pid).toLowerCase()]
+    );
+}
+
+async function requireProject(req, res, next) {
+    if (!req.session.user) return res.status(401).json({ error: 'Not authenticated' });
+
+    const project = await findProject(req.params.pid);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const membership = await dbGet(`
+        SELECT m.role FROM memberships m
+        JOIN users u ON u.id = m.user_id
+        WHERE u.username = ? AND m.project_id = ?
+    `, [req.session.user.username, project.id]);
+    if (!membership) return res.status(403).json({ error: 'Not a member of this project' });
+
+    let settings = {};
+    try { settings = JSON.parse(project.settings || '{}'); } catch (e) { /* keep {} */ }
+    req.project = { id: project.id, code: project.code, name: project.name, timezone: project.timezone, settings };
+    req.membership = { role: membership.role };
+    next();
+}
+
+// Projects the caller belongs to, with their role in each. Drives the
+// project switcher in the frontend shell.
+app.get('/api/me/projects', requireAuth, async (req, res) => {
+    const rows = await dbAll(`
+        SELECT p.id, p.code, p.name, p.timezone, m.role
+        FROM memberships m
+        JOIN users u ON u.id = m.user_id
+        JOIN projects p ON p.id = m.project_id
+        WHERE u.username = ?
+        ORDER BY p.name
+    `, [req.session.user.username]);
+    res.json(rows);
+});
+
+// One project, for members only.
+app.get('/api/projects/:pid', requireProject, (req, res) => {
+    res.json({ ...req.project, role: req.membership.role });
+});
+
+// The TVHS module router. Handlers below register on it with paths relative
+// to /api/projects/:pid/tvhs; mergeParams exposes :pid to them.
+const tvhs = express.Router({ mergeParams: true });
+app.use('/api/projects/:pid/tvhs', requireProject, tvhs);
+
+// Old un-scoped paths redirect to the tvhs project for one release. 308 keeps
+// the method and body, so POST/DELETE callers land on the new path intact.
+app.use(/^\/api\/(routes|checkin|checkins|logs|admin)(\/.*)?$/, (req, res) => {
+    const target = `/api/projects/${TVHS_PROJECT_CODE}/tvhs${req.originalUrl.slice('/api'.length)}`;
+    res.redirect(308, target);
+});
 
 // ---- Route Definitions ----
 const ROUTES = {
@@ -287,7 +360,7 @@ app.get('/api/session', (req, res) => {
 });
 
 // Route definitions
-app.get('/api/routes', requireAuth, (req, res) => {
+tvhs.get('/routes', requireAuth, (req, res) => {
     res.json(ROUTES);
 });
 
@@ -302,37 +375,37 @@ app.get('/api/config', (req, res) => {
 // Driver: check in (clock in) for the day. Idempotent — one check-in per driver per day.
 // The "day" is the driver's own local date (sent by the client) so it matches what
 // they see on their device; falls back to the server's date if none/invalid is sent.
-app.post('/api/checkin', requireAuth, async (req, res) => {
+tvhs.post('/checkin', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can check in' });
 
     const bodyDate = req.body && req.body.date;
     const date = /^\d{4}-\d{2}-\d{2}$/.test(bodyDate) ? bodyDate : localDate();
-    const existing = await dbGet('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?', [user.username, date]);
+    const existing = await dbGet('SELECT checkin_at FROM checkins WHERE project_id = ? AND username = ? AND date = ?', [req.project.id, user.username, date]);
     if (existing) {
         return res.json({ checkedIn: true, checkin_at: existing.checkin_at, date, alreadyCheckedIn: true });
     }
 
     const checkinAt = new Date().toISOString();
-    await dbRun('INSERT INTO checkins (username, date, checkin_at) VALUES (?, ?, ?)', [user.username, date, checkinAt]);
+    await dbRun('INSERT INTO checkins (project_id, username, date, checkin_at) VALUES (?, ?, ?, ?)', [req.project.id, user.username, date, checkinAt]);
     res.json({ checkedIn: true, checkin_at: checkinAt, date });
 });
 
 // Driver: own check-in status for a date (defaults to today)
-app.get('/api/checkin', requireAuth, async (req, res) => {
+tvhs.get('/checkin', requireAuth, async (req, res) => {
     const user = req.session.user;
     const date = req.query.date || localDate();
-    const row = await dbGet('SELECT checkin_at FROM checkins WHERE username = ? AND date = ?', [user.username, date]);
+    const row = await dbGet('SELECT checkin_at FROM checkins WHERE project_id = ? AND username = ? AND date = ?', [req.project.id, user.username, date]);
     res.json({ checkedIn: !!row, checkin_at: row ? row.checkin_at : null, date });
 });
 
 // Driver: own check-in history within a date range
-app.get('/api/checkins/history', requireAuth, async (req, res) => {
+tvhs.get('/checkins/history', requireAuth, async (req, res) => {
     const user = req.session.user;
     const { startDate, endDate } = req.query;
 
-    let query = 'SELECT date, checkin_at FROM checkins WHERE username = ?';
-    const params = [user.username];
+    let query = 'SELECT date, checkin_at FROM checkins WHERE project_id = ? AND username = ?';
+    const params = [req.project.id, user.username];
     if (startDate) { query += ' AND date >= ?'; params.push(startDate); }
     if (endDate) { query += ' AND date <= ?'; params.push(endDate); }
     query += ' ORDER BY date ASC';
@@ -341,10 +414,15 @@ app.get('/api/checkins/history', requireAuth, async (req, res) => {
 });
 
 // Admin: check-in roster for all drivers on a given date (defaults to today)
-app.get('/api/admin/checkins', requireAdmin, async (req, res) => {
+tvhs.get('/admin/checkins', requireAdmin, async (req, res) => {
     const date = req.query.date || localDate();
-    const drivers = await dbAll("SELECT username, name, route FROM users WHERE role = 'driver' ORDER BY name");
-    const rows = await dbAll('SELECT username, checkin_at FROM checkins WHERE date = ?', [date]);
+    const drivers = await dbAll(`
+        SELECT u.username, u.name, u.route FROM users u
+        JOIN memberships m ON m.user_id = u.id
+        WHERE u.role = 'driver' AND m.project_id = ?
+        ORDER BY u.name
+    `, [req.project.id]);
+    const rows = await dbAll('SELECT username, checkin_at FROM checkins WHERE project_id = ? AND date = ?', [req.project.id, date]);
     const byUser = {};
     rows.forEach(r => { byUser[r.username] = r.checkin_at; });
 
@@ -359,16 +437,16 @@ app.get('/api/admin/checkins', requireAdmin, async (req, res) => {
 });
 
 // Admin: check-in history with driver + date-range filters
-app.get('/api/admin/checkins/history', requireAdmin, async (req, res) => {
+tvhs.get('/admin/checkins/history', requireAdmin, async (req, res) => {
     const { driver, route, startDate, endDate } = req.query;
 
     let query = `
         SELECT c.username, c.date, c.checkin_at, u.name as driver_name, u.route as driver_route
         FROM checkins c
         JOIN users u ON c.username = u.username
-        WHERE u.role = 'driver'
+        WHERE u.role = 'driver' AND c.project_id = ?
     `;
-    const params = [];
+    const params = [req.project.id];
 
     if (driver && driver !== 'all') { query += ' AND c.username = ?'; params.push(driver); }
     if (route && route !== 'all') { query += ' AND u.route = ?'; params.push(route); }
@@ -380,15 +458,15 @@ app.get('/api/admin/checkins/history', requireAdmin, async (req, res) => {
 });
 
 // Get logs for a specific user and date range
-app.get('/api/logs', requireAuth, async (req, res) => {
+tvhs.get('/logs', requireAuth, async (req, res) => {
     const { username, startDate, endDate } = req.query;
     const user = req.session.user;
 
     // Drivers can only see their own logs
     const targetUser = (user.role === 'admin' && username) ? username : user.username;
 
-    let query = 'SELECT * FROM logs WHERE username = ?';
-    const params = [targetUser];
+    let query = 'SELECT * FROM logs WHERE project_id = ? AND username = ?';
+    const params = [req.project.id, targetUser];
 
     if (startDate) {
         query += ' AND date >= ?';
@@ -404,7 +482,7 @@ app.get('/api/logs', requireAuth, async (req, res) => {
 });
 
 // Save/update logs for a day
-app.post('/api/logs', requireAuth, async (req, res) => {
+tvhs.post('/logs', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can submit logs' });
 
@@ -412,8 +490,8 @@ app.post('/api/logs', requireAuth, async (req, res) => {
     if (!date || !Array.isArray(legs)) return res.status(400).json({ error: 'date and legs array required' });
 
     const sql = `
-        INSERT INTO logs (username, date, leg_index, leg_from, leg_to, start_time, end_time, sterile, soiled, miles, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO logs (project_id, username, date, leg_index, leg_from, leg_to, start_time, end_time, sterile, soiled, miles, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(username, date, leg_index)
         DO UPDATE SET leg_from=excluded.leg_from, leg_to=excluded.leg_to,
                       start_time=excluded.start_time, end_time=excluded.end_time,
@@ -426,6 +504,7 @@ app.post('/api/logs', requireAuth, async (req, res) => {
     const stmts = legs.map((leg, i) => ({
         sql,
         args: [
+            req.project.id,
             user.username,
             date,
             i,
@@ -442,8 +521,8 @@ app.post('/api/logs', requireAuth, async (req, res) => {
     // Drop any extra legs the driver removed since the last save (rows beyond
     // the submitted list), so deletions actually stick.
     stmts.push({
-        sql: 'DELETE FROM logs WHERE username = ? AND date = ? AND leg_index >= ?',
-        args: [user.username, date, legs.length]
+        sql: 'DELETE FROM logs WHERE project_id = ? AND username = ? AND date = ? AND leg_index >= ?',
+        args: [req.project.id, user.username, date, legs.length]
     });
 
     await db.batch(stmts, 'write');
@@ -451,28 +530,28 @@ app.post('/api/logs', requireAuth, async (req, res) => {
 });
 
 // Clear logs for a specific day
-app.delete('/api/logs', requireAuth, async (req, res) => {
+tvhs.delete('/logs', requireAuth, async (req, res) => {
     const user = req.session.user;
     if (user.role !== 'driver') return res.status(403).json({ error: 'Only drivers can modify logs' });
 
     const { date } = req.body;
     if (!date) return res.status(400).json({ error: 'date required' });
 
-    await dbRun('DELETE FROM logs WHERE username = ? AND date = ?', [user.username, date]);
+    await dbRun('DELETE FROM logs WHERE project_id = ? AND username = ? AND date = ?', [req.project.id, user.username, date]);
     res.json({ ok: true });
 });
 
 // Admin: get all logs with filters
-app.get('/api/admin/logs', requireAdmin, async (req, res) => {
+tvhs.get('/admin/logs', requireAdmin, async (req, res) => {
     const { driver, route, startDate, endDate } = req.query;
 
     let query = `
         SELECT l.*, u.name as driver_name, u.route as driver_route
         FROM logs l
         JOIN users u ON l.username = u.username
-        WHERE u.role = 'driver'
+        WHERE u.role = 'driver' AND l.project_id = ?
     `;
-    const params = [];
+    const params = [req.project.id];
 
     if (driver && driver !== 'all') {
         query += ' AND l.username = ?';
@@ -496,10 +575,15 @@ app.get('/api/admin/logs', requireAdmin, async (req, res) => {
 });
 
 // Admin: get stats
-app.get('/api/admin/stats', requireAdmin, async (req, res) => {
-    const drivers = (await dbGet("SELECT COUNT(*) as cnt FROM users WHERE role = 'driver'")).cnt;
-    const logDays = (await dbGet('SELECT COUNT(DISTINCT username || date) as cnt FROM logs')).cnt;
-    const totals = await dbGet('SELECT COALESCE(SUM(miles),0) as miles, COALESCE(SUM(sterile + soiled),0) as totes FROM logs');
+tvhs.get('/admin/stats', requireAdmin, async (req, res) => {
+    const pid = req.project.id;
+    const drivers = (await dbGet(`
+        SELECT COUNT(*) as cnt FROM users u
+        JOIN memberships m ON m.user_id = u.id
+        WHERE u.role = 'driver' AND m.project_id = ?
+    `, [pid])).cnt;
+    const logDays = (await dbGet('SELECT COUNT(DISTINCT username || date) as cnt FROM logs WHERE project_id = ?', [pid])).cnt;
+    const totals = await dbGet('SELECT COALESCE(SUM(miles),0) as miles, COALESCE(SUM(sterile + soiled),0) as totes FROM logs WHERE project_id = ?', [pid]);
     res.json({
         drivers,
         logEntries: logDays,
@@ -509,13 +593,18 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
 });
 
 // Admin: get drivers list
-app.get('/api/admin/drivers', requireAdmin, async (req, res) => {
-    const drivers = await dbAll("SELECT username, name, route FROM users WHERE role = 'driver' ORDER BY name");
+tvhs.get('/admin/drivers', requireAdmin, async (req, res) => {
+    const drivers = await dbAll(`
+        SELECT u.username, u.name, u.route FROM users u
+        JOIN memberships m ON m.user_id = u.id
+        WHERE u.role = 'driver' AND m.project_id = ?
+        ORDER BY u.name
+    `, [req.project.id]);
     res.json(drivers);
 });
 
 // Admin: export Excel in original format
-app.get('/api/admin/export', requireAdmin, async (req, res) => {
+tvhs.get('/admin/export', requireAdmin, async (req, res) => {
     const ExcelJS = require('exceljs');
     const { driver, route, startDate, endDate } = req.query;
 
@@ -523,9 +612,9 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
     let query = `
         SELECT l.*, u.name as driver_name, u.route as driver_route
         FROM logs l JOIN users u ON l.username = u.username
-        WHERE u.role = 'driver'
+        WHERE u.role = 'driver' AND l.project_id = ?
     `;
-    const params = [];
+    const params = [req.project.id];
     if (driver && driver !== 'all') { query += ' AND l.username = ?'; params.push(driver); }
     if (route && route !== 'all') { query += ' AND u.route = ?'; params.push(route); }
     if (startDate) { query += ' AND l.date >= ?'; params.push(startDate); }
@@ -745,7 +834,7 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
 });
 
 // Driver: export own logs in original format
-app.get('/api/logs/export', requireAuth, async (req, res) => {
+tvhs.get('/logs/export', requireAuth, async (req, res) => {
     const ExcelJS = require('exceljs');
     const user = req.session.user;
     const { startDate, endDate } = req.query;
@@ -755,8 +844,8 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
     const userInfo = await dbGet('SELECT * FROM users WHERE username = ?', [user.username]);
     if (!userInfo) return res.status(404).json({ error: 'User not found' });
 
-    const logs = await dbAll('SELECT * FROM logs WHERE username = ? AND date >= ? AND date <= ? ORDER BY date ASC, leg_index ASC',
-        [user.username, startDate, endDate]);
+    const logs = await dbAll('SELECT * FROM logs WHERE project_id = ? AND username = ? AND date >= ? AND date <= ? ORDER BY date ASC, leg_index ASC',
+        [req.project.id, user.username, startDate, endDate]);
 
     if (logs.length === 0) return res.status(404).json({ error: 'No data to export' });
 

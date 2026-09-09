@@ -20,11 +20,11 @@ describe('config and session basics', () => {
 
     it('protected routes reject anonymous callers', async () => {
         const a = srv.agent();
-        expect((await a.get('/api/routes')).status).toBe(401);
-        expect((await a.get('/api/logs')).status).toBe(401);
-        // Characterization: requireAdmin answers 403 (not 401) to anonymous
-        // callers because it checks role without first checking for a session.
-        expect((await a.get('/api/admin/logs')).status).toBe(403);
+        expect((await a.get('/api/projects/tvhs/tvhs/routes')).status).toBe(401);
+        expect((await a.get('/api/projects/tvhs/tvhs/logs')).status).toBe(401);
+        // Since ticket 0.5 requireProject runs before requireAdmin, so anonymous
+        // callers get 401 on admin paths too (previously 403 from requireAdmin).
+        expect((await a.get('/api/projects/tvhs/tvhs/admin/logs')).status).toBe(401);
     });
 });
 
@@ -72,15 +72,15 @@ describe('username and password login', () => {
 
     it('admins cannot use driver-only endpoints', async () => {
         const a = await srv.login('admin');
-        expect((await a.post('/api/checkin').send({})).status).toBe(403);
-        expect((await a.post('/api/logs').send({ date: '2026-01-05', legs: [] })).status).toBe(403);
+        expect((await a.post('/api/projects/tvhs/tvhs/checkin').send({})).status).toBe(403);
+        expect((await a.post('/api/projects/tvhs/tvhs/logs').send({ date: '2026-01-05', legs: [] })).status).toBe(403);
     });
 
     it('drivers cannot use admin endpoints', async () => {
         const a = await srv.login('north');
-        expect((await a.get('/api/admin/logs')).status).toBe(403);
-        expect((await a.get('/api/admin/stats')).status).toBe(403);
-        expect((await a.get('/api/admin/export')).status).toBe(403);
+        expect((await a.get('/api/projects/tvhs/tvhs/admin/logs')).status).toBe(403);
+        expect((await a.get('/api/projects/tvhs/tvhs/admin/stats')).status).toBe(403);
+        expect((await a.get('/api/projects/tvhs/tvhs/admin/export')).status).toBe(403);
     });
 });
 
