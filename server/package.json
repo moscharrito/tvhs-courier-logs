@@ -11,13 +11,16 @@
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/cli.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
     "bcryptjs": "^3.0.3",
     "cookie-session": "^2.1.1",
     "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.44.7",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "zod": "^3.25.76"
@@ -25,6 +28,7 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
+    "drizzle-kit": "^0.31.10",
     "supertest": "^7.2.2",
     "tsx": "^4.23.13",
     "typescript": "^5.6.0",

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startServer } from './helpers/server.js';
+import { startServer } from './helpers/server.mjs';
 
 let srv;
 beforeAll(async () => { srv = await startServer(); });

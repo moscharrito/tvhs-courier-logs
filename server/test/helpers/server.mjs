@@ -1,19 +1,25 @@
 /* Test harness: boots the real server.js in-process against a fresh SQLite
    file on a random port.
 
-   server.js exports { app, ready, start } and only listens when run directly,
-   so requiring it here gives us the app without a listener. Vitest runs each
-   test file in its own process (pool: forks), so module state such as the
-   in-memory PIN throttle and the libsql client is isolated per file. */
+   Sequence mirrors src/index.ts: set the environment, run migrations through
+   src/db/migrate.ts, then require server.js (which exports { app, ready, start }
+   and only listens when run directly). Vitest runs each test file in its own
+   process (pool: forks), so module state such as the in-memory PIN throttle
+   and the libsql client is isolated per file. */
 
-const path = require('path');
-const fs = require('fs');
-const request = require('supertest');
+import path from 'node:path';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import request from 'supertest';
+import { loadConfig } from '../../src/config.ts';
+import { createDatabase } from '../../src/db/client.ts';
+import { runMigrations } from '../../src/db/migrate.ts';
 
-const SERVER_DIR = path.resolve(__dirname, '..', '..');
+const require = createRequire(import.meta.url);
+export const SERVER_DIR = path.resolve(import.meta.dirname, '..', '..');
 
 // Known credentials for the seeded accounts (see syncUsers in server.js).
-const CREDS = {
+export const CREDS = {
     admin: { username: 'admin', password: 'admin-pass-1' },
     // DRIVER1 is seeded as the southbound driver (Mohamed Djemai)
     south: { username: 'south.driver', password: 'south-pass-1', route: 'southbound', name: 'Mohamed Djemai' },
@@ -21,22 +27,27 @@ const CREDS = {
     north: { username: 'north.driver', password: 'north-pass-1', route: 'northbound', name: 'Bereket Nigusse' },
 };
 
+/** A fresh directory under test/.tmp and a DB_FILE value relative to server/. */
+export function tempDb(prefix = 'run-') {
+    // server.js does path.join(__dirname, DB_FILE), so DB_FILE must be relative
+    // to the server dir (an absolute path would be appended, not replaced).
+    const tmpRoot = path.join(SERVER_DIR, 'test', '.tmp');
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(tmpRoot, prefix));
+    const absolute = path.join(dir, 'test.db');
+    return { dir, absolute, dbFile: path.relative(SERVER_DIR, absolute) };
+}
+
 let booted = null;
 
 /**
  * Start an isolated server. Returns { url, agent(), login(who), stop(), creds }.
  * agent() gives a cookie-keeping supertest agent bound to the server URL.
  */
-async function startServer() {
+export async function startServer() {
     if (booted) throw new Error('startServer() called twice in one test file; server.js holds module-level state');
 
-    // server.js does path.join(__dirname, DB_FILE), so DB_FILE must be relative
-    // to the server dir (an absolute path would be appended, not replaced).
-    const tmpRoot = path.join(SERVER_DIR, 'test', '.tmp');
-    fs.mkdirSync(tmpRoot, { recursive: true });
-    sweepStaleRuns(tmpRoot);
-    const dir = fs.mkdtempSync(path.join(tmpRoot, 'run-'));
-    const dbFile = path.relative(SERVER_DIR, path.join(dir, 'test.db'));
+    const { dir, dbFile } = tempDb();
 
     // Environment must be set before server.js is required: it reads these at load.
     Object.assign(process.env, {
@@ -52,6 +63,11 @@ async function startServer() {
         DRIVER2_USER: CREDS.north.username,
         DRIVER2_PASS: CREDS.north.password,
     });
+
+    // Migrate first, exactly as the entry point does.
+    const migrator = createDatabase(loadConfig());
+    await runMigrations(migrator);
+    migrator.client.close();
 
     // Silence the boot log lines so test output stays readable.
     const origLog = console.log;
@@ -94,9 +110,9 @@ async function startServer() {
 }
 
 // On Windows the SQLite file can stay locked for a moment after close(), so
-// retry the delete a few times before giving up. Anything left behind is
-// swept by the next run (test/.tmp is gitignored).
-async function removeDir(dir) {
+// retry the delete a few times. Whatever is left is removed by the global
+// teardown (test/helpers/global-setup.mjs) once every worker has exited.
+export async function removeDir(dir) {
     for (let attempt = 0; attempt < 10; attempt++) {
         try {
             fs.rmSync(dir, { recursive: true, force: true });
@@ -107,26 +123,9 @@ async function removeDir(dir) {
     }
 }
 
-// Only runs older than 10 minutes are swept, so a parallel test file's live
-// database is never touched.
-function sweepStaleRuns(tmpRoot) {
-    let entries = [];
-    try { entries = fs.readdirSync(tmpRoot); } catch (e) { return; }
-    const cutoff = Date.now() - 10 * 60 * 1000;
-    for (const name of entries) {
-        if (!name.startsWith('run-')) continue;
-        const full = path.join(tmpRoot, name);
-        try {
-            if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { recursive: true, force: true });
-        } catch (e) { /* ignore */ }
-    }
-}
-
 // Collect a binary response body (xlsx) into a Buffer.
-function binaryParser(res, cb) {
+export function binaryParser(res, cb) {
     const chunks = [];
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => cb(null, Buffer.concat(chunks)));
 }
-
-module.exports = { startServer, binaryParser, CREDS };

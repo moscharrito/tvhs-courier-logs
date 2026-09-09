@@ -44,45 +44,8 @@ async function dbRun(sql, args = []) {
     return db.execute({ sql, args });
 }
 
-const SCHEMA = `
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        pin TEXT,
-        name TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('driver','admin')),
-        route TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        date TEXT NOT NULL,
-        leg_index INTEGER NOT NULL,
-        leg_from TEXT DEFAULT '',
-        leg_to TEXT DEFAULT '',
-        start_time TEXT DEFAULT '',
-        end_time TEXT DEFAULT '',
-        sterile INTEGER DEFAULT 0,
-        soiled INTEGER DEFAULT 0,
-        miles REAL DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(username, date, leg_index),
-        FOREIGN KEY(username) REFERENCES users(username)
-    );
-
-    CREATE TABLE IF NOT EXISTS checkins (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        date TEXT NOT NULL,
-        checkin_at DATETIME NOT NULL,
-        UNIQUE(username, date),
-        FOREIGN KEY(username) REFERENCES users(username)
-    );
-`;
+// Schema is owned by versioned migrations (server/drizzle, applied by
+// src/db/migrate.ts before this file is required). See src/db/schema/tvhs.ts.
 
 // ---- Seed / sync users from environment ----
 // Runs on every boot and is idempotent. Accounts are identified by a stable key
@@ -123,25 +86,6 @@ async function ensureUser(existing, envUser, envPass, name, role, route, fallbac
 
     // Keep display name / route current
     await dbRun('UPDATE users SET name = ?, route = ? WHERE username = ?', [name, route, username]);
-}
-
-// Add columns that older databases may be missing (e.g. the driver PIN).
-async function migrate() {
-    const cols = await dbAll('PRAGMA table_info(users)');
-    if (!cols.some(c => c.name === 'pin')) {
-        await dbRun('ALTER TABLE users ADD COLUMN pin TEXT');
-        console.log('Migration: added users.pin');
-    }
-
-    // Extra (off-schedule) legs store their own from/to, since they have no
-    // entry in ROUTES. Standard legs leave these empty and read from ROUTES.
-    const logCols = await dbAll('PRAGMA table_info(logs)');
-    for (const col of ['leg_from', 'leg_to']) {
-        if (!logCols.some(c => c.name === col)) {
-            await dbRun(`ALTER TABLE logs ADD COLUMN ${col} TEXT DEFAULT ''`);
-            console.log(`Migration: added logs.${col}`);
-        }
-    }
 }
 
 async function syncUsers() {
@@ -944,12 +888,11 @@ app.get('/api/logs/export', requireAuth, async (req, res) => {
 });
 
 // ---- Start ----
-// `ready` resolves once the schema, migrations and user sync have run. It is
-// kicked off on require so the boot sequence is identical whether this file is
-// run directly (node server.js), started by src/index.ts, or imported by tests.
+// `ready` resolves once the bootstrap users are reconciled. Migrations must
+// already have run (src/index.ts and the test harness do this before requiring
+// this file); running `node server.js` directly against an unmigrated database
+// is no longer supported.
 const ready = (async function init() {
-    await db.executeMultiple(SCHEMA);
-    await migrate();
     await syncUsers();
 })();
 

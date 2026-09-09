@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ExcelJS from 'exceljs';
-import { startServer, binaryParser } from './helpers/server.js';
+import { startServer, binaryParser } from './helpers/server.mjs';
 
 let srv;
 beforeAll(async () => {

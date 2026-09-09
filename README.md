@@ -32,3 +32,19 @@ Copy `server/.env.example` to `server/.env` (gitignored) and fill in the values.
 ## Tests
 
 `server/test` holds characterization tests for the TVHS API. Each test file boots the real server in-process against a throwaway SQLite file on a random port. Vitest runs files in separate processes, so in-memory state (such as the PIN throttle) does not leak between files.
+
+## Database and migrations
+
+The schema lives in `server/src/db/schema` (Drizzle). Versioned SQL migrations live in `server/drizzle` and are applied automatically on boot, before the listener binds; a failed migration stops the start. To run them by hand (for example against Turso before a deploy):
+
+```bash
+npm run db:migrate -w server
+```
+
+After changing the schema, generate the next migration and commit the SQL and the `meta/` snapshot together:
+
+```bash
+npm run db:generate -w server -- --name <short-description>
+```
+
+Databases created by the original TVHS server adopt the baseline migration without change; those older than the `pin`, `leg_from`, and `leg_to` columns get them added first.
