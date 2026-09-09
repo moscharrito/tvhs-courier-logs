@@ -32,7 +32,9 @@ describe('login creates a server-side session', () => {
 
         const token = tokenOf(res);
         expect(token.length).toBeGreaterThanOrEqual(40);
-        const rows = await sessionRows('admin');
+        // The harness logs the admin in and out once to provision drivers, so
+        // look at live rows only.
+        const rows = (await sessionRows('admin')).filter((r) => !r.revoked_at);
         expect(rows).toHaveLength(1);
         expect(rows[0].id).toBe(sha(token));
         expect(rows[0].id).not.toBe(token);
@@ -96,6 +98,21 @@ describe('session validity', () => {
         const token = tokenOf(await a.post('/api/login').send({ username: srv.creds.admin.username, password: srv.creds.admin.password }));
         await sql('UPDATE sessions SET idle_expires_at = ? WHERE id = ?', [new Date(Date.now() - 1000).toISOString(), sha(token)]);
         expect((await a.get('/api/session')).status).toBe(401);
+    });
+
+    it('a disabled account is refused even if its session row was never revoked', async () => {
+        const login = await srv.agent().post('/api/login').send({ username: srv.creds.north.username, password: srv.creds.north.password });
+        const cookie = `${COOKIE_NAME}=${tokenOf(login)}`;
+        expect((await srv.agent().get('/api/session').set('Cookie', cookie)).status).toBe(200);
+
+        await sql("UPDATE users SET status = 'disabled' WHERE username = ?", [srv.creds.north.username]);
+        const refused = await srv.agent().get('/api/session').set('Cookie', cookie);
+        expect(refused.status).toBe(401);
+        expect(cookieOf(refused)).toMatch(/Expires=Thu, 01 Jan 1970/); // browser cookie is cleared
+
+        // The row itself was not revoked, so re-enabling the account revives it.
+        await sql("UPDATE users SET status = 'active' WHERE username = ?", [srv.creds.north.username]);
+        expect((await srv.agent().get('/api/session').set('Cookie', cookie)).status).toBe(200);
     });
 
     it('an absolute-expired session is refused even when recently active', async () => {

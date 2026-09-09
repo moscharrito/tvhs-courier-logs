@@ -49,6 +49,8 @@ export async function startServer() {
     const { dir, dbFile } = tempDb();
 
     // Environment must be set before server.js is required: it reads these at load.
+    // Only the bootstrap admin comes from the environment; the drivers are
+    // created through the users API below, the way an admin would.
     Object.assign(process.env, {
         DB_FILE: dbFile,
         TURSO_DATABASE_URL: '',          // force local file even if .env sets Turso
@@ -57,10 +59,6 @@ export async function startServer() {
         SESSION_SECRET: 'test-session-secret',
         ADMIN_USER: CREDS.admin.username,
         ADMIN_PASS: CREDS.admin.password,
-        DRIVER1_USER: CREDS.south.username,
-        DRIVER1_PASS: CREDS.south.password,
-        DRIVER2_USER: CREDS.north.username,
-        DRIVER2_PASS: CREDS.north.password,
     });
 
     // Migrate, then boot the legacy app through the same wrapper as the entry
@@ -87,6 +85,20 @@ export async function startServer() {
     });
     const { port } = httpServer.address();
     const url = `http://127.0.0.1:${port}`;
+
+    // Provision the two TVHS drivers as an admin would: create the user, then
+    // give it a tvhs courier membership carrying its route.
+    const admin = request.agent(url);
+    const adminLogin = await admin.post('/api/login').send({ username: CREDS.admin.username, password: CREDS.admin.password });
+    if (adminLogin.status !== 200) throw new Error(`bootstrap admin login failed: ${adminLogin.status} ${adminLogin.text}`);
+    for (const who of ['south', 'north']) {
+        const c = CREDS[who];
+        const created = await admin.post('/api/users').send({ username: c.username, name: c.name, password: c.password, role: 'driver' });
+        if (created.status !== 201) throw new Error(`creating ${who} failed: ${created.status} ${created.text}`);
+        const member = await admin.put(`/api/users/${c.username}/memberships/tvhs`).send({ role: 'courier', settings: { route: c.route } });
+        if (member.status !== 200) throw new Error(`membership for ${who} failed: ${member.status} ${member.text}`);
+    }
+    await admin.post('/api/logout');
 
     booted = {
         url,

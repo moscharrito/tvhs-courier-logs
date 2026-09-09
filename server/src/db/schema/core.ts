@@ -33,6 +33,8 @@ export const memberships = sqliteTable(
         userId: integer('user_id').notNull().references(() => users.id),
         projectId: integer('project_id').notNull().references(() => projects.id),
         role: text('role', { enum: PROJECT_ROLES }).notNull(),
+        /** JSON blob of per-project, per-user settings. For tvhs couriers: { route: 'northbound' | 'southbound' } */
+        settings: text('settings').notNull().default('{}'),
         createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
     },
     (t) => [

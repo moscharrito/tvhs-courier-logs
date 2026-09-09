@@ -46,63 +46,31 @@ async function dbRun(sql, args = []) {
 // Schema is owned by versioned migrations (server/drizzle, applied by
 // src/db/migrate.ts before this file is required). See src/db/schema/tvhs.ts.
 
-// ---- Seed / sync users from environment ----
-// Runs on every boot and is idempotent. Accounts are identified by a stable key
-// (admin by role, drivers by route), so updating a credential in the environment
-// (e.g. Render's Environment tab) updates the login on the next deploy WITHOUT
-// wiping data. A username change cascades to logs/checkins so records stay linked.
-// If an env credential is absent, the existing value is left untouched — never
-// reset to a placeholder.
-async function ensureUser(existing, envUser, envPass, name, role, route, fallbackUser) {
-    const wantUser = envUser ? String(envUser).toLowerCase().trim() : null;
-
-    if (!existing) {
-        const uname = wantUser || fallbackUser;
-        const pass = envPass || 'changeme';
-        await dbRun('INSERT INTO users (username, password, name, role, route) VALUES (?, ?, ?, ?, ?)',
-            [uname, bcrypt.hashSync(pass, 10), name, role, route]);
-        console.log(`User created: ${role}${route ? '/' + route : ''} -> ${uname}`);
-        return;
+// ---- Bootstrap admin ----
+// Users are managed in-app (src/core/users/routes.ts). The environment only
+// matters on a database with no admin yet: ADMIN_USER / ADMIN_PASS create the
+// first one. After that, env changes do nothing; use the users API. Drivers
+// are no longer seeded or renamed from the environment.
+async function bootstrapAdmin() {
+    const adminRow = await dbGet("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+    if (!adminRow) {
+        const username = String(process.env.ADMIN_USER || 'admin').toLowerCase().trim();
+        const password = process.env.ADMIN_PASS;
+        if (!password) throw new Error('No admin user exists and ADMIN_PASS is not set. Set ADMIN_USER and ADMIN_PASS for the first boot.');
+        await dbRun("INSERT INTO users (username, password, name, role, status) VALUES (?, ?, 'Administrator', 'admin', 'active')",
+            [username, bcrypt.hashSync(password, 10)]);
+        console.log(`Bootstrap admin created: ${username}`);
     }
 
-    let username = existing.username;
-
-    // Rename (and cascade to data) if the env username changed — atomic batch
-    if (wantUser && wantUser !== username) {
-        await db.batch([
-            { sql: 'UPDATE users SET username = ? WHERE username = ?', args: [wantUser, username] },
-            { sql: 'UPDATE logs SET username = ? WHERE username = ?', args: [wantUser, username] },
-            { sql: 'UPDATE checkins SET username = ? WHERE username = ?', args: [wantUser, username] },
-        ], 'write');
-        console.log(`User renamed: ${username} -> ${wantUser}`);
-        username = wantUser;
-    }
-
-    // Update password only when one is supplied
-    if (envPass) {
-        await dbRun('UPDATE users SET password = ? WHERE username = ?', [bcrypt.hashSync(envPass, 10), username]);
-    }
-
-    // Keep display name / route current
-    await dbRun('UPDATE users SET name = ?, route = ? WHERE username = ?', [name, route, username]);
-}
-
-async function syncUsers() {
-    const adminRow = await dbGet("SELECT * FROM users WHERE role = 'admin' LIMIT 1");
-    await ensureUser(adminRow, process.env.ADMIN_USER, process.env.ADMIN_PASS, 'Administrator', 'admin', null, 'admin');
-
-    const southRow = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = 'southbound' LIMIT 1");
-    await ensureUser(southRow, process.env.DRIVER1_USER, process.env.DRIVER1_PASS, 'Mohamed Djemai', 'driver', 'southbound', 'driver1');
-
-    const northRow = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = 'northbound' LIMIT 1");
-    await ensureUser(northRow, process.env.DRIVER2_USER, process.env.DRIVER2_PASS, 'Bereket Nigusse', 'driver', 'northbound', 'driver2');
-
-    // Every bootstrap account is a member of the tvhs project: admins as
-    // project admins, drivers as couriers. Idempotent (unique user + project).
+    // Platform admins are admins of tvhs; legacy driver rows are its couriers.
+    // Idempotent (unique user + project). New users get memberships via the API.
     await dbRun(`
-        INSERT OR IGNORE INTO memberships (user_id, project_id, role)
-        SELECT u.id, p.id, CASE u.role WHEN 'admin' THEN 'admin' ELSE 'courier' END
-        FROM users u, projects p WHERE p.code = ?
+        INSERT OR IGNORE INTO memberships (user_id, project_id, role, settings)
+        SELECT u.id, p.id,
+               CASE u.role WHEN 'admin' THEN 'admin' ELSE 'courier' END,
+               CASE WHEN u.role = 'driver' AND u.route IS NOT NULL THEN json_object('route', u.route) ELSE '{}' END
+        FROM users u, projects p
+        WHERE p.code = ? AND u.role IN ('admin', 'driver')
     `, [TVHS_PROJECT_CODE]);
 }
 
@@ -299,6 +267,7 @@ app.post('/api/login', async (req, res) => {
     if (!user || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
+    if (user.status !== 'active') return res.status(403).json({ error: 'Account disabled' });
 
     res.json(await loginSession(req, user));
 });
@@ -306,7 +275,7 @@ app.post('/api/login', async (req, res) => {
 // Public: driver roster for the quick-login picker (no secrets; identifies
 // drivers by route so personal emails aren't exposed publicly).
 app.get('/api/drivers/list', async (req, res) => {
-    const drivers = await dbAll("SELECT name, route, pin FROM users WHERE role = 'driver' ORDER BY name");
+    const drivers = await dbAll("SELECT name, route, pin FROM users WHERE role = 'driver' AND status = 'active' AND route IS NOT NULL ORDER BY name");
     res.json(drivers.map(d => ({ route: d.route, name: d.name, hasPin: !!d.pin })));
 });
 
@@ -316,7 +285,7 @@ app.post('/api/login/pin', async (req, res) => {
     if (!route || !pin) return res.status(400).json({ error: 'Route and PIN required' });
     if (pinBlocked(route)) return res.status(429).json({ error: 'Too many attempts. Wait a bit or use your password.' });
 
-    const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = ?", [route]);
+    const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND status = 'active' AND route = ?", [route]);
     if (!user || !user.pin || !bcrypt.compareSync(String(pin), user.pin)) {
         pinFail(route);
         return res.status(401).json({ error: 'Incorrect PIN' });
@@ -331,7 +300,7 @@ app.post('/api/login/pin/setup', async (req, res) => {
     if (!route || !password || !pin) return res.status(400).json({ error: 'Route, password and PIN required' });
     if (!/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ error: 'PIN must be 4–6 digits' });
 
-    const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND route = ?", [route]);
+    const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND status = 'active' AND route = ?", [route]);
     if (!user || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -976,7 +945,7 @@ tvhs.get('/logs/export', requireAuth, async (req, res) => {
 // this file); running `node server.js` directly against an unmigrated database
 // is no longer supported.
 const ready = (async function init() {
-    await syncUsers();
+    await bootstrapAdmin();
 })();
 
 // Bind the HTTP listener. Resolves with the http.Server once listening.

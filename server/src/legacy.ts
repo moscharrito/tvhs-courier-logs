@@ -16,6 +16,7 @@ import type { Config } from './config';
 import type { Database } from './db/client';
 import { createSessionMiddleware, type SessionStore } from './core/auth/sessions';
 import { createCoreAuthRouter } from './core/auth/routes';
+import { createUsersRouter } from './core/users/routes';
 
 export interface LegacyServer {
     app: Express;
@@ -46,6 +47,7 @@ export function bootLegacy(config: Config, database: Database): BootedLegacy {
     const legacy = require('../server.js') as LegacyServer;
 
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
+    legacy.app.use(createUsersRouter({ client: database.client, store }));
 
     return { legacy, sessions: store };
 }

@@ -129,7 +129,7 @@ export class SessionStore {
         const now = this.now();
         const rs = await this.run(
             `SELECT s.id, s.last_seen_at, s.idle_expires_at, s.absolute_expires_at, s.revoked_at,
-                    u.id AS user_id, u.username, u.name, u.role, u.route
+                    u.id AS user_id, u.username, u.name, u.role, u.route, u.status
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.id = ?`,
             [id],
@@ -137,6 +137,9 @@ export class SessionStore {
         const row = rs.rows[0];
         if (!row) return null;
         if (row['revoked_at']) return null;
+        // A disabled account loses every session immediately, even ones the
+        // admin endpoint has not revoked yet.
+        if (String(row['status']) !== 'active') return null;
         if (String(row['idle_expires_at']) <= iso(now)) return null;
         if (String(row['absolute_expires_at']) <= iso(now)) return null;
 

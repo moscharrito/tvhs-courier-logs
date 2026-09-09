@@ -10,10 +10,8 @@
 # PROMPTS you for them the first time you apply this blueprint and stores them
 # securely in the service - they are NEVER written to this file or to git.
 #
-# Changing any credential later: edit its value in the Render dashboard
-# (Environment tab) and redeploy. On boot the app reconciles the users from
-# these env vars (see syncUsers() in server/server.js), so the login updates
-# WITHOUT wiping data. A username change cascades to that driver's logs/checkins.
+# Users are managed in-app (users API, ticket 0.7). ADMIN_USER / ADMIN_PASS only
+# create the first admin on an empty database; after that they are ignored.
 #
 # Persistence: this app stores data in Turso (libSQL). Render has no persistent
 # disk on web services, so TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are required
@@ -46,16 +44,8 @@ services:
       - key: TURSO_AUTH_TOKEN
         sync: false
 
-      # --- Credentials (entered in dashboard on first apply; never committed) ---
+      # --- Bootstrap admin (only used when the database has no admin yet) ---
       - key: ADMIN_USER
         sync: false
       - key: ADMIN_PASS
-        sync: false
-      - key: DRIVER1_USER
-        sync: false
-      - key: DRIVER1_PASS
-        sync: false
-      - key: DRIVER2_USER
-        sync: false
-      - key: DRIVER2_PASS
         sync: false

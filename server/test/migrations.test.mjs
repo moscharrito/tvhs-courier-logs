@@ -82,8 +82,23 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
+
+// users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
+const USERS_SQL_AFTER_0003 = `CREATE TABLE "users" (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT UNIQUE NOT NULL,
+	password TEXT NOT NULL,
+	pin TEXT,
+	name TEXT NOT NULL,
+	email TEXT,
+	role TEXT NOT NULL CHECK(role IN ('admin','staff','driver')),
+	status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+	route TEXT,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`;
+const USERS_COLS_AFTER_0003 = ['id', 'username', 'password', 'pin', 'name', 'email', 'role', 'status', 'route', 'created_at'];
 
 const norm = (s) => String(s).replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
 
@@ -140,15 +155,16 @@ describe('fresh database', () => {
             expect(result.preBaseline).toEqual([]);
             expect(result.appliedCount).toBe(MIGRATION_COUNT);
 
-            // users is untouched by 0001; logs and checkins get project_id appended.
-            expect(norm(await tableSql(database.client, 'users'))).toBe(norm(LEGACY_SQL.users));
+            // users is rebuilt by 0003; logs and checkins get project_id appended by 0001.
+            expect(norm(await tableSql(database.client, 'users'))).toBe(norm(USERS_SQL_AFTER_0003));
+            expect(await columnNames(database.client, 'users')).toEqual(USERS_COLS_AFTER_0003);
             for (const t of ['logs', 'checkins']) {
                 expect(norm(await tableSql(database.client, t))).toBe(norm(withProjectId(LEGACY_SQL[t])));
                 const pid = (await database.client.execute(`PRAGMA table_info(${t})`)).rows.find((r) => r.name === 'project_id');
                 expect(pid).toMatchObject({ notnull: 1, dflt_value: '1' });
             }
             expect(await columnNames(database.client, 'projects')).toEqual(['id', 'code', 'name', 'timezone', 'settings', 'created_at']);
-            expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'created_at']);
+            expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'created_at', 'settings']);
             expect(await columnNames(database.client, 'sessions')).toEqual(['id', 'user_id', 'device', 'ip', 'created_at', 'last_seen_at', 'idle_expires_at', 'absolute_expires_at', 'revoked_at']);
 
             // Legacy inline UNIQUE constraints stay autoindexes; only the named indexes from 0001 exist.
@@ -198,22 +214,24 @@ describe('database created by the legacy server', () => {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual([]);
             expect(result.appliedCount).toBe(MIGRATION_COUNT);
-            expect(await tableSql(database.client, 'users')).toBe(before.users);
+            // users is rebuilt with the same rows and ids; logs/checkins only gain project_id.
+            expect(norm(await tableSql(database.client, 'users'))).toBe(norm(USERS_SQL_AFTER_0003));
             for (const t of ['logs', 'checkins']) {
-                // Only the project_id column is added to the legacy definition.
                 expect(norm(await tableSql(database.client, t))).toBe(norm(withProjectId(before[t])));
             }
             expect(await count(database.client, 'users')).toBe(1);
             expect(await count(database.client, 'logs')).toBe(1);
             expect(await count(database.client, 'checkins')).toBe(1);
+            const user = (await database.client.execute('SELECT id, username, name, role, status, email, route FROM users')).rows[0];
+            expect({ ...user }).toEqual({ id: 1, username: 'd1', name: 'Driver One', role: 'driver', status: 'active', email: null, route: 'southbound' });
             const log = (await database.client.execute('SELECT * FROM logs')).rows[0];
             expect(log.miles).toBe(122.6);
             expect(log.project_id).toBe(1);
             expect((await database.client.execute('SELECT project_id FROM checkins')).rows[0].project_id).toBe(1);
 
-            // The existing driver is enrolled in tvhs as a courier.
-            const members = (await database.client.execute('SELECT user_id, project_id, role FROM memberships')).rows.map((r) => ({ ...r }));
-            expect(members).toEqual([{ user_id: 1, project_id: 1, role: 'courier' }]);
+            // The existing driver is enrolled in tvhs as a courier with its route in settings.
+            const members = (await database.client.execute('SELECT user_id, project_id, role, settings FROM memberships')).rows.map((r) => ({ ...r }));
+            expect(members).toEqual([{ user_id: 1, project_id: 1, role: 'courier', settings: '{"route":"southbound"}' }]);
         } finally {
             database.client.close();
         }
@@ -289,9 +307,9 @@ describe('the real local development database', () => {
             for (const t of ['users', 'logs', 'checkins']) {
                 expect(await count(database.client, t)).toBe(before[t].rows);
             }
-            // users untouched; logs and checkins gain exactly one column.
-            expect(await columnNames(database.client, 'users')).toEqual(before.users.cols);
-            expect(await tableSql(database.client, 'users')).toBe(before.users.sql);
+            // users is rebuilt with email and status; logs and checkins gain exactly one column.
+            expect(await columnNames(database.client, 'users')).toEqual(USERS_COLS_AFTER_0003);
+            expect(norm(await tableSql(database.client, 'users'))).toBe(norm(USERS_SQL_AFTER_0003));
             for (const t of ['logs', 'checkins']) {
                 expect(await columnNames(database.client, t)).toEqual([...before[t].cols, 'project_id']);
             }

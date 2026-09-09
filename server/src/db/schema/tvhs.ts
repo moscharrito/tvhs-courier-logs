@@ -14,6 +14,20 @@ import { sql } from 'drizzle-orm';
 // backfilled in place. SQLite cannot add a REFERENCES clause that way, so the
 // relation is enforced by requireProject in the API rather than the database.
 
+/* Platform user directory (ticket 0.7 rebuilt the legacy table in place).
+ *
+ * role is platform-wide: admin manages users and every project; driver may
+ * use courier features (PIN login, check-in, logs); staff is everyone else
+ * (dispatchers, ops managers, client viewers) whose rights come only from
+ * memberships. status disabled blocks login and kills live sessions.
+ *
+ * route is the legacy TVHS route mirror. The source of truth is the tvhs
+ * membership's settings.route; the users API keeps this column in step until
+ * the legacy handlers move into src/modules/tvhs. */
+export const USER_ROLES = ['admin', 'staff', 'driver'] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+export const USER_STATUSES = ['active', 'disabled'] as const;
+
 export const users = sqliteTable(
     'users',
     {
@@ -22,11 +36,16 @@ export const users = sqliteTable(
         password: text('password').notNull(),
         pin: text('pin'),
         name: text('name').notNull(),
-        role: text('role', { enum: ['driver', 'admin'] }).notNull(),
+        email: text('email'),
+        role: text('role', { enum: USER_ROLES }).notNull(),
+        status: text('status', { enum: USER_STATUSES }).notNull().default('active'),
         route: text('route'),
         createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
     },
-    (t) => [check('users_role_check', sql`${t.role} IN ('driver','admin')`)],
+    (t) => [
+        check('users_role_check', sql`${t.role} IN ('admin','staff','driver')`),
+        check('users_status_check', sql`${t.status} IN ('active','disabled')`),
+    ],
 );
 
 export const logs = sqliteTable(
