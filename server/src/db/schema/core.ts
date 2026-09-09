@@ -42,5 +42,29 @@ export const memberships = sqliteTable(
     ],
 );
 
+/* Server-side sessions. The browser cookie carries a random token; the row id
+ * is the SHA-256 of that token, so a copy of the table cannot be replayed.
+ * A session is live while revoked_at is null and both expiries are in the
+ * future. Idle expiry moves forward on use (per-role lengths in config);
+ * absolute expiry does not. */
+export const sessions = sqliteTable(
+    'sessions',
+    {
+        /** sha256(token), hex */
+        id: text('id').primaryKey(),
+        userId: integer('user_id').notNull().references(() => users.id),
+        /** Short human label derived from the user agent, for the devices list */
+        device: text('device').notNull().default(''),
+        ip: text('ip').notNull().default(''),
+        createdAt: text('created_at').notNull(),
+        lastSeenAt: text('last_seen_at').notNull(),
+        idleExpiresAt: text('idle_expires_at').notNull(),
+        absoluteExpiresAt: text('absolute_expires_at').notNull(),
+        revokedAt: text('revoked_at'),
+    },
+    (t) => [index('sessions_user_id_idx').on(t.userId)],
+);
+
 export type Project = typeof projects.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
+export type Session = typeof sessions.$inferSelect;

@@ -4,11 +4,10 @@
    ============================================ */
 
 const express = require('express');
-const cookieSession = require('cookie-session');
 const bcrypt = require('bcryptjs');
 const { createClient } = require('@libsql/client');
 const path = require('path');
-const crypto = require('crypto');
+const bridge = require('./legacy-bridge');
 
 // Environment loading and validation live in src/index.ts (dotenv outside
 // production, then loadConfig()). This file expects process.env to be ready.
@@ -110,17 +109,12 @@ async function syncUsers() {
 // ---- Middleware ----
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-// Stateless cookie sessions: the session lives in a signed cookie, so logins
-// survive server restarts/deploys (no server-side store) — important on hosts
-// that restart often. A fixed SESSION_SECRET is required for this to persist;
-// without it a random per-boot key logs everyone out on restart.
-app.use(cookieSession({
-    name: 'tvhs_sess',
-    keys: [process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex')],
-    maxAge: 60 * 24 * 60 * 60 * 1000, // 60 days
-    httpOnly: true,
-    sameSite: 'lax'
-}));
+// Server-side sessions (src/core/auth/sessions.ts), injected by src/legacy.ts.
+// The middleware sets req.session = { id, user } from the izy_sid cookie and
+// req.sessions = { create(user), destroy() } for login and logout. Sessions
+// survive restarts and deploys because they live in the database, and an
+// admin can revoke any device.
+app.use(bridge.get('sessionMiddleware'));
 
 // Operating timezone — pinned in config so check-in dates don't depend on the host clock.
 // Override with APP_TIMEZONE (e.g. "America/New_York") in the environment / .env if needed.
@@ -273,11 +267,11 @@ function dayRows(routeDef, dayLogs) {
 
 // ---- API Routes ----
 
-// Store the authenticated identity in the session and return the public profile
-function loginSession(req, user) {
-    const profile = { username: user.username, name: user.name, role: user.role, route: user.route };
-    req.session.user = profile;
-    return profile;
+// Open a server-side session for the authenticated user (sets the cookie) and
+// return the public profile.
+async function loginSession(req, user) {
+    await req.sessions.create({ id: user.id, username: user.username, name: user.name, role: user.role, route: user.route });
+    return req.session.user;
 }
 
 // Simple in-memory throttle for driver PIN attempts (per route). Slows brute
@@ -306,7 +300,7 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
 
-    res.json(loginSession(req, user));
+    res.json(await loginSession(req, user));
 });
 
 // Public: driver roster for the quick-login picker (no secrets; identifies
@@ -328,7 +322,7 @@ app.post('/api/login/pin', async (req, res) => {
         return res.status(401).json({ error: 'Incorrect PIN' });
     }
     pinReset(route);
-    res.json(loginSession(req, user));
+    res.json(await loginSession(req, user));
 });
 
 // Driver first-time PIN setup / reset — gated by the driver's password
@@ -343,11 +337,11 @@ app.post('/api/login/pin/setup', async (req, res) => {
     }
     await dbRun('UPDATE users SET pin = ? WHERE username = ?', [bcrypt.hashSync(String(pin), 10), user.username]);
     pinReset(route);
-    res.json(loginSession(req, user));
+    res.json(await loginSession(req, user));
 });
 
-app.post('/api/logout', (req, res) => {
-    req.session = null;
+app.post('/api/logout', async (req, res) => {
+    await req.sessions.destroy();
     res.json({ ok: true });
 });
 

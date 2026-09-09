@@ -9,13 +9,12 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import request from 'supertest';
 import { loadConfig } from '../../src/config.ts';
 import { createDatabase } from '../../src/db/client.ts';
 import { runMigrations } from '../../src/db/migrate.ts';
+import { bootLegacy } from '../../src/legacy.ts';
 
-const require = createRequire(import.meta.url);
 export const SERVER_DIR = path.resolve(import.meta.dirname, '..', '..');
 
 // Known credentials for the seeded accounts (see syncUsers in server.js).
@@ -64,17 +63,19 @@ export async function startServer() {
         DRIVER2_PASS: CREDS.north.password,
     });
 
-    // Migrate first, exactly as the entry point does.
-    const migrator = createDatabase(loadConfig());
-    await runMigrations(migrator);
-    migrator.client.close();
+    // Migrate, then boot the legacy app through the same wrapper as the entry
+    // point (session middleware injected, core routers mounted). The core keeps
+    // this database client for the life of the test file.
+    const config = loadConfig();
+    const database = createDatabase(config);
+    await runMigrations(database);
 
     // Silence the boot log lines so test output stays readable.
     const origLog = console.log;
     console.log = () => { };
-    let legacy;
+    let legacy, sessions;
     try {
-        legacy = require(path.join(SERVER_DIR, 'server.js'));
+        ({ legacy, sessions } = bootLegacy(config, database));
         await legacy.ready;
     } finally {
         console.log = origLog;
@@ -90,8 +91,11 @@ export async function startServer() {
     booted = {
         url,
         creds: CREDS,
+        config,
         app: legacy.app,
         db: legacy.db,
+        core: database,
+        sessions,
         agent: () => request.agent(url),
         async login(who) {
             const a = request.agent(url);
@@ -102,6 +106,7 @@ export async function startServer() {
         async stop() {
             await new Promise((resolve) => httpServer.close(resolve));
             try { legacy.db.close(); } catch (e) { /* ignore */ }
+            try { database.client.close(); } catch (e) { /* ignore */ }
             await removeDir(dir);
             booted = null;
         },

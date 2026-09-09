@@ -45,7 +45,7 @@ describe('username and password login', () => {
         const res = await a.post('/api/login').send({ username: srv.creds.admin.username, password: srv.creds.admin.password });
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ username: 'admin', name: 'Administrator', role: 'admin', route: null });
-        expect(res.headers['set-cookie'].join(';')).toMatch(/tvhs_sess=/);
+        expect(res.headers['set-cookie'].join(';')).toMatch(/izy_sid=/);
 
         const sess = await a.get('/api/session');
         expect(sess.status).toBe(200);

@@ -81,6 +81,10 @@ const OLD_SCHEMA = `
     );
 `;
 
+// Keep in step with drizzle/meta/_journal.json.
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions'];
+const MIGRATION_COUNT = MIGRATION_TAGS.length;
+
 const norm = (s) => String(s).replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
 
 // What SQLite stores after `ALTER TABLE ADD COLUMN`: the new column definition
@@ -120,7 +124,7 @@ describe('migrations folder', () => {
     it('resolves to server/drizzle and has the baseline in the journal', () => {
         expect(MIGRATIONS_FOLDER).toBe(path.join(SERVER_DIR, 'drizzle'));
         const journal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'));
-        expect(journal.entries.map((e) => e.tag)).toEqual(['0000_baseline', '0001_projects']);
+        expect(journal.entries.map((e) => e.tag)).toEqual(MIGRATION_TAGS);
         for (const tag of journal.entries.map((e) => e.tag)) {
             expect(fs.existsSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`))).toBe(true);
         }
@@ -134,7 +138,7 @@ describe('fresh database', () => {
         try {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual([]);
-            expect(result.appliedCount).toBe(2);
+            expect(result.appliedCount).toBe(MIGRATION_COUNT);
 
             // users is untouched by 0001; logs and checkins get project_id appended.
             expect(norm(await tableSql(database.client, 'users'))).toBe(norm(LEGACY_SQL.users));
@@ -145,13 +149,14 @@ describe('fresh database', () => {
             }
             expect(await columnNames(database.client, 'projects')).toEqual(['id', 'code', 'name', 'timezone', 'settings', 'created_at']);
             expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'created_at']);
+            expect(await columnNames(database.client, 'sessions')).toEqual(['id', 'user_id', 'device', 'ip', 'created_at', 'last_seen_at', 'idle_expires_at', 'absolute_expires_at', 'revoked_at']);
 
             // Legacy inline UNIQUE constraints stay autoindexes; only the named indexes from 0001 exist.
             const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
             expect(idx.rows.map((r) => r.name)).toEqual([
-                'checkins_project_id_idx', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique', 'projects_code_unique',
+                'checkins_project_id_idx', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique', 'projects_code_unique', 'sessions_user_id_idx',
             ]);
-            expect(await migrationRows(database.client)).toBe(2);
+            expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
 
             // tvhs is seeded as project 1 so the project_id default points at it.
             const projects = (await database.client.execute('SELECT id, code, name, timezone, settings FROM projects')).rows.map((r) => ({ ...r }));
@@ -167,8 +172,8 @@ describe('fresh database', () => {
         try {
             await runMigrations(database);
             const again = await runMigrations(database);
-            expect(again.appliedCount).toBe(2);
-            expect(await migrationRows(database.client)).toBe(2);
+            expect(again.appliedCount).toBe(MIGRATION_COUNT);
+            expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
             expect(await count(database.client, 'projects')).toBe(1);
         } finally {
             database.client.close();
@@ -192,7 +197,7 @@ describe('database created by the legacy server', () => {
         try {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual([]);
-            expect(result.appliedCount).toBe(2);
+            expect(result.appliedCount).toBe(MIGRATION_COUNT);
             expect(await tableSql(database.client, 'users')).toBe(before.users);
             for (const t of ['logs', 'checkins']) {
                 // Only the project_id column is added to the legacy definition.
@@ -226,7 +231,7 @@ describe('database created by the legacy server', () => {
         try {
             const result = await runMigrations(database);
             expect(result.preBaseline).toEqual(['users.pin', 'logs.leg_from', 'logs.leg_to']);
-            expect(result.appliedCount).toBe(2);
+            expect(result.appliedCount).toBe(MIGRATION_COUNT);
 
             expect(await columnNames(database.client, 'users')).toContain('pin');
             const logCols = await columnNames(database.client, 'logs');
@@ -280,7 +285,7 @@ describe('the real local development database', () => {
         const database = createDatabase({ db: { url: `file:${absolute}`, authToken: undefined, kind: 'file' } });
         try {
             const result = await runMigrations(database);
-            expect(result.appliedCount).toBe(2);
+            expect(result.appliedCount).toBe(MIGRATION_COUNT);
             for (const t of ['users', 'logs', 'checkins']) {
                 expect(await count(database.client, t)).toBe(before[t].rows);
             }

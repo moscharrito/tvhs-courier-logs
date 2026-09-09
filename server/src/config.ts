@@ -35,6 +35,14 @@ export interface Config {
             kmsKeyId: string | undefined;
         } | undefined;
     };
+    /** Server-side session lifetimes, in minutes. Staff = admin, ops manager,
+     *  dispatcher, client viewer. Courier = drivers on the road all day. */
+    sessions: {
+        staffIdleMinutes: number;
+        staffAbsoluteMinutes: number;
+        courierIdleMinutes: number;
+        courierAbsoluteMinutes: number;
+    };
     /** Bootstrap accounts reconciled on boot by the legacy syncUsers(). */
     legacyUsers: {
         admin: { user: string | undefined; pass: string | undefined };
@@ -73,6 +81,10 @@ const EnvSchema = z.object({
     S3_ACCESS_KEY_ID: optionalString,
     S3_SECRET_ACCESS_KEY: optionalString,
     S3_KMS_KEY_ID: optionalString,
+    SESSION_STAFF_IDLE_MINUTES: z.coerce.number().int().min(1).default(30),
+    SESSION_STAFF_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
+    SESSION_COURIER_IDLE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
+    SESSION_COURIER_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(30 * 24 * 60),
     ADMIN_USER: optionalString,
     ADMIN_PASS: optionalString,
     DRIVER1_USER: optionalString,
@@ -168,6 +180,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         sessionSecret: e.SESSION_SECRET as string,
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
+        sessions: {
+            staffIdleMinutes: e.SESSION_STAFF_IDLE_MINUTES,
+            staffAbsoluteMinutes: e.SESSION_STAFF_ABSOLUTE_MINUTES,
+            courierIdleMinutes: e.SESSION_COURIER_IDLE_MINUTES,
+            courierAbsoluteMinutes: e.SESSION_COURIER_ABSOLUTE_MINUTES,
+        },
         legacyUsers: {
             admin: { user: e.ADMIN_USER, pass: e.ADMIN_PASS },
             driver1: { user: e.DRIVER1_USER, pass: e.DRIVER1_PASS },
