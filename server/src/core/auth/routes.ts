@@ -65,6 +65,7 @@ export function createCoreAuthRouter({ client, store }: Deps): Router {
     router.delete('/api/me/sessions/others', requireAuth, wrap(async (req, res) => {
         const userId = await currentUserId(req);
         const revoked = await store.revokeAllForUser(userId, req.session.id ?? undefined);
+        await req.audit('session.revoke_others', 'user', req.session.user!.username, { revoked });
         res.json({ ok: true, revoked });
     }));
 
@@ -76,38 +77,46 @@ export function createCoreAuthRouter({ client, store }: Deps): Router {
             return;
         }
         const revoked = await store.revoke(id);
+        await req.audit('session.revoke', 'session', id, { username: req.session.user!.username, own: true, revoked });
         if (id === req.session.id) await req.sessions.destroy();
         res.json({ ok: true, revoked: revoked ? 1 : 0 });
     }));
 
     router.get('/api/users/:username/sessions', requireAdmin, wrap(async (req, res) => {
-        const userId = await userIdByUsername(String(req.params['username']));
+        const username = String(req.params['username']).toLowerCase().trim();
+        const userId = await userIdByUsername(username);
         if (userId === null) {
             res.status(404).json({ error: 'User not found' });
             return;
         }
-        res.json(await store.listForUser(userId, req.session.id));
+        const list = await store.listForUser(userId, req.session.id);
+        await req.audit('session.list', 'user', username, { count: list.length });
+        res.json(list);
     }));
 
     router.delete('/api/users/:username/sessions', requireAdmin, wrap(async (req, res) => {
-        const userId = await userIdByUsername(String(req.params['username']));
+        const username = String(req.params['username']).toLowerCase().trim();
+        const userId = await userIdByUsername(username);
         if (userId === null) {
             res.status(404).json({ error: 'User not found' });
             return;
         }
         const revoked = await store.revokeAllForUser(userId);
+        await req.audit('session.revoke_all', 'user', username, { revoked });
         if (userId === (await currentUserId(req))) await req.sessions.destroy();
         res.json({ ok: true, revoked });
     }));
 
     router.delete('/api/users/:username/sessions/:id', requireAdmin, wrap(async (req, res) => {
-        const userId = await userIdByUsername(String(req.params['username']));
+        const username = String(req.params['username']).toLowerCase().trim();
+        const userId = await userIdByUsername(username);
         const id = String(req.params['id']);
         if (userId === null || (await store.ownerOf(id)) !== userId) {
             res.status(404).json({ error: 'Session not found' });
             return;
         }
         const revoked = await store.revoke(id);
+        await req.audit('session.revoke', 'session', id, { username, own: false, revoked });
         if (id === req.session.id) await req.sessions.destroy();
         res.json({ ok: true, revoked: revoked ? 1 : 0 });
     }));

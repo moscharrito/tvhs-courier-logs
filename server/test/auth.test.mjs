@@ -44,7 +44,9 @@ describe('username and password login', () => {
         const a = srv.agent();
         const res = await a.post('/api/login').send({ username: srv.creds.admin.username, password: srv.creds.admin.password });
         expect(res.status).toBe(200);
-        expect(res.body).toEqual({ username: 'admin', name: 'Administrator', role: 'admin', route: null });
+        // Since ticket 0.8 the profile carries the user id (the audit trail and
+        // the future shell use it); nothing secret is exposed.
+        expect(res.body).toEqual({ id: 1, username: 'admin', name: 'Administrator', role: 'admin', route: null });
         expect(res.headers['set-cookie'].join(';')).toMatch(/izy_sid=/);
 
         const sess = await a.get('/api/session');

@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -166,12 +166,16 @@ describe('fresh database', () => {
             expect(await columnNames(database.client, 'projects')).toEqual(['id', 'code', 'name', 'timezone', 'settings', 'created_at']);
             expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'created_at', 'settings']);
             expect(await columnNames(database.client, 'sessions')).toEqual(['id', 'user_id', 'device', 'ip', 'created_at', 'last_seen_at', 'idle_expires_at', 'absolute_expires_at', 'revoked_at']);
+            expect(await columnNames(database.client, 'audit_events')).toEqual(['id', 'at', 'project_id', 'user_id', 'username', 'action', 'entity', 'entity_id', 'ip', 'detail']);
 
-            // Legacy inline UNIQUE constraints stay autoindexes; only the named indexes from 0001 exist.
+            // Legacy inline UNIQUE constraints stay autoindexes; only the named indexes from later migrations exist.
             const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
             expect(idx.rows.map((r) => r.name)).toEqual([
+                'audit_events_at_idx', 'audit_events_entity_idx', 'audit_events_project_id_idx', 'audit_events_user_id_idx',
                 'checkins_project_id_idx', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique', 'projects_code_unique', 'sessions_user_id_idx',
             ]);
+            const triggers = await database.client.execute("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name");
+            expect(triggers.rows.map((r) => r.name)).toEqual(['audit_events_no_delete', 'audit_events_no_update']);
             expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
 
             // tvhs is seeded as project 1 so the project_id default points at it.

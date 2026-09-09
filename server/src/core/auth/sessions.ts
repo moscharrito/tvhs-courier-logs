@@ -30,7 +30,7 @@ export interface SessionUser {
 /** What handlers see. `user` is null when no valid session cookie is present. */
 export interface RequestSession {
     id: string | null;
-    user: Omit<SessionUser, 'id'> | null;
+    user: SessionUser | null;
 }
 
 export interface SessionControls {
@@ -215,7 +215,7 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
         req.sessions = {
             create: async (user: SessionUser) => {
                 const { token, absoluteExpiresAt } = await store.create(user, { userAgent: req.get('user-agent'), ip: req.ip });
-                req.session = { id: hash(token), user: { username: user.username, name: user.name, role: user.role, route: user.route } };
+                req.session = { id: hash(token), user: { id: user.id, username: user.username, name: user.name, role: user.role, route: user.route } };
                 res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: 'lax', secure, path: '/', expires: absoluteExpiresAt });
             },
             destroy: async () => {
@@ -235,7 +235,7 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
                 return next();
             }
             const { id, user } = found;
-            req.session = { id, user: { username: user.username, name: user.name, role: user.role, route: user.route } };
+            req.session = { id, user };
             return next();
         } catch (err) {
             return next(err);

@@ -67,6 +67,37 @@ export const sessions = sqliteTable(
     (t) => [index('sessions_user_id_idx').on(t.userId)],
 );
 
+/* Append-only audit trail. Migration 0004 adds BEFORE UPDATE and BEFORE
+ * DELETE triggers that abort, so rows can only ever be inserted. Every write
+ * endpoint and every read of one user's data records an event. `detail` is
+ * JSON and must never contain PHI (ids, counts, and field names only). */
+export const auditEvents = sqliteTable(
+    'audit_events',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        /** ISO timestamp */
+        at: text('at').notNull(),
+        projectId: integer('project_id'),
+        userId: integer('user_id'),
+        /** Username at the time, kept even if the user row later changes */
+        username: text('username'),
+        /** dotted verb, e.g. auth.login, logs.save, user.create */
+        action: text('action').notNull(),
+        /** entity type, e.g. user, session, logs, checkin */
+        entity: text('entity').notNull(),
+        entityId: text('entity_id'),
+        ip: text('ip').notNull().default(''),
+        detail: text('detail').notNull().default('{}'),
+    },
+    (t) => [
+        index('audit_events_at_idx').on(t.at),
+        index('audit_events_user_id_idx').on(t.userId),
+        index('audit_events_project_id_idx').on(t.projectId),
+        index('audit_events_entity_idx').on(t.entity, t.entityId),
+    ],
+);
+
 export type Project = typeof projects.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
+export type AuditEvent = typeof auditEvents.$inferSelect;

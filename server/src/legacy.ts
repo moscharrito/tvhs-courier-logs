@@ -17,6 +17,8 @@ import type { Database } from './db/client';
 import { createSessionMiddleware, type SessionStore } from './core/auth/sessions';
 import { createCoreAuthRouter } from './core/auth/routes';
 import { createUsersRouter } from './core/users/routes';
+import { createAuditMiddleware, type AuditLog } from './core/audit/audit';
+import { createAuditRouter } from './core/audit/routes';
 
 export interface LegacyServer {
     app: Express;
@@ -34,6 +36,7 @@ interface Bridge {
 export interface BootedLegacy {
     legacy: LegacyServer;
     sessions: SessionStore;
+    audit: AuditLog;
 }
 
 export function bootLegacy(config: Config, database: Database): BootedLegacy {
@@ -42,12 +45,15 @@ export function bootLegacy(config: Config, database: Database): BootedLegacy {
 
     const { middleware, store } = createSessionMiddleware({ client: database.client, config });
     bridge.set('sessionMiddleware', middleware);
+    const { middleware: auditMiddleware, log } = createAuditMiddleware({ client: database.client });
+    bridge.set('auditMiddleware', auditMiddleware);
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const legacy = require('../server.js') as LegacyServer;
 
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
+    legacy.app.use(createAuditRouter({ log }));
 
-    return { legacy, sessions: store };
+    return { legacy, sessions: store, audit: log };
 }

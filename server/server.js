@@ -83,6 +83,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // survive restarts and deploys because they live in the database, and an
 // admin can revoke any device.
 app.use(bridge.get('sessionMiddleware'));
+// Audit trail (src/core/audit/audit.ts): req.audit(action, entity, id, detail)
+// records who did what, stamped with actor, project and IP. Append-only.
+app.use(bridge.get('auditMiddleware'));
 
 // Operating timezone — pinned in config so check-in dates don't depend on the host clock.
 // Override with APP_TIMEZONE (e.g. "America/New_York") in the environment / .env if needed.
@@ -239,6 +242,8 @@ function dayRows(routeDef, dayLogs) {
 // return the public profile.
 async function loginSession(req, user) {
     await req.sessions.create({ id: user.id, username: user.username, name: user.name, role: user.role, route: user.route });
+    const method = req.path === '/api/login' ? 'password' : req.path === '/api/login/pin' ? 'pin' : 'pin_setup';
+    await req.audit('auth.login', 'user', user.username, { method, role: user.role });
     return req.session.user;
 }
 
@@ -265,9 +270,13 @@ app.post('/api/login', async (req, res) => {
 
     const user = await dbGet('SELECT * FROM users WHERE username = ?', [username.toLowerCase().trim()]);
     if (!user || !bcrypt.compareSync(password, user.password)) {
+        await req.audit('auth.login_failed', 'user', String(username).toLowerCase().trim().slice(0, 120), { method: 'password', reason: user ? 'bad_password' : 'no_such_user' });
         return res.status(401).json({ error: 'Invalid username or password' });
     }
-    if (user.status !== 'active') return res.status(403).json({ error: 'Account disabled' });
+    if (user.status !== 'active') {
+        await req.audit('auth.login_failed', 'user', user.username, { method: 'password', reason: 'disabled' });
+        return res.status(403).json({ error: 'Account disabled' });
+    }
 
     res.json(await loginSession(req, user));
 });
@@ -288,6 +297,7 @@ app.post('/api/login/pin', async (req, res) => {
     const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND status = 'active' AND route = ?", [route]);
     if (!user || !user.pin || !bcrypt.compareSync(String(pin), user.pin)) {
         pinFail(route);
+        await req.audit('auth.login_failed', 'route', String(route).slice(0, 40), { method: 'pin', reason: !user ? 'no_driver' : !user.pin ? 'no_pin' : 'bad_pin' });
         return res.status(401).json({ error: 'Incorrect PIN' });
     }
     pinReset(route);
@@ -310,6 +320,7 @@ app.post('/api/login/pin/setup', async (req, res) => {
 });
 
 app.post('/api/logout', async (req, res) => {
+    if (req.session.user) await req.audit('auth.logout', 'user', req.session.user.username);
     await req.sessions.destroy();
     res.json({ ok: true });
 });
@@ -351,6 +362,7 @@ tvhs.post('/checkin', requireAuth, async (req, res) => {
 
     const checkinAt = new Date().toISOString();
     await dbRun('INSERT INTO checkins (project_id, username, date, checkin_at) VALUES (?, ?, ?, ?)', [req.project.id, user.username, date, checkinAt]);
+    await req.audit('checkin.create', 'checkin', `${user.username}:${date}`, { date });
     res.json({ checkedIn: true, checkin_at: checkinAt, date });
 });
 
@@ -427,6 +439,10 @@ tvhs.get('/logs', requireAuth, async (req, res) => {
 
     // Drivers can only see their own logs
     const targetUser = (user.role === 'admin' && username) ? username : user.username;
+    // An admin reading one specific driver's data is recorded; self reads are not.
+    if (targetUser !== user.username) {
+        await req.audit('logs.read', 'user', targetUser, { startDate: startDate || null, endDate: endDate || null });
+    }
 
     let query = 'SELECT * FROM logs WHERE project_id = ? AND username = ?';
     const params = [req.project.id, targetUser];
@@ -489,6 +505,7 @@ tvhs.post('/logs', requireAuth, async (req, res) => {
     });
 
     await db.batch(stmts, 'write');
+    await req.audit('logs.save', 'logs', `${user.username}:${date}`, { date, legs: legs.length });
     res.json({ ok: true });
 });
 
@@ -501,6 +518,7 @@ tvhs.delete('/logs', requireAuth, async (req, res) => {
     if (!date) return res.status(400).json({ error: 'date required' });
 
     await dbRun('DELETE FROM logs WHERE project_id = ? AND username = ? AND date = ?', [req.project.id, user.username, date]);
+    await req.audit('logs.clear', 'logs', `${user.username}:${date}`, { date });
     res.json({ ok: true });
 });
 
@@ -586,6 +604,9 @@ tvhs.get('/admin/export', requireAdmin, async (req, res) => {
 
     const logs = await dbAll(query, params);
     if (logs.length === 0) return res.status(404).json({ error: 'No data to export' });
+    await req.audit('logs.export', 'logs', driver && driver !== 'all' ? driver : 'all', {
+        driver: driver || 'all', route: route || 'all', startDate: startDate || null, endDate: endDate || null, rows: logs.length,
+    });
 
     // Group by driver
     const byDriver = {};
@@ -811,6 +832,7 @@ tvhs.get('/logs/export', requireAuth, async (req, res) => {
         [req.project.id, user.username, startDate, endDate]);
 
     if (logs.length === 0) return res.status(404).json({ error: 'No data to export' });
+    await req.audit('logs.export_own', 'logs', user.username, { startDate, endDate, rows: logs.length });
 
     const routeDef = ROUTES[userInfo.route];
     if (!routeDef) return res.status(400).json({ error: 'Unknown route' });

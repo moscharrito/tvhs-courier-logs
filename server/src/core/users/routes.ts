@@ -184,12 +184,14 @@ export function createUsersRouter({ client, store }: Deps): Router {
             [body.username, bcrypt.hashSync(body.password, BCRYPT_ROUNDS), body.name, body.email ?? null, body.role, 'active'],
         );
         const created = await findUser(body.username);
+        await req.audit('user.create', 'user', body.username, { role: body.role, hasEmail: body.email !== undefined });
         res.status(201).json(await present(created!));
     }));
 
     router.get('/api/users/:username', requireAdmin, wrap(async (req, res) => {
         const u = await loadOr404(req, res);
         if (!u) return;
+        await req.audit('user.read', 'user', u.username);
         res.json(await present(u));
     }));
 
@@ -217,6 +219,12 @@ export function createUsersRouter({ client, store }: Deps): Router {
         let revoked = 0;
         if (body.status === 'disabled') revoked = await store.revokeAllForUser(Number(u.id));
 
+        await req.audit('user.update', 'user', u.username, {
+            fields: Object.keys(body),
+            ...(body.role !== undefined ? { role: body.role } : {}),
+            ...(body.status !== undefined ? { status: body.status } : {}),
+            revokedSessions: revoked,
+        });
         const updated = await findUser(u.username);
         res.json({ ...(await present(updated!)), revokedSessions: revoked });
     }));
@@ -229,6 +237,7 @@ export function createUsersRouter({ client, store }: Deps): Router {
         await run('UPDATE users SET password = ? WHERE id = ?', [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(u.id)]);
         // Every device signs out, including the admin's own if they reset themselves.
         const revoked = await store.revokeAllForUser(Number(u.id));
+        await req.audit('user.password_reset', 'user', u.username, { revokedSessions: revoked });
         if (req.session.user!.username === u.username) await req.sessions.destroy();
         res.json({ ok: true, revokedSessions: revoked });
     }));
@@ -239,6 +248,7 @@ export function createUsersRouter({ client, store }: Deps): Router {
         const body = parse(SetPin, req.body, res);
         if (!body) return;
         await run('UPDATE users SET pin = ? WHERE id = ?', [bcrypt.hashSync(body.pin, BCRYPT_ROUNDS), Number(u.id)]);
+        await req.audit('user.pin_set', 'user', u.username);
         res.json({ ok: true, hasPin: true });
     }));
 
@@ -246,6 +256,7 @@ export function createUsersRouter({ client, store }: Deps): Router {
         const u = await loadOr404(req, res);
         if (!u) return;
         await run('UPDATE users SET pin = NULL WHERE id = ?', [Number(u.id)]);
+        await req.audit('user.pin_clear', 'user', u.username);
         res.json({ ok: true, hasPin: false });
     }));
 
@@ -279,6 +290,9 @@ export function createUsersRouter({ client, store }: Deps): Router {
             [Number(u.id), Number(project['id']), body.role, JSON.stringify(settings)],
         );
         await mirrorRoute(Number(u.id));
+        await req.audit('membership.set', 'membership', `${u.username}:${String(project['code'])}`, {
+            username: u.username, project: String(project['code']), role: body.role, settingKeys: Object.keys(settings),
+        });
         res.json(await present((await findUser(u.username))!));
     }));
 
@@ -292,6 +306,7 @@ export function createUsersRouter({ client, store }: Deps): Router {
             [Number(u.id), byId ? Number(pid) : pid.toLowerCase()],
         );
         await mirrorRoute(Number(u.id));
+        await req.audit('membership.remove', 'membership', `${u.username}:${pid.toLowerCase()}`, { username: u.username, project: pid.toLowerCase(), removed: rs.rowsAffected });
         res.json({ ok: true, removed: rs.rowsAffected });
     }));
 
