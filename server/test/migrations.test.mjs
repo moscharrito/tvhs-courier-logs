@@ -311,16 +311,21 @@ describe('the real local development database', () => {
             for (const t of ['users', 'logs', 'checkins']) {
                 expect(await count(database.client, t)).toBe(before[t].rows);
             }
-            // users is rebuilt with email and status; logs and checkins gain exactly one column.
+            // The real file may be legacy-shaped or already migrated by a local
+            // dev server; either way it must end in the canonical shape with
+            // every row intact.
             expect(await columnNames(database.client, 'users')).toEqual(USERS_COLS_AFTER_0003);
             expect(norm(await tableSql(database.client, 'users'))).toBe(norm(USERS_SQL_AFTER_0003));
             for (const t of ['logs', 'checkins']) {
-                expect(await columnNames(database.client, t)).toEqual([...before[t].cols, 'project_id']);
+                const cols = await columnNames(database.client, t);
+                const legacyCols = before[t].cols.filter((c) => c !== 'project_id');
+                expect(cols).toEqual([...legacyCols, 'project_id']);
             }
             const usersAfter = (await database.client.execute('SELECT username, name, role, route, pin FROM users ORDER BY id')).rows;
             expect(usersAfter).toEqual(usersBefore);
-            // Every existing user became a tvhs member.
-            expect(await count(database.client, 'memberships')).toBe(before.users.rows);
+            // Every admin and driver is a tvhs member (staff users may have none).
+            const eligible = Number((await database.client.execute("SELECT COUNT(*) AS n FROM users WHERE role IN ('admin','driver')")).rows[0].n);
+            expect(await count(database.client, 'memberships')).toBeGreaterThanOrEqual(eligible);
         } finally {
             database.client.close();
         }

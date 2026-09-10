@@ -43,6 +43,8 @@ export interface Config {
         courierIdleMinutes: number;
         courierAbsoluteMinutes: number;
     };
+    /** Built frontend shell (web/dist). Served at / when present. */
+    webDist: string;
     /** Bootstrap accounts reconciled on boot by the legacy syncUsers(). */
     legacyUsers: {
         admin: { user: string | undefined; pass: string | undefined };
@@ -75,6 +77,7 @@ const EnvSchema = z.object({
     TURSO_DATABASE_URL: optionalString,
     TURSO_AUTH_TOKEN: optionalString,
     DB_FILE: z.string().trim().min(1).default('courier_logs.db'),
+    WEB_DIST: z.string().trim().min(1).optional(),
     FILES_ENABLED: boolish,
     S3_BUCKET: optionalString,
     S3_REGION: optionalString,
@@ -180,6 +183,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         sessionSecret: e.SESSION_SECRET as string,
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
+        webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
         sessions: {
             staffIdleMinutes: e.SESSION_STAFF_IDLE_MINUTES,
             staffAbsoluteMinutes: e.SESSION_STAFF_ABSOLUTE_MINUTES,

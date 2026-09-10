@@ -25,7 +25,7 @@ services:
     name: tvhs-courier-logs
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build -w server
+    buildCommand: npm ci && npm run build
     startCommand: npm start -w server
     autoDeploy: true
     healthCheckPath: /api/config

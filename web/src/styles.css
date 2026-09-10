@@ -1,0 +1,88 @@
+/* Izy Ops shell. Namespaced under .izy so the legacy TVHS stylesheet, which
+   is loaded only while its screen is mounted, cannot collide with it. */
+
+:root {
+    --izy-green: #14532d;
+    --izy-green-2: #16a34a;
+    --izy-green-soft: #dcfce7;
+    --izy-ink: #111827;
+    --izy-muted: #6b7280;
+    --izy-line: #e5e7eb;
+    --izy-bg: #f6f8f7;
+    --izy-card: #ffffff;
+    --izy-danger: #b91c1c;
+    --izy-danger-soft: #fee2e2;
+    --izy-warn-soft: #fef3c7;
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--izy-ink); background: var(--izy-bg); }
+* { box-sizing: border-box; }
+
+.izy { min-height: 100%; display: flex; }
+.izy-side { width: 240px; flex: 0 0 240px; background: var(--izy-green); color: #ecfdf5; display: flex; flex-direction: column; padding: 16px 12px; }
+.izy-brand { font-weight: 700; font-size: 18px; padding: 8px 12px 16px; }
+.izy-brand small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
+.izy-nav-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; padding: 12px 12px 4px; }
+.izy-nav a { display: block; color: inherit; text-decoration: none; padding: 9px 12px; border-radius: 8px; font-size: 14px; }
+.izy-nav a:hover { background: rgba(255,255,255,0.08); }
+.izy-nav a.active { background: var(--izy-green-2); color: #fff; }
+.izy-side .izy-me { margin-top: auto; padding: 12px; font-size: 13px; border-top: 1px solid rgba(255,255,255,0.15); }
+.izy-side .izy-me b { display: block; }
+.izy-main { flex: 1; min-width: 0; padding: 24px 28px; }
+.izy-main h1 { margin: 0 0 4px; font-size: 22px; }
+.izy-main .izy-sub { color: var(--izy-muted); margin: 0 0 20px; font-size: 14px; }
+
+.izy-card { background: var(--izy-card); border: 1px solid var(--izy-line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+.izy-card h2 { margin: 0 0 12px; font-size: 16px; }
+.izy-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.izy-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 160px; }
+.izy-field input, .izy-field select { padding: 8px 10px; border: 1px solid var(--izy-line); border-radius: 8px; font-size: 14px; background: #fff; }
+.izy-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--izy-green-2); background: var(--izy-green-2); color: #fff; font-size: 14px; cursor: pointer; }
+.izy-btn.secondary { background: #fff; color: var(--izy-green); border-color: var(--izy-line); }
+.izy-btn.danger { background: #fff; color: var(--izy-danger); border-color: var(--izy-danger-soft); }
+.izy-btn:disabled { opacity: 0.5; cursor: default; }
+.izy-btn.small { padding: 5px 10px; font-size: 12px; }
+
+.izy-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.izy-table th, .izy-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--izy-line); vertical-align: top; }
+.izy-table th { font-size: 12px; color: var(--izy-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.izy-table a { color: var(--izy-green); }
+.izy-table code { font-size: 12px; background: var(--izy-bg); padding: 2px 5px; border-radius: 4px; }
+
+.izy-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--izy-green-soft); color: var(--izy-green); }
+.izy-pill.off { background: var(--izy-danger-soft); color: var(--izy-danger); }
+.izy-pill.warn { background: var(--izy-warn-soft); color: #92400e; }
+.izy-pill.muted { background: var(--izy-line); color: var(--izy-muted); }
+
+.izy-alert { padding: 10px 12px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; }
+.izy-alert.error { background: var(--izy-danger-soft); color: var(--izy-danger); }
+.izy-alert.ok { background: var(--izy-green-soft); color: var(--izy-green); }
+.izy-alert ul { margin: 6px 0 0 18px; padding: 0; }
+.izy-muted { color: var(--izy-muted); font-size: 13px; }
+
+/* Login */
+.izy-login { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+.izy-login-card { width: 100%; max-width: 420px; background: var(--izy-card); border: 1px solid var(--izy-line); border-radius: 16px; padding: 28px; }
+.izy-login-card h1 { margin: 0; font-size: 20px; }
+.izy-login-card .izy-sub { margin-bottom: 18px; }
+.izy-login-card form { display: flex; flex-direction: column; gap: 12px; }
+.izy-driver { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px; border: 1px solid var(--izy-line); border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; }
+.izy-driver b { display: block; }
+.izy-driver span { color: var(--izy-muted); font-size: 12px; }
+.izy-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--izy-green-soft); color: var(--izy-green); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.izy-link { background: none; border: none; color: var(--izy-green); cursor: pointer; font-size: 14px; padding: 0; text-decoration: underline; }
+
+/* Legacy TVHS mount: full-bleed with a slim platform bar on top */
+.izy-legacy-bar { display: flex; align-items: center; gap: 12px; padding: 6px 14px; background: var(--izy-green); color: #ecfdf5; font-size: 13px; }
+.izy-legacy-bar a, .izy-legacy-bar button { color: #fff; }
+.izy-legacy-host { min-height: calc(100vh - 34px); }
+
+@media (max-width: 900px) {
+    .izy { flex-direction: column; }
+    .izy-side { width: auto; flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 10px; }
+    .izy-side .izy-me { margin: 0 0 0 auto; border: 0; padding: 4px 8px; }
+    .izy-nav { display: flex; flex-wrap: wrap; gap: 4px; }
+    .izy-nav-title { display: none; }
+    .izy-main { padding: 16px; }
+}

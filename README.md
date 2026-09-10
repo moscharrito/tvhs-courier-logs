@@ -6,7 +6,7 @@ Operations platform for Izy Global Services courier contracts. One login, one us
 
 ```
 server/        Express API. server/server.js is the legacy TVHS app, booted by server/src/index.ts
-web/           Frontend workspace (placeholder until ticket 0.9)
+web/           Frontend shell: Vite + React (login, project switcher, users, devices, audit, legacy TVHS mount)
 docs/          Plans and backlog
 NorthBound/    Historical TVHS driver log spreadsheets (reference for the export format)
 SouthBound/    Historical TVHS driver invoice spreadsheets (reference for the export format)
@@ -23,6 +23,7 @@ npm test
 npm run build          # compile server/src to server/dist
 npm start              # run the compiled server
 npm run dev            # run server/src/index.ts with tsx and file watching
+npm run dev -w web     # Vite dev server on :5173, proxying /api and /legacy to :3000
 ```
 
 ## Local configuration
@@ -59,8 +60,12 @@ Sessions are server-side (`sessions` table). The `izy_sid` cookie carries only a
 
 ## Users
 
-Users are managed in-app by platform admins through `/api/users` (create, update name/email/role/status, reset password, set or clear PIN, add or remove project memberships with per-project settings). Platform roles are `admin`, `staff`, and `driver`; project rights come from memberships. Disabling a user or resetting a password signs them out of every device. The environment only creates the first admin on an empty database. The admin screen for these endpoints ships with the frontend shell in ticket 0.9.
+Users are managed in-app by platform admins through `/api/users` (create, update name/email/role/status, reset password, set or clear PIN, add or remove project memberships with per-project settings). Platform roles are `admin`, `staff`, and `driver`; project rights come from memberships. Disabling a user or resetting a password signs them out of every device. The environment only creates the first admin on an empty database. The admin screens live in the frontend shell under Users.
 
 ## Audit trail
 
 `audit_events` is append-only: database triggers abort any UPDATE or DELETE. Every request gets `req.audit(action, entity, entityId, detail)`, which stamps the actor, project, IP, and time. Logins (success and failure), logouts, check-ins, log saves and clears, exports, admin reads of one user's data, user management, membership changes, and session revocations are recorded. `detail` holds ids, counts, and field names only, never PHI or secrets. Admins query it at `GET /api/audit` with `username`, `action` (prefix), `entity`, `entityId`, `projectId`, `from`, `to`, `limit`, and `before` (cursor); reading the log is itself audited.
+
+## Frontend shell
+
+`web/` is a Vite + React app served by the server at `/` from `web/dist` (any non-API, non-file GET falls back to `index.html` for the client router). It provides sign-in (driver PIN or staff password), a project switcher built from memberships, and the platform screens for admins (Users, Audit log) and everyone (My devices). The original TVHS courier log app is served under `/legacy` and mounted inside the shell without an iframe: the shell injects its markup, loads its script once, and re-enters it through its global `checkSession()`; sign-out is routed through the shell. Drivers whose only membership is a TVHS courier one land in that app straight after login. During development run `npm run dev -w server` and `npm run dev -w web` side by side.

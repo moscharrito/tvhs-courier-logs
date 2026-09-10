@@ -2,9 +2,29 @@
   "name": "@izy/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Izy Ops Platform frontend shell. Placeholder until ticket 0.9 adds the Vite + React app.",
+  "description": "Izy Ops Platform frontend shell: login, project switcher, platform admin screens, legacy TVHS mount",
+  "type": "module",
   "scripts": {
-    "typecheck": "echo \"web: no sources yet (ticket 0.9)\"",
-    "test": "echo \"web: no tests yet (ticket 0.9)\""
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.6.0",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
   }
 }

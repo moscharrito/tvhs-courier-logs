@@ -76,7 +76,10 @@ async function bootstrapAdmin() {
 
 // ---- Middleware ----
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// The legacy TVHS frontend now lives under /legacy; the platform shell
+// (web/dist, mounted by src/legacy.ts) owns /. The shell loads these files
+// into its TVHS screen, so drivers still see the same app.
+app.use('/legacy', express.static(path.join(__dirname, 'public')));
 // Server-side sessions (src/core/auth/sessions.ts), injected by src/legacy.ts.
 // The middleware sets req.session = { id, user } from the izy_sid cookie and
 // req.sessions = { create(user), destroy() } for login and logout. Sessions
