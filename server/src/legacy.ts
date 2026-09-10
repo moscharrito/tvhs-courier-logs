@@ -21,6 +21,10 @@ import { createCoreAuthRouter } from './core/auth/routes';
 import { createUsersRouter } from './core/users/routes';
 import { createAuditMiddleware, type AuditLog } from './core/audit/audit';
 import { createAuditRouter } from './core/audit/routes';
+import { Logger } from './core/http/logger';
+import { createRequestMiddleware } from './core/http/request';
+import { createHealthRouter } from './core/http/health';
+import { apiNotFound, createErrorHandler } from './core/http/errors';
 
 export interface LegacyServer {
     app: Express;
@@ -39,12 +43,22 @@ export interface BootedLegacy {
     legacy: LegacyServer;
     sessions: SessionStore;
     audit: AuditLog;
+    logger: Logger;
 }
 
-export function bootLegacy(config: Config, database: Database): BootedLegacy {
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const VERSION: string = (require('../package.json') as { version: string }).version;
+
+export function createLogger(config: Config): Logger {
+    return new Logger({ level: config.log.level, format: config.log.format }, { app: 'izy-ops', env: config.nodeEnv });
+}
+
+export function bootLegacy(config: Config, database: Database, logger: Logger = createLogger(config)): BootedLegacy {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const bridge = require('../legacy-bridge.js') as Bridge;
 
+    // Order inside server.js: request id + log, json body, static, sessions, audit, routes.
+    bridge.set('requestMiddleware', createRequestMiddleware(logger));
     const { middleware, store } = createSessionMiddleware({ client: database.client, config });
     bridge.set('sessionMiddleware', middleware);
     const { middleware: auditMiddleware, log } = createAuditMiddleware({ client: database.client });
@@ -53,13 +67,24 @@ export function bootLegacy(config: Config, database: Database): BootedLegacy {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const legacy = require('../server.js') as LegacyServer;
 
+    legacy.app.use(createHealthRouter({ client: database.client, version: VERSION }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createAuditRouter({ log }));
 
+    if (config.nodeEnv === 'test') {
+        // Lets the test suite exercise the error handler on a real request.
+        legacy.app.get('/api/_test/error', () => { throw new Error('synthetic failure with secret detail'); });
+        legacy.app.get('/api/_test/exposed', () => { throw Object.assign(new Error('You may see this'), { status: 422, expose: true }); });
+    }
+
     mountShell(legacy.app, config.webDist);
 
-    return { legacy, sessions: store, audit: log };
+    // Last: JSON 404 for unknown API paths, then the central error handler.
+    legacy.app.use(apiNotFound);
+    legacy.app.use(createErrorHandler({ logger, isProduction: config.isProduction }));
+
+    return { legacy, sessions: store, audit: log, logger };
 }
 
 /* The built frontend shell (web/dist) is served at /. Any GET that is not an

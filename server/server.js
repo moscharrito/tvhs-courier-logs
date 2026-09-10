@@ -75,6 +75,9 @@ async function bootstrapAdmin() {
 }
 
 // ---- Middleware ----
+// Request id + structured request log (src/core/http/request.ts). First, so
+// every later line and error carries the id.
+app.use(bridge.get('requestMiddleware'));
 app.use(express.json());
 // The legacy TVHS frontend now lives under /legacy; the platform shell
 // (web/dist, mounted by src/legacy.ts) owns /. The shell loads these files

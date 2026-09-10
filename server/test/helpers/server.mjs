@@ -13,7 +13,7 @@ import request from 'supertest';
 import { loadConfig } from '../../src/config.ts';
 import { createDatabase } from '../../src/db/client.ts';
 import { runMigrations } from '../../src/db/migrate.ts';
-import { bootLegacy } from '../../src/legacy.ts';
+import { bootLegacy, createLogger } from '../../src/legacy.ts';
 
 export const SERVER_DIR = path.resolve(import.meta.dirname, '..', '..');
 
@@ -68,12 +68,18 @@ export async function startServer() {
     const database = createDatabase(config);
     await runMigrations(database);
 
-    // Silence the boot log lines so test output stays readable.
+    // Structured log lines are collected instead of printed, so tests can
+    // assert on them and the output stays readable.
+    const logs = [];
+    const logger = createLogger({ ...config, log: { level: 'debug', format: 'json' } });
+    logger.setSink((record) => { logs.push(record); });
+
+    // Silence the legacy boot console lines.
     const origLog = console.log;
     console.log = () => { };
     let legacy, sessions;
     try {
-        ({ legacy, sessions } = bootLegacy(config, database));
+        ({ legacy, sessions } = bootLegacy(config, database, logger));
         await legacy.ready;
     } finally {
         console.log = origLog;
@@ -108,6 +114,7 @@ export async function startServer() {
         db: legacy.db,
         core: database,
         sessions,
+        logs,
         agent: () => request.agent(url),
         async login(who) {
             const a = request.agent(url);

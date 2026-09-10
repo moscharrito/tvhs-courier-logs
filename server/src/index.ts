@@ -4,9 +4,8 @@
  *   1. Load .env (development and test only; production gets env from Render).
  *   2. Validate the environment into a typed config. Fail fast and loudly.
  *   3. Run database migrations. Refuse to start if any fail.
- *   4. Boot the legacy TVHS server with core services injected (sessions,
- *      core routers). It reads process.env at load and reconciles the
- *      bootstrap users against the migrated schema.
+ *   4. Boot the legacy TVHS server with core services injected (request id
+ *      and logging, sessions, audit, health, core routers, error handler).
  *   5. Bind the listener. */
 
 import path from 'node:path';
@@ -14,7 +13,8 @@ import dotenv from 'dotenv';
 import { loadConfig, describeConfig, ConfigError, type Config } from './config';
 import { createDatabase } from './db/client';
 import { runMigrations } from './db/migrate';
-import { bootLegacy } from './legacy';
+import { bootLegacy, createLogger } from './legacy';
+import { errorFields } from './core/http/logger';
 
 if (process.env.NODE_ENV !== 'production') {
     // server/.env, whether running from src (tsx) or dist (compiled)
@@ -35,15 +35,30 @@ function configOrExit(): Config {
 
 async function main(): Promise<void> {
     const config = configOrExit();
-    console.log('Config:', JSON.stringify(describeConfig(config)));
+    const logger = createLogger(config);
+    logger.info('config', describeConfig(config));
 
     const database = createDatabase(config);
-    await runMigrations(database, (m) => console.log(m));
+    await runMigrations(database, (m) => logger.info(m));
 
-    // The core keeps this client (sessions, core routers); the legacy server
-    // still opens its own for its handlers until they move into modules.
-    const { legacy } = bootLegacy(config, database);
-    await legacy.start(config.port);
+    const { legacy } = bootLegacy(config, database, logger);
+    const server = await legacy.start(config.port);
+    logger.info('listening', { port: config.port });
+
+    const shutdown = (signal: string) => {
+        logger.info('shutting down', { signal });
+        server.close(() => {
+            try { database.client.close(); } catch { /* ignore */ }
+            process.exit(0);
+        });
+        setTimeout(() => process.exit(0), 5000).unref();
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+
+    process.on('unhandledRejection', (reason) => {
+        logger.error('unhandled rejection', errorFields(reason));
+    });
 }
 
 main().catch((err: unknown) => {

@@ -45,6 +45,11 @@ export interface Config {
     };
     /** Built frontend shell (web/dist). Served at / when present. */
     webDist: string;
+    log: {
+        level: 'debug' | 'info' | 'warn' | 'error';
+        /** json in production and test, pretty in development unless overridden */
+        format: 'json' | 'pretty';
+    };
     /** Bootstrap accounts reconciled on boot by the legacy syncUsers(). */
     legacyUsers: {
         admin: { user: string | undefined; pass: string | undefined };
@@ -78,6 +83,8 @@ const EnvSchema = z.object({
     TURSO_AUTH_TOKEN: optionalString,
     DB_FILE: z.string().trim().min(1).default('courier_logs.db'),
     WEB_DIST: z.string().trim().min(1).optional(),
+    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    LOG_FORMAT: z.enum(['json', 'pretty']).optional(),
     FILES_ENABLED: boolish,
     S3_BUCKET: optionalString,
     S3_REGION: optionalString,
@@ -184,6 +191,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
+        log: {
+            level: e.LOG_LEVEL,
+            format: e.LOG_FORMAT ?? (e.NODE_ENV === 'development' ? 'pretty' : 'json'),
+        },
         sessions: {
             staffIdleMinutes: e.SESSION_STAFF_IDLE_MINUTES,
             staffAbsoluteMinutes: e.SESSION_STAFF_ABSOLUTE_MINUTES,
@@ -206,6 +217,7 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         timezone: c.timezone,
         database: c.db.kind === 'turso' ? 'Turso (remote)' : c.db.url,
         files: c.files.enabled ? `S3 ${c.files.s3?.bucket ?? ''} (${c.files.s3?.region ?? ''})` : 'disabled',
+        log: `${c.log.level} ${c.log.format}`,
     };
 }
 

@@ -28,7 +28,7 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm start -w server
     autoDeploy: true
-    healthCheckPath: /api/config
+    healthCheckPath: /health
     envVars:
       # --- Non-secret config ---
       - key: NODE_VERSION
