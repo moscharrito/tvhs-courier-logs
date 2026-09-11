@@ -52,6 +52,33 @@ describe('membership bootstrap', () => {
     });
 });
 
+describe('sign-in scoping', () => {
+    it('GET /api/login/projects is public and lists project names only', async () => {
+        const res = await srv.agent().get('/api/login/projects');
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([
+            { code: 'other', name: 'Other Contract' },
+            { code: 'tvhs', name: 'TVHS RMD Courier' },
+            { code: 'uh', name: 'UH Pharmacy Courier' },
+        ]);
+        // No user or membership data leaks through this endpoint.
+        expect(JSON.stringify(res.body)).not.toMatch(/driver|admin|route|id/i);
+    });
+
+    it('GET /api/drivers/list?project= only returns that project\'s couriers', async () => {
+        const tvhs = await srv.agent().get('/api/drivers/list?project=tvhs');
+        expect(tvhs.body.map((d) => d.route).sort()).toEqual(['northbound', 'southbound']);
+
+        // uh has no couriers yet, so its sign-in page lists nobody.
+        expect((await srv.agent().get('/api/drivers/list?project=uh')).body).toEqual([]);
+        expect((await srv.agent().get('/api/drivers/list?project=nope')).body).toEqual([]);
+        expect((await srv.agent().get('/api/drivers/list?project=TVHS')).body).toHaveLength(2);
+
+        // Unscoped keeps the old behaviour for the legacy app.
+        expect((await srv.agent().get('/api/drivers/list')).body).toHaveLength(2);
+    });
+});
+
 describe('project resolution and access', () => {
     it('GET /api/projects/:pid returns the project by code or id, for members only', async () => {
         const admin = await srv.login('admin');

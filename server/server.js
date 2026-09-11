@@ -296,8 +296,27 @@ app.post('/api/login', async (req, res) => {
 // Public: driver roster for the quick-login picker (no secrets; identifies
 // drivers by route so personal emails aren't exposed publicly).
 app.get('/api/drivers/list', async (req, res) => {
-    const drivers = await dbAll("SELECT name, route, pin FROM users WHERE role = 'driver' AND status = 'active' AND route IS NOT NULL ORDER BY name");
+    // Scoped to one project when ?project= is given, so the sign-in page only
+    // ever lists the couriers of the project being signed in to. Without it,
+    // the legacy behaviour (every active TVHS driver) is kept for the old app.
+    const code = req.query.project;
+    const drivers = code
+        ? await dbAll(`
+            SELECT u.name, u.route, u.pin FROM users u
+            JOIN memberships m ON m.user_id = u.id
+            JOIN projects p ON p.id = m.project_id
+            WHERE u.role = 'driver' AND u.status = 'active' AND u.route IS NOT NULL
+              AND m.role = 'courier' AND p.code = ?
+            ORDER BY u.name`, [String(code).toLowerCase()])
+        : await dbAll("SELECT name, route, pin FROM users WHERE role = 'driver' AND status = 'active' AND route IS NOT NULL ORDER BY name");
     res.json(drivers.map(d => ({ route: d.route, name: d.name, hasPin: !!d.pin })));
+});
+
+// Public: the projects a person can sign in to, names only. The sign-in page
+// asks which project first, then shows that project's couriers. No membership
+// or user data is exposed here.
+app.get('/api/login/projects', async (req, res) => {
+    res.json(await dbAll('SELECT code, name FROM projects ORDER BY name'));
 });
 
 // Driver quick login with PIN

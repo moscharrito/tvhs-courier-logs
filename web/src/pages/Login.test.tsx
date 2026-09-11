@@ -18,23 +18,66 @@ function renderApp(initialPath = '/') {
     );
 }
 
+const loginProjects = [
+    { code: 'tvhs', name: 'TVHS RMD Courier' },
+    { code: 'uh', name: 'UH Pharmacy Courier' },
+];
+
 describe('Login', () => {
-    it('shows the driver picker when there is no session, with PIN or setup per driver', async () => {
-        mockFetch({
+    it('asks which project first, then shows that project\'s drivers with PIN or setup', async () => {
+        const { calls } = mockFetch({
             'GET /api/session': { status: 401, body: { error: 'No session' } },
-            'GET /api/drivers/list': drivers,
+            'GET /api/login/projects': loginProjects,
+            'GET /api/drivers/list?project=tvhs': drivers,
         });
         renderApp();
-        expect(await screen.findByText('Who is driving?')).toBeInTheDocument();
+
+        expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
+        const tvhsButton = await screen.findByRole('button', { name: /TVHS RMD Courier/ });
+        expect(screen.getByRole('button', { name: /UH Pharmacy Courier/ })).toBeInTheDocument();
+        // No driver names are shown before a project is chosen.
+        expect(screen.queryByText('Bereket Nigusse')).not.toBeInTheDocument();
+
+        fireEvent.click(tvhsButton);
+
+        expect(await screen.findByText(/who is driving\?/)).toBeInTheDocument();
         expect(await screen.findByText('Bereket Nigusse')).toBeInTheDocument();
         expect(screen.getByText(/NorthBound · Enter PIN/)).toBeInTheDocument();
         expect(screen.getByText(/SouthBound · Set up PIN/)).toBeInTheDocument();
+        // The driver list was fetched scoped to the chosen project.
+        expect(calls).toContain('GET /api/drivers/list?project=tvhs');
+        expect(calls).not.toContain('GET /api/drivers/list');
+    });
+
+    it('tells a driver when the chosen project has no couriers yet', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/drivers/list?project=uh': [],
+        });
+        renderApp();
+        fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
+        expect(await screen.findByText(/No drivers are set up for this project yet/)).toBeInTheDocument();
+    });
+
+    it('goes back from the driver list to the project list', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/drivers/list?project=tvhs': drivers,
+        });
+        renderApp();
+        fireEvent.click(await screen.findByRole('button', { name: /TVHS RMD Courier/ }));
+        await screen.findByText('Bereket Nigusse');
+        fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+        expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
+        expect(screen.queryByText('Bereket Nigusse')).not.toBeInTheDocument();
     });
 
     it('signs a staff user in with username and password and shows the shell', async () => {
         const { calls } = mockFetch({
             'GET /api/session': { status: 401, body: { error: 'No session' } },
-            'GET /api/drivers/list': drivers,
+            'GET /api/login/projects': loginProjects,
             'POST /api/login': { id: 1, username: 'admin', name: 'Administrator', role: 'admin', route: null },
             'GET /api/me/projects': [{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin' }],
         });
@@ -57,13 +100,14 @@ describe('Login', () => {
         const nav = within(screen.getByRole('navigation', { name: 'Main' }));
         expect(nav.getByRole('link', { name: 'Users' })).toBeInTheDocument();
         expect(nav.getByRole('link', { name: 'Audit log' })).toBeInTheDocument();
-        expect(calls).toContain('GET /api/drivers/list');
+        // Staff never trigger a courier lookup.
+        expect(calls.some((c) => c.startsWith('GET /api/drivers/list'))).toBe(false);
     });
 
     it('shows an error from the API on a bad password', async () => {
         mockFetch({
             'GET /api/session': { status: 401, body: { error: 'No session' } },
-            'GET /api/drivers/list': drivers,
+            'GET /api/login/projects': loginProjects,
             'POST /api/login': { status: 401, body: { error: 'Invalid username or password' } },
         });
         renderApp();
