@@ -29,6 +29,7 @@ import { createRequireProject } from './core/projects/middleware';
 import { createProjectSettingsRouter } from './core/projects/settings-routes';
 import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
+import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
 
 export interface LegacyServer {
     app: Express;
@@ -83,6 +84,23 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));
+    // The daily list upload is the raw file body. express.json() in server.js
+    // ignores these content types, so the raw parser below is what reads them.
+    legacy.app.use(
+        '/api/projects/:pid/uh/imports',
+        express.raw({
+            type: [
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.ms-excel',
+                'application/octet-stream',
+                'text/csv',
+                'text/plain',
+            ],
+            limit: MAX_UPLOAD_BYTES,
+        }),
+        requireProject,
+        createImportsRouter({ client: database.client }),
+    );
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.

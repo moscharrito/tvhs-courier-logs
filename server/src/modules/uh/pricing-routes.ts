@@ -11,7 +11,8 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Client } from '@libsql/client';
-import { priceFor, resolveZone, pricingSettingsFrom, type PriceSchedule, type Zone } from './pricing';
+import { priceFor, resolveZone, pricingSettingsFrom, type Zone } from './pricing';
+import { zipZoneMap, scheduleOn } from './zones';
 
 const QuoteBody = z.object({
     zip: z.string().trim().min(1).max(10).optional(),
@@ -30,40 +31,6 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 export function createPricingRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
 
-    /** The schedule in force on `on` (an ISO date), or null if none yet. */
-    async function scheduleFor(projectId: number, on: string): Promise<PriceSchedule | null> {
-        const rs = await client.execute({
-            sql: `SELECT * FROM price_schedules WHERE project_id = ? AND effective_from <= ?
-                  ORDER BY effective_from DESC LIMIT 1`,
-            args: [projectId, on],
-        });
-        const r = rs.rows[0];
-        if (!r) return null;
-        return {
-            effectiveFrom: String(r['effective_from']),
-            zoneRates: {
-                1: Number(r['zone1']), 2: Number(r['zone2']), 3: Number(r['zone3']),
-                4: Number(r['zone4']), 5: Number(r['zone5']),
-            },
-            statSurcharge: Number(r['stat_surcharge']),
-            afterHoursSurcharge: Number(r['after_hours_surcharge']),
-            dryRunFee: Number(r['dry_run_fee']),
-            outOfAreaPerMile: Number(r['out_of_area_per_mile']),
-        };
-    }
-
-    async function zipMap(projectId: number, on: string): Promise<Map<string, Zone>> {
-        // One row per ZIP: the newest mapping that has taken effect.
-        const rs = await client.execute({
-            sql: `SELECT zip, zone FROM zone_zips z WHERE project_id = ? AND effective_from <= ?
-                    AND effective_from = (
-                      SELECT MAX(effective_from) FROM zone_zips z2
-                      WHERE z2.project_id = z.project_id AND z2.zip = z.zip AND z2.effective_from <= ?)`,
-            args: [projectId, on, on],
-        });
-        return new Map(rs.rows.map((r) => [String(r['zip']), Number(r['zone']) as Zone]));
-    }
-
     const today = (req: Request) => {
         const on = String(req.query['on'] ?? '');
         return /^\d{4}-\d{2}-\d{2}$/.test(on) ? on : new Date().toISOString().slice(0, 10);
@@ -71,7 +38,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
 
     router.get('/', wrap(async (req, res) => {
         const on = today(req);
-        const schedule = await scheduleFor(req.project!.id, on);
+        const schedule = await scheduleOn(client, req.project!.id, on);
         const counts = await client.execute({
             sql: `SELECT zone, COUNT(*) AS n FROM zone_zips WHERE project_id = ? AND effective_from <= ? GROUP BY zone ORDER BY zone`,
             args: [req.project!.id, on],
@@ -89,7 +56,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         const on = today(req);
         const zip = req.query['zip'] ? String(req.query['zip']).trim().slice(0, 5) : null;
         if (zip) {
-            const map = await zipMap(req.project!.id, on);
+            const map = await zipZoneMap(client, req.project!.id, on);
             const zone = resolveZone(zip, map);
             res.json({ zip, zone, outOfArea: zone === null, on });
             return;
@@ -111,7 +78,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         const at = body.at ? new Date(body.at) : new Date();
         const on = at.toISOString().slice(0, 10);
 
-        const schedule = await scheduleFor(req.project!.id, on);
+        const schedule = await scheduleOn(client, req.project!.id, on);
         if (!schedule) {
             res.status(409).json({ error: `No price schedule is in effect for this project on ${on}` });
             return;
@@ -121,7 +88,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         if (body.zone !== undefined) {
             zone = body.zone as Zone;
         } else {
-            zone = resolveZone(body.zip ?? null, await zipMap(req.project!.id, on));
+            zone = resolveZone(body.zip ?? null, await zipZoneMap(client, req.project!.id, on));
         }
 
         const settings = pricingSettingsFrom(req.project!.settings, req.project!.timezone);

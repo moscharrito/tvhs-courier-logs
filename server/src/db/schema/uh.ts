@@ -106,3 +106,176 @@ export const priceSchedules = sqliteTable(
 
 export type ZoneZip = typeof zoneZips.$inferSelect;
 export type PriceSchedule = typeof priceSchedules.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * Daily lists and orders (ticket 1.5).
+ *
+ * THIS IS WHERE PHI ENTERS THE SYSTEM. Every column below that names or
+ * locates a patient is marked. The rules that follow are not style
+ * preferences, they are the difference between a compliant system and a
+ * reportable breach:
+ *
+ *   - Audit rows carry counts and ids from these tables, never values.
+ *   - Log lines carry neither. The request logger already drops query
+ *     strings; nothing here may be put in a path or a log field.
+ *   - The uploaded spreadsheet is parsed in memory and never written to
+ *     disk. There is no staging table and no temp file, so an abandoned
+ *     import leaves nothing behind. Ticket 1.8 adds encrypted S3 storage if
+ *     a copy of the source file is ever actually wanted.
+ *   - Only what a delivery needs is stored. A pharmacy list usually carries
+ *     more (date of birth, account number, drug name); the importer maps the
+ *     fields it needs and drops the rest rather than keeping them in case.
+ * ------------------------------------------------------------------------- */
+
+export const LIST_STATUSES = ['draft', 'released', 'cancelled'] as const;
+export const SERVICE_TYPES = ['scheduled', 'stat', 'adhoc'] as const;
+/* 1.5 needs only the states an imported order passes through before dispatch
+ * touches it. Ticket 1.6 owns the rest of the lifecycle and the transition
+ * table; it extends this constraint rather than replacing it. */
+export const ORDER_STATUSES = ['pending', 'ready', 'assigned', 'picked_up', 'delivered', 'failed', 'cancelled'] as const;
+
+/* One import of one pharmacy's list for one service date. A pharmacy may send
+ * more than one batch in a day (Addendum 1 describes the list being compiled
+ * and sent "based on operational needs"), so this is not unique per day. */
+export const dailyLists = sqliteTable(
+    'daily_lists',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        siteId: integer('site_id').notNull().references(() => sites.id),
+        /** Date the deliveries are for, YYYY-MM-DD in the project timezone. */
+        serviceDate: text('service_date').notNull(),
+        status: text('status', { enum: LIST_STATUSES }).notNull().default('draft'),
+        /** When the list reached dispatch. The SLA clock starts here (Addendum 1). */
+        receivedAt: text('received_at').notNull(),
+        /** Original file name, so an operator recognises it. Never a path. */
+        sourceFilename: text('source_filename').notNull().default(''),
+        /** SHA-256 of the uploaded bytes: catches the same file imported twice. */
+        sourceSha256: text('source_sha256').notNull().default(''),
+        rowCount: integer('row_count').notNull().default(0),
+        orderCount: integer('order_count').notNull().default(0),
+        skippedCount: integer('skipped_count').notNull().default(0),
+        importedBy: text('imported_by').notNull().default(''),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        index('daily_lists_project_date_idx').on(t.projectId, t.serviceDate),
+        index('daily_lists_site_date_idx').on(t.siteId, t.serviceDate),
+        check('daily_lists_status_check', sql`${t.status} IN ('draft','released','cancelled')`),
+    ],
+);
+
+export const orders = sqliteTable(
+    'orders',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** Where the courier picks up. The zone is measured from here. */
+        siteId: integer('site_id').notNull().references(() => sites.id),
+        /** Null for a manually created STAT or ad hoc order (ticket 1.6). */
+        dailyListId: integer('daily_list_id').references(() => dailyLists.id),
+        /** The pharmacy's own reference for the row, when the list carries one. */
+        externalRef: text('external_ref').notNull().default(''),
+        serviceType: text('service_type', { enum: SERVICE_TYPES }).notNull().default('scheduled'),
+        serviceDate: text('service_date').notNull(),
+
+        /* PHI: identifies a patient. */
+        recipientName: text('recipient_name').notNull(),
+        /* PHI: contact detail. */
+        recipientPhone: text('recipient_phone').notNull().default(''),
+        /* PHI: a patient's home address. */
+        addressLine: text('address_line').notNull(),
+        addressLine2: text('address_line2').notNull().default(''),
+        city: text('city').notNull().default(''),
+        state: text('state').notNull().default('TX'),
+        zip: text('zip').notNull(),
+        /* PHI: free text from the pharmacy. May name the patient or the drug. */
+        deliveryNotes: text('delivery_notes').notNull().default(''),
+
+        /* Coordinates stay null until ticket 1.4 geocodes them. Nothing
+         * invents them, exactly as with sites. */
+        lat: real('lat'),
+        lng: real('lng'),
+        geocodeStatus: text('geocode_status', { enum: GEOCODE_STATUSES }).notNull().default('pending'),
+
+        /** Billing zone resolved from the ZIP map. Null means out of area. */
+        zone: integer('zone'),
+        /** One-way loaded miles, needed only when zone is null. Ticket 1.4. */
+        outOfAreaMiles: real('out_of_area_miles'),
+
+        signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
+
+        /** When the request reached dispatch. Copied from the list. */
+        receivedAt: text('received_at').notNull(),
+        /** Computed by dueTimesFor from the project's clock rule. */
+        dueAt: text('due_at'),
+        /** STAT's second deadline, one hour from pickup. Set at pickup (1.6). */
+        pickupDueAt: text('pickup_due_at'),
+        pickupAt: text('pickup_at'),
+        arrivedAt: text('arrived_at'),
+        deliveredAt: text('delivered_at'),
+
+        /* Duplicate detection within a site and a day: a hash of the external
+         * reference, or of the normalised recipient and address when the list
+         * carries no reference. A hash rather than the values themselves, so
+         * neither the column nor its index can be read as a patient list. */
+        dedupeKey: text('dedupe_key').notNull().default(''),
+
+        status: text('status', { enum: ORDER_STATUSES }).notNull().default('pending'),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+        updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        index('orders_project_date_idx').on(t.projectId, t.serviceDate),
+        index('orders_list_idx').on(t.dailyListId),
+        index('orders_site_date_idx').on(t.siteId, t.serviceDate),
+        index('orders_status_idx').on(t.projectId, t.status),
+        index('orders_dedupe_idx').on(t.siteId, t.serviceDate, t.dedupeKey),
+        check('orders_service_type_check', sql`${t.serviceType} IN ('scheduled','stat','adhoc')`),
+        check('orders_status_check', sql`${t.status} IN ('pending','ready','assigned','picked_up','delivered','failed','cancelled')`),
+        check('orders_zone_check', sql`${t.zone} IS NULL OR ${t.zone} BETWEEN 1 AND 5`),
+    ],
+);
+
+export const packages = sqliteTable(
+    'packages',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        orderId: integer('order_id').notNull().references(() => orders.id),
+        /* Scope 1.2.6 and 1.2.8 require a description and quantity on the
+         * tracking record and on the proof of delivery, so this is
+         * contractually required rather than optional detail. */
+        description: text('description').notNull().default(''),
+        quantity: integer('quantity').notNull().default(1),
+        /** Scope 1.2.3: doorstep delivery is allowed by medication type. */
+        signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [index('packages_order_idx').on(t.orderId)],
+);
+
+/* The column mapping a site's spreadsheet needs, saved after the first import
+ * so nobody re-maps the same layout every day. headerFingerprint is a hash of
+ * the header row: when a pharmacy changes its export, the fingerprint stops
+ * matching and the operator is asked to confirm the mapping again rather than
+ * the importer silently reading the wrong columns. */
+export const importMappings = sqliteTable(
+    'import_mappings',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        siteId: integer('site_id').notNull().references(() => sites.id),
+        /** JSON: { field: "Header text in the sheet" } */
+        mapping: text('mapping').notNull().default('{}'),
+        headerFingerprint: text('header_fingerprint').notNull().default(''),
+        updatedBy: text('updated_by').notNull().default(''),
+        updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [unique('import_mappings_site_unique').on(t.projectId, t.siteId)],
+);
+
+export type DailyList = typeof dailyLists.$inferSelect;
+export type Order = typeof orders.$inferSelect;
+export type Package = typeof packages.$inferSelect;
+export type ImportMapping = typeof importMappings.$inferSelect;

@@ -1,0 +1,11 @@
+﻿Discharge Pharmacy - Daily Delivery Manifest (SYNTHETIC TEST DATA)
+
+Rx #,Patient Name,Phone,Address 1,Apt/Unit,City,State,Zip Code,Qty,Medication,Delivery Type,Special Instructions,Signature
+RX-1001,Dana Whitfield,(210) 555-0134,1100 Broadway St,Apt 4B,San Antonio,TX,78215,2,"Cold pack, 2 items",Scheduled,Leave with front desk,Yes
+RX-1002,Marcus Ibarra,210-555-0177,4502 Medical Dr,,San Antonio,TX,78229-1234,1,Oral solids,STAT,,Yes
+RX-1003,Priya Raman,2105550188,1055 Ada St,Suite 200,San Antonio,TX,78223,1,Refrigerated,ad hoc,Call on arrival,No
+RX-1004,Owen Castellanos,,206 Fair Ave,,San Antonio,TX,,1,Oral solids,Scheduled,,Yes
+RX-1005,Lena Kowalski,210-555-0199,515 S Presa St,,San Antonio,TX,78205,two,Oral solids,Scheduled,,Yes
+RX-1006,Theo Nakamura,830-555-0102,120 E Blanco Rd,,Boerne,TX,78006,1,Cold pack,Scheduled,,Yes
+RX-1001,Dana Whitfield,(210) 555-0134,1100 Broadway St,Apt 4B,San Antonio,TX,78215,2,"Cold pack, 2 items",Scheduled,Leave with front desk,Yes
+RX-1007,Grace Odenigbo,210-555-0143,7703 Floyd Curl Dr,,San Antonio,TX,78229,3,Oral solids,Priority-2,Ring twice,

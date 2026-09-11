@@ -71,6 +71,17 @@ describe('structured request log', () => {
         expect(JSON.stringify(line)).not.toContain('secret.person');
     });
 
+    it('logs the full path of a mounted module route, not the path inside the router', async () => {
+        // Express rewrites req.url as it descends into a mounted router, so a
+        // path read on finish would say "/" for every module endpoint.
+        const admin = await srv.login('admin');
+        const before = requestLogs().length;
+        await admin.get('/api/projects/uh/uh/sites');
+        const line = requestLogs().slice(before).find((l) => l.method === 'GET' && l.status === 200 && l.path.includes('/uh/sites'));
+        expect(line, 'no log line carried the full mounted path').toBeTruthy();
+        expect(line.path).toBe('/api/projects/uh/uh/sites');
+    });
+
     it('logs 4xx as warn, 5xx as error, and /health at debug', async () => {
         await srv.agent().get('/api/session');           // 401
         await srv.agent().get('/api/_test/error');       // 500

@@ -37,6 +37,9 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-card h2 { margin: 0 0 12px; font-size: 16px; }
 .izy-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .izy-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 160px; }
+.izy-row-blocked { background: var(--izy-danger-soft); }
+.izy-issue-error { color: var(--izy-danger); }
+.izy-field input[type=file] { padding: 6px 0; font-size: 13px; }
 .izy-card h3 { margin: 0 0 8px; font-size: 14px; }
 .izy-row-between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .izy-fieldset { border: 1px solid var(--izy-line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 14px; }
@@ -63,6 +66,7 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 
 .izy-alert { padding: 10px 12px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; }
 .izy-alert.error { background: var(--izy-danger-soft); color: var(--izy-danger); }
+.izy-alert.warn { background: var(--izy-warn-soft); color: #92400e; }
 .izy-alert.ok { background: var(--izy-green-soft); color: var(--izy-green); }
 .izy-alert ul { margin: 6px 0 0 18px; padding: 0; }
 .izy-muted { color: var(--izy-muted); font-size: 13px; }

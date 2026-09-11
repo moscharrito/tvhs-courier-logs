@@ -164,6 +164,7 @@ describe('Login', () => {
                 canManage: false,
                 example: [{ serviceType: 'scheduled', receivedAt: '2026-09-14T17:00:00.000Z', dueAt: '2026-09-14T19:00:00.000Z', minutes: 120, from: 'receipt', pending: false, basis: '120 minutes from the list being received.' }],
             },
+            'GET /api/projects/uh/uh/imports': [],
             'GET /api/projects/uh/uh/sites': [
                 { id: 7, code: 'vida', name: 'University Health Vida Pharmacy', type: 'pharmacy', addressLine: '3611 Jaguar Parkway', city: 'San Antonio', state: 'TX', zip: '78224', fullAddress: '3611 Jaguar Parkway, San Antonio, TX 78224', lat: null, lng: null, geocodeStatus: 'pending', releasesList: true, status: 'active', notes: '' },
             ],
@@ -172,8 +173,11 @@ describe('Login', () => {
         await waitFor(() => expect(screen.getByRole('heading', { name: 'UH Pharmacy Courier' })).toBeInTheDocument());
         expect(screen.getByText(/your role: Dispatcher/)).toBeInTheDocument();
         expect(screen.getByText('Coming next')).toBeInTheDocument();
-        // A dispatcher sees the sites but gets no management controls.
-        expect(await screen.findByText('University Health Vida Pharmacy')).toBeInTheDocument();
+        // A dispatcher sees the sites but gets no management controls. The
+        // name also appears in the import screen's pharmacy picker, so scope
+        // the assertion to the sites table.
+        const sitesTable = (await screen.findByText('Pickup locations')).closest('.izy-card') as HTMLElement;
+        expect(within(sitesTable).getByText('University Health Vida Pharmacy')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'New site' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
         // and sees the contract pricing

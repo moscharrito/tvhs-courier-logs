@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -172,8 +172,10 @@ describe('fresh database', () => {
             const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
             expect(idx.rows.map((r) => r.name)).toEqual([
                 'audit_events_at_idx', 'audit_events_entity_idx', 'audit_events_project_id_idx', 'audit_events_user_id_idx',
-                'checkins_project_id_idx', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique',
-                'price_schedules_project_from_unique', 'projects_code_unique', 'sessions_user_id_idx',
+                'checkins_project_id_idx', 'daily_lists_project_date_idx', 'daily_lists_site_date_idx',
+                'import_mappings_site_unique', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique',
+                'orders_dedupe_idx', 'orders_list_idx', 'orders_project_date_idx', 'orders_site_date_idx', 'orders_status_idx',
+                'packages_order_idx', 'price_schedules_project_from_unique', 'projects_code_unique', 'sessions_user_id_idx',
                 'sites_project_code_unique', 'sites_project_id_idx', 'zone_zips_project_zip_from_unique', 'zone_zips_project_zip_idx',
             ]);
             const triggers = await database.client.execute("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name");

@@ -64,7 +64,31 @@ Users are managed in-app by platform admins through `/api/users` (create, update
 
 ## Audit trail
 
-`audit_events` is append-only: database triggers abort any UPDATE or DELETE. Every request gets `req.audit(action, entity, entityId, detail)`, which stamps the actor, project, IP, and time. Logins (success and failure), logouts, check-ins, log saves and clears, exports, admin reads of one user's data, user management, membership changes, and session revocations are recorded. `detail` holds ids, counts, and field names only, never PHI or secrets. Admins query it at `GET /api/audit` with `username`, `action` (prefix), `entity`, `entityId`, `projectId`, `from`, `to`, `limit`, and `before` (cursor); reading the log is itself audited.
+`audit_events` is append-only: database triggers abort any UPDATE or DELETE. Every request gets `req.audit(action, entity, entityId, detail)`, which stamps the actor, project, IP, and time. Logins (success and failure), logouts, check-ins, log saves and clears, exports, admin reads of one user's data, user management, membership changes, and session revocations are recorded. `detail` holds ids, counts, and field names only, never PHI or secrets. The one deliberate exception is `project.settings.update`, which records the new values: they are contract parameters rather than patient data, and an invoice dispute turns on who changed the after-hours window and when. Admins query it at `GET /api/audit` with `username`, `action` (prefix), `entity`, `entityId`, `projectId`, `from`, `to`, `limit`, and `before` (cursor); reading the log is itself audited.
+
+### Daily list import
+
+Each pharmacy compiles its own delivery list and sends it, typically between noon and 2pm (Addendum 1). Nine pharmacies means nine layouts, so the importer discovers the column mapping, has a person confirm it, then saves it against the site. A saved mapping is keyed to a fingerprint of the header row: when a pharmacy changes its export, the fingerprint stops matching and the operator is asked to confirm again rather than the importer reading the wrong columns.
+
+`server/src/modules/uh/import-parse.ts` is pure: bytes and a mapping in, rows and issues out. It reads .xlsx through exceljs and .csv with its own RFC 4180 parser, finds the header row beneath any title and blank rows, and normalises as it goes (ZIP+4 to five digits, punctuated phones to digits, "Emergency" and "Rush" to STAT). An unrecognised service type becomes scheduled **and says so**, so nobody is silently downgraded.
+
+Rows come back with issues at two severities. An error blocks the row (no recipient, no address, no valid ZIP, a quantity that is not a number); a warning does not (no city, no description, an unrecognised service word, a ZIP outside the published zone list). Duplicates are detected within the file and against orders already imported for that site and date, keyed on the pharmacy's reference when there is one and on the normalised recipient and address when there is not. A duplicate is held back until the operator confirms it is a genuinely separate delivery.
+
+Zones are resolved from the ZIP map at import, so a list is priceable before ticket 1.4 supplies coordinates; a ZIP outside the list is flagged as needing a distance. `due_at` is stamped with `dueTimesFor`, which means the SLA clock starts when the list was received, and `receivedAt` can be set explicitly so a list imported twenty minutes after it arrived does not quietly gain twenty minutes.
+
+`POST .../uh/imports/preview` and `POST .../uh/imports` take the same bytes as the raw request body, with the filename in `X-Upload-Filename` and the options as a JSON query parameter. Preview changes nothing. Both need project `admin`, `ops_manager` or `dispatcher`.
+
+#### PHI
+
+This is the first module that stores patient data, and the rules are load-bearing rather than aspirational:
+
+- **The uploaded file is never written to disk.** It is parsed in memory and discarded. There is no staging table and no temp file, so an operator who previews a list and closes the tab leaves nothing behind. That is why preview and commit each take the bytes, rather than the server holding them between the two.
+- **An issue never contains a value copied from a row.** It carries a row number, a field name and a code. The operator sees the offending data in the preview table, which is authorised and transient; the issue list stays safe to log and count. A test asserts that no fixture name, street or phone number appears in any issue message.
+- **Audit rows carry counts and ids only.** A test asserts the same of the whole audit trail after an import.
+- **Only what a delivery needs is stored.** A pharmacy list usually carries more (date of birth, account number, drug name); the importer maps the fields it needs and drops the rest.
+- `orders.dedupe_key` is a hash, so neither the column nor its index reads as a list of who is receiving medication.
+
+Reading a list (`GET .../uh/imports/:id`) is itself audited, the way an admin reading one user's record is.
 
 ## Project settings
 

@@ -57,6 +57,13 @@
       "when": 1789153294042,
       "tag": "0007_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789168039771,
+      "tag": "0008_daily_lists",
+      "breakpoints": true
     }
   ]
 }
