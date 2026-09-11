@@ -77,3 +77,14 @@ Users are managed in-app by platform admins through `/api/users` (create, update
 ## UH Pharmacy Courier module
 
 Sites are the pickup and delivery locations a run starts or ends at. The nine UH pharmacies from Bid Table BT-89AO are seeded by migration `0006_sites`. Coordinates are deliberately left unset (`geocode_status` of `pending`) until address lookup is switched on; nothing invents them, and changing a site's address clears any coordinates so a stale point cannot price a zone. `GET` and `POST /api/projects/:pid/uh/sites`, and `GET`, `PATCH` and `DELETE /api/projects/:pid/uh/sites/:id`, are readable by any project member and writable by project `admin` or `ops_manager`. Every query is scoped by project, so sites cannot be read or written across projects.
+
+### Zones and pricing
+
+Migration `0007_pricing` loads the zone ZIP map and the Izy BAFO price schedule from the Pricing sheet of Bid Table BT-89AO. The seed SQL is generated from the spreadsheet rather than typed, because a wrong ZIP would misprice every delivery to it; a test diffs the seeded map against the workbook. Both tables are effective-dated, so a later revision never rewrites the mapping that priced past invoices.
+
+`priceFor` in `server/src/modules/uh/pricing.ts` is pure and returns the full breakdown: zone base, STAT and after-hours surcharges, dry-run fee, out-of-area mileage, and a total, with money held in cents so repeated addition cannot drift. Two contract ambiguities are settings rather than assumptions:
+
+- **After-hours window.** Addendum 1 says 8 pm to 7 am, Scope 1.2.3 says 8 pm to 8 am. The addendum governs under the precedence clause and is the default; `pricing.afterHoursEnd` in the project settings changes it. Open item 7.
+- **Dry run.** Addendum 1 calls it a flat rate for the attempted service, per item, but does not say whether it replaces the delivery charge or is added to it. The default is replace, the reading that cannot over-bill University Health; `pricing.dryRunReplacesBase` flips it. Open item 10.
+
+Read the schedule at `GET /api/projects/:pid/uh/pricing`, the ZIP map at `.../pricing/zones` (add `?zip=` for one lookup), and price a delivery at `POST .../pricing/quote`. All are readable by any project member.

@@ -140,6 +140,12 @@ describe('Login', () => {
         mockFetch({
             'GET /api/session': { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null },
             'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'dispatcher' }],
+            'GET /api/projects/uh/uh/pricing': {
+                on: '2026-09-11',
+                schedule: { effectiveFrom: '2026-05-18', zoneRates: { 1: 12.5, 2: 14.5, 3: 22, 4: 36, 5: 52 }, statSurcharge: 22, afterHoursSurcharge: 18, dryRunFee: 9, outOfAreaPerMile: 1.95 },
+                settings: { afterHoursStart: '20:00', afterHoursEnd: '07:00', timezone: 'America/Chicago', dryRunReplacesBase: true },
+                zoneZipCounts: [{ zone: 1, zips: 38 }],
+            },
             'GET /api/projects/uh/uh/sites': [
                 { id: 7, code: 'vida', name: 'University Health Vida Pharmacy', type: 'pharmacy', addressLine: '3611 Jaguar Parkway', city: 'San Antonio', state: 'TX', zip: '78224', fullAddress: '3611 Jaguar Parkway, San Antonio, TX 78224', lat: null, lng: null, geocodeStatus: 'pending', releasesList: true, status: 'active', notes: '' },
             ],
@@ -152,6 +158,10 @@ describe('Login', () => {
         expect(await screen.findByText('University Health Vida Pharmacy')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'New site' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+        // and sees the contract pricing
+        expect(await screen.findByText('Contract pricing')).toBeInTheDocument();
+        expect(screen.getByText('$12.50')).toBeInTheDocument();
+        expect(screen.getByText(/After hours 20:00 to 07:00/)).toBeInTheDocument();
     });
 
     it('shows the TAG brand and the dotted loader while the session is resolving', async () => {

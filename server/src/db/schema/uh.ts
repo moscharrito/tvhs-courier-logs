@@ -50,3 +50,59 @@ export const sites = sqliteTable(
 );
 
 export type Site = typeof sites.$inferSelect;
+
+/* Zone by destination ZIP. Addendum 1: a zone is the one-way loaded mileage
+ * from the pickup location to the delivery location, and UH published the
+ * mapping as a ZIP list per zone in Bid Table BT-89AO. A ZIP absent from this
+ * table is out of area and bills per mile instead.
+ *
+ * Effective-dated so a future zone revision can be loaded without destroying
+ * the mapping that priced past invoices. */
+export const zoneZips = sqliteTable(
+    'zone_zips',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        zip: text('zip').notNull(),
+        zone: integer('zone').notNull(),
+        /** Place name as printed in the bid table for zones 4 and 5 (Helotes, Boerne) */
+        place: text('place'),
+        effectiveFrom: text('effective_from').notNull(),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        unique('zone_zips_project_zip_from_unique').on(t.projectId, t.zip, t.effectiveFrom),
+        index('zone_zips_project_zip_idx').on(t.projectId, t.zip),
+        check('zone_zips_zone_check', sql`${t.zone} BETWEEN 1 AND 5`),
+    ],
+);
+
+/* One complete price list, effective from a date. A contract price schedule
+ * changes as a whole, so a row is the whole schedule rather than one rate.
+ * Rates are the Izy BAFO figures; they are firm for the base term and the
+ * renewals, so a second row should only ever appear after a mutually agreed
+ * escalation (Addendum 1, fuel and labour). */
+export const priceSchedules = sqliteTable(
+    'price_schedules',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        effectiveFrom: text('effective_from').notNull(),
+        label: text('label').notNull().default(''),
+        zone1: real('zone1').notNull(),
+        zone2: real('zone2').notNull(),
+        zone3: real('zone3').notNull(),
+        zone4: real('zone4').notNull(),
+        zone5: real('zone5').notNull(),
+        statSurcharge: real('stat_surcharge').notNull(),
+        afterHoursSurcharge: real('after_hours_surcharge').notNull(),
+        dryRunFee: real('dry_run_fee').notNull(),
+        outOfAreaPerMile: real('out_of_area_per_mile').notNull(),
+        notes: text('notes').notNull().default(''),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [unique('price_schedules_project_from_unique').on(t.projectId, t.effectiveFrom)],
+);
+
+export type ZoneZip = typeof zoneZips.$inferSelect;
+export type PriceSchedule = typeof priceSchedules.$inferSelect;

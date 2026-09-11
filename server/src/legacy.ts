@@ -27,6 +27,7 @@ import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
 import { createSitesRouter } from './modules/uh/sites';
+import { createPricingRouter } from './modules/uh/pricing-routes';
 
 export interface LegacyServer {
     app: Express;
@@ -78,6 +79,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // in server.js, so the module has no dependency on the legacy app.
     const requireProject = createRequireProject(database.client);
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.
