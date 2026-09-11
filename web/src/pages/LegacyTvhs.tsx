@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/auth';
+import { Loading } from '../app/Loading';
 
 const LEGACY_BASE = '/legacy/';
 const LEGACY_STYLE_ID = 'izy-legacy-style';
@@ -65,10 +66,12 @@ export function LegacyTvhs() {
     const { user, signOut } = useAuth();
     const navigate = useNavigate();
     const [error, setError] = useState<string | null>(null);
+    const [ready, setReady] = useState(false);
     const isCourierOnly = user?.role !== 'admin';
 
     useEffect(() => {
         let cancelled = false;
+        setReady(false);
         const detachStyles = attachStyles();
 
         (async () => {
@@ -89,6 +92,7 @@ export function LegacyTvhs() {
                 navigate('/', { replace: true });
             };
             if (typeof window.checkSession === 'function') await window.checkSession();
+            if (!cancelled) setReady(true);
         })().catch((err: unknown) => {
             if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the TVHS app');
         });
@@ -106,13 +110,14 @@ export function LegacyTvhs() {
     return (
         <div>
             <div className="izy-legacy-bar">
-                <b>Izy Ops</b>
+                <b>TAG</b>
                 <span>TVHS RMD Courier</span>
-                {!isCourierOnly && <Link to="/" style={{ marginLeft: 'auto' }}>Back to platform</Link>}
-                {isCourierOnly && <button className="izy-link" style={{ marginLeft: 'auto', color: '#fff' }} type="button" onClick={() => { void window.logout?.(); }}>Sign out</button>}
+                <Link to="/" style={{ marginLeft: 'auto' }}>Projects</Link>
+                {isCourierOnly && <button className="izy-link" style={{ marginLeft: 12, color: '#fff' }} type="button" onClick={() => { void window.logout?.(); }}>Sign out</button>}
             </div>
             {error && <div className="izy-alert error" role="alert" style={{ margin: 12 }}>{error}</div>}
-            <div ref={host} className="izy-legacy-host" data-testid="legacy-host" />
+            {!ready && !error && <Loading full />}
+            <div ref={host} className="izy-legacy-host" data-testid="legacy-host" style={ready ? undefined : { display: 'none' }} />
         </div>
     );
 }

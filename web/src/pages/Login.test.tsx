@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../app/auth';
@@ -74,16 +74,42 @@ describe('Login', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent('Invalid username or password');
     });
 
-    it('routes a courier-only user straight to the TVHS app without shell chrome', async () => {
+    it('lands a driver on the project picker, without admin links, and opens the TVHS app on choice', async () => {
         mockFetch({
             'GET /api/session': { id: 3, username: 'north.driver', name: 'Bereket Nigusse', role: 'driver', route: 'northbound' },
             'GET /api/me/projects': [{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'courier' }],
             'GET /legacy/index.html': { status: 404, body: {} },
         });
         renderApp();
-        await waitFor(() => expect(screen.getByText('TVHS RMD Courier')).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByText('Welcome, Bereket')).toBeInTheDocument());
+        expect(screen.getByText('Choose the project you are working in.')).toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
-        expect(screen.queryByText('Back to platform')).not.toBeInTheDocument();
-        expect(screen.getByTestId('legacy-host')).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Audit log' })).not.toBeInTheDocument();
+
+        // The sidebar lists projects too; click the picker card in the main area.
+        fireEvent.click(within(screen.getByRole('main')).getByRole('link', { name: /TVHS RMD Courier/ }));
+        await waitFor(() => expect(screen.getByTestId('legacy-host')).toBeInTheDocument());
+        expect(screen.getByRole('link', { name: 'Projects' })).toBeInTheDocument();
+    });
+
+    it('shows a placeholder page for a project without a module yet', async () => {
+        mockFetch({
+            'GET /api/session': { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null },
+            'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'dispatcher' }],
+        });
+        renderApp('/projects/uh/uh');
+        await waitFor(() => expect(screen.getByRole('heading', { name: 'UH Pharmacy Courier' })).toBeInTheDocument());
+        expect(screen.getByText(/your role: Dispatcher/)).toBeInTheDocument();
+        expect(screen.getByText('Coming next')).toBeInTheDocument();
+    });
+
+    it('shows the TAG brand and the dotted loader while the session is resolving', async () => {
+        let release = () => {};
+        const gate = new Promise<void>((r) => { release = r; });
+        vi.stubGlobal('fetch', vi.fn(async () => { await gate; return new Response(JSON.stringify({ error: 'No session' }), { status: 401, headers: { 'Content-Type': 'application/json' } }); }));
+        renderApp();
+        expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+        release();
+        expect(await screen.findByRole('heading', { name: 'TAG' })).toBeInTheDocument();
     });
 });

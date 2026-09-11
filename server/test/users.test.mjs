@@ -21,7 +21,8 @@ describe('bootstrap', () => {
         ]);
         const members = (await sql(`SELECT u.username, m.role, m.settings FROM memberships m JOIN users u ON u.id = m.user_id ORDER BY u.username`)).rows.map((r) => ({ ...r }));
         expect(members).toEqual([
-            { username: 'admin', role: 'admin', settings: '{}' },
+            { username: 'admin', role: 'admin', settings: '{}' },   // tvhs
+            { username: 'admin', role: 'admin', settings: '{}' },   // uh
             { username: 'north.driver', role: 'courier', settings: '{"route":"northbound"}' },
             { username: 'south.driver', role: 'courier', settings: '{"route":"southbound"}' },
         ]);

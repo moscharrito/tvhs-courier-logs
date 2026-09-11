@@ -10,8 +10,13 @@ export default defineConfig({
         // a file run in order.
         pool: 'forks',
         fileParallelism: true,
+        // Each fork boots a server, a libsql client and (for the export tests)
+        // ExcelJS, so forks are heavy. Unbounded parallelism oversubscribes a
+        // 4-core dev machine and makes the export tests time out; cap the pool
+        // so runs are predictable.
+        poolOptions: { forks: { maxForks: 3, minForks: 1 } },
         sequence: { concurrent: false },
-        testTimeout: 20000,
+        testTimeout: 30000,
         hookTimeout: 30000,
     },
 });

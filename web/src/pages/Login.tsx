@@ -56,7 +56,7 @@ export function Login() {
     return (
         <div className="izy-login">
             <div className="izy-login-card">
-                <h1>Izy Ops</h1>
+                <h1>TAG</h1>
                 <p className="izy-sub">Izy Global Services LLC</p>
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
 

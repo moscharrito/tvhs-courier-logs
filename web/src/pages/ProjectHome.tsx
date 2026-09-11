@@ -1,0 +1,38 @@
+/* Landing page for a project that has no module screens yet (UH until the
+   dispatch module ships in Phases 1 and 2). Members see the project and
+   their role; the TVHS project never lands here because its route mounts
+   the legacy app directly. */
+
+import { Link, useParams } from 'react-router-dom';
+import { useAuth } from '../app/auth';
+
+const ROLE_LABEL: Record<string, string> = {
+    admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
+};
+
+export function ProjectHome() {
+    const { code = '' } = useParams();
+    const { projects } = useAuth();
+    const project = projects.find((p) => p.code === code);
+
+    if (!project) {
+        return (
+            <>
+                <h1>Project not available</h1>
+                <p className="izy-sub">You are not a member of <code>{code}</code>, or it does not exist.</p>
+                <Link className="izy-btn secondary" to="/">Back to projects</Link>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <h1>{project.name}</h1>
+            <p className="izy-sub"><code>{project.code}</code> · {project.timezone} · your role: {ROLE_LABEL[project.role] ?? project.role}</p>
+            <div className="izy-card">
+                <h2>Coming next</h2>
+                <p>The dispatch module for this project is being built: pharmacy sites and zone pricing first, then daily list intake, the dispatch board, and the courier app. Until then this page confirms your access, and admins can enrol staff and couriers from <Link to="/users">Users</Link>.</p>
+            </div>
+        </>
+    );
+}

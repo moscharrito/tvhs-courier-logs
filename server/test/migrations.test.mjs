@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -178,9 +178,12 @@ describe('fresh database', () => {
             expect(triggers.rows.map((r) => r.name)).toEqual(['audit_events_no_delete', 'audit_events_no_update']);
             expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
 
-            // tvhs is seeded as project 1 so the project_id default points at it.
-            const projects = (await database.client.execute('SELECT id, code, name, timezone, settings FROM projects')).rows.map((r) => ({ ...r }));
-            expect(projects).toEqual([{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', settings: '{}' }]);
+            // tvhs is seeded as project 1 so the project_id default points at it; uh follows.
+            const projects = (await database.client.execute('SELECT id, code, name, timezone, settings FROM projects ORDER BY id')).rows.map((r) => ({ ...r }));
+            expect(projects).toEqual([
+                { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', settings: '{}' },
+                { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', settings: '{}' },
+            ]);
         } finally {
             database.client.close();
         }
@@ -194,7 +197,7 @@ describe('fresh database', () => {
             const again = await runMigrations(database);
             expect(again.appliedCount).toBe(MIGRATION_COUNT);
             expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
-            expect(await count(database.client, 'projects')).toBe(1);
+            expect(await count(database.client, 'projects')).toBe(2);
         } finally {
             database.client.close();
         }

@@ -7,8 +7,8 @@ const TVHS = '/api/projects/tvhs/tvhs';
 let srv;
 beforeAll(async () => {
     srv = await startServer();
-    // A second project nobody belongs to, and a user with no memberships at all.
-    await srv.db.execute("INSERT INTO projects (id, code, name) VALUES (2, 'other', 'Other Contract')");
+    // A third project nobody belongs to (tvhs and uh are seeded), and a user with no memberships at all.
+    await srv.db.execute("INSERT INTO projects (id, code, name) VALUES (3, 'other', 'Other Contract')");
     await srv.db.execute({
         sql: "INSERT INTO users (username, password, name, role, route) VALUES (?, ?, ?, 'driver', NULL)",
         args: ['outsider', bcrypt.hashSync('outsider-pass', 4), 'No Membership'],
@@ -31,6 +31,7 @@ describe('membership bootstrap', () => {
             ORDER BY u.username`)).rows.map((r) => ({ ...r }));
         expect(rows).toEqual([
             { username: 'admin', code: 'tvhs', role: 'admin' },
+            { username: 'admin', code: 'uh', role: 'admin' },
             { username: 'north.driver', code: 'tvhs', role: 'courier' },
             { username: 'south.driver', code: 'tvhs', role: 'courier' },
         ]);
@@ -40,6 +41,7 @@ describe('membership bootstrap', () => {
         const admin = await srv.login('admin');
         expect((await admin.get('/api/me/projects')).body).toEqual([
             { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin' },
+            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' },
         ]);
         const north = await srv.login('north');
         expect((await north.get('/api/me/projects')).body[0]).toMatchObject({ code: 'tvhs', role: 'courier' });
@@ -68,9 +70,10 @@ describe('project resolution and access', () => {
         expect((await admin.get('/api/projects/nope')).status).toBe(404);
         expect((await admin.get('/api/projects/999/tvhs/routes')).status).toBe(404);
 
-        // admin of tvhs is not a member of project 2
+        // admin is a member of tvhs and uh, but not of project 3
         expect((await admin.get('/api/projects/other')).status).toBe(403);
-        expect((await admin.get('/api/projects/2/tvhs/admin/logs')).status).toBe(403);
+        expect((await admin.get('/api/projects/3/tvhs/admin/logs')).status).toBe(403);
+        expect((await admin.get('/api/projects/uh')).status).toBe(200);
 
         const outsider = await loginAs('outsider', 'outsider-pass');
         const r = await outsider.get(`${TVHS}/routes`);

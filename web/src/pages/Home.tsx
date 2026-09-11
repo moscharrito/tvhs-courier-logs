@@ -5,30 +5,29 @@ const ROLE_LABEL: Record<string, string> = {
     admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
 };
 
+/* Project picker. Everyone lands here after sign-in, drivers included, and
+   chooses the project to work in. */
 export function Home() {
     const { user, projects } = useAuth();
     if (!user) return null;
     return (
         <>
             <h1>Welcome, {user.name.split(' ')[0]}</h1>
-            <p className="izy-sub">Pick a project to open it.</p>
+            <p className="izy-sub">Choose the project you are working in.</p>
             <div className="izy-card">
                 <h2>Your projects</h2>
                 {projects.length === 0 ? (
                     <div className="izy-muted">You are not a member of any project yet. Ask an admin to add you.</div>
                 ) : (
-                    <table className="izy-table">
-                        <thead><tr><th>Project</th><th>Your role</th><th></th></tr></thead>
-                        <tbody>
-                            {projects.map((p) => (
-                                <tr key={p.code}>
-                                    <td><b>{p.name}</b><div className="izy-muted">{p.code} · {p.timezone}</div></td>
-                                    <td><span className="izy-pill">{ROLE_LABEL[p.role] ?? p.role}</span></td>
-                                    <td style={{ textAlign: 'right' }}><Link className="izy-btn small" to={`/projects/${p.code}/${p.code}`}>Open</Link></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="tag-projects">
+                        {projects.map((p) => (
+                            <Link key={p.code} className="tag-project" to={`/projects/${p.code}/${p.code}`}>
+                                <b>{p.name}</b>
+                                <span className="izy-muted">{p.code} · {p.timezone}</span>
+                                <span className="izy-pill">{ROLE_LABEL[p.role] ?? p.role}</span>
+                            </Link>
+                        ))}
+                    </div>
                 )}
             </div>
             {user.role === 'admin' && (

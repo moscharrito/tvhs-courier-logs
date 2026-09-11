@@ -1,6 +1,7 @@
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { useAuth, courierOnlyProject } from './auth';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { useAuth } from './auth';
 import { Layout } from './Layout';
+import { Loading } from './Loading';
 import { Login } from '../pages/Login';
 import { Home } from '../pages/Home';
 import { Users } from '../pages/Users';
@@ -8,6 +9,7 @@ import { UserDetail } from '../pages/UserDetail';
 import { Devices } from '../pages/Devices';
 import { Audit } from '../pages/Audit';
 import { LegacyTvhs } from '../pages/LegacyTvhs';
+import { ProjectHome } from '../pages/ProjectHome';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
     const { user } = useAuth();
@@ -15,23 +17,18 @@ function AdminOnly({ children }: { children: JSX.Element }) {
 }
 
 export function App() {
-    const { loading, user, projects } = useAuth();
-    const location = useLocation();
+    const { loading, user } = useAuth();
 
-    if (loading) return <div className="izy-login"><div className="izy-muted">Loading...</div></div>;
+    if (loading) return <Loading full />;
     if (!user) return <Login />;
 
-    // Couriers with one project land in that project's app, no shell chrome.
-    const courier = courierOnlyProject(user, projects);
-    if (courier && location.pathname === '/') {
-        return <Navigate to={`/projects/${courier.code}/${courier.code}`} replace />;
-    }
-
+    // Everyone lands on the project picker after sign-in and chooses where to go.
     return (
         <Routes>
             <Route path="/projects/tvhs/tvhs/*" element={<LegacyTvhs />} />
             <Route element={<Layout />}>
                 <Route path="/" element={<Home />} />
+                <Route path="/projects/:code/*" element={<ProjectHome />} />
                 <Route path="/devices" element={<Devices />} />
                 <Route path="/users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="/users/:username" element={<AdminOnly><UserDetail /></AdminOnly>} />

@@ -62,15 +62,21 @@ async function bootstrapAdmin() {
         console.log(`Bootstrap admin created: ${username}`);
     }
 
-    // Platform admins are admins of tvhs; legacy driver rows are its couriers.
-    // Idempotent (unique user + project). New users get memberships via the API.
+    // Platform admins are admins of every project; legacy driver rows are
+    // tvhs couriers. Idempotent (unique user + project). Other users get
+    // memberships via the users API.
     await dbRun(`
         INSERT OR IGNORE INTO memberships (user_id, project_id, role, settings)
-        SELECT u.id, p.id,
-               CASE u.role WHEN 'admin' THEN 'admin' ELSE 'courier' END,
-               CASE WHEN u.role = 'driver' AND u.route IS NOT NULL THEN json_object('route', u.route) ELSE '{}' END
+        SELECT u.id, p.id, 'admin', '{}'
         FROM users u, projects p
-        WHERE p.code = ? AND u.role IN ('admin', 'driver')
+        WHERE u.role = 'admin'
+    `);
+    await dbRun(`
+        INSERT OR IGNORE INTO memberships (user_id, project_id, role, settings)
+        SELECT u.id, p.id, 'courier',
+               CASE WHEN u.route IS NOT NULL THEN json_object('route', u.route) ELSE '{}' END
+        FROM users u, projects p
+        WHERE p.code = ? AND u.role = 'driver'
     `, [TVHS_PROJECT_CODE]);
 }
 

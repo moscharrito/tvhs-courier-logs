@@ -54,11 +54,3 @@ export function useAuth(): AuthState {
     if (!ctx) throw new Error('useAuth outside AuthProvider');
     return ctx;
 }
-
-/** A driver whose only membership is a courier one goes straight to that project's app. */
-export function courierOnlyProject(user: SessionUser | null, projects: ProjectMembership[]): ProjectMembership | null {
-    if (!user || user.role === 'admin') return null;
-    if (projects.length !== 1) return null;
-    const only = projects[0]!;
-    return only.role === 'courier' ? only : null;
-}

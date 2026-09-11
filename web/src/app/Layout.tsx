@@ -18,13 +18,15 @@ export function Layout() {
     return (
         <div className="izy">
             <aside className="izy-side">
-                <div className="izy-brand">Izy Ops<small>Izy Global Services LLC</small></div>
+                <div className="izy-brand">TAG<small>Izy Global Services LLC</small></div>
                 <nav className="izy-nav" aria-label="Main">
                     <NavLink to="/" end>Home</NavLink>
                     <div className="izy-nav-title">Projects</div>
                     {projects.length === 0 && <span className="izy-muted" style={{ padding: '6px 12px', display: 'block', color: '#c7f0d6' }}>No projects yet</span>}
                     {projects.map((p) => (
-                        <NavLink key={p.code} to={`/projects/${p.code}/${p.code}`} title={ROLE_LABEL[p.role] ?? p.role}>
+                        // No title attribute: it would override the link text as
+                        // the accessible name and announce the role instead.
+                        <NavLink key={p.code} to={`/projects/${p.code}/${p.code}`}>
                             {p.name}
                         </NavLink>
                     ))}
