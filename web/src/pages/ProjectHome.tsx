@@ -5,6 +5,7 @@
 
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../app/auth';
+import { Sites } from './uh/Sites';
 
 const ROLE_LABEL: Record<string, string> = {
     admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
@@ -25,13 +26,16 @@ export function ProjectHome() {
         );
     }
 
+    const canManage = project.role === 'admin' || project.role === 'ops_manager';
+
     return (
         <>
             <h1>{project.name}</h1>
             <p className="izy-sub"><code>{project.code}</code> · {project.timezone} · your role: {ROLE_LABEL[project.role] ?? project.role}</p>
+            <Sites projectCode={project.code} canManage={canManage} />
             <div className="izy-card">
                 <h2>Coming next</h2>
-                <p>The dispatch module for this project is being built: pharmacy sites and zone pricing first, then daily list intake, the dispatch board, and the courier app. Until then this page confirms your access, and admins can enrol staff and couriers from <Link to="/users">Users</Link>.</p>
+                <p>Zone and price tables, then daily list intake, the dispatch board, and the courier app. Admins can enrol staff and couriers from <Link to="/users">Users</Link>.</p>
             </div>
         </>
     );

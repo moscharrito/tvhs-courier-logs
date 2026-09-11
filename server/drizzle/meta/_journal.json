@@ -43,6 +43,13 @@
       "when": 1789146128379,
       "tag": "0005_uh_project",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789152424100,
+      "tag": "0006_sites",
+      "breakpoints": true
     }
   ]
 }

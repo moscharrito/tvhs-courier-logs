@@ -25,6 +25,8 @@ import { Logger } from './core/http/logger';
 import { createRequestMiddleware } from './core/http/request';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
+import { createRequireProject } from './core/projects/middleware';
+import { createSitesRouter } from './modules/uh/sites';
 
 export interface LegacyServer {
     app: Express;
@@ -71,6 +73,11 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createAuditRouter({ log }));
+
+    // UH Pharmacy Courier module. Project scoping is enforced here rather than
+    // in server.js, so the module has no dependency on the legacy app.
+    const requireProject = createRequireProject(database.client);
+    legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.

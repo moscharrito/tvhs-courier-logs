@@ -140,11 +140,18 @@ describe('Login', () => {
         mockFetch({
             'GET /api/session': { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null },
             'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'dispatcher' }],
+            'GET /api/projects/uh/uh/sites': [
+                { id: 7, code: 'vida', name: 'University Health Vida Pharmacy', type: 'pharmacy', addressLine: '3611 Jaguar Parkway', city: 'San Antonio', state: 'TX', zip: '78224', fullAddress: '3611 Jaguar Parkway, San Antonio, TX 78224', lat: null, lng: null, geocodeStatus: 'pending', releasesList: true, status: 'active', notes: '' },
+            ],
         });
         renderApp('/projects/uh/uh');
         await waitFor(() => expect(screen.getByRole('heading', { name: 'UH Pharmacy Courier' })).toBeInTheDocument());
         expect(screen.getByText(/your role: Dispatcher/)).toBeInTheDocument();
         expect(screen.getByText('Coming next')).toBeInTheDocument();
+        // A dispatcher sees the sites but gets no management controls.
+        expect(await screen.findByText('University Health Vida Pharmacy')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'New site' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
     });
 
     it('shows the TAG brand and the dotted loader while the session is resolving', async () => {

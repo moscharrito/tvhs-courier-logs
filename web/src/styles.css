@@ -99,6 +99,11 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-legacy-host { min-height: calc(100vh - 34px); }
 
 @media (max-width: 900px) {
+    /* Data tables are wider than a phone. Scroll them inside their own card
+       instead of letting them push the page sideways. */
+    .izy-card { overflow-x: auto; }
+    .izy-table { min-width: 560px; }
+
     .izy { flex-direction: column; }
     .izy-side { width: auto; flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 10px; }
     .izy-side .izy-me { margin: 0 0 0 auto; border: 0; padding: 4px 8px; }

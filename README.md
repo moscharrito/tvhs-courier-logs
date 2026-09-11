@@ -73,3 +73,7 @@ Users are managed in-app by platform admins through `/api/users` (create, update
 ## Health, logs, and errors
 
 `GET /health` is public and runs a real query; it answers 200 `{ status: "ok", db: "ok", migrations, uptimeSeconds, version }` or 503 `degraded` when the database is unreachable. Render's health check points at it. Every request gets an id (a sane client `X-Request-Id` is honoured, otherwise a UUID) that is echoed on the response, and one structured log line on finish with method, path, status, duration, actor, and ip; the query string is never logged. Logs are JSON lines (pretty in development; `LOG_LEVEL`, `LOG_FORMAT`). Unknown `/api` paths answer JSON 404. The central error handler logs the full error with the request id and answers JSON with a generic message for 5xx (never a stack; the message appears as `detail` only outside production) and the message for exposable 4xx errors such as malformed JSON.
+
+## UH Pharmacy Courier module
+
+Sites are the pickup and delivery locations a run starts or ends at. The nine UH pharmacies from Bid Table BT-89AO are seeded by migration . Coordinates are deliberately left unset ( ) until address lookup is switched on; nothing invents them, and changing a site's address clears any coordinates so a stale point cannot price a zone.  and  are readable by any project member and writable by project  or . Every query is scoped by project, so sites cannot be read or written across projects.

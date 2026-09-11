@@ -89,7 +89,7 @@ Phase 0 total: about 13 developer days across 10 working days. Tight. Claude dra
 
 | # | Ticket | Days | Acceptance criteria |
 |---|---|---|---|
-| 1.1 | UH project and sites | 0.5 | Project uh seeded. sites table loaded with the 9 pharmacies from the bid table with geocoded lat/lng. Admin CRUD |
+| 1.1 | UH project and sites | 0.5 | Done. Project uh seeded (0005). sites table + the 9 pharmacies from the bid table (0006), admin CRUD and a Sites screen. lat/lng deliberately left null pending 1.4: no coordinates are invented |
 | 1.2 | Zone and price tables | 1 | zone_zips loaded from the bid table Pricing sheet (Zones 1 to 5 by ZIP). price_table loaded with BAFO rates and surcharges, effective-dated. Function priceFor(order) returns zone, base, surcharges, out-of-area miles. Unit tests cover every zone, STAT, after-hours boundary (7 pm versus 8 pm setting), dry run, out of area |
 | 1.3 | Project settings | 0.5 | Settings for clock start rule (receipt or pickup), after-hours window, business hours, list release times, timezone America/Chicago |
 | 1.4 | Google Maps integration | 1 | Geocoding and Distance Matrix wrappers. Address-only requests, never a name or note. Results cached by normalized address. Daily quota guard. Distance is one-way loaded miles from the origin site |

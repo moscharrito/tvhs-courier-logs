@@ -22,10 +22,10 @@ export type AuditFn = (action: string, entity: string, entityId?: string | numbe
 declare module 'express-serve-static-core' {
     interface Request {
         audit: AuditFn;
-        /** Set by the legacy requireProject for project-scoped routes. */
-        project?: { id: number; code: string } | undefined;
     }
 }
+// req.project is declared in core/projects/middleware.ts and set by either
+// requireProject (TypeScript modules) or its legacy twin in server.js.
 
 export interface AuditRow {
     id: number;
