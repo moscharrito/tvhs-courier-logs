@@ -26,6 +26,7 @@ import { createRequestMiddleware } from './core/http/request';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
+import { createProjectSettingsRouter } from './core/projects/settings-routes';
 import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
 
@@ -75,9 +76,11 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createAuditRouter({ log }));
 
-    // UH Pharmacy Courier module. Project scoping is enforced here rather than
-    // in server.js, so the module has no dependency on the legacy app.
+    // Project settings are core: every contract has operating parameters.
+    // UH Pharmacy Courier module below. Project scoping is enforced here
+    // rather than in server.js, so a module has no dependency on the legacy app.
     const requireProject = createRequireProject(database.client);
+    legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));
 

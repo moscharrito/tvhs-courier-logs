@@ -66,9 +66,30 @@ Users are managed in-app by platform admins through `/api/users` (create, update
 
 `audit_events` is append-only: database triggers abort any UPDATE or DELETE. Every request gets `req.audit(action, entity, entityId, detail)`, which stamps the actor, project, IP, and time. Logins (success and failure), logouts, check-ins, log saves and clears, exports, admin reads of one user's data, user management, membership changes, and session revocations are recorded. `detail` holds ids, counts, and field names only, never PHI or secrets. Admins query it at `GET /api/audit` with `username`, `action` (prefix), `entity`, `entityId`, `projectId`, `from`, `to`, `limit`, and `before` (cursor); reading the log is itself audited.
 
+## Project settings
+
+Each project is one contract, and a contract's operating parameters are configuration rather than code. They live in the `projects.settings` JSON column, with their shape, defaults and validation in `server/src/core/projects/settings.ts`. Nothing is stored until someone changes a value, so the defaults are always what the contract says.
+
+The defaults are the University Health answers, quoted from Addendum 1 in that file:
+
+| Setting | Default | Source |
+|---|---|---|
+| `sla.clockStart` | `receipt` | "delivered to the designated location within two (2) hours of the courier receiving the delivery request" |
+| `sla.scheduledMinutes` | 120 | the 2-hour delivery window |
+| `sla.statMinutes` | 120 | "the maximum overall delivery time for this service type" |
+| `sla.statFromPickupMinutes` | 60 | "completed within one (1) hour of pickup" |
+| `sla.adhocMinutes` | 240 | Scope 1.2.5 |
+| `businessHours` | 08:00 to 20:00, every day | Scope 1.2.3; UH runs weekends |
+| `listRelease` | 12:00 to 14:00 | "typically provided between 12:00-2:00pm" |
+| `pricing` | 20:00 to 07:00, dry run replaces | Addendum 1 |
+
+`dueTimesFor` turns those into a due time and is the only place that arithmetic lives; ticket 1.6 calls it to stamp `due_at` on an order. Only scheduled deliveries honour `clockStart`: STAT and ad hoc are written as running from the request, so a pickup rule must not loosen them. STAT carries both of its deadlines, since a late pickup can satisfy one and breach the other.
+
+`GET /api/projects/:pid/settings` is readable by any member and returns the resolved settings, the contract defaults, the list of leaves someone has overridden, and worked examples for an order received now. `PATCH` is a section-by-section merge, restricted to project `admin` and `ops_manager`; unknown keys are rejected rather than stored, because a silently ignored setting looks applied and is not. Changes are audited with their new values, a deliberate exception to the "field names only" rule below: these are contract parameters, not PHI, and an invoice dispute turns on who changed the after-hours window and when.
+
 ## Frontend shell
 
-`web/` is a Vite + React app served by the server at `/` from `web/dist` (any non-API, non-file GET falls back to `index.html` for the client router). It is branded TAG. Sign-in asks which project first (`GET /api/login/projects`, public, names only), then shows that project's couriers (`GET /api/drivers/list?project=<code>`) for PIN entry or first-time setup; staff sign in with username and password from any step. After sign-in everyone lands on a project picker, and the platform screens for admins (Users, Audit log) and everyone (My devices). The original TVHS courier log app is served under `/legacy` and mounted inside the shell without an iframe: the shell injects its markup, loads its script once, and re-enters it through its global `checkSession()`; sign-out is routed through the shell. Drivers pick their project like everyone else. A project with no module yet shows a placeholder page. During development run `npm run dev -w server` and `npm run dev -w web` side by side.
+`web/` is a Vite + React app served by the server at `/` from `web/dist` (any non-API, non-file GET falls back to `index.html` for the client router). It is branded TAG. Sign-in asks which project first (`GET /api/login/projects`, public, names only), then shows that project's couriers (`GET /api/drivers/list?project=<code>`) for PIN entry or first-time setup; staff sign in with username and password from any step. After sign-in everyone lands on a project picker, and the platform screens for admins (Users, Audit log) and everyone (My devices). The original TVHS courier log app is served under `/legacy` and mounted inside the shell without an iframe: the shell injects its markup, loads its script once, and re-enters it through its global `checkSession()`; sign-out is routed through the shell. Drivers pick their project like everyone else. A project page carries its sites, its contract pricing and its operating settings; the settings card shows each value beside the contract default, marks anything a person changed, and restates the current rules as real due times, but only an admin or ops manager sees an Edit button. During development run `npm run dev -w server` and `npm run dev -w web` side by side.
 
 ## Health, logs, and errors
 
@@ -84,7 +105,7 @@ Migration `0007_pricing` loads the zone ZIP map and the Izy BAFO price schedule 
 
 `priceFor` in `server/src/modules/uh/pricing.ts` is pure and returns the full breakdown: zone base, STAT and after-hours surcharges, dry-run fee, out-of-area mileage, and a total, with money held in cents so repeated addition cannot drift. Two contract ambiguities are settings rather than assumptions:
 
-- **After-hours window.** Addendum 1 says 8 pm to 7 am, Scope 1.2.3 says 8 pm to 8 am. The addendum governs under the precedence clause and is the default; `pricing.afterHoursEnd` in the project settings changes it. Open item 7.
-- **Dry run.** Addendum 1 calls it a flat rate for the attempted service, per item, but does not say whether it replaces the delivery charge or is added to it. The default is replace, the reading that cannot over-bill University Health; `pricing.dryRunReplacesBase` flips it. Open item 10.
+- **After-hours window.** Addendum 1 defines it outright as 8 pm to 7 am; Scope 1.2.3's 8 am is superseded under the precedence clause. `pricing.afterHoursEnd` in the project settings changes it if UH ever says otherwise.
+- **Dry run.** Addendum 1 calls it a flat rate for the attempted service, per item, but does not say whether it replaces the delivery charge or is added to it. The default is replace, the reading that cannot over-bill University Health; `pricing.dryRunReplacesBase` flips it. Still open with UH.
 
 Read the schedule at `GET /api/projects/:pid/uh/pricing`, the ZIP map at `.../pricing/zones` (add `?zip=` for one lookup), and price a delivery at `POST .../pricing/quote`. All are readable by any project member.

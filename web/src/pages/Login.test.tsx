@@ -146,6 +146,24 @@ describe('Login', () => {
                 settings: { afterHoursStart: '20:00', afterHoursEnd: '07:00', timezone: 'America/Chicago', dryRunReplacesBase: true },
                 zoneZipCounts: [{ zone: 1, zips: 38 }],
             },
+            'GET /api/projects/uh/settings': {
+                timezone: 'America/Chicago',
+                settings: {
+                    sla: { clockStart: 'receipt', scheduledMinutes: 120, statMinutes: 120, statFromPickupMinutes: 60, adhocMinutes: 240 },
+                    businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
+                    listRelease: { earliest: '12:00', latest: '14:00' },
+                    pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true },
+                },
+                defaults: {
+                    sla: { clockStart: 'receipt', scheduledMinutes: 120, statMinutes: 120, statFromPickupMinutes: 60, adhocMinutes: 240 },
+                    businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
+                    listRelease: { earliest: '12:00', latest: '14:00' },
+                    pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true },
+                },
+                overridden: [],
+                canManage: false,
+                example: [{ serviceType: 'scheduled', receivedAt: '2026-09-14T17:00:00.000Z', dueAt: '2026-09-14T19:00:00.000Z', minutes: 120, from: 'receipt', pending: false, basis: '120 minutes from the list being received.' }],
+            },
             'GET /api/projects/uh/uh/sites': [
                 { id: 7, code: 'vida', name: 'University Health Vida Pharmacy', type: 'pharmacy', addressLine: '3611 Jaguar Parkway', city: 'San Antonio', state: 'TX', zip: '78224', fullAddress: '3611 Jaguar Parkway, San Antonio, TX 78224', lat: null, lng: null, geocodeStatus: 'pending', releasesList: true, status: 'active', notes: '' },
             ],
@@ -162,6 +180,10 @@ describe('Login', () => {
         expect(await screen.findByText('Contract pricing')).toBeInTheDocument();
         expect(screen.getByText('$12.50')).toBeInTheDocument();
         expect(screen.getByText(/After hours 20:00 to 07:00/)).toBeInTheDocument();
+        // and the operating settings, read-only: a dispatcher cannot edit them
+        expect(await screen.findByText('Operating settings')).toBeInTheDocument();
+        expect(screen.getByText('120 minutes from the list being received.')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     });
 
     it('shows the TAG brand and the dotted loader while the session is resolving', async () => {

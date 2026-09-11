@@ -9,17 +9,26 @@
  *              as a ZIP list per zone (Bid Table BT-89AO). A ZIP outside the
  *              list is out of area and bills per one-way mile instead.
  *   STAT       surcharge on top of the zone rate.
- *   after hours 8 pm to 7 am per Addendum 1. Scope 1.2.3 says 8 pm to 8 am;
- *              the addendum governs under the precedence clause, but the
- *              window is a project setting so the answer can change without
- *              touching code. Open item 7 with UH.
+ *   after hours 8 pm to 7 am. Addendum 1 defines it outright: "any pickup or
+ *              delivery service requested and performed outside of normal
+ *              business hours, specifically between 8:00 p.m. and 7:00 a.m."
+ *              Scope 1.2.3's 8 am is superseded; the addendum governs under
+ *              the precedence clause and is the narrower window, so it cannot
+ *              over-bill UH. Still a project setting, because the boundary is
+ *              worth one line in the contract confirmation.
  *   dry run    Addendum 1 calls it a "Flat Rate ... to cover the attempted
  *              service for each item". Whether that flat fee replaces the
  *              zone rate or is added to it is not stated, and it moves real
  *              money. Default here is replace, the reading that cannot
  *              over-bill UH; dryRunReplacesBase flips it. Open item 10.
  *
- * Money is held in cents internally so repeated addition cannot drift. */
+ * Money is held in cents internally so repeated addition cannot drift.
+ *
+ * The window and the dry-run rule are project settings; their defaults and
+ * validation live in core/projects/settings, which this reads rather than
+ * restating, so a change there cannot leave pricing behind. */
+
+import { DEFAULT_PROJECT_SETTINGS, resolveSettings } from '../../core/projects/settings';
 
 export type ServiceType = 'scheduled' | 'stat' | 'adhoc';
 export type Zone = 1 | 2 | 3 | 4 | 5;
@@ -43,10 +52,8 @@ export interface PricingSettings {
 }
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
-    afterHoursStart: '20:00',
-    afterHoursEnd: '07:00',
+    ...DEFAULT_PROJECT_SETTINGS.pricing,
     timezone: 'America/Chicago',
-    dryRunReplacesBase: true,
 };
 
 export interface PriceInput {
@@ -177,12 +184,6 @@ export function priceFor(input: PriceInput, schedule: PriceSchedule, settings: P
 
 /** Read pricing settings out of a project's settings blob, falling back to the defaults. */
 export function pricingSettingsFrom(projectSettings: Record<string, unknown>, timezone: string): PricingSettings {
-    const p = (projectSettings['pricing'] ?? {}) as Record<string, unknown>;
-    const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? v.trim() : fallback);
-    return {
-        afterHoursStart: str(p['afterHoursStart'], DEFAULT_PRICING_SETTINGS.afterHoursStart),
-        afterHoursEnd: str(p['afterHoursEnd'], DEFAULT_PRICING_SETTINGS.afterHoursEnd),
-        timezone: timezone || DEFAULT_PRICING_SETTINGS.timezone,
-        dryRunReplacesBase: typeof p['dryRunReplacesBase'] === 'boolean' ? p['dryRunReplacesBase'] : DEFAULT_PRICING_SETTINGS.dryRunReplacesBase,
-    };
+    const { pricing } = resolveSettings(projectSettings);
+    return { ...pricing, timezone: timezone || DEFAULT_PRICING_SETTINGS.timezone };
 }
