@@ -85,6 +85,13 @@
       "when": 1789221330994,
       "tag": "0011_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789223337287,
+      "tag": "0012_signatures",
+      "breakpoints": true
     }
   ]
 }

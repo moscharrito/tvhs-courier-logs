@@ -33,6 +33,7 @@ import { createPricingRouter } from './modules/uh/pricing-routes';
 import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
 import { createOrdersRouter } from './modules/uh/orders';
 import { createRunsRouter } from './modules/uh/runs';
+import { createPickupRouter } from './modules/uh/pickup';
 import { createBoardRouter } from './modules/uh/board';
 
 export interface LegacyServer {
@@ -107,6 +108,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         createImportsRouter({ client: database.client }),
     );
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client }));
+    // Pickup first: its /:id/pickup must be matched before the runs
+    // router's /:id, which would otherwise swallow it.
+    legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createPickupRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
 

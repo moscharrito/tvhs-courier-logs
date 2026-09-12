@@ -435,3 +435,54 @@ export const runStops = sqliteTable(
 
 export type Run = typeof runs.$inferSelect;
 export type RunStop = typeof runStops.$inferSelect;
+
+/* Captured signatures (ticket 2.4).
+ *
+ * Scope 1.2.8 requires the printed name AND signature of the authorised
+ * sending and receiving personnel on a proof of delivery, so a name alone
+ * does not satisfy the contract.
+ *
+ * The signature is stored as the STROKES the finger drew, not as a rendered
+ * image. A few hundred points is one or two kilobytes, it renders crisply at
+ * any size on a POD PDF, and it keeps the platform out of the business of
+ * storing binary blobs before the S3 service in ticket 1.8 exists. It is also
+ * better evidence than a raster: the stroke order and timing are part of the
+ * record.
+ *
+ * One row per signing, not per package. A pharmacy technician handing over
+ * forty packages signs once; making a courier collect forty signatures at a
+ * counter would guarantee the feature goes unused and the record goes blank.
+ * The custody events for all forty point at the same row.
+ *
+ * This is personal data about the person who signed, not about a patient, but
+ * it lives with custody and is protected the same way: append-only in
+ * practice, never in a log, never in the audit trail.
+ */
+
+export const SIGNATURE_KINDS = ['pickup', 'delivery'] as const;
+
+export const signatures = sqliteTable(
+    'signatures',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        kind: text('kind', { enum: SIGNATURE_KINDS }).notNull(),
+        /** Printed name, as Scope 1.2.8 requires alongside the signature. */
+        signedName: text('signed_name').notNull(),
+        /** JSON: [[{x,y,t},...], ...] in a 0..1 coordinate space, so the
+         *  capture is independent of the phone's screen size. */
+        strokes: text('strokes').notNull().default('[]'),
+        /** Who captured it, where and when. */
+        capturedBy: text('captured_by').notNull().default(''),
+        capturedAt: text('captured_at').notNull(),
+        lat: real('lat'),
+        lng: real('lng'),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        index('signatures_project_idx').on(t.projectId, t.capturedAt),
+        check('signatures_kind_check', sql`${t.kind} IN ('pickup','delivery')`),
+    ],
+);
+
+export type Signature = typeof signatures.$inferSelect;

@@ -97,7 +97,10 @@ export function MyRun() {
 
     const stops = data.runs.flatMap((r) => r.stops);
     const remaining = stops.filter((s) => !DONE.includes(s.status));
-    const current = remaining[0] ?? null;
+    /* Still at the counter: a courier cannot deliver what they have not
+       collected, so this is the first thing the screen offers. */
+    const toCollect = stops.filter((s) => s.status === 'assigned');
+    const current = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
 
     return (
@@ -115,6 +118,21 @@ export function MyRun() {
                 </a>
             ) : (
                 <p className="izy-muted">No dispatch number is set for this project yet.</p>
+            )}
+
+            {toCollect.length > 0 && (
+                <div className="izy-card izy-collect">
+                    <h2>Collect first</h2>
+                    <p>
+                        {toCollect.length} {toCollect.length === 1 ? 'stop is' : 'stops are'} still at the pharmacy.
+                        You cannot deliver what you have not taken custody of.
+                    </p>
+                    {data.runs.filter((r) => r.stops.some((s) => s.status === 'assigned')).map((r) => (
+                        <Link key={r.id} className="izy-btn" to={`/projects/${code}/runs/${r.id}/pickup`}>
+                            Pick up for run {r.id}
+                        </Link>
+                    ))}
+                </div>
             )}
 
             {stops.length === 0 ? (

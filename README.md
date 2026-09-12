@@ -182,6 +182,18 @@ Neither is optimal routing, and the plan says full optimisation is deferred past
 
 The dispatch number is `dispatch.phone` in the project settings. There is no default, and the button is hidden until someone sets one: a courier standing at a door with a problem would dial whatever is there, so a placeholder is worse than nothing.
 
+### Taking custody at the pharmacy
+
+`POST .../uh/runs/:id/pickup` collects a batch. **One signature, many packages.** A technician handing over forty packages signs once; making a courier collect forty signatures at a counter would guarantee the feature goes unused and the record ends up blank, which is worse than one honest signature covering the batch. The custody events for every order in the batch point at the same signature row, and each still says individually that this courier took this order at this time.
+
+Grouped by pharmacy, because that is where the courier is standing: a run can collect from more than one, and they are done a counter at a time.
+
+**The package count is confirmed, not assumed.** The screen does not pre-fill the expected number, because that would turn "confirm the count" into "tap continue". A mismatch is allowed through with a reason and flagged in the response and the custody record; it is not blocked, because blocking it would only teach couriers to type whatever number makes the screen continue. A short handover nobody explained is unexplained missing medication, so the reason is required.
+
+Signatures are stored as the **strokes** the finger drew, not as a rendered image: points in a 0..1 space, so the capture does not depend on the size of the phone and renders crisply at any size on a proof of delivery. A few hundred points is a kilobyte or two, it keeps the platform out of storing binary blobs before ticket 1.8's file service exists, and the stroke order and timing are part of the evidence. The key on the custody event reads `local:signature:<id>` so it says plainly where the bytes are today.
+
+A pickup without a position is recorded and says so, rather than being refused: a courier inside a building often has no fix, and Scope 1.2.7 is better served by a custody record with a gap that is visible than by no record at all.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.
