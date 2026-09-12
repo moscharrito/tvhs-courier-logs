@@ -27,6 +27,7 @@ import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from './lifecycle';
+import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -49,11 +50,23 @@ const AddStops = z.object({
     orderIds: z.array(z.number().int().positive()).min(1).max(500),
     /** Where to insert. Omitted means the end of the run. */
     position: z.number().int().min(1).optional(),
+    /** Take the order off whatever run it is on first. Dragging between
+     *  lanes on the board means exactly this, and doing it in one request
+     *  keeps the two custody events together and avoids leaving an order
+     *  unassigned if the second call never arrives. */
+    allowMove: z.boolean().default(false),
 });
 
 const Reorder = z.object({
     /** Every order currently on the run, in the order it should be driven. */
     orderIds: z.array(z.number().int().positive()).min(1).max(500),
+});
+
+const AutoSequence = z.object({
+    /** 'nearest' needs coordinates and refuses without them (ticket 1.4). */
+    strategy: z.enum(['nearest', 'due']).default('nearest'),
+    /** Compute and return the proposal without applying it. */
+    preview: z.boolean().default(false),
 });
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -168,7 +181,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
      * stop is never created, so a run cannot contain an order that the order
      * itself does not believe is assigned.
      */
-    async function addStop(req: Request, run: RunRow, orderId: number, sequence: number): Promise<{ ok: true } | { ok: false; status: number; body: unknown }> {
+    async function addStop(req: Request, run: RunRow, orderId: number, sequence: number, allowMove = false): Promise<{ ok: true } | { ok: false; status: number; body: unknown }> {
         const projectId = req.project!.id;
         const rs = await client.execute({ sql: 'SELECT * FROM orders WHERE project_id = ? AND id = ?', args: [projectId, orderId] });
         const row = rs.rows[0];
@@ -182,12 +195,41 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         const onRun = existing.rows[0];
         if (onRun) {
             const other = Number(onRun['run_id']);
-            return {
-                ok: false, status: 409,
-                body: other === Number(run.id)
-                    ? { error: `Order ${orderId} is already on this run`, code: 'stop.duplicate' }
-                    : { error: `Order ${orderId} is already on run ${other}. Take it off that run first.`, code: 'stop.onAnotherRun', runId: other },
-            };
+            if (other === Number(run.id)) {
+                return { ok: false, status: 409, body: { error: `Order ${orderId} is already on this run`, code: 'stop.duplicate' } };
+            }
+            if (!allowMove) {
+                return {
+                    ok: false, status: 409,
+                    body: { error: `Order ${orderId} is already on run ${other}. Take it off that run first.`, code: 'stop.onAnotherRun', runId: other },
+                };
+            }
+            /* Moving: unassign from the old run first. If that transition is
+             * refused (the courier already has the package) nothing is
+             * changed, and the order stays where it is. */
+            try {
+                await recordOrderEvent(client, {
+                    projectId, order, actor: actorOf(req),
+                    settings: resolveSettings(req.project!.settings),
+                    event: { type: 'unassigned', at: new Date(), reason: `Moved to run ${run.id}.` },
+                });
+            } catch (err) {
+                if (err instanceof TransitionError) {
+                    return {
+                        ok: false, status: 409,
+                        body: {
+                            error: `Order ${orderId} cannot be moved: ${err.message}`, code: err.code,
+                            orderId, status: order.status, runId: other,
+                        },
+                    };
+                }
+                throw err;
+            }
+            await client.execute({ sql: 'DELETE FROM run_stops WHERE project_id = ? AND order_id = ?', args: [projectId, orderId] });
+            await renumber(projectId, other);
+            // Re-read: the unassign moved the status back to ready.
+            const again = await client.execute({ sql: 'SELECT * FROM orders WHERE project_id = ? AND id = ?', args: [projectId, orderId] });
+            Object.assign(order, Object.fromEntries(Object.entries(again.rows[0]!)));
         }
 
         try {
@@ -287,7 +329,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         const rejected: unknown[] = [];
         let sequence = insertAt;
         for (const orderId of body.orderIds) {
-            const result = await addStop(req, run, orderId, sequence);
+            const result = await addStop(req, run, orderId, sequence, body.allowMove);
             if (result.ok) { added.push(orderId); sequence += 1; } else rejected.push(result.body);
         }
         await renumber(projectId, Number(run.id));
@@ -380,6 +422,91 @@ export function createRunsRouter({ client }: { client: Client }): Router {
 
         await req.audit('run.resequence', 'run', String(run.id), { stops: body.orderIds.length });
         res.json({ ...presentRun(run), stops: await stopsOf(projectId, Number(run.id)) });
+    }));
+
+    /**
+     * Propose an order for the stops, and apply it unless asked not to.
+     *
+     * A proposal, not a decision: the dispatcher can reorder afterwards, and
+     * the board shows the minutes-to-due badges so a nearest-neighbour route
+     * that strands a tight STAT is visible rather than silent.
+     */
+    router.post('/:id/sequence/auto', staff, wrap(async (req, res) => {
+        const run = await loadOr404(req, res);
+        if (!run) return;
+        const body = parse(AutoSequence, req.body ?? {}, res);
+        if (!body) return;
+        const projectId = req.project!.id;
+
+        const rs = await client.execute({
+            sql: `SELECT s.order_id, o.lat, o.lng, o.due_at, o.zip, o.site_id
+                  FROM run_stops s JOIN orders o ON o.id = s.order_id
+                  WHERE s.project_id = ? AND s.run_id = ? ORDER BY s.sequence, s.id`,
+            args: [projectId, Number(run.id)],
+        });
+        if (rs.rows.length === 0) { res.status(409).json({ error: 'This run has no stops to sequence.' }); return; }
+
+        const stops: SequenceStop[] = rs.rows.map((r) => ({
+            orderId: Number(r['order_id']),
+            lat: r['lat'] === null ? null : Number(r['lat']),
+            lng: r['lng'] === null ? null : Number(r['lng']),
+            dueAt: r['due_at'] === null ? null : String(r['due_at']),
+            zip: String(r['zip']),
+        }));
+
+        /* Zones are measured from the pickup location (Addendum 1), and so is
+         * the route: the origin is the site the stops were picked up from. */
+        const siteIds = [...new Set(rs.rows.map((r) => Number(r['site_id'])))];
+        let origin: { lat: number; lng: number } | null = null;
+        if (siteIds.length === 1) {
+            const site = await client.execute({
+                sql: 'SELECT lat, lng FROM sites WHERE project_id = ? AND id = ?',
+                args: [projectId, siteIds[0]!],
+            });
+            const row = site.rows[0];
+            if (row && row['lat'] !== null && row['lng'] !== null) origin = { lat: Number(row['lat']), lng: Number(row['lng']) };
+        }
+
+        let result;
+        try {
+            result = sequenceStops(stops, origin, body.strategy as SequenceStrategy);
+        } catch (err) {
+            if (err instanceof SequencingError) {
+                res.status(409).json({
+                    error: err.message, code: err.code, detail: err.detail ?? null,
+                    /* Deadline order needs nothing and is available now, so
+                     * say so rather than leaving the dispatcher stuck. */
+                    alternative: 'due',
+                });
+                return;
+            }
+            throw err;
+        }
+
+        if (siteIds.length > 1 && body.strategy === 'nearest') {
+            result.notes.push(`This run collects from ${siteIds.length} different pharmacies, so there is no single origin to measure from.`);
+        }
+
+        if (!body.preview) {
+            let n = 1;
+            for (const orderId of result.orderIds) {
+                await client.execute({
+                    sql: 'UPDATE run_stops SET sequence = ? WHERE project_id = ? AND run_id = ? AND order_id = ?',
+                    args: [n, projectId, Number(run.id), orderId],
+                });
+                n += 1;
+            }
+            await req.audit('run.autosequence', 'run', String(run.id), {
+                strategy: result.strategy, stops: result.orderIds.length, miles: result.estimatedMiles ?? 0,
+            });
+        }
+
+        res.json({
+            ...presentRun(run),
+            applied: !body.preview,
+            proposal: result,
+            stops: await stopsOf(projectId, Number(run.id)),
+        });
     }));
 
     /* --------------------------------------------------------------- admin */

@@ -43,9 +43,12 @@ export function ProjectHome() {
             <Pricing projectCode={project.code} />
             <ProjectSettings projectCode={project.code} />
             <div className="izy-card">
-                <h2>Orders</h2>
-                <p>Search today's deliveries, see what is running late, and open one for its packages, its price and its chain of custody.</p>
-                <Link className="izy-btn" to={`/projects/${project.code}/orders`}>Open orders</Link>
+                <h2>Dispatch</h2>
+                <p>The board is today's wave: what is waiting, who is carrying what, and what is running late. Orders is the searchable record behind it.</p>
+                <div className="izy-row">
+                    <Link className="izy-btn" to={`/projects/${project.code}/board`}>Open the board</Link>
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
+                </div>
             </div>
             <div className="izy-card">
                 <h2>Coming next</h2>

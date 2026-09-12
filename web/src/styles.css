@@ -43,6 +43,18 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-statline { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; align-items: baseline; }
 .izy-stat-bad { color: var(--izy-danger); }
 .izy-table th[scope], .izy-table tbody th { font-size: 12px; color: var(--izy-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; width: 130px; }
+.izy-board { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
+.izy-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
+.izy-pool-group { margin-bottom: 14px; }
+.izy-pool-group h3 { margin: 10px 0 6px; font-size: 13px; }
+.izy-stop { border: 1px solid var(--izy-line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; background: #fff; }
+.izy-stop[draggable="true"] { cursor: grab; }
+.izy-stop-current { border-color: var(--izy-green); box-shadow: inset 3px 0 0 var(--izy-green); }
+.izy-stop .izy-btn, .izy-stop select { margin-top: 6px; font-size: 12px; }
+.izy-assign select { width: 100%; padding: 5px 8px; border: 1px solid var(--izy-line); border-radius: 6px; background: #fff; }
+.izy-stat-warn { color: #92400e; }
+.izy-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 900px) { .izy-board { grid-template-columns: 1fr; } }
 .izy-card h3 { margin: 0 0 8px; font-size: 14px; }
 .izy-row-between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .izy-fieldset { border: 1px solid var(--izy-line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 14px; }

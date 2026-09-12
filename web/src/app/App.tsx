@@ -11,6 +11,7 @@ import { Audit } from '../pages/Audit';
 import { LegacyTvhs } from '../pages/LegacyTvhs';
 import { ProjectHome } from '../pages/ProjectHome';
 import { Orders } from '../pages/uh/Orders';
+import { Board } from '../pages/uh/Board';
 import { OrderDetail } from '../pages/uh/OrderDetail';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
@@ -30,6 +31,7 @@ export function App() {
             <Route path="/projects/tvhs/tvhs/*" element={<LegacyTvhs />} />
             <Route element={<Layout />}>
                 <Route path="/" element={<Home />} />
+                <Route path="/projects/:code/board" element={<Board />} />
                 <Route path="/projects/:code/orders" element={<Orders />} />
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />
                 <Route path="/projects/:code/*" element={<ProjectHome />} />

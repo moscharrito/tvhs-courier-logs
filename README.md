@@ -148,6 +148,32 @@ Removing a stop is refused once the courier has picked the package up, because t
 
 `POST .../uh/runs` creates a run and optionally fills it in one call, reporting which orders it could not take and why. `POST .../runs/:id/stops` adds (optionally at a position), `DELETE .../runs/:id/stops/:orderId` removes, and `PUT .../runs/:id/sequence` reorders. Couriers see and open only their own runs. The dispatch board and nearest-neighbour sequencing are ticket 2.2, which needs the coordinates ticket 1.4 will supply.
 
+### The dispatch board
+
+`/projects/:code/board` is the screen a dispatcher watches during the noon wave: the unassigned pool on the left grouped by pharmacy, one lane per courier on the right, and the time remaining on every card.
+
+`GET .../uh/board` returns the pool, the lanes, the couriers and the counts **in one request**. Fetching them separately would show an order in the pool and on a lane at the same time, which is the confusion the board exists to remove. Filters apply to both sides together so the header cannot disagree with what is on screen. Staff only: the board is every patient address for the day, and no courier needs that.
+
+Two decisions in the screen worth knowing:
+
+- **Dragging is an enhancement, not the mechanism.** Every assignment is also reachable through a select and a button. A drag-only board cannot be used with a keyboard, and a dispatcher on a headset during a 273-stop wave is not always holding a mouse. The select is the accessible path and the one the tests drive; drag calls the same function.
+- **Polling pauses while the tab is hidden**, and catches up the moment it is shown again. A board left open overnight would otherwise pull every patient address for the day four times a minute into an empty room.
+
+Dragging an order between lanes is one request (`allowMove`), not a delete followed by an add: it keeps the two custody events together and cannot leave an order unassigned because the second call never arrived. Moving is refused once the courier has the package.
+
+**Courier presence** comes from when they last used the app (the sessions table), not from location tracking. The platform does not track a courier continuously; a position is known from the events they send, and only then. Someone who has never signed in is shown as such rather than being called present on the strength of nothing.
+
+### Auto-sequencing a run
+
+`POST .../uh/runs/:id/sequence/auto` proposes an order for the stops and applies it unless `preview` is set. Two strategies:
+
+- **`nearest`** is nearest-neighbour from the pickup pharmacy, which is what the dispatch strategy describes. It needs coordinates on the site and on every stop, and **ticket 1.4 has not supplied them**. Asked for today it refuses with `sequencing.noOrigin` or `sequencing.missingCoordinates` and points at the strategy that does work. It never sequences part of a run geographically and leaves the rest: a silently partial route is worse than none, because the dispatcher would believe the whole run was measured.
+- **`due`** is strictly by deadline. It needs nothing and is available now, but it takes no account of geography and will cross the county between stops.
+
+Neither is optimal routing, and the plan says full optimisation is deferred past go-live. Plain nearest-neighbour also **ignores deadlines** entirely and can put a STAT with twenty minutes left at the end of a loop; the result says so in its notes, and the board shows the minutes-to-due badges afterwards so it is visible rather than silent.
+
+`haversineMiles` is straight-line distance, for ordering stops relative to each other. It must never reach an invoice: the contract bills one-way **loaded** miles, which is a road distance, and that comes from the Distance Matrix call in ticket 1.4.
+
 ### Dates
 
 Every date stored here is a **service date**: the day a list belongs to, the day a run is driven, the day that decides which effective-dated price schedule applies. Those are questions about San Antonio, not about UTC, so they go through `dateIn` and `todayIn` in `server/src/core/dates.ts`. `new Date().toISOString().slice(0, 10)` is the tempting one-liner and it is wrong for five hours of every day: between 7pm and midnight in Chicago it returns tomorrow, which would file an evening STAT call under the next day, drop it off today's board, and price it against a schedule that had not taken effect yet.
