@@ -75,6 +75,12 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-fieldset legend { font-size: 12px; color: var(--izy-muted); text-transform: uppercase; letter-spacing: 0.04em; padding: 0 4px; }
 .izy-check { font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
 .izy-plain-list { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.7; }
+/* A destination is chosen with a thumb at the end of a long shift, so the
+   whole row is the target, not a 20px circle. */
+.izy-choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 10px; margin-top: 8px; border: 1px solid var(--izy-line); border-radius: 8px; font-size: 14px; line-height: 1.5; cursor: pointer; }
+.izy-choice:has(input:checked) { border-color: var(--izy-green); background: #f6faf7; }
+.izy-choice input { margin-top: 3px; width: 18px; height: 18px; }
+
 .izy-field input, .izy-field select { padding: 8px 10px; border: 1px solid var(--izy-line); border-radius: 8px; font-size: 14px; background: #fff; }
 .izy-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--izy-green-2); background: var(--izy-green-2); color: #fff; font-size: 14px; cursor: pointer; }
 .izy-btn.secondary { background: #fff; color: var(--izy-green); border-color: var(--izy-line); }

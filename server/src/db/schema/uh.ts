@@ -235,6 +235,11 @@ export const orders = sqliteTable(
          * failure, so this is a timestamp and not a status: an order still in
          * a van is status 'failed' with returned_at null. */
         returnedAt: text('returned_at'),
+        /* Which pharmacy took them back, and who signed for them. Not always
+         * the origin: after hours the Discharge Pharmacy is the one that is
+         * open, and an origin that shut early sends a courier elsewhere. */
+        returnedToSiteId: integer('returned_to_site_id').references(() => sites.id),
+        returnedBy: text('returned_by').notNull().default(''),
 
         /* Duplicate detection within a site and a day: a hash of the external
          * reference, or of the normalised recipient and address when the list
@@ -490,7 +495,11 @@ export type RunStop = typeof runStops.$inferSelect;
  * practice, never in a log, never in the audit trail.
  */
 
-export const SIGNATURE_KINDS = ['pickup', 'delivery'] as const;
+/* 'return' joins these in 0015: handing undelivered medication back over a
+ * counter is the same kind of custody handover as collecting it, and calling
+ * it a delivery in the record would be a lie that reaches a proof of
+ * delivery. */
+export const SIGNATURE_KINDS = ['pickup', 'delivery', 'return'] as const;
 
 export const signatures = sqliteTable(
     'signatures',
@@ -512,7 +521,7 @@ export const signatures = sqliteTable(
     },
     (t) => [
         index('signatures_project_idx').on(t.projectId, t.capturedAt),
-        check('signatures_kind_check', sql`${t.kind} IN ('pickup','delivery')`),
+        check('signatures_kind_check', sql`${t.kind} IN ('pickup','delivery','return')`),
     ],
 );
 

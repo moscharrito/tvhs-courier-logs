@@ -121,10 +121,21 @@ describe('the transition table', () => {
     });
 
     it('treats a return as custody, not as an outcome: the delivery still failed', () => {
-        const applied = applyEvent(state('failed'), { type: 'returned', at: new Date('2026-09-14T21:00:00Z') }, DEFAULT_PROJECT_SETTINGS);
+        const event = { type: 'returned', at: new Date('2026-09-14T21:00:00Z'), signedName: 'Night Pharmacist', returnedToSiteId: 4 };
+        const applied = applyEvent(state('failed'), event, DEFAULT_PROJECT_SETTINGS);
         expect(applied.toStatus).toBe('failed');
         expect(applied.statusChanged).toBe(false);
         expect(applied.set['returned_at']).toBe('2026-09-14T21:00:00.000Z');
+        expect(applied.set['returned_by']).toBe('Night Pharmacist');
+        expect(applied.set['returned_to_site_id']).toBe(4);
+    });
+
+    it("will not record a return with nobody's name on it", () => {
+        /* Handing medication back over a counter is a custody handover, and
+           Scope 1.2.8 asks who took it. A nameless return says only that the
+           package left the van. */
+        expect(() => applyEvent(state('failed'), { type: 'returned', at: new Date('2026-09-14T21:00:00Z') }, DEFAULT_PROJECT_SETTINGS))
+            .toThrow(/needs signedName/);
     });
 
     it('starts the STAT pickup clock at pickup, because that is when it is knowable', () => {
@@ -312,9 +323,9 @@ describe('a delivery from end to end', () => {
         const attempted = await post({ type: 'attempted', reason: 'incorrect address' });
         expect(attempted.body.order).toMatchObject({ status: 'failed', failureReason: 'incorrect address' });
 
-        const returned = await post({ type: 'returned', at: iso(PAST_MS + 240 * 60000) });
+        const returned = await post({ type: 'returned', at: iso(PAST_MS + 240 * 60000), signedName: 'Night Pharmacist' });
         // Still failed: it is a dry run and bills as one.
-        expect(returned.body.order).toMatchObject({ status: 'failed', returnedAt: iso(PAST_MS + 240 * 60000) });
+        expect(returned.body.order).toMatchObject({ status: 'failed', returnedAt: iso(PAST_MS + 240 * 60000), returnedBy: 'Night Pharmacist' });
 
         const detail = await admin.get(`${BASE}/${order.id}`);
         expect(detail.body.packages.every((p) => p.outcome === 'failed')).toBe(true);

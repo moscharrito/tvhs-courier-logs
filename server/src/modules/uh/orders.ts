@@ -105,6 +105,7 @@ interface OrderRow {
     pickup_at: string | null; arrived_at: string | null; delivered_at: string | null;
     assigned_to_username: string | null; assigned_at: string | null;
     picked_up_by: string; received_by: string; failure_reason: string; returned_at: string | null;
+    returned_to_site_id: number | null; returned_by: string;
     dedupe_key: string; status: string; created_at: string | null; updated_at: string | null;
 }
 
@@ -136,6 +137,8 @@ const present = (o: OrderRow) => ({
     arrivedAt: o.arrived_at,
     deliveredAt: o.delivered_at,
     returnedAt: o.returned_at,
+    returnedToSiteId: o.returned_to_site_id === null ? null : Number(o.returned_to_site_id),
+    returnedBy: o.returned_by,
     assignedTo: o.assigned_to_username,
     assignedAt: o.assigned_at,
     pickedUpBy: o.picked_up_by,

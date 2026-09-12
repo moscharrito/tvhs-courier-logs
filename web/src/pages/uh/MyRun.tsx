@@ -185,7 +185,13 @@ export function MyRun() {
                 </>
             )}
 
-            <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>Refresh</button>
+            <div className="izy-row">
+                <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>Refresh</button>
+                {/* Always offered, not only when today's run has a failure on it:
+                    a package can sit in a van overnight, and a screen that hides
+                    the way to hand it back is how it stays there. */}
+                <Link className="izy-btn secondary" to={`/projects/${code}/returns`}>Take back undelivered</Link>
+            </div>
         </>
     );
 }

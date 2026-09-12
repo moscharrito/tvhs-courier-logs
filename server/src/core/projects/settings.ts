@@ -87,12 +87,25 @@ export interface DispatchSettings {
     name: string;
 }
 
+export interface ReturnSettings {
+    /**
+     * Where undelivered packages go when the origin pharmacy is shut.
+     *
+     * Scope 1.2.9 sends them back to the pharmacy of origin, or to the
+     * Discharge Pharmacy after hours, because that is the one that is open.
+     * A site code rather than an id so it survives a reseed, and a setting
+     * rather than a constant so ops can repoint it without a deploy.
+     */
+    afterHoursSiteCode: string;
+}
+
 export interface ProjectSettings {
     sla: SlaSettings;
     businessHours: BusinessHoursSettings;
     listRelease: ListReleaseSettings;
     pricing: PricingSection;
     dispatch: DispatchSettings;
+    returns: ReturnSettings;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -124,6 +137,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
        standing at a door with a problem would dial it and reach a stranger.
        The courier app hides the button until someone sets this. */
     dispatch: { phone: '', name: 'Dispatch' },
+    returns: { afterHoursSiteCode: 'discharge' },
 };
 
 const hhmm = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, 24-hour');
@@ -164,6 +178,13 @@ export const SettingsPatch = z.object({
            It only ever becomes a tel: link. */
         phone: z.string().trim().max(40).regex(/^[0-9+()\-.\s]*$/, 'digits and + ( ) - . only').optional(),
         name: z.string().trim().max(60).optional(),
+    }).strict().optional(),
+    returns: z.object({
+        /* Validated as a site code, not checked against the sites table here:
+           settings are edited before a site exists often enough, and the
+           return endpoint says plainly when the code matches nothing. */
+        afterHoursSiteCode: z.string().trim().min(1).max(40)
+            .regex(/^[a-z0-9_-]+$/, 'lower-case letters, digits, hyphen and underscore only').optional(),
     }).strict().optional(),
 }).strict().refine((o) => Object.keys(o).length > 0, { message: 'nothing to update' });
 
@@ -209,13 +230,14 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         listRelease: section(stored['listRelease'], DEFAULT_PROJECT_SETTINGS.listRelease),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),
         dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
+        returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),
     };
 }
 
 /** Apply a validated patch on top of a stored blob, one section at a time. */
 export function mergeSettings(stored: Record<string, unknown>, patch: SettingsPatchInput): Record<string, unknown> {
     const next: Record<string, unknown> = { ...stored };
-    for (const name of ['sla', 'businessHours', 'listRelease', 'pricing', 'dispatch'] as const) {
+    for (const name of ['sla', 'businessHours', 'listRelease', 'pricing', 'dispatch', 'returns'] as const) {
         const incoming = patch[name];
         if (!incoming) continue;
         const current = (next[name] && typeof next[name] === 'object' && !Array.isArray(next[name])

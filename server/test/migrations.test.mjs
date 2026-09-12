@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -392,6 +392,69 @@ describe('0009 rebuilds packages without losing rows', () => {
 
             // And the constraint the rebuild existed to add is really there.
             await expect(client.execute("UPDATE packages SET outcome = 'nonsense' WHERE id = 1")).rejects.toThrow();
+        } finally {
+            client.close();
+            await removeDir(dir);
+        }
+    });
+});
+
+describe('0015 rebuilds signatures without losing rows', () => {
+    /* Adding 'return' to the kind CHECK means a full table rebuild in SQLite,
+       which is the shape of migration that lost data in 0009. Signatures are
+       proof of delivery under Scope 1.2.8: losing one is losing the evidence
+       that a controlled substance changed hands. So this runs 0000 through
+       0014, captures a real pickup signature, and applies 0015 on top. */
+    it('carries captured signatures across the rebuild and then accepts a return', async () => {
+        const { dir, absolute } = tempDb('sig-rebuild-');
+        const client = createClient({ url: `file:${absolute}` });
+        try {
+            const journal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'));
+            const runFile = async (tag) => {
+                const sql = fs.readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), 'utf8');
+                for (const stmt of sql.split('--> statement-breakpoint')) {
+                    const trimmed = stmt.trim();
+                    if (trimmed) await client.execute(trimmed);
+                }
+            };
+            const tags = journal.entries.map((e) => e.tag);
+            for (const tag of tags.filter((t) => t < '0015')) await runFile(tag);
+
+            const strokes = JSON.stringify([[{ x: 0.1, y: 0.2, t: 0 }, { x: 0.4, y: 0.5, t: 40 }]]);
+            await client.execute({
+                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
+                      VALUES (2, 'pickup', 'Pharmacy Tech', ?, 'ada.courier', '2026-09-14T17:05:00.000Z', 29.42, -98.49)`,
+                args: [strokes],
+            });
+            // The kind under test is refused before 0015, which is why it exists.
+            await expect(client.execute(
+                `INSERT INTO signatures (project_id, kind, signed_name, captured_at) VALUES (2, 'return', 'Night Pharmacist', '2026-09-14T21:00:00.000Z')`,
+            )).rejects.toThrow();
+
+            await runFile('0015_return_flow');
+
+            const after = await client.execute('SELECT * FROM signatures');
+            expect(after.rows).toHaveLength(1);
+            expect({ ...after.rows[0] }).toMatchObject({
+                id: 1, kind: 'pickup', signed_name: 'Pharmacy Tech', strokes,
+                captured_by: 'ada.courier', captured_at: '2026-09-14T17:05:00.000Z', lat: 29.42, lng: -98.49,
+            });
+
+            // The kind the rebuild existed to allow, and nothing beyond it.
+            await client.execute(
+                `INSERT INTO signatures (project_id, kind, signed_name, captured_at) VALUES (2, 'return', 'Night Pharmacist', '2026-09-14T21:00:00.000Z')`,
+            );
+            await expect(client.execute(
+                `INSERT INTO signatures (project_id, kind, signed_name, captured_at) VALUES (2, 'nonsense', 'X', '2026-09-14T21:00:00.000Z')`,
+            )).rejects.toThrow();
+
+            // The index the rebuild dropped and recreated is back.
+            const indexes = await client.execute('PRAGMA index_list(signatures)');
+            expect(indexes.rows.map((r) => r.name)).toContain('signatures_project_idx');
+
+            // And the id sequence continues rather than restarting at 1.
+            const ids = await client.execute('SELECT id FROM signatures ORDER BY id');
+            expect(ids.rows.map((r) => Number(r.id))).toEqual([1, 2]);
         } finally {
             client.close();
             await removeDir(dir);

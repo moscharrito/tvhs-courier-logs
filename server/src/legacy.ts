@@ -35,6 +35,7 @@ import { createOrdersRouter } from './modules/uh/orders';
 import { createStopRouter } from './modules/uh/stop';
 import { createRunsRouter } from './modules/uh/runs';
 import { createPickupRouter } from './modules/uh/pickup';
+import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
 import { createFileStorage } from './core/files/storage';
 import { createBoardRouter } from './modules/uh/board';
@@ -119,6 +120,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // router's /:id, which would otherwise swallow it.
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createPickupRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/returns', requireProject, createReturnsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/files', requireProject, createFilesRouter({ client: database.client, storage: fileStorage }));
 

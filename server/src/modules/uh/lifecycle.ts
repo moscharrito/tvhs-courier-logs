@@ -95,7 +95,12 @@ export const EVENT_RULES: Record<CustodyEventType, EventRule> = {
     },
     returned: {
         // Also no status change: the delivery still failed.
-        from: ['failed'], to: null, roles: COURIER_AND_STAFF, requires: [],
+        //
+        // A name is required. Handing medication back over a counter is a
+        // custody handover like any other, and Scope 1.2.8 asks who took it;
+        // a return with nobody's name on it says only that the package left
+        // the van.
+        from: ['failed'], to: null, roles: COURIER_AND_STAFF, requires: ['signedName'],
         describes: 'Undelivered packages are back at the pharmacy of origin or the Discharge Pharmacy.',
     },
     cancelled: {
@@ -123,6 +128,8 @@ export interface EventInput {
      *  is append-only, so there is no afterwards. */
     fileId?: number | undefined;
     reason?: string | undefined;
+    /** Which site took the packages back. Set on a `returned` event only. */
+    returnedToSiteId?: number | undefined;
     lat?: number | undefined;
     lng?: number | undefined;
     /** Package ids this event applies to. Empty means the whole order. */
@@ -252,6 +259,12 @@ export function applyEvent(order: OrderState, event: EventInput, settings: Proje
             break;
         case 'returned':
             set['returned_at'] = at;
+            set['returned_by'] = event.signedName!.trim();
+            /* Where it actually went, not where the rule expected it to go.
+               An origin pharmacy that shut early is a real event, and a
+               record saying the packages are somewhere they are not is worse
+               than one that admits the deviation. */
+            if (event.returnedToSiteId !== undefined) set['returned_to_site_id'] = event.returnedToSiteId;
             break;
         case 'cancelled':
             set['failure_reason'] = event.reason!.trim().slice(0, 300);

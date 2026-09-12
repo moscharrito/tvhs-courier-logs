@@ -212,6 +212,22 @@ Until the S3 environment in ticket 0.10 exists, the doorstep endpoint answers 50
 
 A position is sent when the phone offers one and the event is recorded without it otherwise, for the same reason as a pickup: a courier in a stairwell has no fix, and a record with a visible gap beats no record.
 
+### Taking undelivered medication back
+
+`/projects/:code/returns` and `GET`/`POST .../uh/returns`. Scope 1.2.9 sends an undelivered package back to the pharmacy of origin, or to the Discharge Pharmacy after hours.
+
+**A return is not an outcome.** It records a time, a place and a name, and never touches the status: a dry run bills as a dry run whether or not the package has made it back yet. So the query that matters, and the reason the feature exists, is `status = 'failed' AND returned_at IS NULL`. At the end of a shift somebody has to be able to ask what medication is unaccounted for, and get a straight answer.
+
+**Keyed on the courier, not the run.** Pickup is per run because a run is a batch collected at one counter. What is in the van at 8pm is whatever failed across every run of the day, and asking a courier to hand it back run by run would leave packages behind for no reason a courier could see.
+
+**The destination is proposed, not enforced.** The rule picks the origin while that pharmacy is open and the after-hours pharmacy once it has shut, shows the courier which and why, and then records where the packages actually went. A pharmacy that shut early is a real event; a record claiming medication is somewhere it is not would be worse than one that admits the deviation, so an off-rule return needs a reason and is then allowed through. Same reasoning as the pickup count.
+
+**Open or shut is the working day, not the billing window.** `businessHours` (08:00 to 20:00 by default), not the 20:00 to 07:00 after-hours window that carries the surcharge. They disagree between 7am and 8am, which is the Addendum 1 versus Scope 1.2.3 ambiguity noted under pricing. What matters here is whether anyone is behind the counter to take the packages, so sending a courier to a shut pharmacy to save an hour of bookkeeping would be the wrong trade.
+
+The after-hours pharmacy is `returns.afterHoursSiteCode` in the project settings, defaulting to `discharge`: a site code rather than an id so it survives a reseed, and a setting rather than a constant so ops can repoint it without a deploy. A code matching no site falls back to the origin and says so on the screen, because silently routing medication to whatever site sorts first would be worse than a courier reading an explanation.
+
+One signature covers the batch, the same as a pickup and for the same reason, stored as strokes under its own kind (`return`). Adding that kind meant rebuilding the `signatures` table, which is the shape of migration that lost rows in 0009; a migrations test captures a real signature before 0015 and proves it survives.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.
