@@ -132,6 +132,8 @@ export interface OrderState {
     pickupAt: Date | null;
     /** Null until the courier first reports reaching the address. */
     arrivedAt: Date | null;
+    /** Null only when the clock could not start until pickup. */
+    dueAt: Date | null;
 }
 
 export interface Applied {
@@ -220,8 +222,12 @@ export function applyEvent(order: OrderState, event: EventInput, settings: Proje
                 settings,
             );
             set['pickup_due_at'] = due.pickupDueAt ? due.pickupDueAt.toISOString() : null;
-            // A pickup-clock project only learns the due time at pickup.
-            if (due.dueAt) set['due_at'] = due.dueAt.toISOString();
+            // Fill in a due time that could not be computed before, never
+            // revise one that already exists. A pickup-clock project has no
+            // deadline until this moment; everywhere else the deadline was
+            // fixed at receipt and recomputing it here would silently move a
+            // date somebody may have adjusted by hand.
+            if (order.dueAt === null && due.dueAt) set['due_at'] = due.dueAt.toISOString();
             break;
         }
         case 'arrived':
@@ -260,4 +266,66 @@ export function applyEvent(order: OrderState, event: EventInput, settings: Proje
 /** Due times for a new manual order. Shared by the import and manual creation. */
 export function dueForNewOrder(serviceType: ServiceType, receivedAt: Date, settings: ProjectSettings) {
     return dueTimesFor({ serviceType, receivedAt }, settings);
+}
+
+/* ------------------------------------------------------------------ SLA */
+
+export type SlaState = 'open' | 'due_soon' | 'overdue' | 'met' | 'missed' | 'not_applicable';
+
+export interface SlaView {
+    state: SlaState;
+    /** Negative once the deadline has passed. Null when there is no deadline. */
+    minutesToDue: number | null;
+    /** Null while the order is still open. */
+    onTime: boolean | null;
+    /** The instant success was measured at, and which field it came from. */
+    measuredAt: string | null;
+    measuredFrom: 'arrived' | 'delivered' | null;
+}
+
+export interface SlaInput {
+    status: OrderStatus;
+    dueAt: Date | null;
+    arrivedAt: Date | null;
+    deliveredAt: Date | null;
+}
+
+/**
+ * How an order stands against its deadline.
+ *
+ * Success is measured at ARRIVAL, not at delivery. Addendum 1 counts an
+ * on-time arrival as a success even when the recipient is unavailable, so a
+ * courier who reached the door at 19:58 and could not hand over until 20:05
+ * was on time. Measuring at delivery would under-report our own performance
+ * against the figure University Health holds us to.
+ *
+ * Delivery time is the fallback only for records where no arrival was
+ * captured, which should not happen once the courier app enforces it.
+ */
+export function evaluateSla(o: SlaInput, now: Date = new Date(), dueSoonMinutes = 30): SlaView {
+    if (o.status === 'cancelled' || o.dueAt === null) {
+        return { state: 'not_applicable', minutesToDue: null, onTime: null, measuredAt: null, measuredFrom: null };
+    }
+
+    const closed = o.status === 'delivered' || o.status === 'failed';
+    if (closed) {
+        const from = o.arrivedAt ? 'arrived' : o.deliveredAt ? 'delivered' : null;
+        const at = o.arrivedAt ?? o.deliveredAt ?? null;
+        if (at === null) {
+            // Closed with no arrival and no delivery time: nothing to measure.
+            return { state: 'not_applicable', minutesToDue: null, onTime: null, measuredAt: null, measuredFrom: null };
+        }
+        const onTime = at.getTime() <= o.dueAt.getTime();
+        return {
+            state: onTime ? 'met' : 'missed',
+            minutesToDue: Math.round((o.dueAt.getTime() - at.getTime()) / 60000),
+            onTime,
+            measuredAt: at.toISOString(),
+            measuredFrom: from,
+        };
+    }
+
+    const minutesToDue = Math.round((o.dueAt.getTime() - now.getTime()) / 60000);
+    const state: SlaState = minutesToDue < 0 ? 'overdue' : minutesToDue <= dueSoonMinutes ? 'due_soon' : 'open';
+    return { state, minutesToDue, onTime: null, measuredAt: null, measuredFrom: null };
 }

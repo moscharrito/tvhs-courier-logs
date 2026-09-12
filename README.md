@@ -110,6 +110,26 @@ Couriers see and act on only the orders assigned to them, which is both the mini
 
 `custody_events` is append-only in the database, the way `audit_events` is: migration 0009 adds triggers that abort any UPDATE or DELETE, because Scope 1.2.7 requires the chain of custody to be available for regulatory audit and a record that can be edited afterwards is not evidence. **It is not the audit trail.** `audit_events` records who touched the system and carries no PHI; `custody_events` records what happened to a patient's medication and deliberately carries the signatures the contract requires. Treat it like `orders`, not like a log.
 
+### Order search and detail
+
+`/projects/:code/orders` is the staff screen. Filters are the first thing on the page and the time remaining is the first thing on a row, because a dispatcher's questions are "what is late", "what has this pharmacy sent today", and "where is the order this caller is asking about". Filters live in the URL, so a view can be sent to a colleague.
+
+Filter by service date or a date range, site, status, service type, courier (a username, or `unassigned`), zone (a number, or `out_of_area`), pharmacy reference, and `overdue=true`. **Searching by patient name is deliberately not offered.** It would put a name in a URL, and URLs reach browser history, proxies and referrer headers. The pharmacy reference is what a caller reads out anyway.
+
+`GET .../uh/orders/summary` counts the same filtered set the list returns, so the screen's header cannot disagree with its own table. It reports the count by status, how many are overdue, and the on-time rate.
+
+**On time is measured at arrival, not at delivery.** `evaluateSla` in `lifecycle.ts` is the single place that decides: Addendum 1 counts an on-time arrival as a success even when the recipient is unavailable, so a courier who reached the door at 19:58 and handed over at 20:05 was on time. Measuring at delivery would under-report our own performance against the figure University Health holds us to. The delivery time is a fallback only for records with no arrival captured. A cancelled order, or one with no deadline, is scored as `not_applicable` rather than guessed at. This is not the 85 percent completion rate, which is a different figure, and whose formula in Scope 1.2.5 reads inverted ("number of attempts divided by successful deliveries" is never 85 percent); reporting is ticket 3.3.
+
+The detail page shows the packages, the full price breakdown, and the chain of custody with the signatures Scope 1.2.8 requires, rather than summarising them away. It is read-only: events are recorded by the dispatch board and the courier app, and the custody rows cannot be edited at all.
+
+The breakdown is computed rather than stored, so it follows the settings and the effective schedule. Three inputs are not simply read off the row:
+
+- **After hours** is measured at the delivery when there is one, else the pickup, else the request. Addendum 1 defines the service as one "requested and performed outside of normal business hours", and performed is what a courier can be held to. The response says which instant was used, because on a borderline order an $18 surcharge turns on it.
+- **A dry run** bills per item, counting the quantities of the packages that actually failed rather than the whole order, since an order can be part delivered.
+- **Mileage** for an out-of-area order is still unknown until ticket 1.4. `priceFor` says so in its notes rather than quietly billing zero as though the question were settled.
+
+A price is marked provisional while the order can still change what it bills at.
+
 ## Project settings
 
 Each project is one contract, and a contract's operating parameters are configuration rather than code. They live in the `projects.settings` JSON column, with their shape, defaults and validation in `server/src/core/projects/settings.ts`. Nothing is stored until someone changes a value, so the defaults are always what the contract says.

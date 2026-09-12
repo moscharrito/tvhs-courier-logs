@@ -81,7 +81,7 @@ async function driveTo(orderId, status, courier = 'route.courier') {
 describe('the transition table', () => {
     const state = (status, over = {}) => ({
         status, serviceType: 'scheduled', receivedAt: new Date('2026-09-14T17:00:00Z'),
-        pickupAt: null, arrivedAt: null, ...over,
+        pickupAt: null, arrivedAt: null, dueAt: new Date('2026-09-14T19:00:00Z'), ...over,
     });
 
     it('covers every status and every event type, with no dangling target', () => {
@@ -142,8 +142,20 @@ describe('the transition table', () => {
 
     it('fills in the due time at pickup when the project clock starts at pickup', () => {
         const settings = { ...DEFAULT_PROJECT_SETTINGS, sla: { ...DEFAULT_PROJECT_SETTINGS.sla, clockStart: 'pickup' } };
-        const applied = applyEvent(state('assigned'), { type: 'picked_up', at: new Date('2026-09-14T17:40:00Z'), signedName: 'Tech' }, settings);
+        // No deadline existed: the clock could not start until now.
+        const applied = applyEvent(state('assigned', { dueAt: null }), { type: 'picked_up', at: new Date('2026-09-14T17:40:00Z'), signedName: 'Tech' }, settings);
         expect(applied.set['due_at']).toBe('2026-09-14T19:40:00.000Z');
+    });
+
+    it('never revises a deadline that already exists', () => {
+        // Recomputing at pickup would silently move a date somebody may have
+        // adjusted, and would quietly undo a backdated deadline.
+        const applied = applyEvent(state('assigned'), { type: 'picked_up', at: new Date('2026-09-14T17:40:00Z'), signedName: 'Tech' }, DEFAULT_PROJECT_SETTINGS);
+        expect(applied.set['due_at']).toBeUndefined();
+
+        const pickupClock = { ...DEFAULT_PROJECT_SETTINGS, sla: { ...DEFAULT_PROJECT_SETTINGS.sla, clockStart: 'pickup' } };
+        const already = applyEvent(state('assigned'), { type: 'picked_up', at: new Date('2026-09-14T17:40:00Z'), signedName: 'Tech' }, pickupClock);
+        expect(already.set['due_at']).toBeUndefined();
     });
 
     it('refuses an illegal transition rather than silently doing nothing', () => {

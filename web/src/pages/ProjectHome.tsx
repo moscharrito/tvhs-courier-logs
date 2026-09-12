@@ -43,6 +43,11 @@ export function ProjectHome() {
             <Pricing projectCode={project.code} />
             <ProjectSettings projectCode={project.code} />
             <div className="izy-card">
+                <h2>Orders</h2>
+                <p>Search today's deliveries, see what is running late, and open one for its packages, its price and its chain of custody.</p>
+                <Link className="izy-btn" to={`/projects/${project.code}/orders`}>Open orders</Link>
+            </div>
+            <div className="izy-card">
                 <h2>Coming next</h2>
                 <p>Address lookup, then the dispatch board and the courier app. Admins can enrol staff and couriers from <Link to="/users">Users</Link>.</p>
             </div>

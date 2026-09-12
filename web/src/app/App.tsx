@@ -10,6 +10,8 @@ import { Devices } from '../pages/Devices';
 import { Audit } from '../pages/Audit';
 import { LegacyTvhs } from '../pages/LegacyTvhs';
 import { ProjectHome } from '../pages/ProjectHome';
+import { Orders } from '../pages/uh/Orders';
+import { OrderDetail } from '../pages/uh/OrderDetail';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
     const { user } = useAuth();
@@ -28,6 +30,8 @@ export function App() {
             <Route path="/projects/tvhs/tvhs/*" element={<LegacyTvhs />} />
             <Route element={<Layout />}>
                 <Route path="/" element={<Home />} />
+                <Route path="/projects/:code/orders" element={<Orders />} />
+                <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />
                 <Route path="/projects/:code/*" element={<ProjectHome />} />
                 <Route path="/devices" element={<Devices />} />
                 <Route path="/users" element={<AdminOnly><Users /></AdminOnly>} />

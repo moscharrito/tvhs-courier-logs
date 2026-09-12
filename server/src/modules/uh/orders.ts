@@ -20,11 +20,11 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { resolveSettings } from '../../core/projects/settings';
-import { resolveZone } from './pricing';
-import { zipZoneMap } from './zones';
+import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
+import { zipZoneMap, scheduleOn } from './zones';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
 import {
-    applyEvent, availableEvents, dueForNewOrder, EVENT_RULES, TransitionError,
+    applyEvent, availableEvents, dueForNewOrder, evaluateSla, EVENT_RULES, TransitionError,
     CUSTODY_EVENT_TYPES, ORDER_STATUSES,
     type CustodyEventType, type OrderStatus,
 } from './lifecycle';
@@ -139,6 +139,12 @@ const present = (o: OrderRow) => ({
     pickedUpBy: o.picked_up_by,
     receivedBy: o.received_by,
     failureReason: o.failure_reason,
+    sla: evaluateSla({
+        status: o.status as OrderStatus,
+        dueAt: o.due_at ? new Date(o.due_at) : null,
+        arrivedAt: o.arrived_at ? new Date(o.arrived_at) : null,
+        deliveredAt: o.delivered_at ? new Date(o.delivered_at) : null,
+    }),
 });
 
 export function createOrdersRouter({ client }: { client: Client }): Router {
@@ -295,6 +301,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
                     receivedAt: new Date(order.received_at),
                     pickupAt: order.pickup_at ? new Date(order.pickup_at) : null,
                     arrivedAt: order.arrived_at ? new Date(order.arrived_at) : null,
+                    dueAt: order.due_at ? new Date(order.due_at) : null,
                 },
                 {
                     type: body.type, at,
@@ -380,29 +387,161 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
         });
     }));
 
+
+    /**
+     * What this order bills at, as far as is currently knowable.
+     *
+     * Three inputs are not simply read off the row:
+     *
+     *   after hours  Addendum 1 defines it as service "requested and performed
+     *                outside of normal business hours". Performed is what a
+     *                courier can be held to, so this measures the delivery
+     *                when there is one, else the pickup, else the request.
+     *                Which instant was used is returned, because on a
+     *                borderline order an $18 surcharge turns on it.
+     *   dry run      A failed order is a dry run, billed per item (Addendum 1).
+     *                Items are the quantities of the packages that actually
+     *                failed, not the whole order, since an order can be part
+     *                delivered.
+     *   mileage      An out-of-area order needs a distance nobody has yet.
+     *                priceFor says so in its notes rather than quietly
+     *                billing zero as though the question were settled.
+     */
+    async function pricingFor(order: OrderRow, project: { id: number; settings: Record<string, unknown>; timezone: string }) {
+        const schedule = await scheduleOn(client, project.id, order.service_date);
+        if (!schedule) return { available: false as const, reason: `No price schedule is in effect on ${order.service_date}.` };
+
+        const settings = pricingSettingsFrom(project.settings, project.timezone);
+        const performedAt = order.delivered_at ?? order.pickup_at ?? order.received_at;
+        const measuredFrom = order.delivered_at ? 'delivered' : order.pickup_at ? 'pickup' : 'requested';
+        const at = new Date(performedAt);
+
+        const dryRun = order.status === 'failed';
+        let items = 1;
+        if (dryRun) {
+            const rs = await client.execute({
+                sql: `SELECT COALESCE(SUM(quantity), 0) AS n FROM packages
+                      WHERE project_id = ? AND order_id = ? AND outcome = 'failed'`,
+                args: [project.id, Number(order.id)],
+            });
+            items = Math.max(1, Number(rs.rows[0]?.['n'] ?? 0));
+        }
+
+        const breakdown = priceFor({
+            zone: (order.zone === null ? null : Number(order.zone)) as 1 | 2 | 3 | 4 | 5 | null,
+            serviceType: order.service_type as 'scheduled' | 'stat' | 'adhoc',
+            at,
+            dryRun,
+            items,
+            ...(order.out_of_area_miles !== null ? { outOfAreaMiles: Number(order.out_of_area_miles) } : {}),
+        }, schedule, settings);
+
+        return {
+            available: true as const,
+            ...breakdown,
+            afterHours: isAfterHours(at, settings),
+            measuredAt: at.toISOString(),
+            measuredFrom,
+            /** True while the order can still change what it bills at. */
+            provisional: !['delivered', 'failed', 'cancelled'].includes(order.status),
+        };
+    }
+
     /* ---------------------------------------------------------------- reads */
 
-    router.get('/', wrap(async (req, res) => {
+    /* The filters the staff screen offers, in one place so the list and the
+     * summary count exactly the same set. A courier's clause is added last
+     * and cannot be widened by a query parameter. */
+    function filterFor(req: Request): { where: string[]; args: InValue[]; applied: string[] } {
         const q = req.query as Record<string, string | undefined>;
         const where: string[] = ['o.project_id = ?'];
         const args: InValue[] = [req.project!.id];
+        const applied: string[] = [];
 
-        if (q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])) { where.push('o.service_date = ?'); args.push(q['serviceDate']); }
-        if (q['siteId']) { where.push('o.site_id = ?'); args.push(Number(q['siteId'])); }
-        if (q['status'] && (ORDER_STATUSES as readonly string[]).includes(q['status'])) { where.push('o.status = ?'); args.push(q['status']); }
-        if (q['serviceType']) { where.push('o.service_type = ?'); args.push(String(q['serviceType'])); }
-        if (q['assignedTo']) { where.push('o.assigned_to_username = ?'); args.push(String(q['assignedTo'])); }
-        // A courier sees their own work and nothing else.
+        if (q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])) { where.push('o.service_date = ?'); args.push(q['serviceDate']); applied.push('serviceDate'); }
+        if (q['from'] && /^\d{4}-\d{2}-\d{2}$/.test(q['from'])) { where.push('o.service_date >= ?'); args.push(q['from']); applied.push('from'); }
+        if (q['to'] && /^\d{4}-\d{2}-\d{2}$/.test(q['to'])) { where.push('o.service_date <= ?'); args.push(q['to']); applied.push('to'); }
+        if (q['siteId']) { where.push('o.site_id = ?'); args.push(Number(q['siteId'])); applied.push('siteId'); }
+        if (q['status'] && (ORDER_STATUSES as readonly string[]).includes(q['status'])) { where.push('o.status = ?'); args.push(q['status']); applied.push('status'); }
+        if (q['serviceType']) { where.push('o.service_type = ?'); args.push(String(q['serviceType'])); applied.push('serviceType'); }
+        if (q['assignedTo'] === 'unassigned') { where.push('o.assigned_to_username IS NULL'); applied.push('assignedTo'); }
+        else if (q['assignedTo']) { where.push('o.assigned_to_username = ?'); args.push(String(q['assignedTo'])); applied.push('assignedTo'); }
+        if (q['zone'] === 'out_of_area') { where.push('o.zone IS NULL'); applied.push('zone'); }
+        else if (q['zone']) { where.push('o.zone = ?'); args.push(Number(q['zone'])); applied.push('zone'); }
+
+        /* Open and past due. Delivered, failed and cancelled orders are
+         * settled: whether they met the deadline is `sla`, not a filter. */
+        if (q['overdue'] === 'true') {
+            where.push("o.due_at IS NOT NULL AND o.due_at < ? AND o.status NOT IN ('delivered','failed','cancelled')");
+            args.push(new Date().toISOString());
+            applied.push('overdue');
+        }
+
+        /* A reference is the pharmacy's own handle for a row and is what a
+         * dispatcher has in front of them on a phone call. Searching by
+         * patient name is deliberately not offered: it would put a name in a
+         * URL, and URLs reach browser history, proxies and referrer headers. */
+        if (q['ref']) { where.push('o.external_ref = ?'); args.push(String(q['ref']).trim()); applied.push('ref'); }
+
+        // A courier sees their own work and nothing else. Last, so nothing
+        // above can widen it.
         if (isCourier(req)) { where.push('o.assigned_to_username = ?'); args.push(req.session.user?.username ?? ''); }
 
+        return { where, args, applied };
+    }
+
+    router.get('/', wrap(async (req, res) => {
+        const { where, args, applied } = filterFor(req);
+        const q = req.query as Record<string, string | undefined>;
         const limit = Math.min(500, Math.max(1, Number(q['limit'] ?? 200) || 200));
         const rs = await client.execute({
             sql: `SELECT o.* FROM orders o WHERE ${where.join(' AND ')} ORDER BY o.due_at IS NULL, o.due_at, o.id LIMIT ${limit}`,
             args,
         });
         const rows = (rs.rows as unknown as OrderRow[]).map(present);
-        await req.audit('order.list', 'order', null, { returned: rows.length, filters: Object.keys(q) });
+        await req.audit('order.list', 'order', null, { returned: rows.length, filters: applied });
         res.json(rows);
+    }));
+
+    /* Counts over the same filtered set, so the screen's header cannot
+     * disagree with its own table. Declared before /:id so that "summary" is
+     * not read as an order id. */
+    router.get('/summary', wrap(async (req, res) => {
+        const { where, args } = filterFor(req);
+        const rs = await client.execute({
+            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at FROM orders o WHERE ${where.join(' AND ')}`,
+            args,
+        });
+
+        const byStatus: Record<string, number> = {};
+        let overdue = 0;
+        let met = 0;
+        let missed = 0;
+        const now = new Date();
+        for (const r of rs.rows) {
+            const status = String(r['status']);
+            byStatus[status] = (byStatus[status] ?? 0) + 1;
+            const sla = evaluateSla({
+                status: status as OrderStatus,
+                dueAt: r['due_at'] ? new Date(String(r['due_at'])) : null,
+                arrivedAt: r['arrived_at'] ? new Date(String(r['arrived_at'])) : null,
+                deliveredAt: r['delivered_at'] ? new Date(String(r['delivered_at'])) : null,
+            }, now);
+            if (sla.state === 'overdue') overdue += 1;
+            if (sla.state === 'met') met += 1;
+            if (sla.state === 'missed') missed += 1;
+        }
+        const measured = met + missed;
+        res.json({
+            total: rs.rows.length,
+            byStatus,
+            overdue,
+            /* On-time is measured at arrival, not delivery: Addendum 1 counts
+             * an on-time arrival as the success. This is not the 85 percent
+             * completion rate, which is a different figure and whose formula
+             * in Scope 1.2.5 is written inverted; reporting is ticket 3.3. */
+            onTime: { met, missed, measured, rate: measured === 0 ? null : Math.round((met / measured) * 1000) / 10 },
+        });
     }));
 
     router.get('/:id', wrap(async (req, res) => {
@@ -421,6 +560,8 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
                   FROM custody_events WHERE project_id = ? AND order_id = ? ORDER BY id`,
             args: [req.project!.id, Number(order.id)],
         });
+
+        const pricing = await pricingFor(order, req.project!);
 
         // Reading one order means reading patient data; record that it happened.
         await req.audit('order.read', 'order', String(order.id), { events: events.rows.length });
@@ -449,6 +590,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
                 lng: e['lng'] === null ? null : Number(e['lng']),
                 describes: EVENT_RULES[String(e['type']) as CustodyEventType]?.describes ?? '',
             })),
+            pricing,
             allowed: availableEvents(order.status as OrderStatus, [roleOf(req)]),
         });
     }));

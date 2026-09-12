@@ -242,10 +242,14 @@ describe('PATCH /api/projects/:pid/settings', () => {
     it('changes the dry-run rule and the price with it', async () => {
         await reset();
         const quote = (body) => admin.post('/api/projects/uh/uh/pricing/quote').send(body);
+        // Pin the instant to 14:00 Chicago. Without `at` the quote prices at
+        // the wall clock, so this test passed by day and failed after 8pm,
+        // when the $18 after-hours surcharge starts applying.
+        const at = '2026-09-14T19:00:00Z';
         // 78154 is zone 4 ($36). Replace: the $9 fee stands alone.
-        expect((await quote({ zip: '78154', serviceType: 'scheduled', dryRun: true })).body.total).toBe(9);
+        expect((await quote({ zip: '78154', serviceType: 'scheduled', dryRun: true, at })).body.total).toBe(9);
         await admin.patch(UH).send({ pricing: { dryRunReplacesBase: false } });
-        expect((await quote({ zip: '78154', serviceType: 'scheduled', dryRun: true })).body.total).toBe(45);
+        expect((await quote({ zip: '78154', serviceType: 'scheduled', dryRun: true, at })).body.total).toBe(45);
         await reset();
     });
 
