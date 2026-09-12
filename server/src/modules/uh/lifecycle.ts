@@ -118,6 +118,10 @@ export interface EventInput {
     signedName?: string | undefined;
     /** Key of the stored signature image. Ticket 1.8 fills this in. */
     signatureKey?: string | undefined;
+    /** The photo that supports this event, such as a doorstep delivery.
+     *  Carried on the event rather than attached afterwards: custody_events
+     *  is append-only, so there is no afterwards. */
+    fileId?: number | undefined;
     reason?: string | undefined;
     lat?: number | undefined;
     lng?: number | undefined;

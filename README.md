@@ -194,6 +194,24 @@ Signatures are stored as the **strokes** the finger drew, not as a rendered imag
 
 A pickup without a position is recorded and says so, rather than being refused: a courier inside a building often has no fix, and Scope 1.2.7 is better served by a custody record with a gap that is visible than by no record at all.
 
+### The stop
+
+`/projects/:code/orders/:id/stop` is the screen a courier works from at the door, and `POST .../uh/orders/:id/{arrive,deliver,doorstep,attempt}` are what it calls. `server/src/modules/uh/stop.ts` holds the rules; it writes no status itself, going through `recordOrderEvent` like every other caller.
+
+**Arriving is its own tap, because arrival is the thing that is measured.** Addendum 1 counts an on-time arrival as the success, so folding it into the outcome would lose the time on every stop where the courier is quick. When an outcome does arrive without one, the arrival is inferred from it and the custody row says so in as many words rather than leaving a delivery with no arrival at all. The first arrival wins: a courier tapping twice cannot reset the stamp the deadline is judged against.
+
+Then exactly one of three endings:
+
+- **Handed over.** Printed name and signature, both required (Scope 1.2.8). The signature is captured as strokes, the same way the pharmacy handover is.
+- **Left at the door.** A stored photo and a written reason, both required. It is **refused outright when any package on the order needs a signature**, not offered with a warning: Scope 1.2.3 allows a doorstep drop only "depending on the medication type", and a control a courier can see is a control a courier will try. The screen hides the button entirely and says why.
+- **Could not deliver, a dry run.** A reason code **per package**, from Addendum 1's own list (`incorrect_address`, `recipient_not_located`, `no_access`, `incomplete_shipment`, `refused`, `other`), with a note required for `other`. Per package because the contract bills a dry run per item, so the reason is what the invoice line rests on, and because half a shipment arriving is a real outcome.
+
+**The photo is written with the custody row, not attached afterwards.** `custody_events` is append-only by trigger, so there is no afterwards: an earlier version recorded the delivery and then tried to `UPDATE` the row with the file id, which the trigger rejected, leaving a courier looking at an error on a delivery that had in fact succeeded. `EventInput` carries `fileId` and the row is written once, complete. A photo that was never confirmed as stored, or that belongs to a different order, is refused before anything is recorded.
+
+Until the S3 environment in ticket 0.10 exists, the doorstep endpoint answers 503 `files.notConfigured` and the screen says so plainly instead of offering a button that cannot work.
+
+A position is sent when the phone offers one and the event is recorded without it otherwise, for the same reason as a pickup: a courier in a stairwell has no fix, and a record with a visible gap beats no record.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.

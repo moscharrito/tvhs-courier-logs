@@ -154,6 +154,8 @@ export function MyRun() {
                             </p>
                             <div className="izy-row">
                                 <a className="izy-btn" href={mapsUrl(current)} target="_blank" rel="noreferrer">Directions</a>
+                                {/* The stop is the work. Details is for looking something up. */}
+                                <Link className="izy-btn" to={`/projects/${code}/orders/${current.orderId}/stop`}>Open the stop</Link>
                                 <Link className="izy-btn secondary" to={`/projects/${code}/orders/${current.orderId}`}>Details</Link>
                             </div>
                         </div>
@@ -171,6 +173,9 @@ export function MyRun() {
                                     <div className="izy-muted">{s.address}, {s.city} {s.zip}</div>
                                     <div className="izy-row">
                                         <a className="izy-btn secondary" href={mapsUrl(s)} target="_blank" rel="noreferrer">Directions</a>
+                                        {!DONE.includes(s.status) && (
+                                            <Link className="izy-btn secondary" to={`/projects/${code}/orders/${s.orderId}/stop`}>Open the stop</Link>
+                                        )}
                                         <Link className="izy-btn secondary" to={`/projects/${code}/orders/${s.orderId}`}>Details</Link>
                                     </div>
                                 </li>

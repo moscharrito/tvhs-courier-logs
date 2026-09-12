@@ -14,6 +14,7 @@ import { Orders } from '../pages/uh/Orders';
 import { Board } from '../pages/uh/Board';
 import { MyRun } from '../pages/uh/MyRun';
 import { Pickup } from '../pages/uh/Pickup';
+import { Stop } from '../pages/uh/Stop';
 import { OrderDetail } from '../pages/uh/OrderDetail';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
@@ -37,6 +38,7 @@ export function App() {
                 <Route path="/projects/:code/my-run" element={<MyRun />} />
                 <Route path="/projects/:code/runs/:runId/pickup" element={<Pickup />} />
                 <Route path="/projects/:code/orders" element={<Orders />} />
+                <Route path="/projects/:code/orders/:orderId/stop" element={<Stop />} />
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />
                 <Route path="/projects/:code/*" element={<ProjectHome />} />
                 <Route path="/devices" element={<Devices />} />

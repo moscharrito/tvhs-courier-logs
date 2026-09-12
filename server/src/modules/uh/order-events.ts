@@ -53,16 +53,17 @@ export async function insertCustodyEvent(client: Client, e: {
     lat?: number | undefined;
     lng?: number | undefined;
     packageId?: number | undefined;
+    fileId?: number | undefined;
 }): Promise<void> {
     await client.execute({
         sql: `INSERT INTO custody_events
                 (project_id, order_id, package_id, type, at, actor, from_status, to_status,
-                 signed_name, signature_key, reason, lat, lng)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 signed_name, signature_key, reason, lat, lng, file_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
             e.projectId, e.orderId, e.packageId ?? null, e.type, e.at.toISOString(), e.actor,
             e.fromStatus, e.toStatus, e.signedName ?? '', e.signatureKey ?? '', e.reason ?? '',
-            e.lat ?? null, e.lng ?? null,
+            e.lat ?? null, e.lng ?? null, e.fileId ?? null,
         ],
     });
 }
@@ -120,7 +121,7 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
         projectId, orderId, type: event.type, at: event.at, actor,
         fromStatus: order.status, toStatus: applied.toStatus,
         signedName: event.signedName, signatureKey: event.signatureKey,
-        reason: event.reason, lat: event.lat, lng: event.lng,
+        reason: event.reason, lat: event.lat, lng: event.lng, fileId: event.fileId,
     };
 
     if (packageIds.length > 0) {

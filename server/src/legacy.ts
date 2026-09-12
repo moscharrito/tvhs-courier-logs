@@ -32,6 +32,7 @@ import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
 import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
 import { createOrdersRouter } from './modules/uh/orders';
+import { createStopRouter } from './modules/uh/stop';
 import { createRunsRouter } from './modules/uh/runs';
 import { createPickupRouter } from './modules/uh/pickup';
 import { createFilesRouter } from './core/files/routes';
@@ -89,6 +90,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // UH Pharmacy Courier module below. Project scoping is enforced here
     // rather than in server.js, so a module has no dependency on the legacy app.
     const requireProject = createRequireProject(database.client);
+    const fileStorage = createFileStorage(config);
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));
@@ -109,13 +111,16 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         requireProject,
         createImportsRouter({ client: database.client }),
     );
+    // Stop flow first: its /:id/arrive and friends must be matched before
+    // the orders router's /:id, which would otherwise swallow them.
+    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createStopRouter({ client: database.client, storage: fileStorage }));
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client }));
     // Pickup first: its /:id/pickup must be matched before the runs
     // router's /:id, which would otherwise swallow it.
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createPickupRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
-    legacy.app.use('/api/projects/:pid/uh/files', requireProject, createFilesRouter({ client: database.client, storage: createFileStorage(config) }));
+    legacy.app.use('/api/projects/:pid/uh/files', requireProject, createFilesRouter({ client: database.client, storage: fileStorage }));
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.

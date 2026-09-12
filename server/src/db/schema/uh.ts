@@ -226,6 +226,10 @@ export const orders = sqliteTable(
 
         /* Why a delivery failed or was called off. PHI-adjacent free text. */
         failureReason: text('failure_reason').notNull().default(''),
+        /* Scope 1.2.3 allows a doorstep delivery "depending on the medication
+         * type". When one happens there is no receiver signature, so the
+         * record has to say why instead of simply being blank. */
+        noSignatureReason: text('no_signature_reason').notNull().default(''),
         /* Scope 1.2.9: undelivered packages go back to the origin pharmacy, or
          * to the Discharge Pharmacy after hours. Returning does not undo the
          * failure, so this is a timestamp and not a status: an order still in
@@ -270,6 +274,16 @@ export const packages = sqliteTable(
         /* Addendum 1 bills a dry run per item, so the outcome has to be
          * recordable per package and not only per stop. */
         outcome: text('outcome', { enum: ['pending', 'delivered', 'failed'] }).notNull().default('pending'),
+        /* Why this particular item was not delivered. Addendum 1 lists the
+         * circumstances a dry run covers, and DRY_RUN_REASONS below is that
+         * list; a free-text note carries anything outside it.
+         *
+         * No CHECK constraint on purpose: SQLite cannot add one without
+         * rebuilding the table, and a rebuild of a table holding delivery
+         * records is a risk out of proportion to a six-value enum that zod
+         * already enforces at the edge. */
+        failureReasonCode: text('failure_reason_code').notNull().default(''),
+        failureNote: text('failure_note').notNull().default(''),
         createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
     },
     (t) => [
@@ -297,6 +311,21 @@ export const importMappings = sqliteTable(
     },
     (t) => [unique('import_mappings_site_unique').on(t.projectId, t.siteId)],
 );
+
+/* Addendum 1: a dry run applies when a delivery "is attempted but cannot be
+ * completed due to circumstances such as an incorrect address, inability to
+ * locate the recipient, lack of access, or incomplete or unavailable shipment
+ * information". These are that list, in the contract's own terms, so an
+ * invoice line can be defended by pointing at the clause. */
+export const DRY_RUN_REASONS = [
+    'incorrect_address',
+    'recipient_not_located',
+    'no_access',
+    'incomplete_shipment',
+    'refused',
+    'other',
+] as const;
+export type DryRunReason = (typeof DRY_RUN_REASONS)[number];
 
 export type DailyList = typeof dailyLists.$inferSelect;
 export type Order = typeof orders.$inferSelect;
@@ -343,8 +372,10 @@ export const custodyEvents = sqliteTable(
         /* PHI: Scope 1.2.8 requires the printed name of the sending and the
          * receiving personnel on the proof of delivery. */
         signedName: text('signed_name').notNull().default(''),
-        /** S3 key of the signature image. Ticket 1.8 fills this in. */
+        /** Where the signature is. See modules/uh/pickup for the shape. */
         signatureKey: text('signature_key').notNull().default(''),
+        /** The photo that proves a doorstep delivery (ticket 1.8 stores it). */
+        fileId: integer('file_id'),
         /* PHI-adjacent: a courier's free text, which can name a patient. */
         reason: text('reason').notNull().default(''),
 
