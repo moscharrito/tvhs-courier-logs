@@ -79,11 +79,20 @@ export interface PricingSection {
     dryRunReplacesBase: boolean;
 }
 
+export interface DispatchSettings {
+    /** The number a courier's "call dispatch" button dials. Digits and the
+     *  usual punctuation; it is put in a tel: link, nothing more. */
+    phone: string;
+    /** What the courier app calls them: "Izy dispatch". */
+    name: string;
+}
+
 export interface ProjectSettings {
     sla: SlaSettings;
     businessHours: BusinessHoursSettings;
     listRelease: ListReleaseSettings;
     pricing: PricingSection;
+    dispatch: DispatchSettings;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -111,6 +120,10 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         // reading that cannot over-bill UH. Open item 10.
         dryRunReplacesBase: true,
     },
+    /* No default number: a wrong one is worse than none, because a courier
+       standing at a door with a problem would dial it and reach a stranger.
+       The courier app hides the button until someone sets this. */
+    dispatch: { phone: '', name: 'Dispatch' },
 };
 
 const hhmm = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, 24-hour');
@@ -144,6 +157,13 @@ export const SettingsPatch = z.object({
         afterHoursStart: hhmm.optional(),
         afterHoursEnd: hhmm.optional(),
         dryRunReplacesBase: z.boolean().optional(),
+    }).strict().optional(),
+    dispatch: z.object({
+        /* Deliberately permissive: numbers are written a dozen ways and a
+           validator that rejected a working one would be worse than none.
+           It only ever becomes a tel: link. */
+        phone: z.string().trim().max(40).regex(/^[0-9+()\-.\s]*$/, 'digits and + ( ) - . only').optional(),
+        name: z.string().trim().max(60).optional(),
     }).strict().optional(),
 }).strict().refine((o) => Object.keys(o).length > 0, { message: 'nothing to update' });
 
@@ -188,13 +208,14 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         businessHours: section(stored['businessHours'], DEFAULT_PROJECT_SETTINGS.businessHours),
         listRelease: section(stored['listRelease'], DEFAULT_PROJECT_SETTINGS.listRelease),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),
+        dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
     };
 }
 
 /** Apply a validated patch on top of a stored blob, one section at a time. */
 export function mergeSettings(stored: Record<string, unknown>, patch: SettingsPatchInput): Record<string, unknown> {
     const next: Record<string, unknown> = { ...stored };
-    for (const name of ['sla', 'businessHours', 'listRelease', 'pricing'] as const) {
+    for (const name of ['sla', 'businessHours', 'listRelease', 'pricing', 'dispatch'] as const) {
         const incoming = patch[name];
         if (!incoming) continue;
         const current = (next[name] && typeof next[name] === 'object' && !Array.isArray(next[name])

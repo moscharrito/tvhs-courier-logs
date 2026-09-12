@@ -561,6 +561,36 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         })));
     }));
 
+    /* Everything the courier app needs in one request: their runs for today,
+     * the stops in sequence, and the number to call if something goes wrong.
+     * Declared before /:id so "mine" is not read as an id. A phone on
+     * cellular should not make three round trips to show one screen. */
+    router.get('/mine', wrap(async (req, res) => {
+        const project = req.project!;
+        const q = req.query as Record<string, string | undefined>;
+        const serviceDate = q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])
+            ? q['serviceDate']
+            : todayIn(project.timezone);
+        const username = actorOf(req);
+
+        const rs = await client.execute({
+            sql: `SELECT * FROM runs WHERE project_id = ? AND service_date = ? AND courier_username = ?
+                    AND status != 'cancelled' ORDER BY id`,
+            args: [project.id, serviceDate, username],
+        });
+        const runs = [];
+        for (const r of rs.rows) {
+            const run = Object.fromEntries(Object.entries(r)) as unknown as RunRow;
+            runs.push({ ...presentRun(run), stops: await stopsOf(project.id, Number(run.id)) });
+        }
+
+        const { dispatch } = resolveSettings(project.settings);
+        if (runs.length > 0) {
+            await req.audit('run.read', 'run', runs.map((r) => r.id).join(','), { stops: runs.reduce((n, r) => n + r.stops.length, 0) });
+        }
+        res.json({ serviceDate, timezone: project.timezone, courierUsername: username, runs, dispatch });
+    }));
+
     router.get('/:id', wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;

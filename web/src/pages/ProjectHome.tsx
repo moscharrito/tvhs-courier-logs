@@ -3,7 +3,7 @@
    their role; the TVHS project never lands here because its route mounts
    the legacy app directly. */
 
-import { Link, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '../app/auth';
 import { Sites } from './uh/Sites';
 import { Pricing } from './uh/Pricing';
@@ -32,6 +32,11 @@ export function ProjectHome() {
 
     const canManage = project.role === 'admin' || project.role === 'ops_manager';
     const canImport = canManage || project.role === 'dispatcher';
+
+    /* A courier gets their run and nothing else. The rest of this page is
+       sites, pricing, settings and the whole day's list of patient addresses,
+       none of which is theirs to see. */
+    if (project.role === 'courier') return <Navigate to={`/projects/${project.code}/my-run`} replace />;
 
     return (
         <>

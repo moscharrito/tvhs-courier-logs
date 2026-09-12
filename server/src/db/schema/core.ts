@@ -63,6 +63,10 @@ export const sessions = sqliteTable(
         idleExpiresAt: text('idle_expires_at').notNull(),
         absoluteExpiresAt: text('absolute_expires_at').notNull(),
         revokedAt: text('revoked_at'),
+        /** The registered device this session was started from (ticket 2.3).
+         *  Null for a browser that was never enrolled, which is every staff
+         *  sign-in. Revoking a device revokes its live sessions with it. */
+        deviceId: text('device_id'),
     },
     (t) => [index('sessions_user_id_idx').on(t.userId)],
 );
@@ -101,3 +105,41 @@ export type Project = typeof projects.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
+
+/* Registered courier devices (ticket 2.3).
+ *
+ * A four-digit PIN is not an authentication factor on its own: ten thousand
+ * possibilities is a number a person can work through. It is only acceptable
+ * as the second half of "this phone, plus a PIN", which is what this table
+ * makes possible. Enrolling a phone needs the courier's full password once;
+ * after that the phone identifies who is signing in and the PIN proves it is
+ * them holding it.
+ *
+ * The row id is the SHA-256 of the device token, exactly as sessions are, so
+ * a copy of this table cannot be replayed as a device.
+ *
+ * A courier's phone is personal property that will be lost, sold and handed
+ * on, so revoking has to be immediate and has to be visible: revoked_at is
+ * set rather than the row being deleted, and the courier and an admin can
+ * both see the list.
+ */
+export const devices = sqliteTable(
+    'devices',
+    {
+        /** sha256(token), hex. The token itself lives only in the cookie. */
+        id: text('id').primaryKey(),
+        userId: integer('user_id').notNull().references(() => users.id),
+        /** What the courier calls it: "Ada's phone". Never a serial number. */
+        label: text('label').notNull().default(''),
+        /** Short description derived from the user agent, for recognition. */
+        userAgent: text('user_agent').notNull().default(''),
+        createdAt: text('created_at').notNull(),
+        lastSeenAt: text('last_seen_at').notNull(),
+        /** Set on revocation; the row is kept so the history stays readable. */
+        revokedAt: text('revoked_at'),
+        revokedBy: text('revoked_by').notNull().default(''),
+    },
+    (t) => [index('devices_user_id_idx').on(t.userId)],
+);
+
+export type Device = typeof devices.$inferSelect;

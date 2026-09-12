@@ -39,6 +39,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signOut = useCallback(async () => {
         try { await api('/api/logout', { method: 'POST' }); } catch { /* already gone */ }
+        /* Tell the service worker to drop its cache too. The shell holds no
+           patient data, but a courier handing a phone back should not find
+           the app still installed and warm. */
+        navigator.serviceWorker?.controller?.postMessage('tag:signed-out');
         setUser(null);
         setProjects([]);
     }, []);

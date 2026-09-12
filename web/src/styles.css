@@ -55,6 +55,14 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-stat-warn { color: #92400e; }
 .izy-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 900px) { .izy-board { grid-template-columns: 1fr; } }
+.izy-call { display: inline-block; margin-bottom: 14px; text-decoration: none; }
+.izy-next { border-color: var(--izy-green); }
+.izy-next-name { font-size: 20px; font-weight: 600; margin: 6px 0 2px; }
+.izy-next-address { font-size: 16px; margin: 0 0 8px; line-height: 1.4; }
+.izy-stoplist { list-style: none; margin: 0; padding: 0; }
+.izy-stoplist li { border-top: 1px solid var(--izy-line); padding: 10px 0; font-size: 14px; }
+.izy-stoplist li:first-child { border-top: 0; }
+.izy-stop-done { opacity: .55; }
 .izy-card h3 { margin: 0 0 8px; font-size: 14px; }
 .izy-row-between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .izy-fieldset { border: 1px solid var(--izy-line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 14px; }

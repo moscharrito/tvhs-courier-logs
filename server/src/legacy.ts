@@ -19,6 +19,7 @@ import type { Database } from './db/client';
 import { createSessionMiddleware, type SessionStore } from './core/auth/sessions';
 import { createCoreAuthRouter } from './core/auth/routes';
 import { createUsersRouter } from './core/users/routes';
+import { createDevicesRouter } from './core/auth/devices';
 import { createAuditMiddleware, type AuditLog } from './core/audit/audit';
 import { createAuditRouter } from './core/audit/routes';
 import { Logger } from './core/http/logger';
@@ -78,6 +79,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createHealthRouter({ client: database.client, version: VERSION }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
+    legacy.app.use(createDevicesRouter({ client: database.client, config }));
     legacy.app.use(createAuditRouter({ log }));
 
     // Project settings are core: every contract has operating parameters.

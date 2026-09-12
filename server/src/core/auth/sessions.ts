@@ -34,8 +34,10 @@ export interface RequestSession {
 }
 
 export interface SessionControls {
-    /** Create a session for an authenticated user and set the cookie. */
-    create(user: SessionUser): Promise<void>;
+    /** Create a session for an authenticated user and set the cookie.
+     *  `deviceId` records which registered phone it came from (ticket 2.3),
+     *  so revoking that phone can revoke its live sessions with it. */
+    create(user: SessionUser, deviceId?: string | null): Promise<void>;
     /** Revoke the current session and clear the cookie. */
     destroy(): Promise<void>;
 }
@@ -86,7 +88,7 @@ export function deviceLabel(userAgent: string | undefined): string {
     return `${browser} on ${os}`;
 }
 
-function readCookie(header: string | undefined, name: string): string | null {
+export function readCookie(header: string | undefined, name: string): string | null {
     if (!header) return null;
     for (const part of header.split(';')) {
         const eq = part.indexOf('=');
@@ -110,15 +112,15 @@ export class SessionStore {
     }
 
     /** Returns the raw token to put in the cookie. */
-    async create(user: SessionUser, meta: { userAgent?: string | undefined; ip?: string | undefined }): Promise<{ token: string; absoluteExpiresAt: Date }> {
+    async create(user: SessionUser, meta: { userAgent?: string | undefined; ip?: string | undefined; deviceId?: string | null | undefined }): Promise<{ token: string; absoluteExpiresAt: Date }> {
         const token = crypto.randomBytes(32).toString('base64url');
         const now = this.now();
         const { idleMinutes, absoluteMinutes } = lifetimesFor(user.role, this.deps.config.sessions);
         const absoluteExpiresAt = plusMinutes(now, absoluteMinutes);
         await this.run(
-            `INSERT INTO sessions (id, user_id, device, ip, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [hash(token), user.id, deviceLabel(meta.userAgent), (meta.ip || '').slice(0, 64), iso(now), iso(now), iso(plusMinutes(now, idleMinutes)), iso(absoluteExpiresAt)],
+            `INSERT INTO sessions (id, user_id, device, ip, created_at, last_seen_at, idle_expires_at, absolute_expires_at, device_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [hash(token), user.id, deviceLabel(meta.userAgent), (meta.ip || '').slice(0, 64), iso(now), iso(now), iso(plusMinutes(now, idleMinutes)), iso(absoluteExpiresAt), meta.deviceId ?? null],
         );
         return { token, absoluteExpiresAt };
     }
@@ -213,8 +215,8 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
     const middleware: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
         req.session = { id: null, user: null };
         req.sessions = {
-            create: async (user: SessionUser) => {
-                const { token, absoluteExpiresAt } = await store.create(user, { userAgent: req.get('user-agent'), ip: req.ip });
+            create: async (user: SessionUser, deviceId?: string | null) => {
+                const { token, absoluteExpiresAt } = await store.create(user, { userAgent: req.get('user-agent'), ip: req.ip, deviceId: deviceId ?? null });
                 req.session = { id: hash(token), user: { id: user.id, username: user.username, name: user.name, role: user.role, route: user.route } };
                 res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: 'lax', secure, path: '/', expires: absoluteExpiresAt });
             },

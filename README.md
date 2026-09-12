@@ -56,7 +56,7 @@ A project is one courier contract. Two are seeded: `tvhs` (TVHS RMD Courier) and
 
 ## Sessions
 
-Sessions are server-side (`sessions` table). The `izy_sid` cookie carries only a random token; the row is keyed by its SHA-256, so the table cannot be replayed. Idle expiry refreshes on use (staff 30 minutes, couriers 12 hours by default), absolute expiry does not (staff 12 hours, couriers 30 days). Signing out revokes the row. `GET /api/me/sessions` lists a user's live devices; admins can list and revoke any user's devices under `/api/users/:username/sessions`. Lifetimes are set with the `SESSION_*` variables in `server/.env.example`.
+Sessions are server-side (`sessions` table). The `izy_sid` cookie carries only a random token; the row is keyed by its SHA-256, so the table cannot be replayed. Idle expiry refreshes on use (staff 30 minutes, couriers 12 hours by default), absolute expiry does not (staff 12 hours, couriers 30 days). Signing out revokes the row. `GET /api/me/sessions` lists a user's live devices; admins can list and revoke any user's devices under `/api/users/:username/sessions`. Lifetimes are set with the `SESSION_*` variables in `server/.env.example`. A session started from a registered courier phone records which one, so revoking the phone revokes the session with it (see Registered devices below).
 
 ## Users
 
@@ -173,6 +173,34 @@ Dragging an order between lanes is one request (`allowMove`), not a delete follo
 Neither is optimal routing, and the plan says full optimisation is deferred past go-live. Plain nearest-neighbour also **ignores deadlines** entirely and can put a STAT with twenty minutes left at the end of a loop; the result says so in its notes, and the board shows the minutes-to-due badges afterwards so it is visible rather than silent.
 
 `haversineMiles` is straight-line distance, for ordering stops relative to each other. It must never reach an invoice: the contract bills one-way **loaded** miles, which is a road distance, and that comes from the Distance Matrix call in ticket 1.4.
+
+### The courier app
+
+`/projects/:code/my-run` is today's run on a phone: the next stop large and first, the rest in sequence, and one tap each for directions and dispatch. A courier who opens a project goes straight here; the rest of the project page is sites, pricing, settings and the whole day's addresses, none of which is theirs to see. `GET .../uh/runs/mine` returns the runs, the stops in sequence and the dispatch number in one request, because a phone on cellular should not make three round trips to show one screen.
+
+**The map link carries the address only, never the patient's name.** That URL leaves this application: it reaches a third party's servers, a URL bar and the phone's own history. The address is what the courier needs to drive there; the name adds nothing to the navigation and everything to the disclosure.
+
+The dispatch number is `dispatch.phone` in the project settings. There is no default, and the button is hidden until someone sets one: a courier standing at a door with a problem would dial whatever is there, so a placeholder is worse than nothing.
+
+### Registered devices and PIN sign-in
+
+A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.
+
+The `izy_did` cookie holds a random token; the row id is its SHA-256, the same shape as sessions, so a copy of the table cannot be replayed as a phone. PIN attempts are throttled per device, not per user: an attacker without the phone has nothing to try against, and a courier fumbling their own PIN cannot lock out a colleague.
+
+Revoking a device revokes its live sessions with it (`DELETE /api/devices/:id`, by the owner or an admin). A lost phone that stays signed in is the entire risk, and revoking the enrolment while leaving the session alive would look like it had been handled when it had not. The row is kept, marked revoked, so the history stays readable. `GET /api/devices` is the caller's own list; admins read anyone's at `GET /api/users/:username/devices`.
+
+### The installable shell, and what it must never cache
+
+`web/public/manifest.webmanifest` and `sw.js` make the app installable on a phone. The service worker exists under one rule:
+
+**Nothing from `/api` is ever cached.**
+
+A service worker is a cache that outlives the session, the sign-out and often the employment. One that cached API responses would leave a day of patient names and addresses in Cache Storage on a personal phone, readable by anyone who picks it up, long after the session cookie expired and the account was disabled. That is a reportable breach caused by a performance optimisation.
+
+So the cache holds the application shell only: the HTML, the hashed build assets, the icon, the manifest. `/api`, `/legacy` and `/health` return before any cache is opened or matched. Signing out tells the worker to drop its caches as well.
+
+The tests for this run the real worker in a sandbox and hand it requests, rather than asserting on the file's text, because a text assertion passes happily while the code does the opposite of what it says. Offline queueing of a courier's own events is ticket 2.7, and it will use IndexedDB with an explicit lifetime, not this cache.
 
 ### Dates
 
