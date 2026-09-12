@@ -247,6 +247,16 @@ describe('manual STAT and ad hoc orders', () => {
         expect((await admin.post(BASE).send({ siteId: 99999, ...NEW_ORDER })).status).toBe(404);
     });
 
+    it('files an evening order under the San Antonio day, not the UTC one', async () => {
+        // 01:30 UTC is 20:30 the previous day in Chicago. A UTC service date
+        // would file this under tomorrow, dropping it off today's board and
+        // pricing it against a schedule that had not taken effect yet.
+        const at = '2026-09-11T01:30:00Z';
+        const body = await makeOrder({ requestedAt: at });
+        expect(body.serviceDate).toBe('2026-09-10');
+        expect(new Date(body.receivedAt).toISOString().slice(0, 10)).toBe('2026-09-11');
+    });
+
     it('refuses a request time in the future, which would move the deadline', async () => {
         const ahead = new Date(Date.now() + 60 * 60 * 1000).toISOString();
         const res = await admin.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER, requestedAt: ahead });

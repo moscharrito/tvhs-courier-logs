@@ -74,6 +74,8 @@ Each pharmacy compiles its own delivery list and sends it, typically between noo
 
 Rows come back with issues at two severities. An error blocks the row (no recipient, no address, no valid ZIP, a quantity that is not a number); a warning does not (no city, no description, an unrecognised service word, a ZIP outside the published zone list). Duplicates are detected within the file and against orders already imported for that site and date, keyed on the pharmacy's reference when there is one and on the normalised recipient and address when there is not. A duplicate is held back until the operator confirms it is a genuinely separate delivery.
 
+Imported orders are created **ready** for dispatch rather than pending: the operator has already reviewed every row in the preview, the list itself is recorded as released, and a second release gate would only burn minutes off a two-hour clock that started when the pharmacy sent the list. Each one gets a `created` custody event naming the list and the row it came from, so the chain of custody starts where the order entered the system rather than at assignment.
+
 Zones are resolved from the ZIP map at import, so a list is priceable before ticket 1.4 supplies coordinates; a ZIP outside the list is flagged as needing a distance. `due_at` is stamped with `dueTimesFor`, which means the SLA clock starts when the list was received, and `receivedAt` can be set explicitly so a list imported twenty minutes after it arrived does not quietly gain twenty minutes.
 
 `POST .../uh/imports/preview` and `POST .../uh/imports` take the same bytes as the raw request body, with the filename in `X-Upload-Filename` and the options as a JSON query parameter. Preview changes nothing. Both need project `admin`, `ops_manager` or `dispatcher`.
@@ -129,6 +131,26 @@ The breakdown is computed rather than stored, so it follows the settings and the
 - **Mileage** for an out-of-area order is still unknown until ticket 1.4. `priceFor` says so in its notes rather than quietly billing zero as though the question were settled.
 
 A price is marked provisional while the order can still change what it bills at.
+
+### Runs and stops
+
+A run is one courier's batch of stops for part of a day: the "dense loop" the dispatch strategy describes. A courier can have more than one in a day, because lists arrive between noon and 2pm and after-hours work happens too, so runs carry a label rather than being one per courier per date.
+
+**Adding a stop is what assigns an order, and removing one is what unassigns it.** Both go through the transition table, so there is no path that puts work in a courier's hands without the custody event that says who did it and when. `server/src/modules/uh/runs.ts` never writes `orders.status` itself: `recordOrderEvent` in `order-events.ts` is the only code in the system that does, for every caller.
+
+Three rules the endpoint enforces:
+
+- **The event is recorded before the stop is inserted.** If the transition is refused the stop is never created, so a run can never hold an order that the order itself does not believe is assigned.
+- **An order is on at most one run**, enforced by a unique index rather than only by a handler. Two couriers each believing a package is theirs is the failure that prevents.
+- **A reorder must list exactly the orders already on the run**, each once. A short list would silently drop stops; a long one would add an order without ever recording the assignment.
+
+Removing a stop is refused once the courier has picked the package up, because taking a stop off the board does not take it out of the van. It has to be delivered, failed, or returned.
+
+`POST .../uh/runs` creates a run and optionally fills it in one call, reporting which orders it could not take and why. `POST .../runs/:id/stops` adds (optionally at a position), `DELETE .../runs/:id/stops/:orderId` removes, and `PUT .../runs/:id/sequence` reorders. Couriers see and open only their own runs. The dispatch board and nearest-neighbour sequencing are ticket 2.2, which needs the coordinates ticket 1.4 will supply.
+
+### Dates
+
+Every date stored here is a **service date**: the day a list belongs to, the day a run is driven, the day that decides which effective-dated price schedule applies. Those are questions about San Antonio, not about UTC, so they go through `dateIn` and `todayIn` in `server/src/core/dates.ts`. `new Date().toISOString().slice(0, 10)` is the tempting one-liner and it is wrong for five hours of every day: between 7pm and midnight in Chicago it returns tomorrow, which would file an evening STAT call under the next day, drop it off today's board, and price it against a schedule that had not taken effect yet.
 
 ## Project settings
 

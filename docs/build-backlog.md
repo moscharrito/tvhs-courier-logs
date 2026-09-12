@@ -104,7 +104,7 @@ Phase 1 total: about 9 days.
 
 | # | Ticket | Days | Acceptance criteria |
 |---|---|---|---|
-| 2.1 | Runs and stops | 1 | runs and run_stops. Create run for courier and date, add or remove stops, reorder. Order status moves to assigned |
+| 2.1 | Runs and stops | 1 | Done. runs and run_stops (0010), create with optional stops, add at a position, remove, reorder, run status. Adding a stop assigns through the transition table and removing unassigns; order-events.ts is now the only code that writes orders.status, shared by the orders, runs and import paths. 25 tests. Also fixed two things this depended on: imported orders now land ready with a created custody event (they had neither), and service dates are computed in the project timezone rather than UTC |
 | 2.2 | Dispatch board | 4 | Today view: unassigned pool grouped by site, one lane per on-duty courier, drag to assign, minutes-to-due badge with color thresholds, courier last-seen and current stop, filters. Auto-sequence a run by nearest-neighbor from the origin site. Polling every 15 seconds; upgrade to server-sent events if needed |
 | 2.3 | Courier PWA shell | 1.5 | Installable manifest, service worker, PIN login bound to a registered device (device id stored in session). Today's run list in sequence, map link per stop, call dispatch button |
 | 2.4 | Pickup flow | 1 | At origin site: confirm package count, sender printed name and signature, timestamp, GPS. Custody event picked_up. Order status picked_up |

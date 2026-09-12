@@ -19,12 +19,14 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { dateIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
 import { zipZoneMap, scheduleOn } from './zones';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
+import { recordOrderEvent, insertCustodyEvent } from './order-events';
 import {
-    applyEvent, availableEvents, dueForNewOrder, evaluateSla, EVENT_RULES, TransitionError,
+    availableEvents, dueForNewOrder, evaluateSla, EVENT_RULES, TransitionError,
     CUSTODY_EVENT_TYPES, ORDER_STATUSES,
     type CustodyEventType, type OrderStatus,
 } from './lifecycle';
@@ -190,7 +192,10 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
 
         const receivedAt = body.requestedAt ? new Date(body.requestedAt) : new Date();
         if (rejectFuture(receivedAt, 'requestedAt', res)) return;
-        const serviceDate = body.serviceDate ?? receivedAt.toISOString().slice(0, 10);
+        // The day the work belongs to, where the work happens. A STAT call
+        // taken at 7:30pm in San Antonio belongs to that day, not to the
+        // next one, which is what a UTC date would have said.
+        const serviceDate = body.serviceDate ?? dateIn(receivedAt, project.timezone);
         const settings = resolveSettings(project.settings);
         const due = dueForNewOrder(body.serviceType, receivedAt, settings);
 
@@ -225,7 +230,8 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
 
         // A manual order goes straight to the board, so it is born 'ready'
         // rather than 'pending': there is no list to release it from.
-        await recordEvent(project.id, Number(created.id), {
+        await insertCustodyEvent(client, {
+            projectId: project.id, orderId: Number(created.id),
             type: 'created', at: receivedAt, actor: req.session.user?.username ?? '',
             fromStatus: '', toStatus: 'ready',
             reason: `Created by hand as ${body.serviceType}.`,
@@ -239,25 +245,6 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
 
         res.status(201).json({ ...present(created), packages: [{ description: body.description, quantity: body.quantity }] });
     }));
-
-    /** Insert one custody row. Never updates: the table forbids it. */
-    async function recordEvent(projectId: number, orderId: number, e: {
-        type: CustodyEventType; at: Date; actor: string; fromStatus: string; toStatus: string;
-        signedName?: string | undefined; signatureKey?: string | undefined; reason?: string | undefined;
-        lat?: number | undefined; lng?: number | undefined; packageId?: number | undefined;
-    }): Promise<void> {
-        await client.execute({
-            sql: `INSERT INTO custody_events
-                    (project_id, order_id, package_id, type, at, actor, from_status, to_status,
-                     signed_name, signature_key, reason, lat, lng)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [
-                projectId, orderId, e.packageId ?? null, e.type, e.at.toISOString(), e.actor,
-                e.fromStatus, e.toStatus, e.signedName ?? '', e.signatureKey ?? '', e.reason ?? '',
-                e.lat ?? null, e.lng ?? null,
-            ],
-        });
-    }
 
     /* --------------------------------------------------------------- events */
 
@@ -294,16 +281,12 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
 
         let applied;
         try {
-            applied = applyEvent(
-                {
-                    status: order.status as OrderStatus,
-                    serviceType: order.service_type as 'scheduled' | 'stat' | 'adhoc',
-                    receivedAt: new Date(order.received_at),
-                    pickupAt: order.pickup_at ? new Date(order.pickup_at) : null,
-                    arrivedAt: order.arrived_at ? new Date(order.arrived_at) : null,
-                    dueAt: order.due_at ? new Date(order.due_at) : null,
-                },
-                {
+            applied = await recordOrderEvent(client, {
+                projectId: project.id,
+                order,
+                actor: req.session.user?.username ?? '',
+                settings,
+                event: {
                     type: body.type, at,
                     ...(body.courierUsername !== undefined ? { courierUsername: body.courierUsername } : {}),
                     ...(body.signedName !== undefined ? { signedName: body.signedName } : {}),
@@ -313,8 +296,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
                     ...(body.lng !== undefined ? { lng: body.lng } : {}),
                     ...(body.packageIds !== undefined ? { packageIds: body.packageIds } : {}),
                 },
-                settings,
-            );
+            });
         } catch (err) {
             if (err instanceof TransitionError) {
                 res.status(409).json({
@@ -327,49 +309,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
             }
             throw err;
         }
-
-        const sets = Object.keys(applied.set);
-        if (sets.length > 0) {
-            await client.execute({
-                sql: `UPDATE orders SET ${sets.map((c) => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP
-                      WHERE project_id = ? AND id = ?`,
-                args: [...sets.map((c) => applied.set[c] as InValue), project.id, Number(order.id)],
-            });
-        }
-
-        if (applied.packageOutcome) {
-            const ids = body.packageIds ?? [];
-            if (ids.length > 0) {
-                await client.execute({
-                    sql: `UPDATE packages SET outcome = ? WHERE project_id = ? AND order_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
-                    args: [applied.packageOutcome, project.id, Number(order.id), ...ids],
-                });
-            } else {
-                await client.execute({
-                    sql: 'UPDATE packages SET outcome = ? WHERE project_id = ? AND order_id = ?',
-                    args: [applied.packageOutcome, project.id, Number(order.id)],
-                });
-            }
-        }
-
         const packageIds = body.packageIds ?? [];
-        if (packageIds.length > 0) {
-            for (const packageId of packageIds) {
-                await recordEvent(project.id, Number(order.id), {
-                    type: body.type, at, actor: req.session.user?.username ?? '',
-                    fromStatus: order.status, toStatus: applied.toStatus,
-                    signedName: body.signedName, signatureKey: body.signatureKey, reason: body.reason,
-                    lat: body.lat, lng: body.lng, packageId,
-                });
-            }
-        } else {
-            await recordEvent(project.id, Number(order.id), {
-                type: body.type, at, actor: req.session.user?.username ?? '',
-                fromStatus: order.status, toStatus: applied.toStatus,
-                signedName: body.signedName, signatureKey: body.signatureKey, reason: body.reason,
-                lat: body.lat, lng: body.lng,
-            });
-        }
 
         // The audit trail records that a transition happened, not who signed:
         // the signature lives in custody_events, which is the PHI-bearing one.

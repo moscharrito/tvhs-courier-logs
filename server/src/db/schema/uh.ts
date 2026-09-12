@@ -365,3 +365,73 @@ export const custodyEvents = sqliteTable(
 );
 
 export type CustodyEvent = typeof custodyEvents.$inferSelect;
+
+/* Runs and their stops (ticket 2.1).
+ *
+ * A run is one courier's work for part of a day: the batch the explainer
+ * video calls a "dense loop". Addendum 1 describes the pharmacies releasing
+ * lists between noon and 2pm, and after-hours work happens too, so a courier
+ * can have more than one run in a day. Runs are therefore labelled rather
+ * than being one-per-courier-per-date.
+ *
+ * A stop is one order on one run, in sequence. Ordering matters: the
+ * sequence is the route the courier drives, and ticket 2.2 will propose one
+ * by nearest-neighbour from the origin site once ticket 1.4 supplies
+ * coordinates. Until then a dispatcher sets it by hand.
+ *
+ * Adding a stop is what assigns an order, and it goes through the same
+ * transition table as everything else (modules/uh/order-events). There is no
+ * path that puts an order on a run without recording the custody event that
+ * says so.
+ */
+
+export const RUN_STATUSES = ['planned', 'started', 'completed', 'cancelled'] as const;
+
+export const runs = sqliteTable(
+    'runs',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** The courier driving it. A username, as everywhere else. */
+        courierUsername: text('courier_username').notNull(),
+        /** The day the work belongs to, YYYY-MM-DD in the project timezone. */
+        serviceDate: text('service_date').notNull(),
+        /** "Noon wave", "After hours". Distinguishes a courier's second run. */
+        label: text('label').notNull().default(''),
+        status: text('status', { enum: RUN_STATUSES }).notNull().default('planned'),
+        startedAt: text('started_at'),
+        completedAt: text('completed_at'),
+        notes: text('notes').notNull().default(''),
+        createdBy: text('created_by').notNull().default(''),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+        updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        index('runs_project_date_idx').on(t.projectId, t.serviceDate),
+        index('runs_courier_date_idx').on(t.courierUsername, t.serviceDate),
+        check('runs_status_check', sql`${t.status} IN ('planned','started','completed','cancelled')`),
+    ],
+);
+
+export const runStops = sqliteTable(
+    'run_stops',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        runId: integer('run_id').notNull().references(() => runs.id),
+        orderId: integer('order_id').notNull().references(() => orders.id),
+        /** 1-based position in the route. Rewritten as a block on reorder. */
+        sequence: integer('sequence').notNull(),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        /* An order is on at most one run. Two couriers each believing a
+         * package is theirs is the failure this prevents, and a unique index
+         * prevents it in the database rather than only in a handler. */
+        unique('run_stops_order_unique').on(t.projectId, t.orderId),
+        index('run_stops_run_seq_idx').on(t.runId, t.sequence),
+    ],
+);
+
+export type Run = typeof runs.$inferSelect;
+export type RunStop = typeof runStops.$inferSelect;

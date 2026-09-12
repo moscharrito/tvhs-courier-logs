@@ -26,6 +26,8 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { todayIn } from '../../core/dates';
+import { insertCustodyEvent } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
 import { resolveZone } from './pricing';
 import { zipZoneMap } from './zones';
@@ -114,15 +116,6 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
             return { mapping: m as Mapping, fingerprint: String(r['header_fingerprint'] ?? '') };
         } catch { return null; }
-    }
-
-    /** Today in the project timezone, not in the server's. */
-    function todayIn(timezone: string): string {
-        const parts = new Intl.DateTimeFormat('en-CA', {
-            timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-        }).formatToParts(new Date());
-        const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
-        return `${get('year')}-${get('month')}-${get('day')}`;
     }
 
     function readOptions(req: Request, res: Response): Options | null {
@@ -356,6 +349,11 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         const username = req.session.user?.username ?? '';
         const receivedIso = a.receivedAt.toISOString();
 
+        /* Orders are created ready for dispatch, not pending. The operator has
+         * already reviewed every row in the preview and confirmed the import,
+         * and the list itself is recorded as released; a second release gate
+         * would only burn minutes off a two-hour clock that started when the
+         * pharmacy sent the list. */
         const listRs = await client.execute({
             sql: `INSERT INTO daily_lists
                     (project_id, site_id, service_date, status, received_at, source_filename, source_sha256,
@@ -379,7 +377,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
                         (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                          recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
                          delivery_notes, zone, signature_required, received_at, due_at, dedupe_key, status)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`,
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING id`,
                 args: [
                     project.id, a.site.id, listId, source.externalRef, source.serviceType, a.serviceDate,
                     source.recipientName, source.recipientPhone, source.addressLine, source.addressLine2,
@@ -393,6 +391,16 @@ export function createImportsRouter({ client }: { client: Client }): Router {
                 sql: `INSERT INTO packages (project_id, order_id, description, quantity, signature_required)
                       VALUES (?, ?, ?, ?, ?)`,
                 args: [project.id, orderId, source.description, source.quantity, source.signatureRequired ? 1 : 0],
+            });
+            /* Every order starts its chain of custody where it entered the
+             * system. Without this the record for the ~95 percent of orders
+             * that arrive on a list would begin at assignment, with nothing
+             * saying where they came from, which is not a chain Scope 1.2.7
+             * would accept. */
+            await insertCustodyEvent(client, {
+                projectId: project.id, orderId, type: 'created', at: a.receivedAt,
+                actor: username, fromStatus: '', toStatus: 'ready',
+                reason: `Imported from the ${a.site.code} list for ${a.serviceDate}, row ${r.row}.`,
             });
             created += 1;
         }

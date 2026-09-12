@@ -128,7 +128,11 @@ describe('filters', () => {
     });
 
     it('filters by a date and by a date range', async () => {
-        const today = new Date().toISOString().slice(0, 10);
+        // The service date is the day in San Antonio, not in UTC: an order
+        // taken at 8pm Chicago belongs to that day, not the next one.
+        const today = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date());
         expect((await admin.get(`${BASE}?serviceDate=${today}`)).body.length).toBeGreaterThan(0);
         expect((await admin.get(`${BASE}?serviceDate=2001-01-01`)).body).toEqual([]);
         expect((await admin.get(`${BASE}?from=2001-01-01&to=2001-01-02`)).body).toEqual([]);

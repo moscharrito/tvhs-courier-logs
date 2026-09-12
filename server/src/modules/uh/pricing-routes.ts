@@ -13,6 +13,7 @@ import { z } from 'zod';
 import type { Client } from '@libsql/client';
 import { priceFor, resolveZone, pricingSettingsFrom, type Zone } from './pricing';
 import { zipZoneMap, scheduleOn } from './zones';
+import { dateIn, todayIn } from '../../core/dates';
 
 const QuoteBody = z.object({
     zip: z.string().trim().min(1).max(10).optional(),
@@ -31,9 +32,12 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 export function createPricingRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
 
+    /* Which schedule and zone map are in force is a question about a date in
+     * San Antonio. A UTC date would switch over five hours early every
+     * evening. */
     const today = (req: Request) => {
         const on = String(req.query['on'] ?? '');
-        return /^\d{4}-\d{2}-\d{2}$/.test(on) ? on : new Date().toISOString().slice(0, 10);
+        return /^\d{4}-\d{2}-\d{2}$/.test(on) ? on : todayIn(req.project!.timezone);
     };
 
     router.get('/', wrap(async (req, res) => {
@@ -76,7 +80,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         }
         const body = parsed.data;
         const at = body.at ? new Date(body.at) : new Date();
-        const on = at.toISOString().slice(0, 10);
+        const on = dateIn(at, req.project!.timezone);
 
         const schedule = await scheduleOn(client, req.project!.id, on);
         if (!schedule) {

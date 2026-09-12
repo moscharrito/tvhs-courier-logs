@@ -59,10 +59,18 @@ async function memberWith(role, username) {
 }
 
 async function reset() {
+    /* custody_events is append-only (its triggers abort DELETE) and it
+       references orders, so wiping orders is impossible while the foreign key
+       is enforced. That is the right behaviour in production: a delivery
+       record with a chain of custody is not something anyone should be able
+       to delete. In this throwaway database the check is dropped for the
+       cleanup, leaving the custody rows orphaned, which no test reads. */
+    await sql('PRAGMA foreign_keys = OFF');
     await sql('DELETE FROM packages');
     await sql('DELETE FROM orders');
     await sql('DELETE FROM daily_lists');
     await sql('DELETE FROM import_mappings');
+    await sql('PRAGMA foreign_keys = ON');
 }
 
 /* ------------------------------------------------------------ pure parsing */
@@ -363,7 +371,10 @@ describe('POST commit', () => {
         expect(dana).toMatchObject({
             recipientName: 'Dana Whitfield', address: '1100 Broadway St, Apt 4B',
             city: 'San Antonio', state: 'TX', zip: '78215', zone: 1,
-            serviceType: 'scheduled', quantity: 2, status: 'pending',
+            // Ready for dispatch, not pending: the operator reviewed every row
+            // in the preview, and a second release gate would only burn
+            // minutes off a clock that started when the pharmacy sent the list.
+            serviceType: 'scheduled', quantity: 2, status: 'ready',
             geocodeStatus: 'pending', signatureRequired: true,
         });
         expect(dana.dueAt).toBe('2026-09-14T19:00:00.000Z');
@@ -372,6 +383,23 @@ describe('POST commit', () => {
         const pkgs = (await sql('SELECT description, quantity FROM packages ORDER BY id')).rows;
         expect(pkgs).toHaveLength(5);
         expect(pkgs[0].description).toBe('Cold pack, 2 items');
+    });
+
+    it('starts each order\'s chain of custody where it entered the system', async () => {
+        // Without this the record for the ~95 percent of orders that arrive on
+        // a list would begin at assignment, saying nothing about where they
+        // came from, which is not a chain Scope 1.2.7 would accept.
+        const rows = (await sql(`SELECT o.id, c.type, c.to_status, c.reason
+                                 FROM orders o JOIN custody_events c ON c.order_id = o.id`)).rows;
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((r) => r.type === 'created' && r.to_status === 'ready')).toBe(true);
+        expect(String(rows[0].reason)).toMatch(/Imported from the discharge list for \d{4}-\d{2}-\d{2}, row \d+\./);
+
+        // One per order, and no order without one.
+        const counts = (await sql(`SELECT COUNT(*) AS orders,
+                                     (SELECT COUNT(*) FROM custody_events WHERE type = 'created') AS created
+                                   FROM orders`)).rows[0];
+        expect(Number(counts.created)).toBe(Number(counts.orders));
     });
 
     it('leaves coordinates unset rather than inventing them, pending ticket 1.4', async () => {
