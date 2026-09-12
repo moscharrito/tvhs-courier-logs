@@ -13,6 +13,8 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Stop } from './Stop';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
+import { IDBFactory } from 'fake-indexeddb';
+import { queued, resetOutboxForTests } from '../../lib/outbox';
 
 const session = { id: 4, username: 'ada.courier', name: 'Ada Courier', role: 'driver', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
@@ -82,7 +84,14 @@ const bodyOf = (fn: ReturnType<typeof mockFetch>['fn'], key: string) => {
     return JSON.parse(String((call?.[1] as RequestInit).body));
 };
 
+const setOnline = (online: boolean) => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: online });
+};
+
 beforeEach(() => {
+    vi.stubGlobal('indexedDB', new IDBFactory());
+    resetOutboxForTests();
+    setOnline(true);
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
     Object.defineProperty(navigator, 'geolocation', {
         configurable: true,
@@ -223,9 +232,12 @@ describe('Stop', () => {
         fireEvent.change(screen.getByLabelText(/Why nobody signed/), { target: { value: 'Nobody answered, left inside the screen door' } });
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
-        await waitFor(() => expect(screen.getByText('Left at the door and photographed.')).toBeInTheDocument());
+        /* A doorstep delivery always goes through the offline queue: the photo
+           has to be in the bucket before the delivery is claimed, and that is
+           the queue's job whether or not there is signal right now. */
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
         const expected = ['POST /api/projects/uh/uh/files', 'PUT https://bucket.example/put?sig=x', 'POST /api/projects/uh/uh/files/9/stored', `POST ${ORDER}/doorstep`];
-        expect(calls.filter((c) => expected.includes(c))).toEqual(expected);
+        await waitFor(() => expect(calls.filter((c) => expected.includes(c))).toEqual(expected));
         expect(bodyOf(fn, `POST ${ORDER}/doorstep`)).toMatchObject({ fileId: 9, noSignatureReason: 'Nobody answered, left inside the screen door' });
     });
 
@@ -250,6 +262,29 @@ describe('Stop', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
         await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('A delivered order cannot be delivered again'));
+    });
+
+    it('accepts the delivery with no signal and says it is on the phone', async () => {
+        /* A courier in a stairwell has still made the delivery. Being told to
+           check their signal means doing it again later from memory, or not
+           at all. */
+        setOnline(false);
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+        fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
+        sign();
+        fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
+
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+        const waiting = await queued();
+        expect(waiting).toHaveLength(1);
+        expect(waiting[0]).toMatchObject({ orderId: 21, label: expect.stringContaining('Delivery for Ines Vargas') });
+        expect(waiting[0]!.body).toMatchObject({ signedName: 'Ines Vargas' });
+
+        // And the stop stops offering an outcome it has already been given.
+        expect(screen.getByRole('heading', { name: 'Waiting to send' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
     it('offers nothing to record on a stop that is already finished', async () => {

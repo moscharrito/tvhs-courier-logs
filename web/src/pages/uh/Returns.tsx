@@ -17,6 +17,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
+import { sendOrQueue } from '../../lib/outbox';
 
 interface CarriedOrder {
     orderId: number; recipientName: string; externalRef: string;
@@ -66,6 +67,7 @@ export function Returns() {
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
     const [done, setDone] = useState<ReturnResult | null>(null);
+    const [queued, setQueued] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string; details?: string[] } | null>(null);
 
     const refresh = useCallback(async () => {
@@ -96,9 +98,11 @@ export function Returns() {
         setMsg(null);
         const position = await currentPosition();
         try {
-            const result = await api<ReturnResult>(base, {
-                method: 'POST',
-                json: {
+            const outcome = await sendOrQueue({
+                url: base,
+                label: `Return at ${group.site.name}`,
+                orderId: null,
+                body: {
                     siteId: group.site.id,
                     signedName: signedName.trim(),
                     strokes,
@@ -112,7 +116,8 @@ export function Returns() {
                     ...(position ?? {}),
                 },
             });
-            setDone(result);
+            if (outcome.sent) setDone(outcome.body as unknown as ReturnResult);
+            else setQueued(true);
             setStrokes([]);
             setSignedName('');
             setCounted('');
@@ -122,7 +127,7 @@ export function Returns() {
         } catch (err) {
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'Could not record the return. Check your signal and try again.' });
+                : { kind: 'error', text: 'Could not record the return. Try again.' });
         } finally {
             setBusy(false);
         }
@@ -146,6 +151,13 @@ export function Returns() {
                 <div className="izy-alert ok" role="status">
                     Handed back {done.returned.length} {done.returned.length === 1 ? 'order' : 'orders'}.
                     {done.notes.length > 0 && <ul>{done.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+                </div>
+            )}
+
+            {queued && (
+                <div className="izy-alert warn" role="status">
+                    Saved on this phone. The handover will be sent as soon as you have signal, and this list
+                    will catch up then.
                 </div>
             )}
 

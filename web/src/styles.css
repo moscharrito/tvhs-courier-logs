@@ -103,7 +103,13 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-alert.error { background: var(--izy-danger-soft); color: var(--izy-danger); }
 .izy-alert.warn { background: var(--izy-warn-soft); color: #92400e; }
 .izy-alert.ok { background: var(--izy-green-soft); color: var(--izy-green); }
+.izy-alert.muted { background: var(--izy-bg); color: var(--izy-muted); border: 1px solid var(--izy-line); }
 .izy-alert ul { margin: 6px 0 0 18px; padding: 0; }
+/* The queue banner sits above the screen, in the frame, so it is on every
+   courier page rather than only the one that queued something. */
+.izy-sync { position: sticky; top: 0; z-index: 5; padding-top: 8px; background: var(--izy-bg); }
+.izy-sync .izy-alert:last-child { margin-bottom: 8px; }
+
 .izy-muted { color: var(--izy-muted); font-size: 13px; }
 
 /* Loading: three medium dots, centred. Also duplicated statically in

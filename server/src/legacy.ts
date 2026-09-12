@@ -37,6 +37,7 @@ import { createRunsRouter } from './modules/uh/runs';
 import { createPickupRouter } from './modules/uh/pickup';
 import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
+import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createBoardRouter } from './modules/uh/board';
 
@@ -92,6 +93,12 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // rather than in server.js, so a module has no dependency on the legacy app.
     const requireProject = createRequireProject(database.client);
     const fileStorage = createFileStorage(config);
+    /* Every route a courier's phone writes to goes through this. A phone that
+       loses signal mid-request retries with the same id, and the retry is
+       answered rather than applied a second time (ticket 2.7). Read-only
+       routes and the staff screens do not need it: nobody replays a GET, and
+       a dispatcher watching a reply arrive is not an unreliable network. */
+    const idempotent = createIdempotency({ client: database.client });
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));
@@ -114,15 +121,15 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     );
     // Stop flow first: its /:id/arrive and friends must be matched before
     // the orders router's /:id, which would otherwise swallow them.
-    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createStopRouter({ client: database.client, storage: fileStorage }));
+    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, idempotent, createStopRouter({ client: database.client, storage: fileStorage }));
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client }));
     // Pickup first: its /:id/pickup must be matched before the runs
     // router's /:id, which would otherwise swallow it.
-    legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createPickupRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/runs', requireProject, idempotent, createPickupRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
-    legacy.app.use('/api/projects/:pid/uh/returns', requireProject, createReturnsRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/returns', requireProject, idempotent, createReturnsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
-    legacy.app.use('/api/projects/:pid/uh/files', requireProject, createFilesRouter({ client: database.client, storage: fileStorage }));
+    legacy.app.use('/api/projects/:pid/uh/files', requireProject, idempotent, createFilesRouter({ client: database.client, storage: fileStorage }));
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.

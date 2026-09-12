@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError, type ProjectMembership, type SessionUser } from '../lib/api';
+import { clearOutbox, startOutbox } from '../lib/outbox';
 
 interface AuthState {
     loading: boolean;
@@ -37,12 +38,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
+    /* Start draining as soon as somebody is signed in, and keep draining while
+       they are. Nothing queued can be sent without a session, so this is the
+       right moment rather than app boot. */
+    useEffect(() => {
+        if (!user) return;
+        return startOutbox();
+    }, [user]);
+
     const signOut = useCallback(async () => {
         try { await api('/api/logout', { method: 'POST' }); } catch { /* already gone */ }
         /* Tell the service worker to drop its cache too. The shell holds no
            patient data, but a courier handing a phone back should not find
            the app still installed and warm. */
         navigator.serviceWorker?.controller?.postMessage('tag:signed-out');
+        /* And empty the outbox. It holds names, addresses and signatures on a
+           phone that may be personal; anything still queued belongs to a
+           session that is over and could no longer be sent anyway. */
+        await clearOutbox().catch(() => { /* nothing queued, or no IndexedDB */ });
         setUser(null);
         setProjects([]);
     }, []);

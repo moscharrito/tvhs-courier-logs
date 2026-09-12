@@ -499,6 +499,52 @@ export type RunStop = typeof runStops.$inferSelect;
  * counter is the same kind of custody handover as collecting it, and calling
  * it a delivery in the record would be a lie that reaches a proof of
  * delivery. */
+/* One row per event a courier's phone sent, keyed by the id the PHONE chose.
+ *
+ * A phone with no signal queues what the courier did and sends it later. The
+ * dangerous case is not the missing signal, it is the ambiguous one: the
+ * request reached the server, the reply did not, and the phone retries. Without
+ * this table that retry is a second delivery on the same order, or a second
+ * pickup, and the chain of custody is no longer a chain.
+ *
+ * So the phone stamps every mutation with an id it generated, and the first
+ * request to claim that id wins. A retry carrying the same id is answered with
+ * the first reply instead of being applied again.
+ *
+ * The stored reply can contain PHI, because it is the reply the courier's app
+ * would have received. It is kept for CLIENT_EVENT_RETENTION_DAYS and swept,
+ * rather than forever: a replay cache is useful for hours, not for years, and
+ * an unbounded copy of every delivery response is a liability with no reader.
+ */
+export const CLIENT_EVENT_STATES = ['in_progress', 'done'] as const;
+
+export const clientEvents = sqliteTable(
+    'client_events',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** The id the phone generated. Unique within a project. */
+        clientEventId: text('client_event_id').notNull(),
+        /** Whose phone. A key is answered only for the user who claimed it. */
+        username: text('username').notNull(),
+        method: text('method').notNull().default(''),
+        path: text('path').notNull().default(''),
+        state: text('state', { enum: CLIENT_EVENT_STATES }).notNull().default('in_progress'),
+        /** The HTTP status and body of the first reply, replayed verbatim. */
+        status: integer('status'),
+        response: text('response').notNull().default(''),
+        createdAt: text('created_at').notNull(),
+        completedAt: text('completed_at'),
+    },
+    (t) => [
+        unique('client_events_key_unique').on(t.projectId, t.clientEventId),
+        index('client_events_created_idx').on(t.createdAt),
+        check('client_events_state_check', sql`${t.state} IN ('in_progress','done')`),
+    ],
+);
+
+export type ClientEvent = typeof clientEvents.$inferSelect;
+
 export const SIGNATURE_KINDS = ['pickup', 'delivery', 'return'] as const;
 
 export const signatures = sqliteTable(

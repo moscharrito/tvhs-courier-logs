@@ -16,6 +16,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
+import { sendOrQueue } from '../../lib/outbox';
 
 interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number }
 interface SiteGroup { site: { id: number; code: string; name: string }; orders: WaitingOrder[]; packages: number }
@@ -58,6 +59,7 @@ export function Pickup() {
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
     const [done, setDone] = useState<PickupResult | null>(null);
+    const [queued, setQueued] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string; details?: string[] } | null>(null);
 
     const load = useCallback(async () => {
@@ -88,9 +90,12 @@ export function Pickup() {
         setMsg(null);
         const position = await currentPosition();
         try {
-            const result = await api<PickupResult>(`${base}/pickup`, {
-                method: 'POST',
-                json: {
+            /* Through the outbox: pharmacy counters are indoors, often in a
+               basement, and a courier who cannot record a pickup cannot start
+               the run. */
+            const outcome = await sendOrQueue({
+                url: `${base}/pickup`,
+                body: {
                     siteId: group.site.id,
                     signedName: signedName.trim(),
                     strokes,
@@ -98,8 +103,14 @@ export function Pickup() {
                     note: note.trim(),
                     ...(position ?? {}),
                 },
+                label: `Pickup at ${group.site.name}`,
+                orderId: null,
             });
-            setDone(result);
+            if (outcome.sent) {
+                setDone(outcome.body as unknown as PickupResult);
+            } else {
+                setQueued(true);
+            }
             setStrokes([]);
             setSignedName('');
             setCounted('');
@@ -108,7 +119,7 @@ export function Pickup() {
         } catch (err) {
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'Could not record the pickup. Check your signal and try again.' });
+                : { kind: 'error', text: 'Could not record the pickup. Try again.' });
         } finally {
             setBusy(false);
         }
@@ -132,6 +143,13 @@ export function Pickup() {
                 <div className="izy-alert ok" role="status">
                     Collected {done.collected.length} {done.collected.length === 1 ? 'order' : 'orders'}.
                     {done.notes.length > 0 && <ul>{done.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+                </div>
+            )}
+
+            {queued && (
+                <div className="izy-alert warn" role="status">
+                    Saved on this phone. The pickup will be sent as soon as you have signal, and the list
+                    above will catch up then. Load the vehicle and go.
                 </div>
             )}
 

@@ -17,6 +17,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
+import { sendOrQueue, pendingFor } from '../../lib/outbox';
 
 interface Package {
     id: number; description: string; quantity: number;
@@ -68,33 +69,10 @@ async function currentPosition(): Promise<{ lat: number; lng: number } | null> {
 const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
 
-/**
- * Put the photo in the bucket and return the file id.
- *
- * Three steps, in this order: ask for a signed URL, PUT the bytes straight to
- * S3, then tell the server the object is there. The bytes never pass through
- * our server, so a photo does not sit in a request log, and the file counts as
- * stored only once it actually is: the doorstep endpoint refuses a file that
- * was never confirmed, which is what keeps a proof of delivery honest when a
- * phone dies halfway through.
- */
-async function uploadPhoto(code: string, orderId: number, photo: File): Promise<number> {
-    const created = await api<{ id: number; upload: { url: string; method: string; headers: Record<string, string> } }>(
-        `/api/projects/${code}/uh/files`,
-        { method: 'POST', json: { kind: 'doorstep', contentType: photo.type, bytes: photo.size, orderId } },
-    );
-    // Straight to S3, so no credentials and no cookies go with it.
-    const put = await fetch(created.upload.url, {
-        method: created.upload.method,
-        headers: created.upload.headers,
-        body: photo,
-        credentials: 'omit',
-        mode: 'cors',
-    });
-    if (!put.ok) throw new ApiError(put.status, 'The photo did not upload. Check your signal and try again.');
-    await api(`/api/projects/${code}/uh/files/${created.id}/stored`, { method: 'POST', json: { bytes: photo.size } });
-    return created.id;
-}
+/** What a queued entry is called when the courier reads the list back. */
+const LABELS: Record<string, string> = {
+    arrive: 'Arrival', deliver: 'Delivery', doorstep: 'Doorstep delivery', attempt: 'Attempt',
+};
 
 type Choice = null | 'deliver' | 'doorstep' | 'attempt';
 
@@ -112,6 +90,7 @@ export function Stop() {
     const photoInput = useRef<HTMLInputElement>(null);
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
     const [busy, setBusy] = useState(false);
+    const [queuedHere, setQueuedHere] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string; details?: string[] } | null>(null);
 
     const load = useCallback(async () => {
@@ -120,6 +99,9 @@ export function Stop() {
         }
     }, [base]);
     useEffect(() => { void load(); }, [load]);
+    /* A stop whose outcome is queued must not offer the outcome again: the
+       courier would record it twice and see two entries waiting. */
+    useEffect(() => { void pendingFor(Number(orderId)).then(setQueuedHere); }, [orderId]);
     useEffect(() => {
         api<{ available: boolean }>(`/api/projects/${code}/uh/files/status/check`)
             .then((s) => setFilesAvailable(s.available))
@@ -135,13 +117,41 @@ export function Stop() {
     const needsSignature = order.signatureRequired || order.packages.some((p) => p.signatureRequired);
     const closed = ['delivered', 'failed', 'cancelled'].includes(order.status);
 
-    async function post(path: string, body: Record<string, unknown>, ok: string) {
+    /**
+     * Record what happened.
+     *
+     * Through the outbox, never straight at fetch. A courier standing in a
+     * stairwell has still made the delivery, and being told to "check your
+     * signal and try again" would mean doing it again later from memory, or
+     * not at all.
+     */
+    async function post(path: string, body: Record<string, unknown>, ok: string, photo?: File) {
         setBusy(true);
         setMsg(null);
         const position = await currentPosition();
         try {
-            await api(`${base}/${path}`, { method: 'POST', json: { ...body, ...(position ?? {}) } });
-            setMsg({ kind: 'ok', text: ok });
+            const result = await sendOrQueue({
+                url: `${base}/${path}`,
+                body: { ...body, ...(position ?? {}) },
+                label: `${LABELS[path] ?? path} for ${order!.recipientName}`,
+                orderId: order!.id,
+                ...(photo ? { photo: { blob: photo, contentType: photo.type, kind: 'doorstep', bodyKey: 'fileId' } } : {}),
+            });
+            if (result.sent) {
+                setMsg({ kind: 'ok', text: ok });
+            } else {
+                /* Truthful either way. A doorstep delivery always goes
+                   through the queue, because the photo has to reach the bucket
+                   before the event does, so "waiting for signal" would be a
+                   lie when the phone has five bars. */
+                setMsg({
+                    kind: 'warn',
+                    text: navigator.onLine === false
+                        ? 'Saved on this phone. It will be sent as soon as you have signal.'
+                        : 'Saved on this phone and sending now.',
+                });
+                setQueuedHere(true);
+            }
             setChoice(null);
             setStrokes([]);
             setSignedName('');
@@ -151,7 +161,7 @@ export function Stop() {
         } catch (err) {
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'That did not save. Check your signal and try again.' });
+                : { kind: 'error', text: 'That did not save. Try again.' });
         } finally {
             setBusy(false);
         }
@@ -162,22 +172,14 @@ export function Stop() {
         void post('deliver', { signedName: signedName.trim(), strokes }, 'Delivered and signed for.');
     };
 
-    const doorstep = async (e: FormEvent) => {
+    const doorstep = (e: FormEvent) => {
         e.preventDefault();
         if (!photo) return;
-        setBusy(true);
-        setMsg(null);
-        try {
-            const fileId = await uploadPhoto(code, order!.id, photo);
-            // The photo exists before the delivery is claimed, never after.
-            await post('doorstep', { fileId, noSignatureReason: noSignatureReason.trim() }, 'Left at the door and photographed.');
-        } catch (err) {
-            setMsg(err instanceof ApiError
-                ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'The photo did not upload. Check your signal and try again.' });
-        } finally {
-            setBusy(false);
-        }
+        /* The photo travels with the event rather than being uploaded first.
+           The queue puts it in the bucket and only then sends the delivery, so
+           a doorstep drop is never claimed without the photo behind it, on a
+           signal or off one. */
+        void post('doorstep', { noSignatureReason: noSignatureReason.trim() }, 'Left at the door and photographed.', photo);
     };
 
     const attempt = (e: FormEvent) => {
@@ -218,6 +220,17 @@ export function Stop() {
                 {order.recipientPhone && <a className="izy-btn secondary" href={`tel:${order.recipientPhone}`}>Call recipient</a>}
             </div>
 
+            {queuedHere && !closed && (
+                <div className="izy-card">
+                    <h2>Waiting to send</h2>
+                    <p>
+                        What you recorded at this stop is saved on this phone and has not reached dispatch
+                        yet. It will go as soon as you have signal. There is nothing else to do here.
+                    </p>
+                    <Link className="izy-btn" to={`/projects/${code}/my-run`}>Back to today</Link>
+                </div>
+            )}
+
             {closed ? (
                 <div className="izy-card">
                     <h2>Finished</h2>
@@ -226,7 +239,7 @@ export function Stop() {
                 </div>
             ) : (
                 <>
-                    {order.arrivedAt === null && (
+                    {order.arrivedAt === null && !queuedHere && (
                         <div className="izy-card">
                             <h2>Arrived?</h2>
                             <p className="izy-muted">
@@ -244,7 +257,7 @@ export function Stop() {
                         </div>
                     )}
 
-                    {choice === null && (
+                    {choice === null && !queuedHere && (
                         <div className="izy-card">
                             <h2>How did it go?</h2>
                             <div className="izy-row">

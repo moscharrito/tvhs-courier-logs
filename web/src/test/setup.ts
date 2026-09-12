@@ -1,4 +1,8 @@
 import '@testing-library/jest-dom/vitest';
+/* jsdom has no IndexedDB, and the courier screens write through the offline
+   queue. Without this they would exercise the no-database fallback rather than
+   the path a phone actually takes. */
+import 'fake-indexeddb/auto';
 import { afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 

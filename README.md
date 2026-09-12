@@ -228,6 +228,24 @@ The after-hours pharmacy is `returns.afterHoursSiteCode` in the project settings
 
 One signature covers the batch, the same as a pickup and for the same reason, stored as strokes under its own kind (`return`). Adding that kind meant rebuilding the `signatures` table, which is the shape of migration that lost rows in 0009; a migrations test captures a real signature before 0015 and proves it survives.
 
+### Working with no signal
+
+San Antonio has basements, lift shafts, loading docks and long stretches of the far zones with nothing. A courier standing in one of them has still made the delivery. So every write a courier makes goes through an outbox in IndexedDB (`web/src/lib/outbox.ts`) rather than straight at `fetch`, and the queue drains when it can.
+
+**The phone generates the event id.** A server-generated id cannot help here: the phone would have to receive it first, which is exactly the round trip that failed. Each entry carries a `clientEventId` sent with the first attempt and with every retry, and `core/http/idempotency.ts` answers a repeat with the stored first reply instead of entering the handler again. Without that, the dangerous case is not the request that never arrives, it is the one that arrives and whose reply does not: the phone retries and the order is delivered twice.
+
+**In order, one at a time.** A delivery recorded before its own arrival is a chain of custody that reads backwards. The queue stops at the first entry it cannot send rather than skipping ahead, and entries carry a `sequence` allocated one higher than anything already queued, not a timestamp: `Date.now()` has millisecond resolution, and two events recorded in the same millisecond would come back in whatever order their random ids happened to sort in.
+
+**A refusal is not a retry.** A 4xx means the server understood and said no; sending it again in thirty seconds produces the same no for ever, with every later event stuck behind it. Those are moved aside and shown to the courier, who is the only one who can say what really happened. Network failures and 5xx are retried, and a 5xx also releases the claimed id on the server so a transient database error cannot make an id permanently unusable.
+
+**A queued photo reaches the bucket before the event that depends on it.** A doorstep drop is queued as the blob plus the event; the queue asks for the upload URL, PUTs the bytes, confirms the object, and only then sends the delivery carrying the resulting file id. So a doorstep delivery is never claimed without the photo behind it, on a signal or off one.
+
+**The queue is PHI.** It holds names, addresses and signatures in IndexedDB on a phone that may be personal. Entries are deleted the moment they are accepted, refusals expire after a day, and signing out empties it along with the service worker cache. On the server, stored replies are swept after `CLIENT_EVENT_RETENTION_DAYS` (7): a replay cache is useful for hours, not years, and an unbounded copy of every delivery response is a liability with no reader.
+
+**The courier can always see the difference between "recorded" and "sent".** `SyncStatus` sits in the frame above every screen, says nothing when there is nothing to say, and becomes loud only for a refusal. A courier who cannot tell those apart will assume sent, and a delivery nobody knows about is the failure the whole feature exists to prevent.
+
+A browser with no usable IndexedDB (a private window, site data switched off) falls back to sending directly and surfacing real errors, rather than pretending to queue and dropping the event.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.

@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
+import { SyncStatus } from './SyncStatus';
 
 const ROLE_LABEL: Record<string, string> = {
     admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
@@ -49,6 +50,9 @@ export function Layout() {
                 </div>
             </aside>
             <main className="izy-main">
+                {/* Above the screen, not tucked into a corner: a courier who
+                    cannot tell "sent" from "on this phone" will assume sent. */}
+                <SyncStatus />
                 <Outlet />
             </main>
         </div>

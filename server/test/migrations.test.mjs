@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -172,7 +172,8 @@ describe('fresh database', () => {
             const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
             expect(idx.rows.map((r) => r.name)).toEqual([
                 'audit_events_at_idx', 'audit_events_entity_idx', 'audit_events_project_id_idx', 'audit_events_user_id_idx',
-                'checkins_project_id_idx', 'custody_events_order_idx', 'custody_events_project_at_idx',
+                'checkins_project_id_idx', 'client_events_created_idx', 'client_events_key_unique',
+                'custody_events_order_idx', 'custody_events_project_at_idx',
                 'daily_lists_project_date_idx', 'daily_lists_site_date_idx', 'devices_user_id_idx',
                 'files_key_unique', 'files_order_idx', 'files_project_status_idx',
                 'import_mappings_site_unique', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique',
