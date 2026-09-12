@@ -218,6 +218,29 @@ The tests for this run the real worker in a sandbox and hand it requests, rather
 
 Every date stored here is a **service date**: the day a list belongs to, the day a run is driven, the day that decides which effective-dated price schedule applies. Those are questions about San Antonio, not about UTC, so they go through `dateIn` and `todayIn` in `server/src/core/dates.ts`. `new Date().toISOString().slice(0, 10)` is the tempting one-liner and it is wrong for five hours of every day: between 7pm and midnight in Chicago it returns tomorrow, which would file an evening STAT call under the next day, drop it off today's board, and price it against a schedule that had not taken effect yet.
 
+## Files: proof of delivery storage
+
+Bytes never pass through this server. The browser is handed a **signed PUT** and uploads straight to S3; reading is a **signed GET that expires in five minutes**. That is not only a bandwidth decision: a photo of a patient's front door that never touches the application server cannot end up in a request log, a heap dump or a crash report.
+
+Three steps, because the server never sees the bytes: `POST .../uh/files` records what is about to exist and returns the signed URL, the browser PUTs to S3, then `POST .../uh/files/:id/stored` confirms. A row left pending is an upload that never completed.
+
+- **SSE-KMS is part of the signature.** The encryption headers are signed, so a PUT that omits them does not match and S3 rejects it. With the bucket policy in [docs/infra/s3-bucket.md](docs/infra/s3-bucket.md) there is no way to write an unencrypted object, and the guarantee does not rest on the application alone.
+- **The key is built by the server**: `project/date/order-<id>/kind/<uuid>.<ext>`. A client cannot propose one, which keeps a patient's name out of an object key by way of a helpfully named photo and stops a caller reaching outside their project. It is never returned to a client either: a list of keys is a list of which orders have a photo of a door.
+- **A courier can only touch files on an order assigned to them**, and cannot enumerate the day's photos at all.
+- Files are filed under the **order's service date**, not the day the photo was taken.
+
+### Signing
+
+`server/src/core/files/sigv4.ts` signs the URLs itself rather than pulling in the AWS SDK. Presigning is the only AWS operation this platform performs, and the SDK plus presigner is tens of megabytes of transitive dependencies to reach it; on a system holding PHI, dependency surface is a security property.
+
+The obvious risk in hand-writing a signature is being subtly wrong in a way that only appears against real AWS. That is answered by AWS's own published worked example: the tests reproduce the canonical request, the string to sign and the final signature from the "Authenticating Requests: Using Query Parameters" documentation **byte for byte**, including the documented `aeeed9bb…` signature. If those match, the canonical form and the key derivation match AWS.
+
+Not supported, because nothing needs it: temporary STS credentials (`x-amz-security-token`), path-style addressing, and keys outside the character set the key builder produces. Moving the deployment to an IAM role would need the first of those.
+
+### Until the bucket exists
+
+There is no AWS account yet: **ticket 0.10** sets it up, under a signed AWS Business Associate Addendum. Until `FILES_ENABLED` and the `S3_*` values are set, every file endpoint answers 503 naming that ticket, and no row is created. An upload that silently goes nowhere is worse than one that fails loudly at the counter. `GET .../uh/files/status/check` reports whether uploads are possible, so a screen can say so before a courier takes a photo.
+
 ## Project settings
 
 Each project is one contract, and a contract's operating parameters are configuration rather than code. They live in the `projects.settings` JSON column, with their shape, defaults and validation in `server/src/core/projects/settings.ts`. Nothing is stored until someone changes a value, so the defaults are always what the contract says.

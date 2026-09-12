@@ -143,3 +143,52 @@ export const devices = sqliteTable(
 );
 
 export type Device = typeof devices.$inferSelect;
+
+/* Stored files (ticket 1.8).
+ *
+ * The bytes live in S3 under a signed URL; this table is what the platform
+ * knows about them. Without it the only way to find out what exists would be
+ * to list the bucket, which is slow, unscoped, and would hand any caller a
+ * directory of every proof of delivery in the project.
+ *
+ * A row is created before the upload and marked stored afterwards, because
+ * the browser PUTs straight to S3 and the server never sees the bytes. A
+ * pending row whose upload never happened is an orphan; the bucket lifecycle
+ * rule in docs/infra/s3-bucket.md expires those.
+ *
+ * PHI: a doorstep photo shows a patient's front door and often their name on
+ * a package. The key is scoped by project, date and order so that access can
+ * be reasoned about, and no URL to it is ever valid for longer than five
+ * minutes.
+ */
+
+export const FILE_KINDS = ['doorstep', 'pod', 'exception', 'signature'] as const;
+export const FILE_STATUSES = ['pending', 'stored'] as const;
+
+export const files = sqliteTable(
+    'files',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** The delivery it belongs to. Null for anything not about one order. */
+        orderId: integer('order_id'),
+        kind: text('kind', { enum: FILE_KINDS }).notNull(),
+        /** project/date/order/kind/uuid.ext. Built by the server, never by a client. */
+        s3Key: text('s3_key').notNull(),
+        contentType: text('content_type').notNull(),
+        bytes: integer('bytes').notNull().default(0),
+        status: text('status', { enum: FILE_STATUSES }).notNull().default('pending'),
+        uploadedBy: text('uploaded_by').notNull().default(''),
+        createdAt: text('created_at').notNull(),
+        storedAt: text('stored_at'),
+    },
+    (t) => [
+        unique('files_key_unique').on(t.s3Key),
+        index('files_order_idx').on(t.orderId),
+        index('files_project_status_idx').on(t.projectId, t.status),
+        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature')`),
+        check('files_status_check', sql`${t.status} IN ('pending','stored')`),
+    ],
+);
+
+export type StoredFile = typeof files.$inferSelect;

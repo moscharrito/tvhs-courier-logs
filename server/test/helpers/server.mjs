@@ -43,7 +43,14 @@ let booted = null;
  * Start an isolated server. Returns { url, agent(), login(who), stop(), creds }.
  * agent() gives a cookie-keeping supertest agent bound to the server URL.
  */
-export async function startServer() {
+/**
+ * @param {Record<string,string>} [env] Extra environment for this server, set
+ *   before server.js is required. Use it to exercise a feature that is
+ *   configured by the environment, such as the S3 file service, through the
+ *   real boot path rather than by mounting a router afterwards: routers added
+ *   after boot sit behind the JSON 404 handler and never match.
+ */
+export async function startServer(env = {}) {
     if (booted) throw new Error('startServer() called twice in one test file; server.js holds module-level state');
 
     const { dir, dbFile } = tempDb();
@@ -59,6 +66,7 @@ export async function startServer() {
         SESSION_SECRET: 'test-session-secret',
         ADMIN_USER: CREDS.admin.username,
         ADMIN_PASS: CREDS.admin.password,
+        ...env,
     });
 
     // Migrate, then boot the legacy app through the same wrapper as the entry

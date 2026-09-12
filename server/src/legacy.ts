@@ -34,6 +34,8 @@ import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
 import { createOrdersRouter } from './modules/uh/orders';
 import { createRunsRouter } from './modules/uh/runs';
 import { createPickupRouter } from './modules/uh/pickup';
+import { createFilesRouter } from './core/files/routes';
+import { createFileStorage } from './core/files/storage';
 import { createBoardRouter } from './modules/uh/board';
 
 export interface LegacyServer {
@@ -113,6 +115,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createPickupRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/files', requireProject, createFilesRouter({ client: database.client, storage: createFileStorage(config) }));
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.

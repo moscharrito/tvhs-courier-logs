@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -174,6 +174,7 @@ describe('fresh database', () => {
                 'audit_events_at_idx', 'audit_events_entity_idx', 'audit_events_project_id_idx', 'audit_events_user_id_idx',
                 'checkins_project_id_idx', 'custody_events_order_idx', 'custody_events_project_at_idx',
                 'daily_lists_project_date_idx', 'daily_lists_site_date_idx', 'devices_user_id_idx',
+                'files_key_unique', 'files_order_idx', 'files_project_status_idx',
                 'import_mappings_site_unique', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique',
                 'orders_dedupe_idx', 'orders_list_idx', 'orders_project_date_idx', 'orders_site_date_idx', 'orders_status_idx',
                 'packages_order_idx', 'price_schedules_project_from_unique', 'projects_code_unique',
