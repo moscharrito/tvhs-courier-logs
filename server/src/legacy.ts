@@ -30,6 +30,7 @@ import { createProjectSettingsRouter } from './core/projects/settings-routes';
 import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
 import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
+import { createOrdersRouter } from './modules/uh/orders';
 
 export interface LegacyServer {
     app: Express;
@@ -101,6 +102,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         requireProject,
         createImportsRouter({ client: database.client }),
     );
+    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client }));
 
     if (config.nodeEnv === 'test') {
         // Lets the test suite exercise the error handler on a real request.

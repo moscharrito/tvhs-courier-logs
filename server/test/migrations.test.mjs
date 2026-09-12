@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -172,14 +172,18 @@ describe('fresh database', () => {
             const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
             expect(idx.rows.map((r) => r.name)).toEqual([
                 'audit_events_at_idx', 'audit_events_entity_idx', 'audit_events_project_id_idx', 'audit_events_user_id_idx',
-                'checkins_project_id_idx', 'daily_lists_project_date_idx', 'daily_lists_site_date_idx',
+                'checkins_project_id_idx', 'custody_events_order_idx', 'custody_events_project_at_idx',
+                'daily_lists_project_date_idx', 'daily_lists_site_date_idx',
                 'import_mappings_site_unique', 'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique',
                 'orders_dedupe_idx', 'orders_list_idx', 'orders_project_date_idx', 'orders_site_date_idx', 'orders_status_idx',
                 'packages_order_idx', 'price_schedules_project_from_unique', 'projects_code_unique', 'sessions_user_id_idx',
                 'sites_project_code_unique', 'sites_project_id_idx', 'zone_zips_project_zip_from_unique', 'zone_zips_project_zip_idx',
             ]);
             const triggers = await database.client.execute("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name");
-            expect(triggers.rows.map((r) => r.name)).toEqual(['audit_events_no_delete', 'audit_events_no_update']);
+            expect(triggers.rows.map((r) => r.name)).toEqual([
+                'audit_events_no_delete', 'audit_events_no_update',
+                'custody_events_no_delete', 'custody_events_no_update',
+            ]);
             expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
 
             // tvhs is seeded as project 1 so the project_id default points at it; uh follows.
@@ -335,6 +339,59 @@ describe('the real local development database', () => {
             expect(await count(database.client, 'memberships')).toBeGreaterThanOrEqual(eligible);
         } finally {
             database.client.close();
+        }
+    });
+});
+
+describe('0009 rebuilds packages without losing rows', () => {
+    /* drizzle-kit generated this migration's INSERT reading "outcome" from the
+       old packages table, which does not have that column yet. It was
+       hand-corrected. The bug only shows on a database that already holds
+       imported packages, so run 0000 through 0008, put a package in, and then
+       apply 0009 on top. */
+    it('carries existing packages across the table rebuild and defaults them to pending', async () => {
+        const { dir, absolute } = tempDb('rebuild-');
+        const client = createClient({ url: `file:${absolute}` });
+        try {
+            const journal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'));
+            const runFile = async (tag) => {
+                const sql = fs.readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), 'utf8');
+                for (const stmt of sql.split('--> statement-breakpoint')) {
+                    const trimmed = stmt.trim();
+                    if (trimmed) await client.execute(trimmed);
+                }
+            };
+            const tags = journal.entries.map((e) => e.tag);
+            for (const tag of tags.filter((t) => t < '0009')) await runFile(tag);
+
+            const site = await client.execute("SELECT id FROM sites WHERE code = 'discharge'");
+            const siteId = Number(site.rows[0].id);
+            await client.execute({
+                sql: `INSERT INTO daily_lists (project_id, site_id, service_date, received_at) VALUES (2, ?, '2026-09-14', '2026-09-14T17:00:00Z')`,
+                args: [siteId],
+            });
+            await client.execute({
+                sql: `INSERT INTO orders (project_id, site_id, daily_list_id, service_date, recipient_name, address_line, zip, received_at)
+                      VALUES (2, ?, 1, '2026-09-14', 'Test Person', '1 Somewhere', '78229', '2026-09-14T17:00:00Z')`,
+                args: [siteId],
+            });
+            await client.execute(`INSERT INTO packages (project_id, order_id, description, quantity) VALUES (2, 1, 'Cold pack', 3)`);
+
+            // The column does not exist yet: this is the pre-0009 shape.
+            const before = await client.execute('PRAGMA table_info(packages)');
+            expect(before.rows.map((r) => r.name)).not.toContain('outcome');
+
+            await runFile('0009_custody');
+
+            const after = await client.execute('SELECT id, description, quantity, outcome FROM packages');
+            expect(after.rows).toHaveLength(1);
+            expect({ ...after.rows[0] }).toMatchObject({ id: 1, description: 'Cold pack', quantity: 3, outcome: 'pending' });
+
+            // And the constraint the rebuild existed to add is really there.
+            await expect(client.execute("UPDATE packages SET outcome = 'nonsense' WHERE id = 1")).rejects.toThrow();
+        } finally {
+            client.close();
+            await removeDir(dir);
         }
     });
 });

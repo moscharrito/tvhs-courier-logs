@@ -215,6 +215,23 @@ export const orders = sqliteTable(
         arrivedAt: text('arrived_at'),
         deliveredAt: text('delivered_at'),
 
+        /* Assignment. A username, as everywhere else in the platform. */
+        assignedToUsername: text('assigned_to_username'),
+        assignedAt: text('assigned_at'),
+
+        /* Scope 1.2.8 proof of delivery: the printed name of the authorised
+         * sending and receiving personnel. PHI. */
+        pickedUpBy: text('picked_up_by').notNull().default(''),
+        receivedBy: text('received_by').notNull().default(''),
+
+        /* Why a delivery failed or was called off. PHI-adjacent free text. */
+        failureReason: text('failure_reason').notNull().default(''),
+        /* Scope 1.2.9: undelivered packages go back to the origin pharmacy, or
+         * to the Discharge Pharmacy after hours. Returning does not undo the
+         * failure, so this is a timestamp and not a status: an order still in
+         * a van is status 'failed' with returned_at null. */
+        returnedAt: text('returned_at'),
+
         /* Duplicate detection within a site and a day: a hash of the external
          * reference, or of the normalised recipient and address when the list
          * carries no reference. A hash rather than the values themselves, so
@@ -250,9 +267,15 @@ export const packages = sqliteTable(
         quantity: integer('quantity').notNull().default(1),
         /** Scope 1.2.3: doorstep delivery is allowed by medication type. */
         signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
+        /* Addendum 1 bills a dry run per item, so the outcome has to be
+         * recordable per package and not only per stop. */
+        outcome: text('outcome', { enum: ['pending', 'delivered', 'failed'] }).notNull().default('pending'),
         createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
     },
-    (t) => [index('packages_order_idx').on(t.orderId)],
+    (t) => [
+        index('packages_order_idx').on(t.orderId),
+        check('packages_outcome_check', sql`${t.outcome} IN ('pending','delivered','failed')`),
+    ],
 );
 
 /* The column mapping a site's spreadsheet needs, saved after the first import
@@ -279,3 +302,66 @@ export type DailyList = typeof dailyLists.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type Package = typeof packages.$inferSelect;
 export type ImportMapping = typeof importMappings.$inferSelect;
+
+/* Chain of custody (ticket 1.6).
+ *
+ * Scope 1.2.7 requires the chain of custody to be secured and available for
+ * regulatory audit, so this table is append-only the way audit_events is:
+ * migration 0009 adds BEFORE UPDATE and BEFORE DELETE triggers that abort.
+ * A custody record that can be edited after the fact is not evidence.
+ *
+ * This table is NOT the audit trail, and the difference matters. audit_events
+ * records who touched the system and carries no PHI. custody_events records
+ * what physically happened to a patient's medication and deliberately does
+ * carry the names Scope 1.2.8 requires on a proof of delivery: the printed
+ * name of the authorised sending and receiving personnel. Treat it like
+ * orders, not like a log.
+ */
+export const CUSTODY_EVENT_TYPES = [
+    'created', 'released', 'assigned', 'unassigned', 'picked_up',
+    'arrived', 'delivered', 'attempted', 'returned', 'cancelled', 'note',
+] as const;
+
+export const PACKAGE_OUTCOMES = ['pending', 'delivered', 'failed'] as const;
+
+export const custodyEvents = sqliteTable(
+    'custody_events',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        orderId: integer('order_id').notNull().references(() => orders.id),
+        /** Null when the event covers the whole order rather than one package. */
+        packageId: integer('package_id').references(() => packages.id),
+        type: text('type', { enum: CUSTODY_EVENT_TYPES }).notNull(),
+        /** ISO timestamp of the event itself, which may predate the row. */
+        at: text('at').notNull(),
+        /** Who recorded it. A username, as everywhere else in the platform. */
+        actor: text('actor').notNull().default(''),
+        fromStatus: text('from_status').notNull().default(''),
+        toStatus: text('to_status').notNull().default(''),
+
+        /* PHI: Scope 1.2.8 requires the printed name of the sending and the
+         * receiving personnel on the proof of delivery. */
+        signedName: text('signed_name').notNull().default(''),
+        /** S3 key of the signature image. Ticket 1.8 fills this in. */
+        signatureKey: text('signature_key').notNull().default(''),
+        /* PHI-adjacent: a courier's free text, which can name a patient. */
+        reason: text('reason').notNull().default(''),
+
+        /** Where the courier was. Scope 1.2.7 asks for GPS on custody. */
+        lat: real('lat'),
+        lng: real('lng'),
+
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        index('custody_events_order_idx').on(t.orderId, t.at),
+        index('custody_events_project_at_idx').on(t.projectId, t.at),
+        check(
+            'custody_events_type_check',
+            sql`${t.type} IN ('created','released','assigned','unassigned','picked_up','arrived','delivered','attempted','returned','cancelled','note')`,
+        ),
+    ],
+);
+
+export type CustodyEvent = typeof custodyEvents.$inferSelect;

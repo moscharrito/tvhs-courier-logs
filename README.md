@@ -90,6 +90,26 @@ This is the first module that stores patient data, and the rules are load-bearin
 
 Reading a list (`GET .../uh/imports/:id`) is itself audited, the way an admin reading one user's record is.
 
+### Orders and the chain of custody
+
+An order's status only ever moves through `POST /api/projects/:pid/uh/orders/:id/events`. There is deliberately no endpoint that sets a status directly: a status you can PATCH drifts away from the custody record that is supposed to explain it. `server/src/modules/uh/lifecycle.ts` holds the whole transition table, what each event means, which project roles may record it, and which fields it is meaningless without. An illegal event answers 409 with the current status and the list of events that would be legal instead.
+
+Three rules in that table come straight from the contract and are easy to get wrong:
+
+- **Arrival is a timestamp, not an outcome.** Addendum 1 counts an on-time arrival as a success even when nobody answers the door, so `arrived` records a time and leaves the status alone. The first arrival wins, so a courier tapping twice cannot reset the stamp that decides whether the delivery was on time.
+- **A return is custody, not an outcome.** Scope 1.2.9 sends undelivered packages back to the pharmacy of origin, or to the Discharge Pharmacy after hours. That does not undo the failure: a dry run stays `failed` and bills as one. "Still in a van" is `status = 'failed' AND returned_at IS NULL`.
+- **Once a courier has custody the order cannot be cancelled.** Something physical is in a vehicle; it has to be delivered, failed, or returned.
+
+Proof of delivery needs the printed name and signature of the authorised **sending and receiving** personnel (Scope 1.2.8), so a signature is captured at pickup as well as at the door. STAT's second deadline, one hour from pickup, is stamped when the pickup happens, because that is the first moment it is knowable.
+
+A timestamp more than five minutes in the future is refused. A device's clock can drift a little; beyond that, a future `received_at` would push the SLA deadline out and a future delivery time would make an on-time calculation say yes when the answer is no.
+
+`POST /api/projects/:pid/uh/orders` creates a STAT or ad hoc order by hand, with `requestedAt` defaulting to now. Scheduled orders cannot be created this way: they come in on a daily list, where they are checked for duplicates first.
+
+Couriers see and act on only the orders assigned to them, which is both the minimum-necessary rule for PHI and the obvious operational one.
+
+`custody_events` is append-only in the database, the way `audit_events` is: migration 0009 adds triggers that abort any UPDATE or DELETE, because Scope 1.2.7 requires the chain of custody to be available for regulatory audit and a record that can be edited afterwards is not evidence. **It is not the audit trail.** `audit_events` records who touched the system and carries no PHI; `custody_events` records what happened to a patient's medication and deliberately carries the signatures the contract requires. Treat it like `orders`, not like a log.
+
 ## Project settings
 
 Each project is one contract, and a contract's operating parameters are configuration rather than code. They live in the `projects.settings` JSON column, with their shape, defaults and validation in `server/src/core/projects/settings.ts`. Nothing is stored until someone changes a value, so the defaults are always what the contract says.

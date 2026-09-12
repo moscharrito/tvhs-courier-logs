@@ -8,6 +8,7 @@ import { useAuth } from '../app/auth';
 import { Sites } from './uh/Sites';
 import { Pricing } from './uh/Pricing';
 import { ListImport } from './uh/ListImport';
+import { NewOrder } from './uh/NewOrder';
 import { ProjectSettings } from './ProjectSettings';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -36,6 +37,7 @@ export function ProjectHome() {
         <>
             <h1>{project.name}</h1>
             <p className="izy-sub"><code>{project.code}</code> · {project.timezone} · your role: {ROLE_LABEL[project.role] ?? project.role}</p>
+            <NewOrder projectCode={project.code} canCreate={canImport} />
             <ListImport projectCode={project.code} canImport={canImport} />
             <Sites projectCode={project.code} canManage={canManage} />
             <Pricing projectCode={project.code} />
