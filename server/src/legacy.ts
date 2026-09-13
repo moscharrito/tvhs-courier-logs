@@ -40,6 +40,7 @@ import { createFilesRouter } from './core/files/routes';
 import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createBoardRouter } from './modules/uh/board';
+import { createClientPortalRouter } from './modules/uh/client-portal';
 
 export interface LegacyServer {
     app: Express;
@@ -129,6 +130,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/returns', requireProject, idempotent, createReturnsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/client', requireProject, createClientPortalRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/files', requireProject, idempotent, createFilesRouter({ client: database.client, storage: fileStorage }));
 
     if (config.nodeEnv === 'test') {

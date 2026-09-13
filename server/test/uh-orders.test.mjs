@@ -449,8 +449,13 @@ describe('access control', () => {
         const north = await srv.login('north');
         expect((await north.get(BASE)).status).toBe(403);
 
+        /* A client viewer reads nothing here either. This asserted 200 until
+           ticket 3.1, which is to say a pharmacist could have read every
+           patient address in the contract through the staff search. Their own
+           pharmacy's deliveries are at /uh/client. */
         const viewer = await memberWith('client_viewer', 'orders.viewer');
-        expect((await viewer.get(BASE)).status).toBe(200);
+        expect((await viewer.get(BASE)).status).toBe(403);
+        expect((await viewer.get(`${BASE}/summary`)).status).toBe(403);
         expect((await viewer.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER })).status).toBe(403);
     });
 

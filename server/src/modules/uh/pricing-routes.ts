@@ -11,6 +11,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Client } from '@libsql/client';
+import { requireProjectRole } from '../../core/projects/middleware';
 import { priceFor, resolveZone, pricingSettingsFrom, type Zone } from './pricing';
 import { zipZoneMap, scheduleOn } from './zones';
 import { dateIn, todayIn } from '../../core/dates';
@@ -31,6 +32,10 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 
 export function createPricingRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
+    /* The rate card is commercial, not operational. A courier does not need it
+     * to do the job, and the client reading our own price schedule out of a
+     * tracking portal is a negotiation we did not agree to have. */
+    const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
 
     /* Which schedule and zone map are in force is a question about a date in
      * San Antonio. A UTC date would switch over five hours early every
@@ -40,7 +45,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         return /^\d{4}-\d{2}-\d{2}$/.test(on) ? on : todayIn(req.project!.timezone);
     };
 
-    router.get('/', wrap(async (req, res) => {
+    router.get('/', staff, wrap(async (req, res) => {
         const on = today(req);
         const schedule = await scheduleOn(client, req.project!.id, on);
         const counts = await client.execute({
@@ -56,7 +61,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         });
     }));
 
-    router.get('/zones', wrap(async (req, res) => {
+    router.get('/zones', staff, wrap(async (req, res) => {
         const on = today(req);
         const zip = req.query['zip'] ? String(req.query['zip']).trim().slice(0, 5) : null;
         if (zip) {
@@ -72,7 +77,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         res.json(rs.rows.map((r) => ({ zip: String(r['zip']), zone: Number(r['zone']), place: r['place'] === null ? null : String(r['place']) })));
     }));
 
-    router.post('/quote', wrap(async (req, res) => {
+    router.post('/quote', staff, wrap(async (req, res) => {
         const parsed = QuoteBody.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({ error: 'Invalid request', details: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`) });

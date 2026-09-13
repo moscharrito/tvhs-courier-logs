@@ -93,6 +93,9 @@ export interface PreviewRow {
 export function createImportsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const operate = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    /* An import holds the pharmacy's whole list, patients included. Reading one
+     * is the same disclosure as uploading one, so it takes the same role. */
+    const readers = operate;
 
     async function siteOr404(projectId: number, siteId: number, res: Response): Promise<SiteRow | null> {
         const rs = await client.execute({
@@ -437,7 +440,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
 
     /* -------------------------------------------------------------- reads */
 
-    router.get('/', wrap(async (req, res) => {
+    router.get('/', readers, wrap(async (req, res) => {
         const on = String(req.query['serviceDate'] ?? '');
         const where: string[] = ['l.project_id = ?'];
         const args: InValue[] = [req.project!.id];
@@ -466,7 +469,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         })));
     }));
 
-    router.get('/mappings/:siteId', wrap(async (req, res) => {
+    router.get('/mappings/:siteId', readers, wrap(async (req, res) => {
         const siteId = Number(req.params['siteId']);
         const site = await siteOr404(req.project!.id, siteId, res);
         if (!site) return;
@@ -483,7 +486,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         res.json({ ok: true, siteId });
     }));
 
-    router.get('/:id', wrap(async (req, res) => {
+    router.get('/:id', readers, wrap(async (req, res) => {
         const id = Number(req.params['id']);
         if (!Number.isInteger(id) || id <= 0) { res.status(404).json({ error: 'Import not found' }); return; }
         const rs = await client.execute({

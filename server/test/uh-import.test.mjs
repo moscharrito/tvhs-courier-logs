@@ -513,8 +513,12 @@ describe('access control', () => {
         const north = await srv.login('north');            // tvhs only
         expect((await north.get(BASE)).status).toBe(403);
 
+        /* A client viewer reads nothing here. This asserted 200 until ticket
+           3.1: an import holds the pharmacy's whole list, patients included,
+           so reading one is the same disclosure as uploading one. Their view
+           of their own deliveries is the portal. */
         const viewer = await memberWith('client_viewer', 'import.viewer');
-        expect((await viewer.get(BASE)).status).toBe(200);
+        expect((await viewer.get(BASE)).status).toBe(403);
         expect((await upload(viewer, `${BASE}/preview`, XLSX, { siteId: dischargeId })).status).toBe(403);
         expect((await upload(viewer, BASE, XLSX, { siteId: dischargeId })).status).toBe(403);
 

@@ -25,7 +25,13 @@ declare module 'express-serve-static-core' {
     interface Request {
         /** Set by requireProject, or by its legacy twin in server.js. */
         project?: RequestProject | undefined;
-        membership?: { role: ProjectRole } | undefined;
+        membership?: {
+            role: ProjectRole;
+            /* Per-project settings on the membership itself, not the project.
+             * A client viewer's scope lives here: which pharmacies they are
+             * allowed to see (ticket 3.1). */
+            settings: Record<string, unknown>;
+        } | undefined;
     }
 }
 
@@ -58,7 +64,7 @@ export function createRequireProject(client: Client): RequestHandler {
             }
 
             const mrs = await client.execute({
-                sql: `SELECT m.role FROM memberships m JOIN users u ON u.id = m.user_id
+                sql: `SELECT m.role, m.settings FROM memberships m JOIN users u ON u.id = m.user_id
                       WHERE u.username = ? AND m.project_id = ?`,
                 args: [req.session.user.username, Number(project['id'])],
             });
@@ -75,7 +81,10 @@ export function createRequireProject(client: Client): RequestHandler {
                 timezone: String(project['timezone']),
                 settings: parseSettings(project['settings']),
             };
-            req.membership = { role: String(membership['role']) as ProjectRole };
+            req.membership = {
+                role: String(membership['role']) as ProjectRole,
+                settings: parseSettings(membership['settings']),
+            };
             next();
         })().catch(next);
     };

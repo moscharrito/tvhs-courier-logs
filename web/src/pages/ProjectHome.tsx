@@ -38,6 +38,11 @@ export function ProjectHome() {
        none of which is theirs to see. */
     if (project.role === 'courier') return <Navigate to={`/projects/${project.code}/my-run`} replace />;
 
+    /* A client viewer gets their own deliveries and nothing else. This page is
+       our sites, our rate card, our settings and every pharmacy's patients;
+       none of it is theirs. */
+    if (project.role === 'client_viewer') return <Navigate to={`/projects/${project.code}/deliveries`} replace />;
+
     return (
         <>
             <h1>{project.name}</h1>
@@ -53,6 +58,10 @@ export function ProjectHome() {
                 <div className="izy-row">
                     <Link className="izy-btn" to={`/projects/${project.code}/board`}>Open the board</Link>
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
+                    {/* Staff see exactly what the client sees. A portal nobody
+                        on our side ever looks at is a portal nobody can answer
+                        a question about. */}
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
                 </div>
             </div>
             <div className="izy-card">

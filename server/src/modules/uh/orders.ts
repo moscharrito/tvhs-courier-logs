@@ -155,6 +155,11 @@ const present = (o: OrderRow) => ({
 export function createOrdersRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    /* Reading an order means reading a patient's name and address. Couriers
+     * are included and then narrowed to their own work further down; a client
+     * viewer is not, because this endpoint is the whole project and their view
+     * of their own pharmacy is the portal (ticket 3.1). */
+    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';
@@ -433,7 +438,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
         return { where, args, applied };
     }
 
-    router.get('/', wrap(async (req, res) => {
+    router.get('/', readers, wrap(async (req, res) => {
         const { where, args, applied } = filterFor(req);
         const q = req.query as Record<string, string | undefined>;
         const limit = Math.min(500, Math.max(1, Number(q['limit'] ?? 200) || 200));
@@ -449,7 +454,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
     /* Counts over the same filtered set, so the screen's header cannot
      * disagree with its own table. Declared before /:id so that "summary" is
      * not read as an order id. */
-    router.get('/summary', wrap(async (req, res) => {
+    router.get('/summary', readers, wrap(async (req, res) => {
         const { where, args } = filterFor(req);
         const rs = await client.execute({
             sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at FROM orders o WHERE ${where.join(' AND ')}`,
@@ -487,7 +492,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
         });
     }));
 
-    router.get('/:id', wrap(async (req, res) => {
+    router.get('/:id', readers, wrap(async (req, res) => {
         const order = await loadOr404(req, res);
         if (!order) return;
 

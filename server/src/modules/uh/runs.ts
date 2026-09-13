@@ -100,6 +100,9 @@ const presentRun = (r: RunRow) => ({
 export function createRunsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    /* A run is a courier's day and every stop on it. Couriers read their own
+     * (narrowed below); a client viewer has no business reading any of it. */
+    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';
@@ -538,7 +541,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
 
     /* --------------------------------------------------------------- reads */
 
-    router.get('/', wrap(async (req, res) => {
+    router.get('/', readers, wrap(async (req, res) => {
         const q = req.query as Record<string, string | undefined>;
         const where: string[] = ['r.project_id = ?'];
         const args: InValue[] = [req.project!.id];
@@ -565,7 +568,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
      * the stops in sequence, and the number to call if something goes wrong.
      * Declared before /:id so "mine" is not read as an id. A phone on
      * cellular should not make three round trips to show one screen. */
-    router.get('/mine', wrap(async (req, res) => {
+    router.get('/mine', readers, wrap(async (req, res) => {
         const project = req.project!;
         const q = req.query as Record<string, string | undefined>;
         const serviceDate = q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])
@@ -591,7 +594,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         res.json({ serviceDate, timezone: project.timezone, courierUsername: username, runs, dispatch });
     }));
 
-    router.get('/:id', wrap(async (req, res) => {
+    router.get('/:id', readers, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;
         const stops = await stopsOf(req.project!.id, Number(run.id));

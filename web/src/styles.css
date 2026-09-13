@@ -42,6 +42,16 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-field input[type=file] { padding: 6px 0; font-size: 13px; }
 .izy-statline { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; align-items: baseline; }
 .izy-stat-bad { color: var(--izy-danger); }
+/* The four numbers a pharmacist reads first, big enough to read across
+   a counter rather than buried in a sentence. */
+.izy-stats { display: flex; flex-wrap: wrap; gap: 24px; }
+.izy-stats div { display: flex; flex-direction: column; }
+.izy-stats b { font-size: 26px; line-height: 1.1; }
+.izy-stats span { font-size: 12px; color: var(--izy-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.izy-stats .izy-stat-bad b { color: var(--izy-danger); }
+/* A row that needs somebody to do something. */
+.izy-row-bad > td { background: var(--izy-danger-soft); }
+
 .izy-table th[scope], .izy-table tbody th { font-size: 12px; color: var(--izy-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; width: 130px; }
 .izy-board { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
 .izy-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }

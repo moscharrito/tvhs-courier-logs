@@ -17,6 +17,19 @@ export function UserDetail() {
     const [password, setPassword] = useState('');
     const [pin, setPin] = useState('');
     const [member, setMember] = useState({ project: 'tvhs', role: 'courier' as ProjectMembership['role'], route: 'northbound' });
+    /* Which pharmacies a client viewer may see. Nothing is ticked by default:
+       an unscoped viewer sees nothing, which is the safe way round. Ticking
+       "all" by accident would hand one pharmacy every other pharmacy's
+       patients (ticket 3.1). */
+    const [scopeSites, setScopeSites] = useState<number[]>([]);
+    const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
+
+    useEffect(() => {
+        if (member.role !== 'client_viewer') { setSites([]); return; }
+        api<Array<{ id: number; name: string }>>(`/api/projects/${member.project}/uh/sites`)
+            .then(setSites)
+            .catch(() => setSites([]));
+    }, [member.project, member.role]);
 
     const load = useCallback(async () => {
         const data = await api<UserSummary>(`/api/users/${encodeURIComponent(username)}`);
@@ -113,7 +126,11 @@ export function UserDetail() {
                 )}
                 <form className="izy-row" style={{ marginTop: 12 }} onSubmit={(e) => {
                     e.preventDefault();
-                    const settings = member.project === 'tvhs' && member.role === 'courier' ? { route: member.route } : {};
+                    const settings = member.project === 'tvhs' && member.role === 'courier'
+                        ? { route: member.route }
+                        : member.role === 'client_viewer'
+                            ? { siteIds: scopeSites }
+                            : {};
                     void run('Membership saved', () => api(`${base}/memberships/${member.project}`, { method: 'PUT', json: { role: member.role, settings } }));
                 }}>
                     <label className="izy-field">Project
@@ -126,6 +143,30 @@ export function UserDetail() {
                             {PROJECT_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                         </select>
                     </label>
+                    {member.role === 'client_viewer' && (
+                        <fieldset className="izy-fieldset">
+                            <legend>Pharmacies this account may see</legend>
+                            {sites.length === 0
+                                ? <span className="izy-muted">That project has no pharmacies to choose from.</span>
+                                : sites.map((site) => (
+                                    <label key={site.id} className="izy-check">
+                                        <input
+                                            type="checkbox"
+                                            checked={scopeSites.includes(site.id)}
+                                            onChange={(e) => setScopeSites(e.target.checked
+                                                ? [...scopeSites, site.id]
+                                                : scopeSites.filter((id) => id !== site.id))}
+                                        />
+                                        {site.name}
+                                    </label>
+                                ))}
+                            {scopeSites.length === 0 && sites.length > 0 && (
+                                <span className="izy-muted">
+                                    None chosen: this account will see nothing until a pharmacy is ticked.
+                                </span>
+                            )}
+                        </fieldset>
+                    )}
                     {member.project === 'tvhs' && member.role === 'courier' && (
                         <label className="izy-field">Route
                             <select value={member.route} onChange={(e) => setMember({ ...member, route: e.target.value })}>

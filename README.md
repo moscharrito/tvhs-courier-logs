@@ -288,6 +288,28 @@ San Antonio has basements, lift shafts, loading docks and long stretches of the 
 
 A browser with no usable IndexedDB (a private window, site data switched off) falls back to sending directly and surfacing real errors, rather than pretending to queue and dropping the event.
 
+### What University Health sees
+
+`/projects/:code/deliveries`, behind `GET .../uh/client/...` and the `client_viewer` role. Scope 1.2.6 asks for a tracking method giving the time, the location, the description and the quantity. This is that, and deliberately nothing more.
+
+**Scoped to pharmacies, not to the project.** A client viewer is a pharmacist at one counter. Their membership names the sites they may see (`settings.siteIds`, set from the admin screen), and an account with no sites named sees nothing and is told why. Defaulting an unscoped viewer to "everything" would mean one mistake in a settings form silently hands one pharmacy the other eight pharmacies' patients.
+
+**No courier personal data beyond a first name.** A courier appears as "Ada"; our office appears as "Dispatch". No surnames, no usernames, no positions. UH needs to know a person carried it and who to ask; a courier is entitled to work without their employer's client being handed their movements.
+
+**No money.** What a delivery cost belongs in an invoice somebody has checked (Scope 1.2.11, ticket 3.4), not in a tracking screen where a number can be quoted back at us that we never meant as a bill.
+
+**A delivery at another pharmacy is 404, not 403.** A refusal would confirm it exists, which is itself something that viewer is not entitled to know.
+
+**Searchable by the pharmacy's own reference, never by patient name**, for the reason the staff search made the same choice: a name typed into a search box reaches browser history, proxies and server logs. The screen says so rather than silently returning nothing.
+
+Staff can open the same portal, so the people answering the phone can see exactly what the caller is looking at.
+
+### The access matrix, and a hole it found
+
+Building the portal meant creating the first real `client_viewer`, and that exposed something that had been true since ticket 1.5: the staff order search, the run list, the import list and the rate card had **no role gate at all**. Any member of the project passed. Couriers were narrowed to their own work by a filter inside the handler, but a client viewer would have read every patient address in the contract, and our price schedule with it.
+
+They are now gated, and `uh-client-portal.test.mjs` holds a table of role against route that fails if a new route arrives without one. Two older tests asserted the previous behaviour and were corrected: they had encoded the defect as intended behaviour, which is the way a hole like that survives a review.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.
