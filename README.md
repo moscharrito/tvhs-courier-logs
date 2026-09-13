@@ -304,6 +304,20 @@ A browser with no usable IndexedDB (a private window, site data switched off) fa
 
 Staff can open the same portal, so the people answering the phone can see exactly what the caller is looking at.
 
+### Performance against the contract
+
+`/projects/:code/reports`, behind `GET .../uh/reports/sla` and `.../sla.xlsx`. Staff only: the client gets their numbers from us in a workbook somebody has looked at, not from a live endpoint that could disagree with an invoice.
+
+**The definitions are the feature.** Every rate carries its numerator, its denominator and what was excluded, on the screen and on a Definitions sheet of the workbook. A performance figure nobody can reproduce is worse than none, because the argument about it then happens in a contract meeting rather than here. Cancelled deliveries and still-open ones are excluded from every rate and counted separately; attempts that cannot be timed are counted and shown, so the on-time denominator can be checked against the attempt count.
+
+**Scope 1.2.5's formula reads inverted.** It defines the completion rate as "the number of attempts divided by the number of successful deliveries" and in the same clause requires 85 per cent. That ratio is at or above 1 and can never be a percentage. The report uses the sensible reading as the headline and shows the literal ratio beside it, labelled, rather than resolving the ambiguity quietly in our own favour. It is an open item for the clarification email, and the screen says so.
+
+**On time is measured at arrival**, through the same `evaluateSla` the board and the order detail use, so the figure on this screen cannot drift from the figure on those.
+
+Ranges group by day, week, month or quarter. Weeks start on Monday and are labelled "week of 2026-09-14" rather than "2026-W38", which is a number people have to look up.
+
+The Excel export has a Summary sheet, one sheet per breakdown, and the definitions. Rates are written as numbers with a percentage format rather than as text, so they can be charted. **The layout is provisional and says so on its own sheet:** it has not been agreed with University Health Quality Services, and the ticket expected that alignment to happen after the first draft rather than before.
+
 ### The proof of delivery document
 
 `GET .../uh/orders/:id/pod.pdf` for our own people, `GET .../uh/client/orders/:id/pod.pdf` for the pharmacy. One page, laid out around the five things Scope 1.2.8 names: the date and time, the pickup location, the delivery location, the description and quantity, and the printed name and signature of the sending and receiving personnel.

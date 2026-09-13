@@ -62,6 +62,7 @@ export function ProjectHome() {
                         on our side ever looks at is a portal nobody can answer
                         a question about. */}
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
                 </div>
             </div>
             <div className="izy-card">
