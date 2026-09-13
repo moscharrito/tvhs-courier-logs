@@ -16,7 +16,8 @@
     "db:migrate": "tsx src/db/cli.ts",
     "seed:demo": "tsx scripts/seed-demo.mjs",
     "sim": "tsx scripts/simulate-wave.mjs",
-    "reconcile": "tsx scripts/reconcile.mjs"
+    "reconcile": "tsx scripts/reconcile.mjs",
+    "loadtest": "tsx scripts/load-test.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

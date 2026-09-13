@@ -395,6 +395,20 @@ The tests for this run the real worker in a sandbox and hand it requests, rather
 
 Every date stored here is a **service date**: the day a list belongs to, the day a run is driven, the day that decides which effective-dated price schedule applies. Those are questions about San Antonio, not about UTC, so they go through `dateIn` and `todayIn` in `server/src/core/dates.ts`. `new Date().toISOString().slice(0, 10)` is the tempting one-liner and it is wrong for five hours of every day: between 7pm and midnight in Chicago it returns tomorrow, which would file an evening STAT call under the next day, drop it off today's board, and price it against a schedule that had not taken effect yet.
 
+### Under load
+
+`npm run loadtest -w server` spawns a real server process against an isolated database on port 3210, seeds a day of the contract, and then runs 12 couriers working their stops, 3 dispatchers watching the board and moving orders between lanes, and a 300-row import, all at once. Real HTTP, real sessions, the real idempotency path: anything that short-circuited those would measure something other than what a courier's phone meets at noon. It writes `docs/load-test-<date>.md` and exits non-zero if it misses the bar.
+
+**The first run failed badly**, and the cause was worth the exercise on its own: 8,957 ms to import 300 rows, and a board read at 1,414 ms. The database was in SQLite's default rollback-journal mode, where a write locks the whole file, so every dispatcher's board read waited behind a courier's delivery. Write-ahead logging, `synchronous = NORMAL` and a 5-second busy timeout for file databases (`src/db/client.ts`) took the import to 541 ms and the board to 259 ms.
+
+**The target is measured after the first five seconds, and the reason is written into the report.** The opening seconds are every courier opening the app at the same instant against a server that has answered nothing yet, next to a 300-row import. As one figure that burst moved the p95 between 152 ms and 741 ms across runs of identical code, depending on what else the laptop was doing, which is a number that decides nothing. Split, both halves say something: the wave runs at a p95 of about 90 ms, and the cold start is where every slow request lives. The slowest of them is the pickup manifest, which all 12 couriers ask for within a second of each other. That is ticket 4.8, not a thing this ticket quietly averaged away.
+
+**These numbers are a floor, not a forecast.** A local libSQL file is not Turso over the network, where every query carries a round trip. The run that decides anything is the one against staging, once ticket 0.10 exists.
+
+**Speed is measured; correctness is asserted.** `server/test/concurrency.test.mjs` holds the half that a timing threshold cannot check, because a threshold in CI fails on a busy machine and teaches people to ignore it. A retry that overlaps its own first attempt writes one custody row, not two. Two couriers delivering the same order produce one winner and one refusal. Two dispatchers moving an order at the same moment leave it on exactly one run, enforced by a unique index rather than by a handler that looks first. Twelve couriers posting together lose no events and no audit rows. A board read taken mid-write never shows an order in the pool and on a lane at the same time.
+
+**A 4xx under load is not a failure.** The report separates them: **failed** means the server broke, **refused** means it worked and the application declined. Every refusal in the run is a dispatcher moving an order while its courier is halfway down the list, which is a real thing that happens at noon, and the courier app sets such refusals aside for a person rather than retrying them.
+
 ## Files: proof of delivery storage
 
 Bytes never pass through this server. The browser is handed a **signed PUT** and uploads straight to S3; reading is a **signed GET that expires in five minutes**. That is not only a bandwidth decision: a photo of a patient's front door that never touches the application server cannot end up in a request log, a heap dump or a crash report.

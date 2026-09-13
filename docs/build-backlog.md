@@ -132,7 +132,8 @@ Phase 3 total: about 8 days.
 
 | # | Ticket | Days | Acceptance criteria |
 |---|---|---|---|
-| 4.1 | Load test | 1 | 12 couriers posting events while 3 dispatchers reassign, 300 orders imported in 10 minutes. p95 API under 500 ms |
+| 4.1 | Load test | 1 | Done. `npm run loadtest -w server` spawns a real server against an isolated database, seeds a day, then runs 12 couriers, 3 dispatchers and a 300-row import against it concurrently over real HTTP with real sessions. 788 requests, p95 90 ms once running, 0 failures, 269 deliveries in 60 seconds. Report at docs/load-test-2026-09-13.md, and test/concurrency.test.mjs keeps the correctness half in CI: one custody row per delivery under a racing retry, one winner when two couriers deliver the same order, one run per order when two dispatchers move it, a complete audit trail. The first run failed the target badly (import 8,957 ms) and the cause was SQLite's rollback journal; write-ahead logging in src/db/client.ts took it to 541 ms. Two caveats on the record: a local file is not Turso over the network, so this has to be rerun against staging (ticket 0.10), and see 4.8 |
+| 4.8 | Cold-start burst | 0.5 | Found by 4.1. Every slow request in the load test is in the first 5 seconds, when all 12 couriers open the app at once against a server that has answered nothing yet. The pickup manifest (`GET /runs/:id/pickup`) is the worst, over 2 seconds in the slowest run. Index review on that query plus a warm-up request at boot. Measure on staging, not on a laptop |
 | 4.2 | Security review | 2 | Access control matrix tested per role and project. Authorization tests for every endpoint. Rate limits on auth. Dependency audit clean. Secrets only in Render environment. Headers and CSP set |
 | 4.3 | MFA for staff | 1 | TOTP for admin, ops manager, dispatcher. Recovery codes. Enforced in production |
 | 4.4 | Backup and restore drill | 0.5 | Turso point-in-time restore exercised into staging. S3 versioning on. Documented |
@@ -140,7 +141,7 @@ Phase 3 total: about 8 days.
 | 4.6 | Retention and purge | 0.5 | Scheduled job flags records past retention. Purge of files behind a manual approval |
 | 4.7 | Privacy program alignment | 0.5 | Confirm every control named in the written privacy and security program exists in the app and hosting |
 
-Phase 4 total: about 6.5 days.
+Phase 4 total: about 7 days.
 
 ## Phase 5: Shadow run and cutover (Nov 24 to Dec 5)
 
