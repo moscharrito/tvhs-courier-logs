@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/cli.ts"
+    "db:migrate": "tsx src/db/cli.ts",
+    "seed:demo": "tsx scripts/seed-demo.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

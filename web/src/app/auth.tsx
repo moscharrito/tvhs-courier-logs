@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError, type ProjectMembership, type SessionUser } from '../lib/api';
-import { clearOutbox, startOutbox } from '../lib/outbox';
+import { clearOutbox, setOutboxUser, startOutbox } from '../lib/outbox';
 
 interface AuthState {
     loading: boolean;
@@ -42,7 +42,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
        they are. Nothing queued can be sent without a session, so this is the
        right moment rather than app boot. */
     useEffect(() => {
-        if (!user) return;
+        if (!user) { setOutboxUser(''); return; }
+        // Stamp the queue with who is signed in before it starts draining.
+        setOutboxUser(user.username);
         return startOutbox();
     }, [user]);
 

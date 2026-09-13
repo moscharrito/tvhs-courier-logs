@@ -462,3 +462,117 @@ describe('auto-sequencing a run', () => {
         expect((await ada.post(`${RUNS}/${run.id}/sequence/auto`).send({ strategy: 'due' })).status).toBe(403);
     });
 });
+
+/* ------------------------------------------------------------- live status */
+
+describe('what the board says is happening now', () => {
+    /** Drive an order through to a courier event carrying a position. */
+    async function stopWithEvents(over = {}) {
+        const order = await makeOrder(over);
+        const run = await makeRun({ orderIds: [order.id], label: 'Feed run' });
+        const ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+        await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: over.siteId ?? dischargeId, signedName: 'Pharmacy Tech',
+            strokes: [[{ x: 0.1, y: 0.5, t: 0 }, { x: 0.5, y: 0.2, t: 20 }, { x: 0.9, y: 0.6, t: 40 }]],
+            countedPackages: 1, lat: 29.5085, lng: -98.5768,
+        });
+        return { order, run, ada };
+    }
+
+    it('carries the courier events a dispatcher could not otherwise see', async () => {
+        const { order, ada } = await stopWithEvents();
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({ lat: 29.42, lng: -98.49 });
+
+        const res = await board();
+        expect(res.status).toBe(200);
+        const mine = res.body.activity.filter((a) => a.orderId === order.id);
+        // Newest first: a dispatcher reads the top of the list.
+        expect(mine.map((a) => a.type)).toEqual(['arrived', 'picked_up']);
+        // And by when it happened, not by when the row was written: a queued
+        // phone delivers old events late, and they must not jump the feed.
+        const times = res.body.activity.map((a) => Date.parse(a.at));
+        expect([...times].sort((x, y) => y - x)).toEqual(times);
+        expect(mine[0]).toMatchObject({ courierName: 'Ada Courier', recipientName: expect.stringMatching(/Recipient/) });
+    });
+
+    it('leaves out what the dispatcher just did themselves', async () => {
+        /* Echoing back `created` and `assigned` would bury the courier events,
+           which are the only ones a dispatcher cannot already see. */
+        const order = await makeOrder();
+        await makeRun({ orderIds: [order.id], label: 'Quiet run' });
+        const types = (await board()).body.activity.map((a) => a.type);
+        expect(types).not.toContain('created');
+        expect(types).not.toContain('assigned');
+    });
+
+    it("carries the courier's own words about a failure", async () => {
+        const { order, ada } = await stopWithEvents();
+        const detail = await admin.get(`${ORDERS}/${order.id}`);
+        await ada.post(`${ORDERS}/${order.id}/attempt`).send({
+            packages: detail.body.packages.map((p) => ({ packageId: p.id, reasonCode: 'other', note: 'Gate code failed and the office was shut' })),
+        });
+        const entry = (await board()).body.activity.find((a) => a.orderId === order.id && a.type === 'attempted');
+        // The code is what the invoice rests on; the words are what a
+        // dispatcher can act on. The feed carries both.
+        expect(entry.reason).toBe('other');
+        expect(entry.note).toMatch(/Gate code failed/);
+    });
+
+    it('shows where a courier was when they last sent a position, with its age', async () => {
+        /* Not tracking: the position comes from the events they sent, and the
+           age travels with it so nobody reads an old fix as a live one. */
+        const { run } = await stopWithEvents();
+        const lane = (await board()).body.lanes.find((l) => l.run.id === run.id);
+        expect(lane.courier.position).toMatchObject({
+            lat: 29.5085, lng: -98.5768, fresh: true, event: 'picked_up',
+        });
+        expect(lane.courier.position.minutesAgo).toBeLessThan(2);
+    });
+
+    it('marks a position as old rather than dropping it', async () => {
+        const { run } = await stopWithEvents();
+        // Backdate the only positioned event for this courier.
+        const old = new Date(Date.now() - 45 * 60000).toISOString();
+        await sql(
+            `INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status, lat, lng)
+             SELECT project_id, order_id, 'note', ?, actor, from_status, to_status, 29.1, -98.1
+             FROM custody_events WHERE actor = 'ada.courier' AND lat IS NOT NULL ORDER BY id DESC LIMIT 1`,
+            [old],
+        );
+        const lane = (await board()).body.lanes.find((l) => l.run.id === run.id);
+        expect(lane.courier.position).toMatchObject({ lat: 29.1, fresh: false });
+        expect(lane.courier.position.minutesAgo).toBeGreaterThan(40);
+    });
+
+    it('has no position for a courier who has sent no events', async () => {
+        const run = await makeRun({ courierUsername: 'bo.courier', label: 'Idle run' });
+        const lane = (await board()).body.lanes.find((l) => l.run.id === run.id);
+        expect(lane.courier.position).toBeNull();
+    });
+
+    it('puts a late-arriving event where it happened, not at the top', async () => {
+        /* An offline courier's events reach the server long after the fact but
+           carry the time they really happened. A feed that sorted by arrival
+           would headline something from an hour ago. */
+        const { order } = await stopWithEvents();
+        await sql(
+            `INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status, reason)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, 'note', ?, 'ada.courier', 'picked_up', 'picked_up', 'Recorded from the queue')`,
+            [order.id, new Date(Date.now() - 90 * 60000).toISOString()],
+        );
+        const feed = (await board()).body.activity;
+        expect(feed[0].reason).not.toBe('Recorded from the queue');
+        expect(feed.some((a) => a.reason === 'Recorded from the queue')).toBe(true);
+    });
+
+    it('keeps the feed to a readable length', async () => {
+        expect((await board()).body.activity.length).toBeLessThanOrEqual(30);
+    });
+
+    it('is staff only, like the rest of the board', async () => {
+        const ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+        expect((await ada.get(BOARD)).status).toBe(403);
+    });
+});

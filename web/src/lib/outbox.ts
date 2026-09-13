@@ -46,6 +46,11 @@ export interface OutboxEntry {
     label: string;
     /** The order this is about, so a screen can say "waiting to send". */
     orderId: number | null;
+    /* Whose work this is. The queue lives per phone, not per person, and a
+       phone is handed over, borrowed, and signed into by the next shift. An
+       entry sent under somebody else's session would be recorded against the
+       wrong courier, in an append-only table, with a signature attached. */
+    username: string;
     createdAt: number;
     /* Ordering is by this, not by createdAt. Date.now() has millisecond
        resolution, and two events recorded in the same millisecond would come
@@ -181,7 +186,14 @@ export interface EnqueueInput {
     orderId?: number | null;
     photo?: OutboxEntry['photo'];
     id?: string;
+    /** Defaults to whoever is signed in now (see setOutboxUser). */
+    username?: string;
 }
+
+/* Who the queue belongs to. Set when a session is established, cleared on
+ * sign-out. Entries stamped with anybody else are not sent. */
+let currentUser = '';
+export function setOutboxUser(username: string): void { currentUser = username; }
 
 export async function enqueue(input: EnqueueInput): Promise<OutboxEntry> {
     const existing = await queued();
@@ -191,6 +203,7 @@ export async function enqueue(input: EnqueueInput): Promise<OutboxEntry> {
         body: input.body,
         label: input.label,
         orderId: input.orderId ?? null,
+        username: input.username ?? currentUser,
         createdAt: Date.now(),
         sequence: (existing[existing.length - 1]?.sequence ?? 0) + 1,
         tries: 0,
@@ -313,6 +326,15 @@ export async function flush(): Promise<void> {
             const entries = await queued();
             const entry = entries[0];
             if (!entry) break;
+
+            /* Somebody else's work, left on this phone. It cannot be sent:
+               the server records the actor from the session, so this would
+               name the wrong courier on a custody row that can never be
+               corrected. Set it aside for a person to deal with. */
+            if (entry.username && currentUser && entry.username !== currentUser) {
+                await reject(entry, 0, `Recorded by ${entry.username}, who is no longer signed in on this phone. Tell dispatch.`);
+                continue;
+            }
 
             try {
                 const body: Record<string, unknown> = { ...entry.body, clientEventId: entry.id };

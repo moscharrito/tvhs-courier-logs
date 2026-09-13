@@ -174,6 +174,24 @@ Neither is optimal routing, and the plan says full optimisation is deferred past
 
 `haversineMiles` is straight-line distance, for ordering stops relative to each other. It must never reach an invoice: the contract bills one-way **loaded** miles, which is a road distance, and that comes from the Distance Matrix call in ticket 1.4.
 
+### What the board says is happening now
+
+The board polls every fifteen seconds, so a poll has to be worth reading. Counts alone change without saying who did what, so the board carries a feed of courier events: collected, arrived, delivered, could not deliver, returned.
+
+**The dispatcher's own actions are left out.** Echoing back `created` and `assigned` would bury the courier events, which are the only ones a dispatcher cannot already see.
+
+**Ordered by when it happened, not by when the row was written.** The order detail page deliberately reads the chain of custody by id, because that is the append order. The feed answers a different question, against ages shown in minutes, and since ticket 2.7 a queued phone routinely delivers an hour-old event a moment ago. Sorting by arrival would headline it.
+
+**A dry run shows the courier's own words.** The custody row carries the reason code, because that is what the invoice line rests on; the words the courier typed are on the package, because the contract bills a dry run per item. The feed carries both.
+
+**Position comes from events, and never from tracking.** Each courier's last known position is their most recent event that carried coordinates, within the last twelve hours. The age travels with it and is shown, and anything older than fifteen minutes is marked old. A stale position presented as a live one is worse than none, because a dispatcher would route around a courier who is no longer there. The map link carries coordinates only, never an address.
+
+**A board that has stopped updating says so.** If a poll fails the header changes from "updated 14:32" to "not updating"; during a wave that is the difference between a late delivery and a missed one.
+
+### Demo data
+
+`npm run seed:demo -w server` creates a courier called Mohammed (`demo-pass-2026`, PIN 4417) and a day of stops in the UH project: delivered, arrived, in transit, a dry run with a reason, two still assigned and two left in the pool. Every name and address is invented. It refuses to run against a Turso database, because demo patients in a production table are indistinguishable from real ones a week later and somebody would eventually invoice them. Each state is reached through the same transition table the application uses, so the seeded data cannot be in a state the app could not have produced itself.
+
 ### The courier app
 
 `/projects/:code/my-run` is today's run on a phone: the next stop large and first, the rest in sequence, and one tap each for directions and dispatch. A courier who opens a project goes straight here; the rest of the project page is sites, pricing, settings and the whole day's addresses, none of which is theirs to see. `GET .../uh/runs/mine` returns the runs, the stops in sequence and the dispatch number in one request, because a phone on cellular should not make three round trips to show one screen.
@@ -241,6 +259,8 @@ San Antonio has basements, lift shafts, loading docks and long stretches of the 
 **A queued photo reaches the bucket before the event that depends on it.** A doorstep drop is queued as the blob plus the event; the queue asks for the upload URL, PUTs the bytes, confirms the object, and only then sends the delivery carrying the resulting file id. So a doorstep delivery is never claimed without the photo behind it, on a signal or off one.
 
 **The queue is PHI.** It holds names, addresses and signatures in IndexedDB on a phone that may be personal. Entries are deleted the moment they are accepted, refusals expire after a day, and signing out empties it along with the service worker cache. On the server, stored replies are swept after `CLIENT_EVENT_RETENTION_DAYS` (7): a replay cache is useful for hours, not years, and an unbounded copy of every delivery response is a liability with no reader.
+
+**A queued entry belongs to the courier who made it.** The queue lives on the phone, not on the person, and a phone is handed over, borrowed and signed into by the next shift. An entry is only sent while its own courier is signed in; otherwise it is set aside for a person, because the server records the actor from the session and sending it would name the wrong courier on an append-only custody row with somebody else's signature attached. This was found by watching it happen during verification, not by reasoning about it.
 
 **The courier can always see the difference between "recorded" and "sent".** `SyncStatus` sits in the frame above every screen, says nothing when there is nothing to say, and becomes loud only for a refusal. A courier who cannot tell those apart will assume sent, and a delivery nobody knows about is the failure the whole feature exists to prevent.
 

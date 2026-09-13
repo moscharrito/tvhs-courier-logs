@@ -10,7 +10,7 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import {
     enqueue, queued, flush, sendOrQueue, rejections, dismissRejection, clearOutbox,
-    pendingFor, subscribe, newEventId, resetOutboxForTests,
+    pendingFor, subscribe, newEventId, resetOutboxForTests, setOutboxUser,
 } from './outbox';
 
 const url = (n: number) => `/api/projects/uh/uh/orders/${n}/arrive`;
@@ -43,6 +43,7 @@ beforeEach(() => {
     // A fresh database per test: leftovers would make ordering assertions lie.
     vi.stubGlobal('indexedDB', new IDBFactory());
     resetOutboxForTests();
+    setOutboxUser('ada.courier');
     setOnline(true);
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -282,5 +283,35 @@ describe('signing out', () => {
         await clearOutbox();
         expect(await queued()).toHaveLength(0);
         expect(await rejections()).toHaveLength(0);
+    });
+});
+
+describe('a phone that changed hands', () => {
+    it("will not send one courier's work under another courier's session", async () => {
+        /* The queue lives on the phone, not on the person. The server records
+           the actor from the session, so sending Ada's queued delivery while
+           Ben is signed in would name Ben on an append-only custody row, with
+           Ada's signature attached to it. */
+        setOnline(false);
+        await enqueue({ url: url(1), body: {}, label: 'Delivery for Ines Vargas', orderId: 1 });
+        setOnline(true);
+        setOutboxUser('ben.courier');
+        const { fn } = fetchReturning({ status: 201 });
+
+        await flush();
+        expect(fn).not.toHaveBeenCalled();
+        expect(await queued()).toHaveLength(0);
+        const [rejected] = await rejections();
+        expect(rejected?.error).toMatch(/ada\.courier, who is no longer signed in/);
+    });
+
+    it('sends it normally once that courier signs back in', async () => {
+        setOnline(false);
+        await enqueue({ url: url(1), body: {}, label: 'Delivery', orderId: 1 });
+        setOnline(true);
+        const { fn } = fetchReturning({ status: 201 });
+        await flush();
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(await queued()).toHaveLength(0);
     });
 });

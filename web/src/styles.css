@@ -62,6 +62,14 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-stoplist { list-style: none; margin: 0; padding: 0; }
 .izy-stoplist li { border-top: 1px solid var(--izy-line); padding: 10px 0; font-size: 14px; }
 .izy-stoplist li:first-child { border-top: 0; }
+/* The activity feed: a time column so the eye can scan down it, and the
+   event beside it. Newest first, no scrollbar of its own: a dispatcher
+   scrolling a panel inside a board loses their place. */
+.izy-feed { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.izy-feed li { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--izy-line); line-height: 1.45; }
+.izy-feed li:first-child { border-top: 0; }
+.izy-feed-when { flex: 0 0 74px; color: var(--izy-muted); }
+
 .izy-stop-done { opacity: .55; }
 .izy-sigpad { margin-top: 10px; }
 .izy-sigpad-label { font-size: 13px; color: var(--izy-muted); }

@@ -34,9 +34,22 @@ interface BoardOrder {
     assignedTo: string | null; signatureRequired: boolean; sla: Sla;
 }
 
+interface Position {
+    lat: number; lng: number; at: string; minutesAgo: number;
+    fresh: boolean; event: string; orderId: number | null;
+}
+
 interface Courier {
     username: string; name: string; lastSeenAt: string | null;
     minutesSinceSeen: number | null; present: boolean;
+    /** Where they were when they last sent an event. Null if never. */
+    position: Position | null;
+}
+
+interface Activity {
+    id: number; at: string; minutesAgo: number; actor: string; courierName: string;
+    type: string; orderId: number; externalRef: string; recipientName: string;
+    orderStatus: string; reason: string; note: string; hasPosition: boolean;
 }
 
 interface Lane {
@@ -56,9 +69,36 @@ interface BoardData {
     lanes: Lane[];
     couriers: Courier[];
     idleCouriers: Courier[];
+    activity: Activity[];
 }
 
 const clock = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
+
+/** Addendum 1's dry-run codes, in words a dispatcher would use out loud. */
+const REASON_LABEL: Record<string, string> = {
+    recipient_not_located: 'could not find the recipient',
+    incorrect_address: 'address is wrong',
+    no_access: 'could not get access',
+    incomplete_shipment: 'shipment incomplete',
+    refused: 'recipient refused it',
+    other: 'other',
+};
+
+const EVENT_LABEL: Record<string, string> = {
+    picked_up: 'collected', arrived: 'arrived at', delivered: 'delivered to',
+    attempted: 'could not deliver to', returned: 'returned', note: 'noted',
+};
+
+const since = (minutes: number): string => {
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    return `${Math.round(minutes / 60)} h ago`;
+};
+
+/** A position is evidence about a moment. The age is never dropped. */
+function positionLabel(p: Position): string {
+    return `last seen ${since(p.minutesAgo)}${p.fresh ? '' : ' (old)'}`;
+}
 
 function seenLabel(c: Courier): string {
     if (c.minutesSinceSeen === null) return 'never signed in';
@@ -78,6 +118,7 @@ export function Board() {
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
     const [busy, setBusy] = useState(false);
     const [dragging, setDragging] = useState<number | null>(null);
+    const [stale, setStale] = useState(false);
     const [newRunCourier, setNewRunCourier] = useState('');
     const pollRef = useRef<number | null>(null);
 
@@ -87,7 +128,13 @@ export function Board() {
     const load = useCallback(async () => {
         try {
             setData(await api<BoardData>(`${base}/board${query ? `?${query}` : ''}`));
+            setStale(false);
         } catch (err) {
+            /* Say the board has stopped updating rather than leaving a
+               dispatcher reading minute-old numbers as if they were live.
+               During a wave that is the difference between a late delivery
+               and a missed one. */
+            setStale(true);
             setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not load the board' });
         }
     }, [base, query]);
@@ -176,7 +223,10 @@ export function Board() {
             <h1>Dispatch board</h1>
             <p className="izy-sub">
                 <Link to={`/projects/${code}`}>{project.name}</Link> · {data.serviceDate} · {data.timezone}
-                {' · '}<span className="izy-muted">updated {clock(data.generatedAt)}, every 15 seconds</span>
+                {' · '}
+                {stale
+                    ? <span className="izy-stat-bad">not updating, last read at {clock(data.generatedAt)}</span>
+                    : <span className="izy-muted">updated {clock(data.generatedAt)}, every 15 seconds</span>}
             </p>
 
             {msg && (
@@ -280,6 +330,22 @@ export function Board() {
                                 {lane.run.label || 'Run'} {lane.run.id} · {lane.counts.done} of {lane.counts.total} done
                                 {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
                                 {lane.currentStop && <> · now at stop {lane.currentStop.sequence}</>}
+                                {lane.courier.position && (
+                                    <>
+                                        {' · '}
+                                        {/* Coordinates, not an address, and always with their age:
+                                            this is where the phone was when it last sent an event,
+                                            not where the courier is now. */}
+                                        <a
+                                            href={`https://www.google.com/maps/search/?api=1&query=${lane.courier.position.lat},${lane.courier.position.lng}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className={lane.courier.position.fresh ? undefined : 'izy-stat-warn'}
+                                        >
+                                            {positionLabel(lane.courier.position)}
+                                        </a>
+                                    </>
+                                )}
                             </p>
 
                             <div className="izy-row">
@@ -317,6 +383,35 @@ export function Board() {
                             ))}
                         </section>
                     ))}
+
+                    <section className="izy-card izy-lane" aria-label="Recent activity">
+                        <h2>What just happened</h2>
+                        {data.activity.length === 0 ? (
+                            <p className="izy-muted">No courier has recorded anything today yet.</p>
+                        ) : (
+                            <ol className="izy-feed">
+                                {data.activity.map((a) => (
+                                    <li key={a.id}>
+                                        <span className="izy-feed-when">{since(a.minutesAgo)}</span>
+                                        <span>
+                                            <b>{a.courierName}</b> {EVENT_LABEL[a.type] ?? a.type}{' '}
+                                            <Link to={`/projects/${code}/orders/${a.orderId}`}>{a.recipientName}</Link>
+                                            {a.externalRef && <> · {a.externalRef}</>}
+                                            {/* The courier's own words about a failure are the most
+                                                useful thing on this feed, so they are not truncated
+                                                away into a status pill. */}
+                                            {(a.reason || a.note) && (
+                                                <div className="izy-muted">
+                                                    {a.type === 'attempted' ? (REASON_LABEL[a.reason] ?? a.reason) : a.reason}
+                                                    {a.note && <> · {a.note}</>}
+                                                </div>
+                                            )}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ol>
+                        )}
+                    </section>
 
                     <section className="izy-card izy-lane">
                         <h2>Start a run</h2>

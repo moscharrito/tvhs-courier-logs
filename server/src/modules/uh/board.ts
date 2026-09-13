@@ -25,6 +25,25 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 /** A courier is shown as present if they have used the app recently. */
 const PRESENT_WITHIN_MINUTES = 10;
 
+/* How many events the feed carries. Enough that a dispatcher who looked away
+ * for a few minutes sees what they missed, few enough that it stays a feed
+ * rather than a log: the whole day's history is the order detail page. */
+const FEED_LIMIT = 30;
+
+/* A position is a fact about a moment, not about now. Past this, the board
+ * says how old it is in plain words instead of drawing a dot and implying the
+ * courier is still there. */
+const POSITION_FRESH_MINUTES = 15;
+
+/* How far back to look for a position at all. Longer than a shift is
+ * pointless; a position from yesterday says nothing about today. */
+const POSITION_WINDOW_HOURS = 12;
+
+/* The events worth a dispatcher's attention. `created`, `released` and
+ * `assigned` are things the dispatcher just did themselves; echoing them back
+ * would bury the courier's events, which are the ones they cannot see. */
+const FEED_TYPES = ['picked_up', 'arrived', 'delivered', 'attempted', 'returned', 'note'] as const;
+
 const OPEN_STATUSES = ['pending', 'ready', 'assigned', 'picked_up'] as const;
 
 interface OrderRow {
@@ -144,6 +163,94 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         });
         const courierByUsername = new Map(couriers.map((c) => [c.username, c]));
 
+        /* WHERE THE COURIER WAS, not where they are.
+         *
+         * Derived from the events they sent, and from nothing else. The
+         * platform does not track a courier continuously: a phone that
+         * reported a position at 14:02 is evidence about 14:02, so the age
+         * travels with the position and the board shows it. A stale position
+         * presented as a live one is worse than no position, because a
+         * dispatcher would route around a courier who is no longer there.
+         *
+         * The subquery picks each courier's most recent event that actually
+         * carried coordinates: an event sent from a basement has none, and
+         * falling back to the one before it is more honest than nothing. */
+        const positions = await client.execute({
+            sql: `SELECT e.actor, e.lat, e.lng, e.at, e.type, e.order_id
+                  FROM custody_events e
+                  JOIN (
+                      SELECT actor, MAX(id) AS id FROM custody_events
+                      WHERE project_id = ? AND lat IS NOT NULL AND at >= ?
+                      GROUP BY actor
+                  ) last ON last.id = e.id`,
+            /* Bounded by hours, not by the service date. `at` is UTC and a
+               service date is a Chicago date, so a date bound would quietly
+               include five hours of the previous evening. Twelve hours covers
+               the longest shift and nothing older is worth showing. */
+            args: [project.id, new Date(now - POSITION_WINDOW_HOURS * 60 * 60 * 1000).toISOString()],
+        });
+        const positionByUsername = new Map(positions.rows.map((r) => {
+            const at = String(r['at']);
+            const minutes = Math.round((now - Date.parse(at)) / 60000);
+            return [String(r['actor']), {
+                lat: Number(r['lat']),
+                lng: Number(r['lng']),
+                at,
+                minutesAgo: minutes,
+                fresh: minutes <= POSITION_FRESH_MINUTES,
+                /* What they were doing when the phone reported it, so a
+                   dispatcher can tell "at a door" from "left the pharmacy". */
+                event: String(r['type']),
+                orderId: r['order_id'] === null ? null : Number(r['order_id']),
+            }];
+        }));
+
+        /* What has happened since the dispatcher last looked. The board is
+         * polled, so this is what makes a poll worth reading: the counts alone
+         * change without saying who did what. */
+        const feed = await client.execute({
+            sql: `SELECT e.id, e.at, e.actor, e.type, e.order_id, e.reason, e.signed_name, e.lat, e.lng,
+                         o.recipient_name, o.external_ref, o.status AS order_status, pn.note
+                  FROM custody_events e
+                  JOIN orders o ON o.id = e.order_id
+                  /* A dry run's custody row carries the reason CODE; the words
+                     the courier typed are on the package, because the contract
+                     bills a dry run per item. A dispatcher needs the words. */
+                  LEFT JOIN (
+                      SELECT order_id, MIN(NULLIF(failure_note, '')) AS note
+                      FROM packages WHERE project_id = ? GROUP BY order_id
+                  ) pn ON pn.order_id = e.order_id
+                  WHERE e.project_id = ? AND o.service_date = ?
+                    AND e.type IN (${FEED_TYPES.map(() => '?').join(',')})
+                  /* By WHEN IT HAPPENED, not by when the row was written.
+                     The order detail page deliberately reads by id, because
+                     that is the append order and the chain of custody. This is
+                     a different question: a panel headed "what just happened",
+                     against ages shown in minutes, must not put an hour-old
+                     event at the top because a queued phone delivered it late
+                     (ticket 2.7 makes that ordinary). */
+                  ORDER BY e.at DESC, e.id DESC LIMIT ?`,
+            args: [project.id, project.id, serviceDate, ...FEED_TYPES, FEED_LIMIT],
+        });
+        const activity = feed.rows.map((r) => ({
+            id: Number(r['id']),
+            at: String(r['at']),
+            minutesAgo: Math.round((now - Date.parse(String(r['at']))) / 60000),
+            actor: String(r['actor']),
+            courierName: courierByUsername.get(String(r['actor']))?.name ?? String(r['actor']),
+            type: String(r['type']),
+            orderId: Number(r['order_id']),
+            externalRef: String(r['external_ref']),
+            recipientName: String(r['recipient_name']),
+            orderStatus: String(r['order_status']),
+            /* The reason code, and separately the courier's own words. The
+               words are the single most useful thing on this feed; the code is
+               what the invoice line rests on. */
+            reason: String(r['reason']),
+            note: r['type'] === 'attempted' ? String(r['note'] ?? '') : '',
+            hasPosition: r['lat'] !== null,
+        }));
+
         const lanes = runs.rows.map((r) => {
             const runId = Number(r['id']);
             const laneStops = (stopsByRun.get(runId) ?? [])
@@ -161,7 +268,10 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                     status: String(r['status']),
                     startedAt: r['started_at'] === null ? null : String(r['started_at']),
                 },
-                courier: courierByUsername.get(username) ?? { username, name: username, lastSeenAt: null, minutesSinceSeen: null, present: false },
+                courier: {
+                    ...(courierByUsername.get(username) ?? { username, name: username, lastSeenAt: null, minutesSinceSeen: null, present: false }),
+                    position: positionByUsername.get(username) ?? null,
+                },
                 stops: laneStops,
                 /** The next stop that still needs doing, which is where the courier is working. */
                 currentStop: remaining[0] ?? null,
@@ -203,6 +313,8 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             dueSoon: count((o) => o.sla.state === 'due_soon'),
         };
 
+        const withPositions = couriers.map((c) => ({ ...c, position: positionByUsername.get(c.username) ?? null }));
+
         // Counts and ids only; the board is full of patient addresses.
         await req.audit('board.read', 'board', serviceDate, {
             orders: all.length, lanes: lanes.length, unassigned: poolOrders.length,
@@ -215,9 +327,11 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             summary,
             pool,
             lanes,
-            couriers,
+            couriers: withPositions,
             /** Couriers with no run today, so a dispatcher can start one. */
-            idleCouriers: couriers.filter((c) => !lanes.some((l) => l.run.courierUsername === c.username)),
+            idleCouriers: withPositions.filter((c) => !lanes.some((l) => l.run.courierUsername === c.username)),
+            /** Courier events, newest first. What a poll is actually for. */
+            activity,
         });
     }));
 

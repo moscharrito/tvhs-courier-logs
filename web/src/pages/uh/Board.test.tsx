@@ -29,7 +29,19 @@ const order = (over = {}) => ({
 
 const courier = (over = {}) => ({
     username: 'ada.courier', name: 'Ada Courier', lastSeenAt: '2026-09-14T18:00:00.000Z',
-    minutesSinceSeen: 2, present: true, ...over,
+    minutesSinceSeen: 2, present: true, position: null, ...over,
+});
+
+const position = (over = {}) => ({
+    lat: 29.4241, lng: -98.4936, at: '2026-09-14T18:00:00.000Z',
+    minutesAgo: 3, fresh: true, event: 'arrived', orderId: 2, ...over,
+});
+
+const activity = (over = {}) => ({
+    id: 501, at: '2026-09-14T18:01:00.000Z', minutesAgo: 1, actor: 'ada.courier',
+    courierName: 'Ada Courier', type: 'delivered', orderId: 2, externalRef: 'RX-2',
+    recipientName: 'Marcus Ibarra', orderStatus: 'delivered', reason: '', note: '',
+    hasPosition: true, ...over,
 });
 
 const boardData = (over = {}) => ({
@@ -50,6 +62,7 @@ const boardData = (over = {}) => ({
     }],
     couriers: [courier()],
     idleCouriers: [courier({ username: 'bo.courier', name: 'Bo Courier', present: false, lastSeenAt: null, minutesSinceSeen: null })],
+    activity: [activity()],
     ...over,
 });
 
@@ -222,5 +235,69 @@ describe('Board', () => {
         }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
         expect(screen.getByText('Nothing waiting.')).toBeInTheDocument();
+    });
+});
+
+describe('Board: what just happened', () => {
+    it('lists the courier events a dispatcher cannot otherwise see', async () => {
+        renderBoard();
+        const feed = await screen.findByRole('region', { name: 'Recent activity' });
+        expect(feed).toHaveTextContent('Ada Courier');
+        expect(feed).toHaveTextContent('delivered to');
+        expect(feed).toHaveTextContent('Marcus Ibarra');
+        expect(feed).toHaveTextContent('1 min ago');
+    });
+
+    it("shows a dry run's reason in words, and the courier's note with it", async () => {
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                activity: [activity({ type: 'attempted', reason: 'no_access', note: 'Gate code failed' })],
+            }),
+        }));
+        const feed = await screen.findByRole('region', { name: 'Recent activity' });
+        expect(feed).toHaveTextContent('could not deliver to');
+        expect(feed).toHaveTextContent('could not get access');
+        expect(feed).toHaveTextContent('Gate code failed');
+    });
+
+    it('says plainly when nothing has happened yet', async () => {
+        renderBoard(routes({ 'GET /api/projects/uh/uh/board*': boardData({ activity: [] }) }));
+        expect(await screen.findByText(/No courier has recorded anything today yet/)).toBeInTheDocument();
+    });
+
+    it('shows where a courier was, with how old that is', async () => {
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                lanes: [{
+                    ...boardData().lanes[0],
+                    courier: courier({ position: position({ minutesAgo: 3, fresh: true }) }),
+                }],
+            }),
+        }));
+        const link = await screen.findByRole('link', { name: /last seen 3 min ago/ });
+        // Coordinates only. A courier's position is not an address, and the
+        // map link must not carry one.
+        expect(link).toHaveAttribute('href', expect.stringContaining('29.4241,-98.4936'));
+    });
+
+    it('marks an old position as old rather than drawing it as current', async () => {
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                lanes: [{
+                    ...boardData().lanes[0],
+                    courier: courier({ position: position({ minutesAgo: 47, fresh: false }) }),
+                }],
+            }),
+        }));
+        expect(await screen.findByRole('link', { name: /last seen 47 min ago \(old\)/ })).toBeInTheDocument();
+    });
+
+    it('says the board has stopped updating rather than showing stale numbers as live', async () => {
+        const { fn } = renderBoard();
+        await screen.findByRole('region', { name: 'Recent activity' });
+        // The next poll fails.
+        fn.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        fireEvent(document, new Event('visibilitychange'));
+        expect(await screen.findByText(/not updating/)).toBeInTheDocument();
     });
 });
