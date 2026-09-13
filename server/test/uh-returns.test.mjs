@@ -72,6 +72,23 @@ const STROKES = [[{ x: 0.1, y: 0.5, t: 0 }, { x: 0.5, y: 0.2, t: 30 }, { x: 0.8,
 
 const handBack = (agent, body) => agent.post(RETURNS).send({ signedName: 'Night Pharmacist', strokes: STROKES, ...body });
 
+/**
+ * The most recent instant in the past when the origin pharmacy was open.
+ *
+ * Two of the tests below turn on the destination rule, which follows the
+ * working day. Left to the wall clock they pass by day and fail after 8pm,
+ * which is exactly the kind of test that wakes somebody up for nothing. The
+ * rule itself is tested against fixed instants further up; these pass the
+ * instant to the endpoint instead of hoping.
+ */
+function anOpenMoment() {
+    for (let hoursBack = 0; hoursBack < 24 * 8; hoursBack += 1) {
+        const at = new Date(Date.now() - hoursBack * 3600_000);
+        if (originIsOpen(at, DEFAULT_PROJECT_SETTINGS, TZ)) return at.toISOString();
+    }
+    throw new Error('no open hour in the last week, which the default settings make impossible');
+}
+
 /* ------------------------------------------------------------------ rule */
 
 describe('where an undelivered package goes back to', () => {
@@ -283,12 +300,14 @@ describe('handing a load back', () => {
         // In business hours this belongs back at its own pharmacy.
         const order = await failedOrder({ siteId: pavilionId });
 
-        const wrongPlace = await handBack(ada, { siteId: dischargeId, countedPackages: 1, orderIds: [order.id] });
+        const at = anOpenMoment();
+        const wrongPlace = await handBack(ada, { siteId: dischargeId, countedPackages: 1, orderIds: [order.id], at });
         expect(wrongPlace.status).toBe(400);
         expect(wrongPlace.body).toMatchObject({ code: 'returns.offRule', orderIds: [order.id] });
 
         const explained = await handBack(ada, {
-            siteId: dischargeId, countedPackages: 1, orderIds: [order.id], note: 'Pavilion closed early for a power cut',
+            siteId: dischargeId, countedPackages: 1, orderIds: [order.id], at,
+            note: 'Pavilion closed early for a power cut',
         });
         expect(explained.status).toBe(201);
         // What actually happened, not what the rule wanted.
@@ -301,7 +320,7 @@ describe('handing a load back', () => {
         await handBackEverything(ada);
         await failedOrder({ siteId: pavilionId });
 
-        const res = await handBack(ada, { siteId: dischargeId, countedPackages: 1 });
+        const res = await handBack(ada, { siteId: dischargeId, countedPackages: 1, at: anOpenMoment() });
         expect(res.status).toBe(409);
         expect(res.body.code).toBe('returns.nothingForSite');
     });

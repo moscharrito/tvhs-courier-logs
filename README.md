@@ -188,6 +188,28 @@ The board polls every fifteen seconds, so a poll has to be worth reading. Counts
 
 **A board that has stopped updating says so.** If a poll fails the header changes from "updated 14:32" to "not updating"; during a wave that is the difference between a late delivery and a missed one.
 
+### A simulated day
+
+`npm run sim -w server` generates a whole day of the contract: 273 stops on a weekday, 227 at a weekend (UH's own figures from Addendum 1 and the bid table), spread across the nine pharmacies, carried by twelve test couriers, and driven from released to delivered or failed and carried back.
+
+```
+npm run sim -w server                          273 stops, 12 couriers, today
+npm run sim -w server -- --orders 50           a smaller day
+npm run sim -w server -- --stop-after assigned a board full of work to dispatch
+npm run sim -w server -- --seed 7              a different but repeatable day
+npm run sim -w server -- --reset               remove a simulated day again
+```
+
+**Nothing writes a status directly.** Every state change goes through `recordOrderEvent`, the same path the courier app uses, so a simulated day cannot contain an order in a state the application could not have produced. A generator that took the shortcut would produce data that hides lifecycle bugs rather than exposing them.
+
+**What is real and what is assumed.** The daily totals are UH's. The split between pharmacies, the mix of service types and the failure rate are assumptions made in `simulate.ts` and labelled there as assumptions: UH gave a total, not a distribution, and the redacted sample list the addendum referenced was never supplied to us. When it arrives, those constants are what changes.
+
+**Deterministic.** The same seed gives the same day, so a load test repeats and a bug found in a simulated wave can be reproduced.
+
+**It only ever touches its own rows.** Everything it creates carries a `SIM-` reference, `--reset` removes only those, and the end-of-day return sweep picks up only failures it created itself. `--reset` has to drop the append-only trigger on `custody_events` to delete their events, so it refuses unless the caller confirms this is a local file database, puts the trigger back in a `finally`, and then checks that it is really there.
+
+A full weekday takes about 25 seconds to generate (1113 lifecycle events) and the board renders it in about 65 ms. That is a generator figure, not a load test: ticket 4.1 is twelve couriers posting concurrently over HTTP, which is a different question.
+
 ### Demo data
 
 `npm run seed:demo -w server` creates a courier called Mohammed (`demo-pass-2026`, PIN 4417) and a day of stops in the UH project: delivered, arrived, in transit, a dry run with a reason, two still assigned and two left in the pool. Every name and address is invented. It refuses to run against a Turso database, because demo patients in a production table are indistinguishable from real ones a week later and somebody would eventually invoice them. Each state is reached through the same transition table the application uses, so the seeded data cannot be in a state the app could not have produced itself.

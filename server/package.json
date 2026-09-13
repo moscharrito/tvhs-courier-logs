@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/cli.ts",
-    "seed:demo": "tsx scripts/seed-demo.mjs"
+    "seed:demo": "tsx scripts/seed-demo.mjs",
+    "sim": "tsx scripts/simulate-wave.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
