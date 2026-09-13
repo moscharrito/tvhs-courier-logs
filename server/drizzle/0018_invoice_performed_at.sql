@@ -1,0 +1,1 @@
+ALTER TABLE `invoice_lines` ADD `performed_at` text DEFAULT '' NOT NULL;

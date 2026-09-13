@@ -200,7 +200,6 @@ export const orders = sqliteTable(
 
         /** Billing zone resolved from the ZIP map. Null means out of area. */
         zone: integer('zone'),
-        /** One-way loaded miles, needed only when zone is null. Ticket 1.4. */
         outOfAreaMiles: real('out_of_area_miles'),
 
         signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
@@ -580,6 +579,11 @@ export const invoiceLines = sqliteTable(
         statCents: integer('stat_cents').notNull().default(0),
         afterHoursCents: integer('after_hours_cents').notNull().default(0),
         dryRunCents: integer('dry_run_cents').notNull().default(0),
+        /* The instant the invoice priced against: delivered, else picked up,
+         * else requested. It is the evidence for the after-hours surcharge on
+         * this line, so a frozen line carries it rather than pointing at an
+         * order that may since have changed. */
+        performedAt: text('performed_at').notNull().default(''),
         outOfAreaMiles: real('out_of_area_miles'),
         outOfAreaCents: integer('out_of_area_cents').notNull().default(0),
         amountCents: integer('amount_cents').notNull().default(0),

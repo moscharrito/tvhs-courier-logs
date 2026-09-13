@@ -336,6 +336,19 @@ The Excel export has a Summary sheet, one sheet per breakdown, and the definitio
 
 Both documents come from the writers already in the tree: the Excel export from exceljs, the PDF from `core/pdf`, paginated with a continuation header and a page count.
 
+### Reconciling an invoice by hand
+
+`npm run reconcile -w server` simulates a month, bills it through the invoice pipeline, and then re-derives every line from the rate card using arithmetic in `src/modules/uh/reconcile.ts` that shares no code with `pricing.ts`. It reports every difference with the working spelled out, writes `docs/reconciliation-<month>.md` for somebody to sign, and exits non-zero if anything disagrees. The same check runs in CI over three days, so the two readings cannot drift apart between now and go-live.
+
+**A reconciliation that called `priceFor` would prove only that `priceFor` equals itself.** The point is two independent readings of the same contract, and finding where they differ before University Health does.
+
+**What it proves and what it does not.** It proves the invoice pipeline computes what the rate card says, across ordinary and awkward deliveries. It does not prove the rate card matches the signed bid table: that document is not in this repository, so the report prints the rate card in full for a person to check once, by eye, against the signed copy. And it does not settle the billing unit, which is an open question with UH.
+
+Two things came out of running it:
+
+- **The wave simulation never produced an after-hours delivery.** Every simulated delivery happened in the afternoon, so the $18 after-hours surcharge had only ever been unit-tested and never appeared on a generated invoice. The simulator now runs a small evening batch with its own pickup, which is what an after-hours request actually looks like.
+- **A failed STAT delivery is charged the dry-run fee *and* the STAT surcharge.** The dry-run fee replaces the delivery charge, but the surcharges survive. Addendum 1 calls the dry run "a predetermined flat fee ... to cover the attempted service for each item" and says nothing about whether a surcharge survives an attempt. The reconciliation raises it as a question rather than agreeing with the code, and it belongs in the clarification email with a dollar figure attached.
+
 ### The proof of delivery document
 
 `GET .../uh/orders/:id/pod.pdf` for our own people, `GET .../uh/client/orders/:id/pod.pdf` for the pharmacy. One page, laid out around the five things Scope 1.2.8 names: the date and time, the pickup location, the delivery location, the description and quantity, and the printed name and signature of the sending and receiving personnel.

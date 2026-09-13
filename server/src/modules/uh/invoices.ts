@@ -91,6 +91,8 @@ export interface DraftLine {
     outOfAreaCents: number;
     amountCents: number;
     note: string;
+    /** What the after-hours decision on this line was measured against. */
+    performedAt: string;
 }
 
 export interface Exception {
@@ -181,6 +183,7 @@ export async function buildDraft(
             outOfAreaCents: toCents(pricing.outOfArea.amount),
             amountCents: toCents(pricing.total),
             note: pricing.notes.join(' '),
+            performedAt: pricing.measuredAt,
         });
     }
 
@@ -287,6 +290,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             outOfAreaCents: Number(l['out_of_area_cents']),
             amountCents: Number(l['amount_cents']),
             note: String(l['note']),
+            performedAt: String(l['performed_at'] ?? ''),
         }));
     }
 
@@ -550,13 +554,13 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             await client.execute({
                 sql: `INSERT INTO invoice_lines (project_id, invoice_id, order_id, service_date, reference, pharmacy,
                           delivery_zip, zone, service_type, dry_run, items, base_cents, stat_cents, after_hours_cents,
-                          dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note, performed_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 args: [
                     project.id, Number(invoice['id']), line.orderId, line.serviceDate, line.reference, line.pharmacy,
                     line.deliveryZip, line.zone, line.serviceType, line.dryRun ? 1 : 0, line.items,
                     line.baseCents, line.statCents, line.afterHoursCents, line.dryRunCents,
-                    line.outOfAreaMiles, line.outOfAreaCents, line.amountCents, line.note,
+                    line.outOfAreaMiles, line.outOfAreaCents, line.amountCents, line.note, line.performedAt,
                 ],
             });
         }

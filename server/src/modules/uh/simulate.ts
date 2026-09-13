@@ -67,6 +67,13 @@ const DOORSTEP_RATE = 0.12;
 /** Packages needing a signature, so the doorstep rule is exercised both ways. */
 const SIGNATURE_RATE = 0.35;
 
+/* ASSUMED, and it exists because without it the generated data never exercises
+ * the after-hours surcharge at all: every simulated delivery happened in the
+ * afternoon, so an $18 line on the invoice was only ever unit-tested. Addendum
+ * 1 names after-hours service as its own billable category, so a realistic day
+ * has some. Found by the reconciliation in ticket 3.5. */
+const AFTER_HOURS_RATE = 0.06;
+
 const DRY_RUN_REASONS = ['recipient_not_located', 'incorrect_address', 'no_access', 'incomplete_shipment', 'refused', 'other'] as const;
 
 /* Invented people. Two lists crossed, so 273 names do not repeat much and none
@@ -198,7 +205,7 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
         new Date(Date.parse(`${serviceDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`) + localOffsetMs);
 
     const orderIds: number[] = [];
-    const orderMeta = new Map<number, { siteId: number; serviceType: ServiceType; signatureRequired: boolean; packageId: number; receivedAt: Date }>();
+    const orderMeta = new Map<number, { siteId: number; serviceType: ServiceType; signatureRequired: boolean; packageId: number; receivedAt: Date; afterHours: boolean }>();
     let packages = 0;
 
     for (let i = 0; i < orderCount; i += 1) {
@@ -206,8 +213,13 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
         const serviceType = weighted(rng, SERVICE_MIX.map((m) => ({ value: m.type, weight: m.weight })));
         const address = rng() < 0.04 ? { zip: pick(rng, outOfArea), zone: null } : pick(rng, zips);
         const signatureRequired = rng() < SIGNATURE_RATE;
-        // Requests trickle in across the release window rather than all at once.
-        const receivedAt = new Date(atLocal(12, 0).getTime() + Math.floor(rng() * 120) * 60000);
+        /* Requests trickle in across the release window rather than all at
+           once, except for the evening ones: an after-hours request arrives
+           after the working day and is delivered after it too. */
+        const afterHours = rng() < AFTER_HOURS_RATE;
+        const receivedAt = afterHours
+            ? new Date(atLocal(20, 15).getTime() + Math.floor(rng() * 120) * 60000)
+            : new Date(atLocal(12, 0).getTime() + Math.floor(rng() * 120) * 60000);
         const due = dueForNewOrder(serviceType, receivedAt, settings);
         const quantity = 1 + Math.floor(rng() * 3);
 
@@ -238,7 +250,7 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
         });
         packages += quantity;
         orderIds.push(orderId);
-        orderMeta.set(orderId, { siteId: site.id, serviceType, signatureRequired, packageId: Number(pkg.rows[0]!['id']), receivedAt });
+        orderMeta.set(orderId, { siteId: site.id, serviceType, signatureRequired, packageId: Number(pkg.rows[0]!['id']), receivedAt, afterHours });
     }
     onProgress(`${orderCount} orders created across ${sites.length} pharmacies`);
 
@@ -266,8 +278,14 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
     /* Each courier gets a dense loop from one pharmacy where possible: the
      * dispatch strategy's whole argument is that batching by origin is what
      * makes the drive time work. Orders are dealt out site by site. */
+    /* The evening work goes to one courier on its own run. Mixing it into a
+     * daytime loop would mean a package collected at one o'clock and delivered
+     * at nine, which is not a shift anybody works. */
+    const eveningIds = orderIds.filter((id) => orderMeta.get(id)!.afterHours);
+    const daytimeIds = orderIds.filter((id) => !orderMeta.get(id)!.afterHours);
+
     const bySite = new Map<number, number[]>();
-    for (const id of orderIds) {
+    for (const id of daytimeIds) {
         const siteId = orderMeta.get(id)!.siteId;
         if (!bySite.has(siteId)) bySite.set(siteId, []);
         bySite.get(siteId)!.push(id);
@@ -285,6 +303,7 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
     result.runs = runIdByCourier.size;
 
     const stopsByCourier = new Map<string, number[]>(courierNames.map((c) => [c, []]));
+    const eveningCourier = courierNames[courierNames.length - 1]!;
     let cursor = 0;
     for (const list of bySite.values()) {
         for (const orderId of list) {
@@ -296,6 +315,7 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
         // stays mostly at one counter.
         cursor += 1;
     }
+    for (const id of eveningIds) stopsByCourier.get(eveningCourier)!.push(id);
 
     const fresh = async (id: number): Promise<OrderStateRow & { status: string }> => {
         const rs = await client.execute({ sql: 'SELECT * FROM orders WHERE id = ?', args: [id] });
@@ -321,15 +341,25 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
 
     /* ------------------------------------------------------- the courier day */
 
+    /* When a courier collects. The evening courier collects in the evening,
+     * after the requests that make up their run have come in. */
+    const pickupAt = (orderId: number) => (orderMeta.get(orderId)!.afterHours ? atLocal(21, 0) : atLocal(13, 10));
+
     for (const [courier, ids] of stopsByCourier) {
         if (ids.length === 0) continue;
-        // One signature per pharmacy counter, as the pickup flow requires.
-        const signature = await captureSignature(client, projectId, 'pickup', 'Pharmacy Tech', courier, atLocal(13, 10));
-        for (const orderId of ids) {
-            await record(orderId, courier, {
-                type: 'picked_up', at: atLocal(13, 10), signedName: 'Pharmacy Tech',
-                signatureKey: signature, lat: 29.5085, lng: -98.5768,
-            });
+        const daytime = ids.filter((id) => !orderMeta.get(id)!.afterHours);
+        const evening = ids.filter((id) => orderMeta.get(id)!.afterHours);
+        // One signature per counter per batch, as the pickup flow requires.
+        for (const batch of [daytime, evening]) {
+            if (batch.length === 0) continue;
+            const at = pickupAt(batch[0]!);
+            const signature = await captureSignature(client, projectId, 'pickup', 'Pharmacy Tech', courier, at);
+            for (const orderId of batch) {
+                await record(orderId, courier, {
+                    type: 'picked_up', at, signedName: 'Pharmacy Tech',
+                    signatureKey: signature, lat: 29.5085, lng: -98.5768,
+                });
+            }
         }
     }
     onProgress('collected at the counters');
@@ -345,7 +375,7 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
              * a simulated day where nothing is ever late makes every report
              * look finished and tests none of the overdue paths. */
             const late = rng() < LATE_RATE;
-            const base = dueAt ? dueAt.getTime() : atLocal(15, 0).getTime();
+            const base = dueAt ? dueAt.getTime() : (meta.afterHours ? atLocal(22, 0) : atLocal(15, 0)).getTime();
             const arrivedAt = new Date(base + (late ? 1 : -1) * (5 + Math.floor(rng() * 40)) * 60000);
             await record(orderId, courier, {
                 type: 'arrived', at: arrivedAt,
