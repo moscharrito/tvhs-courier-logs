@@ -304,6 +304,22 @@ A browser with no usable IndexedDB (a private window, site data switched off) fa
 
 Staff can open the same portal, so the people answering the phone can see exactly what the caller is looking at.
 
+### The proof of delivery document
+
+`GET .../uh/orders/:id/pod.pdf` for our own people, `GET .../uh/client/orders/:id/pod.pdf` for the pharmacy. One page, laid out around the five things Scope 1.2.8 names: the date and time, the pickup location, the delivery location, the description and quantity, and the printed name and signature of the sending and receiving personnel.
+
+**Written by hand, not by a library.** `server/src/core/pdf/writer.ts` is a few hundred lines: Helvetica text, rules, boxes and polylines, uncompressed, with a plain cross-reference table. This document carries patient names, addresses and signatures, so everything in its path has to be reviewed, kept patched and covered by the security program we owe University Health, and the whole need is text in one standard font and some straight lines. The same reasoning as the SigV4 signer: small specified things are worth writing, large unspecified ones are not.
+
+**The signatures are drawn, not described.** They were captured as strokes in a 0..1 space (ticket 2.4), so the document renders the actual movement of the pen at any size. They are fitted with a single scale factor for both axes, because stretching a signature to fill a wide box produces something the person did not draw, which is exactly what a disputed proof of delivery must not contain.
+
+**A missing signature is shown as missing**, with the reason under it, never as a blank space that could be mistaken for a printing fault. A proof of delivery that hides its own gaps is not proof of anything.
+
+**Our copy and the client's copy differ in one way:** ours names couriers in full, because it is our record of who handled a controlled substance; theirs names a first name, for the reasons in the portal section above.
+
+**Not cached.** The ticket asks for the document to be cached in S3. A copy takes about ten milliseconds to build, and a cached one is a second copy of PHI with its own lifetime and its own deletion problem. The generation time is asserted in a test so that if it ever stops being true, the decision gets revisited rather than quietly remaining wrong.
+
+Text that a base-14 font cannot draw is transliterated and the rest dropped, so an accented name prints plainly rather than breaking the file. The separators the application writes are mapped rather than dropped, which was found by rendering a page and reading it: "stat - Delivered" had been printing as "stat Delivered".
+
 ### The access matrix, and a hole it found
 
 Building the portal meant creating the first real `client_viewer`, and that exposed something that had been true since ticket 1.5: the staff order search, the run list, the import list and the rate card had **no role gate at all**. Any member of the project passed. Couriers were narrowed to their own work by a filter inside the handler, but a client viewer would have read every patient address in the contract, and our price schedule with it.

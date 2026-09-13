@@ -31,8 +31,22 @@ import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
+import { loadPodData, podFilename, renderPod } from './pod';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
+
+/** Send a generated document. Inline rather than as an attachment: a
+ *  pharmacist checking one delivery wants to look at it, not collect a
+ *  downloads folder full of patient names. */
+export function sendPdf(res: Response, pdf: Buffer, filename: string): void {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', String(pdf.length));
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    /* Never cached by a proxy or a browser: this is PHI, and a shared machine
+       at a pharmacy counter is exactly where a cached copy would be found. */
+    res.setHeader('Cache-Control', 'no-store, private');
+    res.end(pdf);
+}
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
 
 /** Longest window a client may ask for in one request. A year of a nine
@@ -355,8 +369,57 @@ export function createClientPortalRouter({ client }: { client: Client }): Router
             })),
             /* The proof of delivery document itself is ticket 3.2. Saying so
              * beats a button that does nothing. */
-            proofOfDelivery: { available: false, reason: 'The printable proof of delivery arrives with ticket 3.2.' },
+            /* The document itself is at .../pod.pdf. The note is only for what
+               it cannot show: a doorstep photograph, until the file service in
+               ticket 0.10 exists. */
+            proofOfDelivery: {
+                available: true,
+                reason: events.rows.some((e) => String(e['signed_name']) === 'Left at the door')
+                    ? 'A photograph was taken at the door. Photo storage is not yet configured, so it is not reproduced in the document.'
+                    : '',
+            },
         });
+    }));
+
+    /* ------------------------------------------------------ proof of delivery */
+
+    router.get('/orders/:id/pod.pdf', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const { scope, sites } = await scopedSites(req);
+        const id = Number(req.params['id']);
+        if (!Number.isInteger(id) || id <= 0) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        const check = await client.execute({
+            sql: 'SELECT site_id FROM orders WHERE project_id = ? AND id = ?',
+            args: [project.id, id],
+        });
+        const row = check.rows[0];
+        // Same rule as the detail view: not found rather than forbidden.
+        if (!row || (!scope.wholeProject && !sites.some((s) => s.id === Number(row['site_id'])))) {
+            res.status(404).json({ error: 'Delivery not found' });
+            return;
+        }
+
+        /* Every courier on the project, because the document names the
+               people on its own timeline and they are not known until it is
+               built. A dozen rows. */
+        const couriers = await client.execute({
+            sql: `SELECT u.username FROM users u JOIN memberships m ON m.user_id = u.id
+                  WHERE m.project_id = ?`,
+            args: [project.id],
+        });
+        const names = await displayNames(project.id, couriers.rows.map((r) => String(r['username'])));
+        const data = await loadPodData(client, {
+            projectId: project.id,
+            orderId: id,
+            timezone: project.timezone,
+            courierName: (username) => names.get(username) ?? '',
+            photoAvailable: false,
+        });
+        if (!data) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        await req.audit('client.pod', 'order', String(id), { status: data.status });
+        sendPdf(res, renderPod(data), podFilename(id, data.serviceDate));
     }));
 
     return router;

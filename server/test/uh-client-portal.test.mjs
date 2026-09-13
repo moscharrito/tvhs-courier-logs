@@ -228,12 +228,15 @@ describe('what reaches the client', () => {
         expect(res.body.timeline.map((e) => e.type)).toEqual(['picked_up', 'arrived', 'delivered']);
     });
 
-    it('says the proof of delivery document is not here yet rather than offering a dead button', async () => {
+    it('offers the proof of delivery document', async () => {
         const order = await delivered();
         const uh = await agentFor('uh.pharmacist', 'client-pass-1');
         const res = await uh.get(`${CLIENT}/orders/${order.id}`);
-        expect(res.body.proofOfDelivery).toMatchObject({ available: false });
-        expect(res.body.proofOfDelivery.reason).toMatch(/3\.2/);
+        expect(res.body.proofOfDelivery).toMatchObject({ available: true });
+
+        const pdf = await uh.get(`${CLIENT}/orders/${order.id}/pod.pdf`);
+        expect(pdf.status).toBe(200);
+        expect(pdf.headers['content-type']).toBe('application/pdf');
     });
 
     it('records that a client read a patient record', async () => {

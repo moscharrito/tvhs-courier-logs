@@ -315,7 +315,21 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                         ))}
                     </ol>
 
-                    {!detail.proofOfDelivery.available && (
+                    <div className="izy-row">
+                        {/* A plain link, not a fetch and a blob: the browser
+                            knows how to open a PDF, and a blob URL would keep
+                            a copy of a patient's proof of delivery alive in
+                            the tab until it is closed. */}
+                        <a
+                            className="izy-btn"
+                            href={`/api/projects/${code}/uh/client/orders/${order.id}/pod.pdf`}
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            Open the proof of delivery
+                        </a>
+                    </div>
+                    {detail.proofOfDelivery.reason && (
                         <p className="izy-muted">{detail.proofOfDelivery.reason}</p>
                     )}
                 </>

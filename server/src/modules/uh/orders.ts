@@ -19,6 +19,8 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { loadPodData, podFilename, renderPod } from './pod';
+import { sendPdf } from './client-portal';
 import { dateIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
@@ -490,6 +492,34 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
              * in Scope 1.2.5 is written inverted; reporting is ticket 3.3. */
             onTime: { met, missed, measured, rate: measured === 0 ? null : Math.round((met / measured) * 1000) / 10 },
         });
+    }));
+
+    /* The proof of delivery, for our own people. Before /:id so the .pdf
+     * suffix is not read as an order id. */
+    router.get('/:id/pod.pdf', readers, wrap(async (req, res) => {
+        const order = await loadOr404(req, res);
+        if (!order) return;
+
+        /* Staff and the courier who carried it see the full name: this is our
+         * own record of who handled a controlled substance. The client's copy
+         * of the same document names a first name only (ticket 3.1). */
+        const users = await client.execute({
+            sql: 'SELECT username, name FROM users',
+            args: [],
+        });
+        const names = new Map(users.rows.map((u) => [String(u['username']), String(u['name'])]));
+
+        const data = await loadPodData(client, {
+            projectId: req.project!.id,
+            orderId: Number(order.id),
+            timezone: req.project!.timezone,
+            courierName: (username) => names.get(username) ?? username,
+            photoAvailable: false,
+        });
+        if (!data) { res.status(404).json({ error: `Order ${req.params['id']} not found in this project` }); return; }
+
+        await req.audit('order.pod', 'order', String(order.id), { status: data.status });
+        sendPdf(res, renderPod(data), podFilename(Number(order.id), data.serviceDate));
     }));
 
     router.get('/:id', readers, wrap(async (req, res) => {

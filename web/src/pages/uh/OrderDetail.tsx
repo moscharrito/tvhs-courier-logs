@@ -104,6 +104,15 @@ export function OrderDetail() {
                 {order.dailyListId !== null && <> · from list {order.dailyListId}</>}
             </p>
 
+            {/* Our copy of the proof of delivery: the same document the client
+                gets, with our couriers named in full. A plain link, because the
+                browser already knows how to open a PDF. */}
+            <p>
+                <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/${order.id}/pod.pdf`} target="_blank" rel="noreferrer">
+                    Proof of delivery (PDF)
+                </a>
+            </p>
+
             <div className="izy-card">
                 <div className="izy-row-between">
                     <h2>Delivery</h2>

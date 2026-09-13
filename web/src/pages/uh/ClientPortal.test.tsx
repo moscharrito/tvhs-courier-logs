@@ -50,7 +50,7 @@ const detail = (over = {}) => ({
         { type: 'arrived', at: '2026-09-14T18:20:00.000Z', by: 'Ada', signedName: '', reason: '' },
         { type: 'delivered', at: '2026-09-14T18:25:00.000Z', by: 'Ada', signedName: 'Ines Vargas', reason: '' },
     ],
-    proofOfDelivery: { available: false, reason: 'The printable proof of delivery arrives with ticket 3.2.' },
+    proofOfDelivery: { available: false, reason: '' },
     ...over,
 });
 
@@ -134,12 +134,16 @@ describe('ClientPortal', () => {
         expect(proof).toHaveTextContent('Ada');
     });
 
-    it('says the printable document is not here yet instead of offering a dead button', async () => {
+    it('offers the proof of delivery as a document', async () => {
         renderPortal();
         await screen.findByRole('heading', { name: 'Deliveries' });
         fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
-        expect(await screen.findByText(/printable proof of delivery arrives with ticket 3\.2/)).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
+
+        const link = await screen.findByRole('link', { name: 'Open the proof of delivery' });
+        expect(link).toHaveAttribute('href', '/api/projects/uh/uh/client/orders/21/pod.pdf');
+        // A plain link, so the browser opens it and no copy of a patient's
+        // proof of delivery is kept alive in the tab as a blob URL.
+        expect(link).toHaveAttribute('target', '_blank');
     });
 
     it('tells an unscoped account what is wrong instead of showing an empty page', async () => {
