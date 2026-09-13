@@ -499,6 +499,119 @@ export type RunStop = typeof runStops.$inferSelect;
  * counter is the same kind of custody handover as collecting it, and calling
  * it a delivery in the record would be a lie that reaches a proof of
  * delivery. */
+/* Invoicing.
+ *
+ * MONEY IS STORED IN CENTS, as integers. A dollar is not representable in
+ * binary floating point, and an invoice is the one place in this system where
+ * a rounding difference of a hundredth becomes a letter from somebody's
+ * accounts department.
+ *
+ * AN ISSUED INVOICE IS FROZEN. A draft is recomputed from the orders every
+ * time it is opened, because a late-arriving courier event or a corrected zone
+ * should change it. The moment it is issued, every line is written down as
+ * billed and never recomputed: you cannot send accounts payable a number and
+ * then have the system quietly show a different one. That is the whole reason
+ * invoice_lines exists rather than the invoice being a query.
+ *
+ * NO PATIENT NAMES. An invoice goes to a finance team, who need the date, the
+ * pharmacy, the reference and the charge, and have no need of the person the
+ * medication was for. The delivery ZIP is carried because it is what justifies
+ * the zone on the line, and a ZIP without a name or a street is not a patient.
+ */
+export const INVOICE_STATUSES = ['draft', 'issued', 'paid', 'void'] as const;
+
+export const invoices = sqliteTable(
+    'invoices',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** Human reference: IZY-UH-2026-09-0001. Unique within the project. */
+        number: text('number').notNull(),
+        periodFrom: text('period_from').notNull(),
+        periodTo: text('period_to').notNull(),
+        /** Null for the whole contract; set when a pharmacy is billed alone. */
+        siteId: integer('site_id').references(() => sites.id),
+        status: text('status', { enum: INVOICE_STATUSES }).notNull().default('draft'),
+        currency: text('currency').notNull().default('USD'),
+        /** Frozen at issue. Zero while a draft, which recomputes on read. */
+        subtotalCents: integer('subtotal_cents').notNull().default(0),
+        adjustmentsCents: integer('adjustments_cents').notNull().default(0),
+        totalCents: integer('total_cents').notNull().default(0),
+        lineCount: integer('line_count').notNull().default(0),
+        /** Deliveries in the period that could not be priced at issue time.
+         *  Recorded on the invoice because leaving them out is a decision
+         *  somebody made, not an absence. */
+        excludedCount: integer('excluded_count').notNull().default(0),
+        excludedNote: text('excluded_note').notNull().default(''),
+        notes: text('notes').notNull().default(''),
+        issuedAt: text('issued_at'),
+        issuedBy: text('issued_by').notNull().default(''),
+        paidAt: text('paid_at'),
+        voidedAt: text('voided_at'),
+        voidReason: text('void_reason').notNull().default(''),
+        createdAt: text('created_at').notNull(),
+        createdBy: text('created_by').notNull().default(''),
+    },
+    (t) => [
+        unique('invoices_project_number_unique').on(t.projectId, t.number),
+        index('invoices_project_period_idx').on(t.projectId, t.periodFrom),
+        check('invoices_status_check', sql`${t.status} IN ('draft','issued','paid','void')`),
+    ],
+);
+
+export const invoiceLines = sqliteTable(
+    'invoice_lines',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        invoiceId: integer('invoice_id').notNull().references(() => invoices.id),
+        orderId: integer('order_id').notNull().references(() => orders.id),
+        serviceDate: text('service_date').notNull(),
+        /** The pharmacy's own reference, which is what they reconcile against. */
+        reference: text('reference').notNull().default(''),
+        pharmacy: text('pharmacy').notNull().default(''),
+        /** Justifies the zone. Not a patient: no name, no street. */
+        deliveryZip: text('delivery_zip').notNull().default(''),
+        zone: integer('zone'),
+        serviceType: text('service_type').notNull(),
+        dryRun: integer('dry_run', { mode: 'boolean' }).notNull().default(false),
+        items: integer('items').notNull().default(1),
+        baseCents: integer('base_cents').notNull().default(0),
+        statCents: integer('stat_cents').notNull().default(0),
+        afterHoursCents: integer('after_hours_cents').notNull().default(0),
+        dryRunCents: integer('dry_run_cents').notNull().default(0),
+        outOfAreaMiles: real('out_of_area_miles'),
+        outOfAreaCents: integer('out_of_area_cents').notNull().default(0),
+        amountCents: integer('amount_cents').notNull().default(0),
+        note: text('note').notNull().default(''),
+    },
+    (t) => [
+        index('invoice_lines_invoice_idx').on(t.invoiceId),
+        unique('invoice_lines_invoice_order_unique').on(t.invoiceId, t.orderId),
+    ],
+);
+
+/* A correction with a reason attached. Credits are negative. Nothing is ever
+ * edited into a line: an invoice that was issued and then quietly altered is
+ * not an invoice, it is an argument waiting to happen. */
+export const invoiceAdjustments = sqliteTable(
+    'invoice_adjustments',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        invoiceId: integer('invoice_id').notNull().references(() => invoices.id),
+        description: text('description').notNull(),
+        amountCents: integer('amount_cents').notNull(),
+        reason: text('reason').notNull().default(''),
+        createdAt: text('created_at').notNull(),
+        createdBy: text('created_by').notNull().default(''),
+    },
+    (t) => [index('invoice_adjustments_invoice_idx').on(t.invoiceId)],
+);
+
+export type Invoice = typeof invoices.$inferSelect;
+export type InvoiceLine = typeof invoiceLines.$inferSelect;
+
 /* One row per event a courier's phone sent, keyed by the id the PHONE chose.
  *
  * A phone with no signal queues what the courier did and sends it later. The

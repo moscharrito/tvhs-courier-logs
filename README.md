@@ -318,6 +318,24 @@ Ranges group by day, week, month or quarter. Weeks start on Monday and are label
 
 The Excel export has a Summary sheet, one sheet per breakdown, and the definitions. Rates are written as numbers with a percentage format rather than as text, so they can be charted. **The layout is provisional and says so on its own sheet:** it has not been agreed with University Health Quality Services, and the ticket expected that alignment to happen after the first draft rather than before.
 
+### Invoicing
+
+`/projects/:code/invoices`, behind `/uh/invoices`. Admins and ops managers bill; a dispatcher can read one; couriers and the client cannot reach it at all.
+
+**A draft recomputes, an issued invoice does not.** Opening a draft re-prices every delivery in the period, because a late courier event or a corrected zone should change what we bill. Issuing writes every line down as billed and never recomputes it: you cannot send a finance team a number and then show them a different one. That is why `invoice_lines` exists rather than the invoice being a query, and the screen says on every draft that its numbers will move.
+
+**One pricing function.** Lines are priced by `order-pricing.ts`, the same code the order detail screen quotes from. It was extracted from `orders.ts` in this ticket precisely so there is no second implementation to drift; a disagreement between a quote and a charge surfaces as a dispute over a number the client has already been shown.
+
+**Nothing is billed at zero.** A delivery that cannot be priced, which today means out of area with no mileage until ticket 1.4 supplies distances, becomes an exception, is excluded from the total, and is listed above the total rather than below it. Issuing an invoice that leaves deliveries off requires saying so explicitly, and the count and the reason are written onto the invoice and printed on the document.
+
+**Money is integer cents** everywhere, converted to dollars only for display. A dollar is not representable in binary floating point, and an invoice is the one place where a hundredth of a cent becomes a letter from somebody's accounts department.
+
+**Corrections carry a reason** and cannot be removed once the invoice is issued: an issued document that quietly changes is not a document. An invoice is voided with a reason, never deleted, so the number stays used and the question "what happened to 0004" has an answer a year later.
+
+**No patient names on an invoice.** It goes to a finance team who need the date, the pharmacy, the reference and the charge. The delivery ZIP is carried because it justifies the zone, and a ZIP with no name and no street is not a patient.
+
+Both documents come from the writers already in the tree: the Excel export from exceljs, the PDF from `core/pdf`, paginated with a continuation header and a page count.
+
 ### The proof of delivery document
 
 `GET .../uh/orders/:id/pod.pdf` for our own people, `GET .../uh/client/orders/:id/pod.pdf` for the pharmacy. One page, laid out around the five things Scope 1.2.8 names: the date and time, the pickup location, the delivery location, the description and quantity, and the printed name and signature of the sending and receiving personnel.

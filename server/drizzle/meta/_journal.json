@@ -120,6 +120,13 @@
       "when": 1789233410142,
       "tag": "0016_client_events",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1789317140981,
+      "tag": "0017_invoices",
+      "breakpoints": true
     }
   ]
 }

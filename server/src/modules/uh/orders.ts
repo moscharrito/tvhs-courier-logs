@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
+import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
 import { dateIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
@@ -338,64 +339,9 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
     }));
 
 
-    /**
-     * What this order bills at, as far as is currently knowable.
-     *
-     * Three inputs are not simply read off the row:
-     *
-     *   after hours  Addendum 1 defines it as service "requested and performed
-     *                outside of normal business hours". Performed is what a
-     *                courier can be held to, so this measures the delivery
-     *                when there is one, else the pickup, else the request.
-     *                Which instant was used is returned, because on a
-     *                borderline order an $18 surcharge turns on it.
-     *   dry run      A failed order is a dry run, billed per item (Addendum 1).
-     *                Items are the quantities of the packages that actually
-     *                failed, not the whole order, since an order can be part
-     *                delivered.
-     *   mileage      An out-of-area order needs a distance nobody has yet.
-     *                priceFor says so in its notes rather than quietly
-     *                billing zero as though the question were settled.
-     */
-    async function pricingFor(order: OrderRow, project: { id: number; settings: Record<string, unknown>; timezone: string }) {
-        const schedule = await scheduleOn(client, project.id, order.service_date);
-        if (!schedule) return { available: false as const, reason: `No price schedule is in effect on ${order.service_date}.` };
-
-        const settings = pricingSettingsFrom(project.settings, project.timezone);
-        const performedAt = order.delivered_at ?? order.pickup_at ?? order.received_at;
-        const measuredFrom = order.delivered_at ? 'delivered' : order.pickup_at ? 'pickup' : 'requested';
-        const at = new Date(performedAt);
-
-        const dryRun = order.status === 'failed';
-        let items = 1;
-        if (dryRun) {
-            const rs = await client.execute({
-                sql: `SELECT COALESCE(SUM(quantity), 0) AS n FROM packages
-                      WHERE project_id = ? AND order_id = ? AND outcome = 'failed'`,
-                args: [project.id, Number(order.id)],
-            });
-            items = Math.max(1, Number(rs.rows[0]?.['n'] ?? 0));
-        }
-
-        const breakdown = priceFor({
-            zone: (order.zone === null ? null : Number(order.zone)) as 1 | 2 | 3 | 4 | 5 | null,
-            serviceType: order.service_type as 'scheduled' | 'stat' | 'adhoc',
-            at,
-            dryRun,
-            items,
-            ...(order.out_of_area_miles !== null ? { outOfAreaMiles: Number(order.out_of_area_miles) } : {}),
-        }, schedule, settings);
-
-        return {
-            available: true as const,
-            ...breakdown,
-            afterHours: isAfterHours(at, settings),
-            measuredAt: at.toISOString(),
-            measuredFrom,
-            /** True while the order can still change what it bills at. */
-            provisional: !['delivered', 'failed', 'cancelled'].includes(order.status),
-        };
-    }
+    /* What an order bills at lives in order-pricing.ts, so that the quote on
+     * this screen and the charge on the invoice come from one function and
+     * cannot drift apart. */
 
     /* ---------------------------------------------------------------- reads */
 
@@ -539,7 +485,7 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
             args: [req.project!.id, Number(order.id)],
         });
 
-        const pricing = await pricingFor(order, req.project!);
+        const pricing = await priceOrder(client, order, req.project!);
 
         // Reading one order means reading patient data; record that it happened.
         await req.audit('order.read', 'order', String(order.id), { events: events.rows.length });
