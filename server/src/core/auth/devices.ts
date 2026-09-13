@@ -25,32 +25,22 @@ import { z } from 'zod';
 import type { Client } from '@libsql/client';
 import type { Config } from '../../config';
 import { readCookie } from './sessions';
+import { createAuthThrottles, tooManyAttempts, type AuthThrottles } from './throttle';
 
 export const DEVICE_COOKIE = 'izy_did';
 /** A phone stays enrolled for a year unless revoked; the PIN is the gate. */
 const DEVICE_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
-/* A PIN is short, so the throttle is what stops it being guessed. Per device
- * rather than per user: an attacker without the phone has nothing to try
- * against, and a courier fumbling their own PIN cannot lock out a colleague. */
-const PIN_MAX_ATTEMPTS = 5;
-const PIN_WINDOW_MS = 10 * 60 * 1000;
-const pinAttempts = new Map<string, { count: number; until: number }>();
-
-function pinBlocked(deviceId: string): boolean {
-    const rec = pinAttempts.get(deviceId);
-    return !!rec && rec.count >= PIN_MAX_ATTEMPTS && rec.until > Date.now();
-}
-function pinFail(deviceId: string): void {
-    const now = Date.now();
-    const rec = pinAttempts.get(deviceId);
-    if (!rec || rec.until < now) pinAttempts.set(deviceId, { count: 1, until: now + PIN_WINDOW_MS });
-    else rec.count += 1;
-}
-function pinReset(deviceId: string): void { pinAttempts.delete(deviceId); }
+/* A PIN is short, so the throttle is what stops it being guessed. Keyed per
+ * device rather than per user: an attacker without the phone has nothing to
+ * try against, and a courier fumbling their own PIN cannot lock out a
+ * colleague. The counters themselves live in core/auth/throttle.ts and are
+ * shared with the password and route-PIN endpoints, so moving between them
+ * does not buy a fresh allowance (ticket 4.2). */
+let sharedThrottles: AuthThrottles = createAuthThrottles();
 
 /** Exported for tests, which need a clean slate between cases. */
-export function resetPinThrottle(): void { pinAttempts.clear(); }
+export function resetPinThrottle(): void { sharedThrottles.pin.clear(); }
 
 const hash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
@@ -95,10 +85,14 @@ export function describeUserAgent(ua: string): string {
 interface Deps {
     client: Client;
     config: Config;
+    /** The process-wide counters. Defaulted so a test can mount this router
+     *  on its own, but the boot sequence always passes the shared set. */
+    throttles?: AuthThrottles;
 }
 
-export function createDevicesRouter({ client, config }: Deps): Router {
+export function createDevicesRouter({ client, config, throttles }: Deps): Router {
     const router = Router();
+    if (throttles) sharedThrottles = throttles;
 
     const setDeviceCookie = (res: Response, token: string) => {
         res.cookie(DEVICE_COOKIE, token, {
@@ -129,20 +123,37 @@ export function createDevicesRouter({ client, config }: Deps): Router {
         const body = parse(Enrol, req.body, res);
         if (!body) return;
 
+        /* Enrolment takes the account password, so it is a password endpoint
+           and counts against the same allowance as signing in with one. */
+        const username = body.username.toLowerCase();
+        const wait = sharedThrottles.password.check(req.ip, username);
+        if (wait) {
+            await req.audit('auth.throttled', 'user', username.slice(0, 120), { method: 'enrol' });
+            res.set('Retry-After', String(wait.retryAfterSeconds));
+            res.status(429).json(tooManyAttempts(wait.retryAfterSeconds, 'ask an administrator to reset your password'));
+            return;
+        }
+
         const rs = await client.execute({
             sql: 'SELECT * FROM users WHERE username = ?',
-            args: [body.username.toLowerCase()],
+            args: [username],
         });
         const user = rs.rows[0];
         // One message for every failure: a different one for "no such user"
         // would turn this into a way to enumerate staff.
         const bad = () => res.status(401).json({ error: 'Incorrect username or password' });
-        if (!user || String(user['status']) !== 'active') { bad(); return; }
+        if (!user || String(user['status']) !== 'active') {
+            sharedThrottles.password.fail(req.ip, username);
+            bad();
+            return;
+        }
         if (!bcrypt.compareSync(body.password, String(user['password']))) {
+            sharedThrottles.password.fail(req.ip, username);
             await req.audit('device.enrol_failed', 'user', String(user['username']), { reason: 'bad_password' });
             bad();
             return;
         }
+        sharedThrottles.password.reset(req.ip, username);
 
         const token = crypto.randomBytes(32).toString('hex');
         const now = new Date().toISOString();
@@ -194,8 +205,11 @@ export function createDevicesRouter({ client, config }: Deps): Router {
             return;
         }
         const deviceId = hash(token);
-        if (pinBlocked(deviceId)) {
-            res.status(429).json({ error: 'Too many attempts. Wait ten minutes, or sign in with your password.' });
+        const wait = sharedThrottles.pin.check(req.ip, `device:${deviceId}`);
+        if (wait) {
+            await req.audit('auth.throttled', 'user', String(device['username'] ?? ''), { method: 'device_pin' });
+            res.set('Retry-After', String(wait.retryAfterSeconds));
+            res.status(429).json(tooManyAttempts(wait.retryAfterSeconds, 'sign in with your password'));
             return;
         }
         const body = parse(DeviceLogin, req.body, res);
@@ -206,12 +220,12 @@ export function createDevicesRouter({ client, config }: Deps): Router {
             return;
         }
         if (!device['pin'] || !bcrypt.compareSync(body.pin, String(device['pin']))) {
-            pinFail(deviceId);
+            sharedThrottles.pin.fail(req.ip, `device:${deviceId}`);
             await req.audit('auth.login_failed', 'user', String(device['username']), { method: 'device_pin' });
             res.status(401).json({ error: 'Incorrect PIN' });
             return;
         }
-        pinReset(deviceId);
+        sharedThrottles.pin.reset(req.ip, `device:${deviceId}`);
 
         await client.execute({ sql: 'UPDATE devices SET last_seen_at = ? WHERE id = ?', args: [new Date().toISOString(), deviceId] });
         // Refresh the cookie so an in-use phone does not silently expire.

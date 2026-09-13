@@ -24,6 +24,8 @@ import { createAuditMiddleware, type AuditLog } from './core/audit/audit';
 import { createAuditRouter } from './core/audit/routes';
 import { Logger } from './core/http/logger';
 import { createRequestMiddleware } from './core/http/request';
+import { securityHeadersFor } from './core/http/security';
+import { createAuthThrottles, tooManyAttempts } from './core/auth/throttle';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
@@ -60,6 +62,8 @@ interface Bridge {
 export interface BootedLegacy {
     legacy: LegacyServer;
     sessions: SessionStore;
+    /** Exposed so tests can start each case from a clean slate. */
+    throttles: ReturnType<typeof createAuthThrottles>;
     audit: AuditLog;
     logger: Logger;
 }
@@ -75,7 +79,15 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const bridge = require('../legacy-bridge.js') as Bridge;
 
-    // Order inside server.js: request id + log, json body, static, sessions, audit, routes.
+    // Order inside server.js: security headers, request id + log, json body,
+    // static, sessions, audit, routes.
+    bridge.set('securityHeaders', securityHeadersFor(config));
+    /* One set of counters for the process, shared by the legacy password and
+     * PIN endpoints and by the enrolled-device ones in core/auth/devices. */
+    const throttles = createAuthThrottles();
+    bridge.set('authThrottles', throttles);
+    bridge.set('tooManyAttempts', tooManyAttempts);
+    bridge.set('trustProxy', config.trustProxy);
     bridge.set('requestMiddleware', createRequestMiddleware(logger));
     const { middleware, store } = createSessionMiddleware({ client: database.client, config });
     bridge.set('sessionMiddleware', middleware);
@@ -88,7 +100,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createHealthRouter({ client: database.client, version: VERSION }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
-    legacy.app.use(createDevicesRouter({ client: database.client, config }));
+    legacy.app.use(createDevicesRouter({ client: database.client, config, throttles }));
     legacy.app.use(createAuditRouter({ log }));
 
     // Project settings are core: every contract has operating parameters.
@@ -149,7 +161,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(apiNotFound);
     legacy.app.use(createErrorHandler({ logger, isProduction: config.isProduction }));
 
-    return { legacy, sessions: store, audit: log, logger };
+    return { legacy, sessions: store, audit: log, logger, throttles };
 }
 
 /* The built frontend shell (web/dist) is served at /. Any GET that is not an

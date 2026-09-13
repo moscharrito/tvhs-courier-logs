@@ -186,12 +186,21 @@ describe('GET /api/projects/:pid/settings', () => {
         expect(new Date(scheduled.dueAt) - new Date(scheduled.receivedAt)).toBe(120 * 60_000);
     });
 
-    it('is readable by any member and closed to everyone else', async () => {
+    it('is readable by the people who run the contract, and by nobody else', async () => {
         expect((await srv.agent().get(UH)).status).toBe(401);
-        const viewer = await memberWith('client_viewer', 'settings.viewer');
-        const res = await viewer.get(UH);
+
+        /* A courier reads it because the courier app takes its business hours
+           from here, and reads it without the right to change anything. */
+        const courier = await memberWith('courier', 'settings.courier');
+        const res = await courier.get(UH);
         expect(res.status).toBe(200);
         expect(res.body.canManage).toBe(false);
+
+        /* A client viewer does not. These are the operating parameters of the
+           contract, including the internal goal we hold ourselves to above the
+           85% University Health measures (ticket 4.2). */
+        const viewer = await memberWith('client_viewer', 'settings.viewer');
+        expect((await viewer.get(UH)).status).toBe(403);
 
         // A TVHS-only courier is not a member of uh.
         const north = await srv.login('north');

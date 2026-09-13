@@ -12,6 +12,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "ci": "npm run typecheck && npm run test",
+    "audit": "npm audit --omit=dev --audit-level=high",
     "start": "npm start -w server",
     "dev": "npm run dev -w server"
   },

@@ -15,6 +15,23 @@ const bridge = require('./legacy-bridge');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+/* Do not advertise the framework. It tells an attacker which CVE list to read
+ * and tells a legitimate caller nothing at all. */
+app.disable('x-powered-by');
+
+/* Behind Render's proxy, exactly one hop. Without this every audit row records
+ * the proxy's address instead of the courier's, and every per-address throttle
+ * counts the whole internet as one caller. `true` is not the safe default here:
+ * it would trust an X-Forwarded-For header sent by anyone, so a number is used
+ * and it is set from the environment (src/core/http/security.ts explains the
+ * rest of the hardening). */
+const trustProxy = bridge.has('trustProxy') ? bridge.get('trustProxy') : 0;
+if (trustProxy) app.set('trust proxy', trustProxy);
+
+// Response headers (src/core/http/security.ts): CSP, HSTS, nosniff and the
+// rest. First, so they are on every response including static files and 404s.
+app.use(bridge.get('securityHeaders'));
+
 // ---- Database (libSQL) ----
 // In production set TURSO_DATABASE_URL (libsql://...) + TURSO_AUTH_TOKEN so data
 // persists in Turso — required on hosts with an ephemeral disk (e.g. Render free).
@@ -259,30 +276,38 @@ async function loginSession(req, user) {
     return req.session.user;
 }
 
-// Simple in-memory throttle for driver PIN attempts (per route). Slows brute
-// force of the short PIN; resets on restart, so it's a speed bump, not a vault.
-const pinAttempts = new Map();
-const PIN_MAX = 5, PIN_WINDOW = 15 * 60 * 1000;
-function pinBlocked(route) {
-    const rec = pinAttempts.get(route);
-    return !!(rec && rec.until > Date.now() && rec.count >= PIN_MAX);
+/* Failed-attempt throttling (src/core/auth/throttle.ts), shared with the
+ * enrolled-device endpoints so a guesser cannot get a fresh allowance by
+ * moving between them. This file used to keep its own copy for PIN attempts
+ * and none at all for passwords. */
+const throttles = bridge.get('authThrottles');
+const tooManyAttempts = bridge.get('tooManyAttempts');
+
+/** Refuse a caller who has spent their attempts. Returns true when handled. */
+async function throttled(req, res, guard, identity, alternative, detail) {
+    const wait = guard.check(req.ip, identity);
+    if (!wait) return false;
+    await req.audit('auth.throttled', 'user', String(identity).slice(0, 120), detail);
+    res.set('Retry-After', String(wait.retryAfterSeconds));
+    res.status(429).json(tooManyAttempts(wait.retryAfterSeconds, alternative));
+    return true;
 }
-function pinFail(route) {
-    const now = Date.now();
-    const rec = pinAttempts.get(route);
-    if (!rec || rec.until < now) pinAttempts.set(route, { count: 1, until: now + PIN_WINDOW });
-    else rec.count++;
-}
-function pinReset(route) { pinAttempts.delete(route); }
 
 // Auth — username + password (admin, and a fallback for drivers)
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    const name = String(username).toLowerCase().trim();
 
-    const user = await dbGet('SELECT * FROM users WHERE username = ?', [username.toLowerCase().trim()]);
+    /* Checked before the password is, so a throttled caller costs one map
+       lookup rather than a bcrypt comparison. bcrypt is deliberately slow;
+       answering unlimited guesses with it is its own denial of service. */
+    if (await throttled(req, res, throttles.password, name, 'ask an administrator to reset your password', { method: 'password' })) return;
+
+    const user = await dbGet('SELECT * FROM users WHERE username = ?', [name]);
     if (!user || !bcrypt.compareSync(password, user.password)) {
-        await req.audit('auth.login_failed', 'user', String(username).toLowerCase().trim().slice(0, 120), { method: 'password', reason: user ? 'bad_password' : 'no_such_user' });
+        throttles.password.fail(req.ip, name);
+        await req.audit('auth.login_failed', 'user', name.slice(0, 120), { method: 'password', reason: user ? 'bad_password' : 'no_such_user' });
         return res.status(401).json({ error: 'Invalid username or password' });
     }
     if (user.status !== 'active') {
@@ -290,6 +315,7 @@ app.post('/api/login', async (req, res) => {
         return res.status(403).json({ error: 'Account disabled' });
     }
 
+    throttles.password.reset(req.ip, name);
     res.json(await loginSession(req, user));
 });
 
@@ -323,15 +349,15 @@ app.get('/api/login/projects', async (req, res) => {
 app.post('/api/login/pin', async (req, res) => {
     const { route, pin } = req.body;
     if (!route || !pin) return res.status(400).json({ error: 'Route and PIN required' });
-    if (pinBlocked(route)) return res.status(429).json({ error: 'Too many attempts. Wait a bit or use your password.' });
+    if (await throttled(req, res, throttles.pin, `route:${route}`, 'sign in with your password', { method: 'pin' })) return;
 
     const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND status = 'active' AND route = ?", [route]);
     if (!user || !user.pin || !bcrypt.compareSync(String(pin), user.pin)) {
-        pinFail(route);
+        throttles.pin.fail(req.ip, `route:${route}`);
         await req.audit('auth.login_failed', 'route', String(route).slice(0, 40), { method: 'pin', reason: !user ? 'no_driver' : !user.pin ? 'no_pin' : 'bad_pin' });
         return res.status(401).json({ error: 'Incorrect PIN' });
     }
-    pinReset(route);
+    throttles.pin.reset(req.ip, `route:${route}`);
     res.json(await loginSession(req, user));
 });
 
@@ -341,12 +367,20 @@ app.post('/api/login/pin/setup', async (req, res) => {
     if (!route || !password || !pin) return res.status(400).json({ error: 'Route, password and PIN required' });
     if (!/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ error: 'PIN must be 4–6 digits' });
 
+    /* This checks a password, so it is a password endpoint and is throttled
+       like one. Without that it was a second, unlimited oracle for exactly the
+       credential /api/login protects (ticket 4.2). */
+    if (await throttled(req, res, throttles.password, `route:${route}`, 'ask an administrator to reset your password', { method: 'pin_setup' })) return;
+
     const user = await dbGet("SELECT * FROM users WHERE role = 'driver' AND status = 'active' AND route = ?", [route]);
     if (!user || !bcrypt.compareSync(password, user.password)) {
+        throttles.password.fail(req.ip, `route:${route}`);
+        await req.audit('auth.login_failed', 'route', String(route).slice(0, 40), { method: 'pin_setup', reason: user ? 'bad_password' : 'no_driver' });
         return res.status(401).json({ error: 'Incorrect password' });
     }
     await dbRun('UPDATE users SET pin = ? WHERE username = ?', [bcrypt.hashSync(String(pin), 10), user.username]);
-    pinReset(route);
+    throttles.password.reset(req.ip, `route:${route}`);
+    throttles.pin.reset(req.ip, `route:${route}`);
     res.json(await loginSession(req, user));
 });
 

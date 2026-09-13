@@ -121,6 +121,27 @@ describe('loadConfig validation', () => {
     });
 });
 
+describe('trusting a proxy', () => {
+    /* Getting this wrong is quiet and consequential: too low and every audit
+     * row records Render's address instead of the courier's, and the
+     * per-address throttle counts the whole internet as one caller; too high
+     * and a caller sets X-Forwarded-For and chooses both for themselves. */
+    it('trusts nothing when the connection is direct', () => {
+        expect(loadConfig(base).trustProxy).toBe(0);
+    });
+
+    it('trusts exactly one hop in production, which is what Render puts there', () => {
+        const c = loadConfig({ ...base, NODE_ENV: 'production', TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' });
+        expect(c.trustProxy).toBe(1);
+    });
+
+    it('can be set explicitly, and refuses a value that is not a hop count', () => {
+        expect(loadConfig({ ...base, TRUST_PROXY: '2' }).trustProxy).toBe(2);
+        expect(problemsOf({ ...base, TRUST_PROXY: 'true' }).join(' ')).toMatch(/TRUST_PROXY/);
+        expect(problemsOf({ ...base, TRUST_PROXY: '-1' }).join(' ')).toMatch(/TRUST_PROXY/);
+    });
+});
+
 describe('describeConfig', () => {
     it('never includes secrets', () => {
         const c = loadConfig({

@@ -365,11 +365,59 @@ Two things came out of running it:
 
 Text that a base-14 font cannot draw is transliterated and the rest dropped, so an accented name prints plainly rather than breaking the file. The separators the application writes are mapped rather than dropped, which was found by rendering a page and reading it: "stat - Delivered" had been printing as "stat Delivered".
 
-### The access matrix, and a hole it found
+### The access matrix, and the holes it found
 
 Building the portal meant creating the first real `client_viewer`, and that exposed something that had been true since ticket 1.5: the staff order search, the run list, the import list and the rate card had **no role gate at all**. Any member of the project passed. Couriers were narrowed to their own work by a filter inside the handler, but a client viewer would have read every patient address in the contract, and our price schedule with it.
 
-They are now gated, and `uh-client-portal.test.mjs` holds a table of role against route that fails if a new route arrives without one. Two older tests asserted the previous behaviour and were corrected: they had encoded the defect as intended behaviour, which is the way a hole like that survives a review.
+Ticket 4.2 turned that one-off discovery into a standing check. `server/test/access-matrix.test.mjs` is a table of **every endpoint the application mounts against every kind of caller**, and it is both the specification and the proof: 109 cases, covering anonymous, a signed-in person who is not a member of the project, each of the five project roles, and the platform administrator. The non-member is the seeded TVHS driver, so every University Health row is a cross-project check as well.
+
+Two rules make it worth having.
+
+**Authorization is asserted and nothing else.** The ids in the table are nonexistent and the bodies are empty on purpose, so an allowed caller usually gets a 400 or a 404, and that counts as a pass. What is under test is the gate, not the handler behind it.
+
+**A route must decide who is asking before it decides what exists.** A handler that answers 404 to a caller who should have been refused has told them the id is free. That is how the third defect below was found.
+
+It found three more holes of the same shape as the first: routes written before `client_viewer` existed, which had simply never been asked the question.
+
+- **Every University Health site was readable by a client viewer**: address, contact, the lot. Now staff and couriers, because a courier needs the pickup address and a pharmacy contact does not need the list of every location in the contract.
+- **So were the project's operating parameters**, including the internal SLA goal we hold ourselves to above the 85% University Health measures. A client reading our own target is not a breach, but it is not theirs to read.
+- **The manual event endpoint loaded the order before checking the role**, so a client viewer walking the id space learned which orders exist, one 404 at a time. It now refuses first and looks second.
+
+The test ends with a coverage guard that compares the table against the routes the application actually mounts. A new endpoint fails the suite until somebody writes down who may call it, which is the only way a table like this stays true.
+
+`docs/security-review-2026-09-13.md` is the written review: what was examined, what was found, what was changed, and what is still open.
+
+### Guessing a credential
+
+`POST /api/login` had no rate limit at all. The only thing slowing a guesser down was bcrypt, which is a cost to us as much as to them: answering ten thousand guesses with a deliberately slow hash is its own denial of service. `POST /api/login/pin/setup` takes a driver's password and had no counter either. Two doors, one credential, a counter on neither. The PIN picker and the enrolled-device endpoint each had one, and they were two copies of the same code.
+
+`server/src/core/auth/throttle.ts` is now the only implementation, shared by all four, so a guesser cannot get a fresh allowance by moving between them.
+
+**Two keys, not one.** By username alone, an attacker sprays one guess at a thousand accounts and is never counted. By address alone, an attacker with a thousand addresses is never counted, and a pharmacy behind one NAT locks itself out. Passwords get ten per account and fifty per address in fifteen minutes; PINs get five per account and thirty per address in ten. Five, because a PIN is four digits and five guesses is the most that can be allowed while leaving ten thousand possibilities genuinely out of reach.
+
+A refused caller gets a 429, a `Retry-After`, and a message that reads the same whether or not the account exists. A correct credential clears that account's counter but not the address's: one person signing in correctly must not erase the evidence of a spray coming from the same place. Every lockout writes `auth.throttled` to the audit trail, which is what turns a blocked attack into a visible one.
+
+**The counters live in this process's memory.** On one Render instance that is the whole picture; on two, an attacker gets each limit once per instance. Moving them into the database is the fix, and it is deliberately not done yet: a write per failed attempt against a network database hands the attacker a lever.
+
+### Headers, and a script that came from somebody else
+
+There were no security headers of any kind until ticket 4.2. `server/src/core/http/security.ts` sets them, written by hand rather than taken from helmet, for the same reason as the PDF writer and the SigV4 signer: the requirement is a fixed set of values this application has to decide anyway, and a dependency in the path of every response is one more thing to patch, audit and explain to University Health.
+
+The policy is `default-src 'self'` with `script-src 'self'`, no CDN and no inline script, plus `nosniff`, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `base-uri 'none'`, `Referrer-Policy: no-referrer`, a `Permissions-Policy` that asks for the camera and position and nothing else, and HSTS for two years in production only. Sending HSTS from a development server would pin localhost to HTTPS in a developer's browser for a year.
+
+**`script-src 'self'` immediately broke something, which is the point.** The legacy TVHS page was loading flatpickr from cdnjs at runtime, with no subresource integrity, on a page carrying a signed-in session and showing driver logs. A CDN compromise would have been our breach to report. The file is now served from `server/public/vendor/flatpickr`, byte-identical to cdnjs flatpickr 4.6.13, with the hashes recorded in the security review. A content security policy is a tripwire as much as a defence.
+
+`style-src` keeps `'unsafe-inline'` and it is the one relaxed directive: React components set style attributes in about fifty places, and `index.html` carries the boot styles that paint the loading state before the bundle arrives. Style injection cannot execute code, and the price of removing it is a nonce threaded through the whole render path.
+
+**`trust proxy` was not set**, which would have put Render's address in every audit row instead of the courier's, and made the new per-address throttle count the whole internet as one caller. It is now a hop count from the environment, one in production and none elsewhere. Not `true`, which trusts an `X-Forwarded-For` header from anyone and so lets a caller choose the address that lands in the audit trail.
+
+### Dependencies
+
+`npm run audit` checks production dependencies at the high threshold. It is not part of `npm run ci`, which has to run offline.
+
+The review found one high advisory, `drizzle-orm` below 0.45.2, and upgraded it. Exposure was nil either way, because drizzle is used for schema definitions and migrations and every runtime query goes through `client.execute({ sql, args })` with bound parameters, but a high advisory in a production dependency is not something to argue with.
+
+Four moderate advisories were traced to the calling code rather than accepted or dismissed by their labels: the `uuid` bug needs a `buf` argument that `exceljs` never passes, and the react-router open redirect needs a user-controlled navigation target, of which this application has none. Both "fixes" are major-version changes. The reasoning is written down in the security review so the next person does not have to redo it.
 
 ### Registered devices and PIN sign-in
 

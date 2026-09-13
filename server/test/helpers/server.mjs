@@ -85,9 +85,9 @@ export async function startServer(env = {}) {
     // Silence the legacy boot console lines.
     const origLog = console.log;
     console.log = () => { };
-    let legacy, sessions;
+    let legacy, sessions, throttles;
     try {
-        ({ legacy, sessions } = bootLegacy(config, database, logger));
+        ({ legacy, sessions, throttles } = bootLegacy(config, database, logger));
         await legacy.ready;
     } finally {
         console.log = origLog;
@@ -122,6 +122,9 @@ export async function startServer(env = {}) {
         db: legacy.db,
         core: database,
         sessions,
+        /* The failed-attempt counters, so a test can start from a clean slate
+           rather than inheriting another case's lockout. */
+        throttles,
         logs,
         agent: () => request.agent(url),
         async login(who) {

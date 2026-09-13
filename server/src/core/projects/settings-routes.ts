@@ -1,6 +1,6 @@
 /* Project settings.
  *
- *   GET   /api/projects/:pid/settings    any member
+ *   GET   /api/projects/:pid/settings    admin, ops_manager, dispatcher, courier
  *   PATCH /api/projects/:pid/settings    admin, ops_manager
  *
  * GET returns the resolved settings and the contract defaults side by side,
@@ -28,6 +28,13 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 export function createProjectSettingsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const manage = requireProjectRole('admin', 'ops_manager');
+    /* The courier app reads business hours from here, so a courier reads it
+     * too. A client viewer does not: these are the operating parameters of the
+     * contract, including the internal goal we hold ourselves to above the
+     * 85% University Health measures us against, and a pharmacy contact
+     * reading that learns what our own target is. Open to any member until
+     * the access matrix in ticket 4.2 made the question explicit. */
+    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
 
     function present(timezone: string, stored: Record<string, unknown>, canManage: boolean) {
         const settings = resolveSettings(stored);
@@ -67,7 +74,7 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
         return { timezone: String(row?.['timezone'] ?? 'America/Chicago'), settings: parsed };
     }
 
-    router.get('/', wrap(async (req, res) => {
+    router.get('/', readers, wrap(async (req, res) => {
         const role = req.membership?.role;
         const { timezone, settings } = await storedFor(req.project!.id);
         res.json(present(timezone, settings, role === 'admin' || role === 'ops_manager'));

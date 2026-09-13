@@ -1,9 +1,9 @@
 /* Orders and their chain of custody.
  *
- *   GET    /api/projects/:pid/uh/orders          any member, filtered list
+ *   GET    /api/projects/:pid/uh/orders          staff and couriers, filtered
  *   POST   /api/projects/:pid/uh/orders          staff, manual STAT or ad hoc
- *   GET    /api/projects/:pid/uh/orders/:id      any member, with the timeline
- *   POST   /api/projects/:pid/uh/orders/:id/events  record a custody event
+ *   GET    /api/projects/:pid/uh/orders/:id      staff and couriers, with the timeline
+ *   POST   /api/projects/:pid/uh/orders/:id/events  staff and couriers, then per event type
  *
  * Every status change in the system goes through POST .../events, which asks
  * lifecycle.ts what the event means and refuses anything the transition table
@@ -163,6 +163,9 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
      * viewer is not, because this endpoint is the whole project and their view
      * of their own pharmacy is the portal (ticket 3.1). */
     const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    /* Everyone who may record any event at all. Which event is a second
+     * question, answered per type below against EVENT_RULES. */
+    const records = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';
@@ -259,9 +262,17 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
 
     /* --------------------------------------------------------------- events */
 
-    router.post('/:id/events', wrap(async (req, res) => {
-        const order = await loadOr404(req, res);
-        if (!order) return;
+    /* Two gates, because this one endpoint records every kind of event.
+     *
+     * The outer one is middleware and refuses anybody who may not record an
+     * event at all: a client viewer is turned away here, before a body is read
+     * or an order is looked up. The inner one is per event type, because only
+     * staff may release or assign. Before ticket 4.2 there was no outer gate,
+     * and a client viewer probing order ids was answered 404 rather than 403,
+     * which told them which ids exist. */
+    router.post('/:id/events', records, wrap(async (req, res) => {
+        /* The type decides the role, so this check cannot be middleware. It
+           still comes before the order is loaded: refuse first, then look. */
         const body = parse(RecordEvent, req.body, res);
         if (!body) return;
 
@@ -271,6 +282,9 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
             res.status(403).json({ error: `Recording "${body.type}" needs the role: ${rule.roles.join(' or ')}` });
             return;
         }
+
+        const order = await loadOr404(req, res);
+        if (!order) return;
 
         const project = req.project!;
         const settings = resolveSettings(project.settings);

@@ -1,8 +1,8 @@
 /* UH sites: the pharmacies and hospitals a run starts or ends at.
  *
- *   GET    /api/projects/:pid/uh/sites          any member
+ *   GET    /api/projects/:pid/uh/sites          admin, ops_manager, dispatcher, courier
  *   POST   /api/projects/:pid/uh/sites          admin, ops_manager
- *   GET    /api/projects/:pid/uh/sites/:id      any member
+ *   GET    /api/projects/:pid/uh/sites/:id      admin, ops_manager, dispatcher, courier
  *   PATCH  /api/projects/:pid/uh/sites/:id      admin, ops_manager
  *   DELETE /api/projects/:pid/uh/sites/:id      admin, ops_manager
  *
@@ -92,6 +92,13 @@ function parse<S extends z.ZodTypeAny>(schema: S, body: unknown, res: Response):
 export function createSitesRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const manage = requireProjectRole('admin', 'ops_manager');
+    /* A site row is a University Health address, a phone number and a contact
+     * name. A courier needs it to find the counter; the people running the
+     * contract need it to plan. A client viewer does not: they are a pharmacy
+     * contact who sees their own deliveries through the portal, and this list
+     * is every location in the contract. Reading it was open to any member
+     * until the access matrix in ticket 4.2 asked the question out loud. */
+    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
 
     async function findById(projectId: number, id: number): Promise<SiteRow | null> {
         const rs = await client.execute({ sql: 'SELECT * FROM sites WHERE project_id = ? AND id = ?', args: [projectId, id] });
@@ -110,7 +117,7 @@ export function createSitesRouter({ client }: { client: Client }): Router {
         return site;
     }
 
-    router.get('/', wrap(async (req, res) => {
+    router.get('/', readers, wrap(async (req, res) => {
         const { status, type } = req.query as { status?: string; type?: string };
         const where: string[] = ['project_id = ?'];
         const args: InValue[] = [req.project!.id];
@@ -141,7 +148,7 @@ export function createSitesRouter({ client }: { client: Client }): Router {
         res.status(201).json(present(created));
     }));
 
-    router.get('/:id', wrap(async (req, res) => {
+    router.get('/:id', readers, wrap(async (req, res) => {
         const site = await loadOr404(req, res);
         if (!site) return;
         res.json(present(site));

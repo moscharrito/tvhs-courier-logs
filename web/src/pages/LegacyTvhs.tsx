@@ -18,8 +18,12 @@ import { Loading } from '../app/Loading';
 
 const LEGACY_BASE = '/legacy/';
 const LEGACY_STYLE_ID = 'izy-legacy-style';
-const FLATPICKR_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css';
-const FLATPICKR_JS = 'https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js';
+/* Served from our own origin, not a CDN. This page carries a signed-in
+ * session; a script from somebody else's server runs with it, and a CDN
+ * compromise would be our breach to report. The files are byte-identical to
+ * cdnjs flatpickr 4.6.13 and live in server/public/vendor (ticket 4.2). */
+const FLATPICKR_CSS = '/legacy/vendor/flatpickr/flatpickr.min.css';
+const FLATPICKR_JS = '/legacy/vendor/flatpickr/flatpickr.min.js';
 
 declare global {
     interface Window {

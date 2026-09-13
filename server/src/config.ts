@@ -19,6 +19,8 @@ export interface Config {
     port: number;
     timezone: string;
     sessionSecret: string;
+    /** Proxy hops to trust for req.ip and req.protocol. One on Render. */
+    trustProxy: number;
     db: {
         /** libsql:// (Turso) or file: URL */
         url: string;
@@ -79,6 +81,11 @@ const EnvSchema = z.object({
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     APP_TIMEZONE: z.string().trim().min(1).default('America/Chicago'),
     SESSION_SECRET: optionalString,
+    /* How many reverse proxies sit in front. Render puts exactly one there.
+     * Zero means trust nothing, which is right for a direct connection: with a
+     * non-zero value a client can set X-Forwarded-For and choose the address
+     * that lands in the audit trail and in the throttle's bucket. */
+    TRUST_PROXY: z.coerce.number().int().min(0).max(10).optional(),
     TURSO_DATABASE_URL: optionalString,
     TURSO_AUTH_TOKEN: optionalString,
     DB_FILE: z.string().trim().min(1).default('courier_logs.db'),
@@ -188,6 +195,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         port: e.PORT,
         timezone: e.APP_TIMEZONE,
         sessionSecret: e.SESSION_SECRET as string,
+        trustProxy: e.TRUST_PROXY ?? (isProduction ? 1 : 0),
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
@@ -218,6 +226,7 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         database: c.db.kind === 'turso' ? 'Turso (remote)' : c.db.url,
         files: c.files.enabled ? `S3 ${c.files.s3?.bucket ?? ''} (${c.files.s3?.region ?? ''})` : 'disabled',
         log: `${c.log.level} ${c.log.format}`,
+        trustProxy: c.trustProxy,
     };
 }
 
