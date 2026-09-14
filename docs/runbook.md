@@ -443,6 +443,20 @@ and `meta/_journal.json`.
 
 ---
 
+## Answering "do you have a control for that?"
+
+`docs/privacy-controls.md` is the inventory: each safeguard, the file that
+implements it, and the test that proves it, under the headings a privacy and
+security program uses. It also lists what is missing, which is the part worth
+reading first.
+
+The short version of what is missing, at the time of writing: no BAAs with
+Render, Turso or AWS (ticket 0.10), no breach notification procedure, no
+backup that has been restored, no second enrolled administrator, and no
+written program for any of it to be checked against.
+
+---
+
 ## Retention and purging
 
 A sweep runs at boot and once a day after that. It **counts** what is past its

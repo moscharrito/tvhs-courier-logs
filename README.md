@@ -35,6 +35,21 @@ that have actually happened, with what each one looks like from outside. It is
 written to be read by somebody who did not write the code, at three in the
 morning.
 
+**`docs/privacy-controls.md`** is the control inventory: every safeguard this
+application and its hosting actually implement, with the file that implements
+it and the test that proves it, arranged under the headings a privacy and
+security program uses. It exists because ticket 4.7 asked to check the program
+against the app and **there is no written program yet**, so the useful half is
+the inverse: write down what is true, and what is missing, so the program can
+be checked against reality in one pass when it is written.
+
+A document like that rots the first time somebody renames a module, so
+`server/test/privacy-controls.test.mjs` reads it: every file it cites must
+exist, and the numbers a program would quote back at us (session timeouts,
+lockout limits, code lifetimes, retention periods) are asserted against the
+constants they describe. A session timeout cannot be changed in one place and
+left true in the other.
+
 Two things in it are worth knowing before you need it.
 
 **The first deploy onto an empty database has an order that cannot be
