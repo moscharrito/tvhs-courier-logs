@@ -77,6 +77,93 @@ describe('sign-in scoping', () => {
         // Unscoped keeps the old behaviour for the legacy app.
         expect((await srv.agent().get('/api/drivers/list')).body).toHaveLength(2);
     });
+
+    /* Ticket 5.5. The roster used to require a route, which only TVHS fills
+       in, so every UH courier was invisible on the page they sign in from and
+       it told them nobody was set up. Membership decides it now. */
+    describe('a courier on a project that has no routes', () => {
+        let admin;
+        beforeAll(async () => {
+            admin = await srv.login('admin');
+            await admin.post('/api/users').send({
+                username: 'ana.courier', name: 'Ana Ruiz', password: 'ana-pass-9911', role: 'driver',
+            });
+            await admin.put('/api/users/ana.courier/memberships/uh').send({ role: 'courier', settings: {} });
+        });
+
+        it('is listed, with a null route saying how she signs in', async () => {
+            const res = await srv.agent().get('/api/drivers/list?project=uh');
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual([{ route: null, username: 'ana.courier', name: 'Ana Ruiz', hasPin: false }]);
+        });
+
+        it('reports no route PIN even once she has enrolled a phone', async () => {
+            /* users.pin is shared between the route PIN and the device PIN
+               from ticket 2.3. Without this, enrolling a phone would flip
+               hasPin here, which means nothing for a routeless courier and
+               would tell an anonymous visitor who has enrolled one. */
+            const phone = srv.agent();
+            await phone.post('/api/login').send({ username: 'ana.courier', password: 'ana-pass-9911' });
+            const enrol = await phone.post('/api/devices/enrol').send({ username: 'ana.courier', password: 'ana-pass-9911', pin: '4821', label: 'Her phone' });
+            expect(enrol.status, enrol.text).toBe(201);
+
+            const res = await srv.agent().get('/api/drivers/list?project=uh');
+            expect(res.body).toEqual([{ route: null, username: 'ana.courier', name: 'Ana Ruiz', hasPin: false }]);
+        });
+
+        it('is not handed a tvhs membership on the next boot', async () => {
+            /* The boot backfill made every driver row a tvhs courier, which
+               for a UH courier meant readable tvhs project data and a place
+               on the tvhs sign-in page. A legacy tvhs driver is one with a
+               route, and that is what the backfill means by "legacy". */
+            const her = srv.agent();
+            await her.post('/api/login').send({ username: 'ana.courier', password: 'ana-pass-9911' });
+            const mine = await her.get('/api/me/projects');
+            expect(mine.body.map((p) => p.code)).toEqual(['uh']);
+            expect((await her.get('/api/projects/tvhs')).status).toBe(403);
+            expect((await her.get('/api/projects/tvhs/tvhs/routes')).status).toBe(403);
+        });
+
+        it('does not leak into another project, or into the legacy roster', async () => {
+            expect((await srv.agent().get('/api/drivers/list?project=tvhs')).body).toHaveLength(2);
+            // The unscoped list is the old TVHS app's, and it is route-keyed.
+            const legacy = await srv.agent().get('/api/drivers/list');
+            expect(legacy.body.every((d) => d.route !== null)).toBe(true);
+            expect(legacy.body.map((d) => d.name)).not.toContain('Ana Ruiz');
+        });
+
+        it('can sign in with the password, which is all the picker needs', async () => {
+            const res = await srv.agent().post('/api/login')
+                .send({ username: 'ana.courier', password: 'ana-pass-9911' });
+            expect(res.status).toBe(200);
+            expect(res.body.username).toBe('ana.courier');
+        });
+
+        it('is not given a route PIN, because that one works from any device', async () => {
+            /* The device-bound PIN from ticket 5.4 is the four-digit sign-in a
+               courier ends up with. A route PIN is bound to nothing, and there
+               is no route to key one on here anyway. */
+            const res = await srv.agent().post('/api/login/pin/setup')
+                .send({ route: null, password: 'ana-pass-9911', pin: '4821' });
+            expect(res.status).toBe(400);
+            expect((await srv.agent().post('/api/login/pin').send({ route: null, pin: '4821' })).status).toBe(400);
+        });
+
+        it('never lists a platform admin, even one holding a courier membership', async () => {
+            /* An admin signs in through Staff sign in and holds a second
+               factor. Publishing their username on an anonymous page because
+               somebody gave them a membership is not a trade worth making. */
+            await admin.put('/api/users/admin/memberships/uh').send({ role: 'courier', settings: {} });
+            const res = await srv.agent().get('/api/drivers/list?project=uh');
+            expect(res.body.map((d) => d.username)).toEqual(['ana.courier']);
+        });
+
+        it('disappears from the roster when the account is disabled', async () => {
+            await admin.patch('/api/users/ana.courier').send({ status: 'disabled' });
+            expect((await srv.agent().get('/api/drivers/list?project=uh')).body).toEqual([]);
+            await admin.patch('/api/users/ana.courier').send({ status: 'active' });
+        });
+    });
 });
 
 describe('project resolution and access', () => {

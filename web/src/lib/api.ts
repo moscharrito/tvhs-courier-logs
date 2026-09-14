@@ -53,8 +53,12 @@ export interface ProjectMembership {
 }
 
 export interface DriverPick {
-    route: string;
+    /** TVHS's two vans. Null for every courier on a project without routes,
+     *  which is what decides how they sign in: see Login.tsx. */
+    route: string | null;
+    username: string;
     name: string;
+    /** Whether a route PIN is already set. Meaningless without a route. */
     hasPin: boolean;
 }
 

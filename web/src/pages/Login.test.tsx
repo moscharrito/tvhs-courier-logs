@@ -6,8 +6,16 @@ import { App } from '../app/App';
 import { mockFetch } from '../test/setup';
 
 const drivers = [
-    { route: 'northbound', name: 'Bereket Nigusse', hasPin: true },
-    { route: 'southbound', name: 'Mohamed Djemai', hasPin: false },
+    { route: 'northbound', username: 'bereket', name: 'Bereket Nigusse', hasPin: true },
+    { route: 'southbound', username: 'mohamed', name: 'Mohamed Djemai', hasPin: false },
+];
+
+/* A project without routes, which is every project except TVHS. Ticket 5.5:
+   these couriers used to be filtered out of the roster entirely because the
+   query wanted a route, so the page told them nobody was set up. */
+const couriers = [
+    { route: null, username: 'ana.courier', name: 'Ana Ruiz', hasPin: false },
+    { route: null, username: 'luis.courier', name: 'Luis Obando', hasPin: false },
 ];
 
 function renderApp(initialPath = '/') {
@@ -57,7 +65,65 @@ describe('Login', () => {
         });
         renderApp();
         fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
-        expect(await screen.findByText(/No drivers are set up for this project yet/)).toBeInTheDocument();
+        expect(await screen.findByText(/Nobody is set up as a courier on this project yet/)).toBeInTheDocument();
+    });
+
+    it('lists a courier who has no route, which is every UH courier', async () => {
+        /* Ticket 5.5. The roster is decided by membership now, not by a route
+           column that only TVHS ever fills in. Before this, Ana held a courier
+           membership on UH and the page still said nobody was set up. */
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/drivers/list?project=uh': couriers,
+        });
+        renderApp();
+        fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
+
+        expect(await screen.findByText('Ana Ruiz')).toBeInTheDocument();
+        expect(screen.getByText('Luis Obando')).toBeInTheDocument();
+        // And it says what tapping will ask for, before they tap.
+        expect(screen.getAllByText('Sign in with your password')).toHaveLength(2);
+    });
+
+    it('asks a routeless courier for a password, never for a new PIN', async () => {
+        /* The security half of the same ticket. A route PIN works from any
+           device. The device-bound PIN from 5.4 does not, and it is the one a
+           courier ends up with, so this step must not mint the other kind. */
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/drivers/list?project=uh': couriers,
+        });
+        renderApp();
+        fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
+        fireEvent.click(await screen.findByText('Ana Ruiz'));
+
+        expect(await screen.findByLabelText('Your password')).toBeInTheDocument();
+        expect(screen.queryByLabelText(/PIN/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Create a 4 to 6 digit PIN/)).not.toBeInTheDocument();
+        // And they are told this is the once-per-phone step.
+        expect(screen.getByText(/set this phone up and a PIN signs you in next time/)).toBeInTheDocument();
+    });
+
+    it('signs that courier in without them typing a username', async () => {
+        /* The whole point. A courier at a pharmacy counter taps their own name
+           and types one secret, rather than remembering a username. */
+        const { calls, bodies } = mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/drivers/list?project=uh': couriers,
+            'POST /api/login': { id: 4, username: 'ana.courier', name: 'Ana Ruiz', role: 'driver', route: null },
+        });
+        renderApp();
+        fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
+        fireEvent.click(await screen.findByText('Ana Ruiz'));
+        fireEvent.change(await screen.findByLabelText('Your password'), { target: { value: 'her-password' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+        await waitFor(() => expect(calls).toContain('POST /api/login'));
+        // The username came from the picker, not from a box she had to fill.
+        expect(bodies['POST /api/login']).toMatchObject({ username: 'ana.courier', password: 'her-password' });
     });
 
     it('goes back from the driver list to the project list', async () => {

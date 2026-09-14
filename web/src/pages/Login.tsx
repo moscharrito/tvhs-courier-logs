@@ -2,9 +2,21 @@
  *
  * Step 1 asks which project you are signing in to, because the courier list
  * is per project: TVHS has two drivers by route, UH will have twenty. Step 2
- * shows that project's couriers (PIN, or password plus a new PIN the first
- * time). Staff sign in with username and password from any step; their
- * projects come from their memberships after authentication.
+ * shows that project's couriers. What picking one does depends on whether
+ * that project uses routes:
+ *
+ *   with a route     PIN, or password plus a new PIN the first time. TVHS,
+ *                    unchanged.
+ *   without a route  password only, and then the run screen offers to set
+ *                    the phone up (ticket 5.4), after which this page opens
+ *                    on their own PIN lock screen instead.
+ *
+ * The routeless courier is deliberately not offered a route-style PIN. That
+ * PIN works from any device; the device-bound one from 5.4 does not, and
+ * adding a second four-digit any-device route to PHI would undo it.
+ *
+ * Staff sign in with username and password from any step; their projects
+ * come from their memberships after authentication.
  *
  * A staff member who holds a second factor gets one more step: the password
  * reply is a challenge rather than a session, and the code finishes it
@@ -22,11 +34,16 @@ import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api'
 import { useAuth } from '../app/auth';
 import { Loading } from '../app/Loading';
 
-type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'staff' | 'code' | 'device';
+type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'code' | 'device';
 interface LoginProject { code: string; name: string }
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-const routeLabel = (r: string) => (r === 'northbound' ? 'NorthBound' : r === 'southbound' ? 'SouthBound' : r);
+const routeLabel = (r: string | null) => (r === 'northbound' ? 'NorthBound' : r === 'southbound' ? 'SouthBound' : r ?? '');
+
+/** What picking this person will ask them for, said before they tap. */
+const pickHint = (d: DriverPick) => (d.route === null
+    ? 'Sign in with your password'
+    : `${routeLabel(d.route)} · ${d.hasPin ? 'Enter PIN' : 'Set up PIN'}`);
 
 export function Login() {
     const { refresh } = useAuth();
@@ -74,6 +91,10 @@ export function Login() {
         setPin('');
         setPassword('');
         setError(null);
+        /* No route means no route PIN and no way to key one, so this is a
+           password sign-in. It is also the only one they need: enrolling the
+           phone afterwards is what makes the next sign-in four digits. */
+        if (d.route === null) { setMode('password'); return; }
         setMode(d.hasPin ? 'pin' : 'setup');
     };
 
@@ -89,9 +110,14 @@ export function Login() {
         setBusy(true);
         setError(null);
         try {
-            if (mode === 'staff') {
+            if (mode === 'staff' || mode === 'password') {
+                /* Same endpoint either way. The only difference is where the
+                   username came from: typed, or the courier the picker
+                   already knows. A courier who holds a second factor is
+                   challenged here exactly like anybody else. */
+                const who = mode === 'password' ? driver?.username ?? '' : username;
                 const res = await api<{ mfaRequired?: boolean; challengeToken?: string }>(
-                    '/api/login', { method: 'POST', json: { username, password } },
+                    '/api/login', { method: 'POST', json: { username: who, password } },
                 );
                 if (res.mfaRequired && res.challengeToken) {
                     /* No session yet. The password is cleared here and not
@@ -183,12 +209,16 @@ export function Login() {
                         <button className="izy-link" type="button" onClick={backToProjects} style={{ alignSelf: 'flex-start' }}>Back</button>
                         <div className="izy-muted">{project.name} · who is driving?</div>
                         {drivers === null ? <Loading label="Loading drivers" /> : drivers.map((d) => (
-                            <button key={d.route} className="izy-driver" onClick={() => pick(d)} type="button">
+                            <button key={d.username} className="izy-driver" onClick={() => pick(d)} type="button">
                                 <span className="izy-avatar">{initials(d.name)}</span>
-                                <span><b>{d.name}</b><span>{routeLabel(d.route)} · {d.hasPin ? 'Enter PIN' : 'Set up PIN'}</span></span>
+                                <span><b>{d.name}</b><span>{pickHint(d)}</span></span>
                             </button>
                         ))}
-                        {drivers?.length === 0 && <div className="izy-muted">No drivers are set up for this project yet. Use staff sign in, or ask an admin to add you.</div>}
+                        {drivers?.length === 0 && (
+                            <div className="izy-muted">
+                                Nobody is set up as a courier on this project yet. Ask dispatch to add you, or use staff sign in.
+                            </div>
+                        )}
                         {staffLink}
                     </div>
                 )}
@@ -215,6 +245,26 @@ export function Login() {
                     </form>
                 )}
 
+                {mode === 'password' && driver && (
+                    <form onSubmit={(e) => { void submit(e); }}>
+                        <button className="izy-link" type="button" onClick={() => setMode('pick')} style={{ alignSelf: 'flex-start' }}>Back</button>
+                        <div className="izy-driver" style={{ cursor: 'default' }}>
+                            <span className="izy-avatar">{initials(driver.name)}</span>
+                            <span><b>{driver.name}</b><span>{driver.username}</span></span>
+                        </div>
+                        <label className="izy-field">Your password
+                            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
+                        </label>
+                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
+                        {/* Said here rather than discovered later: this is the
+                            once-per-phone step, and the next one is four
+                            digits. */}
+                        <div className="izy-muted" style={{ textAlign: 'center' }}>
+                            Once you are in, set this phone up and a PIN signs you in next time.
+                        </div>
+                    </form>
+                )}
+
                 {mode === 'code' && (
                     <form onSubmit={(e) => { void submit(e); }}>
                         <div className="izy-muted">Enter the six-digit code from your authenticator app.</div>
@@ -235,7 +285,7 @@ export function Login() {
                         <button
                             className="izy-link"
                             type="button"
-                            onClick={() => { setChallenge(null); setCode(''); setMode('staff'); setError(null); }}
+                            onClick={() => { setChallenge(null); setCode(''); setMode(driver ? 'password' : 'staff'); setError(null); }}
                         >
                             Start again
                         </button>

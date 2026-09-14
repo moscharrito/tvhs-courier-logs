@@ -87,13 +87,21 @@ describe('username and password login', () => {
 });
 
 describe('driver PIN quick login', () => {
-    it('public driver list exposes route, name and hasPin only', async () => {
+    it('public driver list exposes route, username, name and hasPin only', async () => {
+        /* The username joined this list in ticket 5.5, because a courier on a
+           project without routes is signed in by the picker rather than by a
+           box they type into. It is an identifier and not a credential, and
+           both sign-in paths are throttled per account and per address.
+           Nothing else may appear here: no email, no password hash, no id,
+           and no membership data. */
         const res = await srv.agent().get('/api/drivers/list');
         expect(res.status).toBe(200);
         expect(res.body).toEqual([
-            { route: 'northbound', name: 'Bereket Nigusse', hasPin: false },
-            { route: 'southbound', name: 'Mohamed Djemai', hasPin: false },
+            { route: 'northbound', username: 'north.driver', name: 'Bereket Nigusse', hasPin: false },
+            { route: 'southbound', username: 'south.driver', name: 'Mohamed Djemai', hasPin: false },
         ]);
+        const text = JSON.stringify(res.body);
+        expect(text).not.toMatch(/password|email|\$2[aby]\$|"id"|pin"\s*:\s*"/i);
     });
 
     it('PIN login fails before a PIN is set', async () => {

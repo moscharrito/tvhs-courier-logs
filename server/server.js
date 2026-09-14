@@ -88,12 +88,24 @@ async function bootstrapAdmin() {
         FROM users u, projects p
         WHERE u.role = 'admin'
     `);
+    /* A LEGACY driver row is one with a route. This used to say role='driver'
+       and nothing else, which meant every courier account created for any
+       other project was handed a tvhs courier membership on the next boot:
+       readable tvhs project data, and a place on the tvhs sign-in page. It
+       went unnoticed because the sign-in roster filtered on a route anyway,
+       so the wrongly granted membership never showed up anywhere somebody
+       would look. Ticket 5.5 removed that filter and made it visible.
+
+       Memberships the old query already created are left alone rather than
+       deleted here: a UH courier deliberately given a tvhs membership by an
+       admin looks exactly the same, and quietly revoking access at boot is
+       not a thing a boot routine should do. Existing databases want a look
+       at `SELECT * FROM memberships` instead. */
     await dbRun(`
         INSERT OR IGNORE INTO memberships (user_id, project_id, role, settings)
-        SELECT u.id, p.id, 'courier',
-               CASE WHEN u.route IS NOT NULL THEN json_object('route', u.route) ELSE '{}' END
+        SELECT u.id, p.id, 'courier', json_object('route', u.route)
         FROM users u, projects p
-        WHERE p.code = ? AND u.role = 'driver'
+        WHERE p.code = ? AND u.role = 'driver' AND u.route IS NOT NULL
     `, [TVHS_PROJECT_CODE]);
 }
 
@@ -395,8 +407,35 @@ app.post('/api/login/mfa', async (req, res) => {
     });
 });
 
-// Public: driver roster for the quick-login picker (no secrets; identifies
-// drivers by route so personal emails aren't exposed publicly).
+// Public: courier roster for the quick-login picker. No secrets, and no
+// email addresses.
+//
+// Routes are a TVHS idea: two vans, northbound and southbound, one driver
+// each, and the route is both the label and the identifier the PIN sign-in
+// is keyed on. UH has no routes and will have twenty couriers, so requiring
+// one meant every UH courier was invisible here and the page told them,
+// wrongly, that nobody was set up. Their only way in was to type a username
+// and a password at a pharmacy counter, which is the thing ticket 5.4
+// exists to avoid.
+//
+// So membership decides who is a courier on a project, which is the
+// project-level truth, and the route decides only how they sign in:
+//
+//   route set     PIN sign-in, as before. Grandfathered for TVHS.
+//   no route      password, then the phone is enrolled (ticket 5.4) and
+//                 every sign-in after that is a PIN bound to that phone.
+//
+// A routeless courier is deliberately NOT given a route-style PIN. That PIN
+// works from any device, and minting a new four-digit any-device route to
+// PHI is the opposite of what 5.4 did. The password is the first sign-in on
+// an unknown phone and the enrolment is what replaces it.
+//
+// The username is published here alongside the name, which the picker needs
+// to sign somebody in. It is an identifier and not a credential, the names
+// were already public on this page, and both password and PIN sign-in are
+// throttled per account and per address (ticket 4.2). Platform admins are
+// excluded even if somebody gives one a courier membership: they sign in
+// through Staff sign in and they hold a second factor.
 app.get('/api/drivers/list', async (req, res) => {
     // Scoped to one project when ?project= is given, so the sign-in page only
     // ever lists the couriers of the project being signed in to. Without it,
@@ -404,14 +443,21 @@ app.get('/api/drivers/list', async (req, res) => {
     const code = req.query.project;
     const drivers = code
         ? await dbAll(`
-            SELECT u.name, u.route, u.pin FROM users u
+            SELECT u.username, u.name, u.route, u.pin FROM users u
             JOIN memberships m ON m.user_id = u.id
             JOIN projects p ON p.id = m.project_id
-            WHERE u.role = 'driver' AND u.status = 'active' AND u.route IS NOT NULL
+            WHERE u.status = 'active' AND u.role <> 'admin'
               AND m.role = 'courier' AND p.code = ?
             ORDER BY u.name`, [String(code).toLowerCase()])
-        : await dbAll("SELECT name, route, pin FROM users WHERE role = 'driver' AND status = 'active' AND route IS NOT NULL ORDER BY name");
-    res.json(drivers.map(d => ({ route: d.route, name: d.name, hasPin: !!d.pin })));
+        : await dbAll("SELECT username, name, route, pin FROM users WHERE role = 'driver' AND status = 'active' AND route IS NOT NULL ORDER BY name");
+    // hasPin means "a route PIN is already set", which is the only thing the
+    // picker uses it for. users.pin is shared with device enrolment (ticket
+    // 2.3), so a routeless courier who has set a phone up has one without it
+    // meaning anything here; reporting that to an anonymous visitor would
+    // also tell them which couriers have enrolled a phone.
+    res.json(drivers.map(d => ({
+        route: d.route, username: d.username, name: d.name, hasPin: d.route !== null && !!d.pin,
+    })));
 });
 
 // Public: the projects a person can sign in to, names only. The sign-in page

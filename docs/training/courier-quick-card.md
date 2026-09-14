@@ -9,8 +9,8 @@ the card to the screen without translating.
 
 ## Signing in
 
-**First time on this phone:** tap **Staff sign in**, then your username and
-password.
+**First time on this phone:** tap **UH Pharmacy Courier**, then your own name,
+then your password. No username to remember, and no PIN yet.
 
 Then set the phone up once, so you never type that again. The run screen
 offers it: **Set this phone up once and a PIN signs you in instead of your
@@ -25,8 +25,9 @@ digits and you are in.
 > does not have it, which is why four digits is enough. If you lose the phone,
 > tell dispatch and they will cut it off.
 
-> **Not the driver picker.** The list of names with PINs on the very first
-> screen is the old TVHS system, and not yours.
+> **If your name is not on the list**, dispatch has not added you to the
+> project yet. Ask them. **Staff sign in** at the bottom still works with a
+> username and password if you need in before that is sorted.
 
 Shared phone, or somebody else's? **Not <your name>? Sign in another way**
 under the PIN box.
