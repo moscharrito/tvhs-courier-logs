@@ -18,7 +18,10 @@
 # for data to survive restarts/deploys.
 #
 # Ticket 0.10 moves this service to the paid organization plan (BAA) and adds
-# a staging service.
+# a staging service. Until then this deploys nothing that holds real patient
+# data: the free plan has no BAA, and a free instance sleeps.
+#
+# The deploy, rollback and restore procedures are in docs/runbook.md.
 
 services:
   - type: web
@@ -33,10 +36,33 @@ services:
       # --- Non-secret config ---
       - key: NODE_VERSION
         value: "20"
+
+      # Set explicitly rather than relied on. Half of this application's
+      # security posture hangs off it: Secure cookies, HSTS, whether staff are
+      # made to hold a second factor, and how many proxy hops are trusted.
+      # The server now refuses to start against a Turso database without it
+      # (ticket 4.5), so a deploy that lost this value fails the health check
+      # instead of quietly serving PHI with every control relaxed.
+      - key: NODE_ENV
+        value: production
+
       - key: APP_TIMEZONE
         value: America/Chicago
       - key: SESSION_SECRET
         generateValue: true            # Render generates a strong random value
+
+      # Render terminates TLS and proxies to this service: exactly one hop.
+      # Without it every audit row records Render's address instead of the
+      # courier's, and the per-address auth throttle counts the whole internet
+      # as one caller. Never `true`, which would trust a header from anyone.
+      - key: TRUST_PROXY
+        value: "1"
+
+      # Two-factor authentication for admin, ops manager and dispatcher
+      # (ticket 4.3). On by default in production; set here so that turning it
+      # off is a visible change to this file and not a forgotten variable.
+      - key: MFA_ENFORCED
+        value: "true"
 
       # --- Turso database (create at turso.tech; paste when prompted) ---
       - key: TURSO_DATABASE_URL
@@ -45,7 +71,27 @@ services:
         sync: false
 
       # --- Bootstrap admin (only used when the database has no admin yet) ---
+      # With MFA_ENFORCED on, this account signs in and must enrol a second
+      # factor before it can create anybody. That is the intended first-deploy
+      # sequence; see docs/runbook.md.
       - key: ADMIN_USER
         sync: false
       - key: ADMIN_PASS
         sync: false
+
+      # --- Proof-of-delivery file storage (ticket 1.8, needs ticket 0.10) ---
+      # Doorstep photographs are PHI in a bucket, so this stays off until
+      # there is a bucket covered by a signed AWS BAA. With it off, the stop
+      # screen refuses a doorstep delivery rather than losing the photograph.
+      - key: FILES_ENABLED
+        value: "false"
+      # - key: S3_BUCKET
+      #   sync: false
+      # - key: S3_REGION
+      #   sync: false
+      # - key: S3_ACCESS_KEY_ID
+      #   sync: false
+      # - key: S3_SECRET_ACCESS_KEY
+      #   sync: false
+      # - key: S3_KMS_KEY_ID
+      #   sync: false

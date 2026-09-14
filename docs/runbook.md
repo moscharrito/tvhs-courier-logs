@@ -1,0 +1,458 @@
+# Runbook
+
+Ticket 4.5. What to do when something needs doing, written to be read at
+three in the morning by somebody who did not write the code.
+
+Every procedure here is a real command against real endpoints. Where something
+cannot be done yet, it says so and says what it is waiting on, rather than
+describing a procedure that would fail halfway.
+
+---
+
+## Before anything else
+
+```bash
+curl -s https://<service>.onrender.com/health
+```
+
+```json
+{"status":"ok","db":"ok","migrations":20,"uptimeSeconds":1174,"version":"1.0.0"}
+```
+
+| Field | What it tells you |
+|---|---|
+| `status` | `degraded` means the database query failed. The platform health check fails with it, so Render will not route to a broken instance. |
+| `db` | `error` means Turso is unreachable or the token is wrong. Nothing else on this page will work. |
+| `migrations` | Should match the number of files in `server/drizzle`. Fewer means a deploy is part-way or a rollback left the code behind the schema. |
+| `version` | From `server/package.json`. Confirms which build is actually serving. |
+
+It is public and holds nothing sensitive, so it can be checked from anywhere,
+including from a phone.
+
+**Logs.** Render dashboard, service, Logs. Every line is JSON with a
+`requestId`; an error a user reports can be found by that id if they can read
+it off the screen. `LOG_LEVEL=debug` in the environment turns up the volume
+without a redeploy (it is read at boot, so it needs a restart).
+
+---
+
+## Deploy
+
+**Today, deploying would ship the wrong code.** Render's `autoDeploy` follows
+the repository's default branch, which is `master`. All of the platform work
+lives on `0/1-characterization-tests`, which is 39 commits ahead and has never
+been pushed. Merging that branch is a decision, not a deploy step, and it has
+not been made. Until it is, the blueprint would deploy the old TVHS courier
+log app.
+
+Once the branch question is settled, the deploy itself is:
+
+1. `npm run ci` locally. It must be green: typecheck and 1,078 tests.
+2. `npm run audit`. Production dependencies, high and above. Must exit zero.
+3. Push to the default branch. Render builds `npm ci && npm run build` and
+   starts `npm start -w server`.
+4. Watch `/health` until `status` is `ok` and `migrations` matches the number
+   of files in `server/drizzle`.
+5. Sign in and load the dispatch board. The health check proves the process is
+   up and the database answers; it does not prove the shell was built.
+
+**Migrations run themselves, on boot, before the listener binds**
+(`server/src/index.ts`). A failed migration means the process refuses to
+start, which means the health check fails, which means Render keeps the
+previous instance serving. That is the intended behaviour: a half-migrated
+database serving traffic is worse than a deploy that did not happen.
+
+To watch a migration separately from a deploy, run it first against the same
+database:
+
+```bash
+NODE_ENV=production TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run db:migrate -w server
+```
+
+**The first deploy onto an empty database** has a sequence that cannot be
+reordered, because two-factor authentication is enforced (ticket 4.3):
+
+1. `ADMIN_USER` / `ADMIN_PASS` create the first administrator on boot. They
+   are ignored on every later boot.
+2. Sign in as that administrator. The only thing the account can reach is the
+   two-factor setup screen.
+3. Enrol: scan the QR, type the code, **write down the ten recovery codes**.
+4. Now create everybody else, and grant project memberships.
+
+Step 3 is not optional and cannot be skipped from the outside. An
+administrator who abandons it has an account that can do nothing.
+
+---
+
+## Rollback
+
+Render: service, Deploys, find the last good one, Rollback. It restarts on the
+previous image; no build runs.
+
+**Check the migrations first.** Migrations are forward-only: a rollback moves
+the code back and leaves the schema where it is. That is safe when the new
+migration only added things, which every migration in this repository so far
+does (new tables, new columns with defaults, new indexes). It is not safe if a
+migration ever drops or renames a column the older code reads.
+
+So, before rolling back across a migration:
+
+```bash
+# What the schema has now
+curl -s https://<service>.onrender.com/health     # note "migrations"
+# What the old build expects
+git show <old-commit>:server/drizzle/meta/_journal.json | grep -c '"tag"'
+```
+
+If the numbers differ, look at the SQL files in between. If they only add,
+roll back and carry on. If any of them removes or renames, **do not roll
+back**: fix forward instead, because the older code will be reading columns
+that are no longer there and the failure will be a 500 per request rather than
+anything as clean as a refusal to start.
+
+**A rollback does not undo data.** Orders created, deliveries recorded and
+invoices issued by the newer build are still there. If the problem was bad
+data rather than bad code, rolling back does nothing for it: see Restore.
+
+---
+
+## Rotate a secret
+
+All of these live in the Render service's Environment tab. Changing one
+restarts the service.
+
+### SESSION_SECRET
+
+**Everybody is signed out**, immediately and everywhere. Couriers mid-round
+will be asked to sign in again, and anything in a phone's offline queue stays
+queued until they do (it is bound to the courier who created it, ticket 2.7,
+so it is not lost).
+
+Do it when a secret may have been exposed, and prefer doing it outside a wave.
+Render can generate the replacement; it must be at least 32 characters, which
+the config enforces in production.
+
+### TURSO_AUTH_TOKEN
+
+1. Mint a new token in Turso for the same database.
+2. Paste it into Render. The service restarts.
+3. Watch `/health` until `db` is `ok`.
+4. Revoke the old token in Turso, **after** step 3 and not before.
+
+Doing step 4 first takes the application down until the restart completes.
+
+### ADMIN_USER / ADMIN_PASS
+
+These matter only on an empty database. Changing them on a live system does
+nothing at all: it does not change the administrator's password. To change a
+real password, use the users API (`POST /api/users/:username/password`) or ask
+that person to change their own.
+
+### S3 keys
+
+Not applicable yet: `FILES_ENABLED` is `false` and there is no bucket. When
+there is (ticket 0.10), rotation is the same shape as the Turso token: add the
+new key, restart, confirm, then deactivate the old one.
+
+---
+
+## Revoke a device, or a person
+
+Three different things, and the difference matters.
+
+### A courier lost their phone
+
+The phone holds an enrolled device cookie, and a PIN signs in from it. Revoke
+the enrolment, which takes its live sessions with it:
+
+```
+GET    /api/users/<username>/devices      (admin, to find the id)
+DELETE /api/devices/<id>                  (admin, or the owner)
+```
+
+The row is kept and marked revoked, so the history stays readable. If anything
+was queued offline on that phone it is gone with it, which is the correct
+trade: a phone in somebody else's hands must not be able to send.
+
+### A staff member lost their phone (two-factor)
+
+They sign in with a recovery code, in the same box as the six-digit code.
+
+If they have no recovery codes left:
+
+```
+POST /api/users/<username>/mfa/reset      (admin)
+```
+
+This clears their enrolment **and revokes every live session they have**,
+because the lost phone may be holding one. They sign in with their password
+and are put straight back on the setup screen.
+
+**If the last administrator loses both their phone and their recovery codes,
+the application has no way back in.** Nobody can reset the last
+administrator, by design. The way back is a direct database change:
+
+```sql
+DELETE FROM mfa_recovery_codes WHERE user_id = (SELECT id FROM users WHERE username = '<admin>');
+DELETE FROM mfa_enrolments     WHERE user_id = (SELECT id FROM users WHERE username = '<admin>');
+```
+
+Run it from the Turso shell, then sign in and enrol again immediately. **Write
+it in the audit trail by hand afterwards** (a note to the security program),
+because a change made outside the application does not appear in it: the audit
+table is append-only to the app, not to somebody with the database token.
+Prevention is cheaper: a second administrator account, enrolled, with its
+recovery codes somewhere separate.
+
+### Somebody has left
+
+```
+PATCH /api/users/<username>   { "status": "disabled" }
+```
+
+A disabled account loses every session on its next request, not on the next
+sweep: the session middleware checks the account's status on every resolve.
+The account is kept rather than deleted, so the custody events and signatures
+that carry their name still make sense a year later.
+
+Revoke their sessions too if you want them out this second rather than on
+their next request:
+
+```
+DELETE /api/users/<username>/sessions     (admin)
+```
+
+### Reading back what somebody did
+
+```
+GET /api/audit?username=<username>&limit=200
+GET /api/audit?action=auth.login_failed&from=2026-09-01T00:00:00Z
+GET /api/audit?action=mfa&limit=100          (prefix match: mfa.enrolled, mfa.reset, ...)
+```
+
+Platform administrators only, and reading it is itself audited. `detail` never
+contains PHI: ids, counts and field names only.
+
+---
+
+## Restore
+
+**This cannot be rehearsed yet.** Turso's point-in-time restore is a paid
+feature, and the service is on the free plan pending ticket 0.10. The drill is
+ticket 4.4 and it is blocked on the same thing. What follows is the intended
+procedure, and it is untested.
+
+1. **Stop writing.** In Render, scale the service to zero, or suspend it. A
+   restore while couriers are still recording deliveries produces a database
+   that disagrees with the phones in their pockets.
+2. Restore in Turso to a timestamp **before** the damage, into a **new
+   database**. Never over the top of the live one: the broken state is
+   evidence, and the restore might be to the wrong moment.
+3. Point a local process at the restored copy and look at it before trusting
+   it:
+   ```bash
+   ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=<restored> TURSO_AUTH_TOKEN=... \
+     npm run db:migrate -w server
+   ```
+   That applies any migrations the restored snapshot is missing and prints
+   what it did. Then check the obvious counts: orders for the affected days,
+   custody events, invoices.
+4. Repoint `TURSO_DATABASE_URL` at the restored database and restart.
+5. **Work out what was lost.** Anything recorded between the restore point and
+   the stop is gone from the database but may still exist on a courier's
+   phone: the offline queue holds unsent events and will replay them when they
+   next sign in. Events that were already sent and acknowledged will not
+   replay, and those are the ones to reconstruct from the audit trail and the
+   paper the pharmacy holds.
+6. Tell University Health. A delivery record that vanished is a records
+   problem under the contract, whatever caused it.
+
+**What is not in the database.** Doorstep photographs will live in S3 when
+ticket 0.10 exists, and are not covered by a Turso restore. S3 versioning is
+part of ticket 4.4.
+
+---
+
+## On-call
+
+**To be filled in before go-live. This is the section a runbook is useless
+without, and it cannot be written from the code.**
+
+| Role | Who | Reach them on |
+|---|---|---|
+| Platform on-call | | |
+| Operations lead | | |
+| University Health contact | Karthik Munnam (procurement) | see the contract file |
+| Turso support | | plan-dependent; free plan has no support channel |
+| Render support | | plan-dependent |
+
+Decide and write down:
+
+- Who is called when the dispatch board is down during a wave, and after how
+  many minutes.
+- Who decides to fall back to telephone dispatch, and what the couriers are
+  told to do.
+- Who tells University Health, and at what threshold. The contract's own
+  standard is the delivery window, so an outage that does not miss one is a
+  different conversation from an outage that does.
+- Where the paper fallback lives. Scope 1.2.8 wants a signature per delivery;
+  a system outage does not suspend that.
+
+---
+
+## Known failure modes
+
+Written from what has actually gone wrong in development and in the load test,
+not from imagination. Each one says what it looks like from outside.
+
+### The application refuses to start
+
+**Looks like:** Render shows the deploy failing, the health check never
+passes, the previous instance keeps serving.
+
+This is usually the configuration guard doing its job. The logs name every
+problem at once, in plain English. The most likely ones:
+
+- `TURSO_DATABASE_URL is set but NODE_ENV is "development"`. The deploy lost
+  `NODE_ENV=production`. Without it: cookies are not Secure, HSTS is not sent,
+  staff are not made to hold a second factor, and the proxy hop is not
+  trusted. It refuses on purpose (ticket 4.5).
+- `SESSION_SECRET must be at least 32 characters in production`.
+- `TURSO_DATABASE_URL is required in production`. A local file would be lost
+  on the next redeploy.
+- A migration failed. The log names the file. Fix forward.
+
+### Everything is slow at the start of a wave
+
+**Looks like:** the first minute of the morning is sluggish, then fine.
+
+Known and measured (ticket 4.1). Every slow request in the load test is in the
+first five seconds, when every courier opens the app at once against a server
+that has answered nothing yet. The worst is the pickup manifest,
+`GET /runs/:id/pickup`. It is ticket 4.8 and it is not fixed. If it is worse
+in production than the report suggests, that is the staging measurement nobody
+has done yet, not a new fault.
+
+### Board reads are queueing behind courier writes
+
+**Looks like:** the board takes seconds to refresh while couriers are
+delivering; everything recovers when the wave ends.
+
+On a local file database this was write-ahead logging being off, and it is now
+on (`src/db/client.ts`). On Turso this pragma does nothing, because Turso is a
+server with its own concurrency. If it happens in production the cause is
+somewhere else, and the place to look is the Turso dashboard's query latency
+rather than this application.
+
+### A courier says "it says that order is not mine"
+
+**Working as intended, almost always.** A dispatcher moved the order to
+another courier while this one was halfway down their list. The load test
+produces exactly this and the courier app sets such refusals aside for a
+person rather than retrying them (ticket 2.7). Look at the board: the order
+will be on somebody else's lane.
+
+### A courier's deliveries are not appearing
+
+**Looks like:** the courier says they delivered; the board says they did not.
+
+Their phone is queueing. The app shows a sync indicator. Anything queued sends
+when signal returns, in the order it was recorded, and a delivery cannot
+arrive before its own arrival because the queue is strictly ordered. Nothing
+needs doing unless it persists after the phone is demonstrably back online,
+which would be a bug worth capturing before clearing anything.
+
+**Do not tell them to sign out.** Signing out empties the queue, by design:
+it holds patient names and addresses on a phone that may be personal. Anything
+unsent would be lost.
+
+### Somebody is locked out
+
+**Looks like:** 429, "Too many attempts. Wait N minutes."
+
+The auth throttle (ticket 4.2). Ten password attempts per account and fifty
+per address in fifteen minutes; five PIN attempts per account. It clears
+itself when the window passes; there is no unlock button, and a restart clears
+it too, because the counters are in this process's memory.
+
+**That last point is also a limitation to know about:** with more than one
+Render instance, an attacker gets each limit once per instance. Moving the
+counters into the database is the fix and it is deliberately deferred, because
+a write per failed attempt against a network database is a lever handed to the
+attacker. Revisit it when there is a second instance.
+
+Check whether it is one person fumbling or something worse:
+
+```
+GET /api/audit?action=auth.throttled&limit=50
+```
+
+Many different usernames from one address is a spray, not a forgotten
+password.
+
+### A staff account cannot reach anything, and says "Set up two-factor authentication"
+
+Working as intended (ticket 4.3). They have not enrolled. They can reach the
+setup screen and nothing else. If they cannot enrol because they have no
+phone, that is a real problem with no good answer inside the application: an
+administrator can create them a fresh account, but the policy applies to that
+one too.
+
+### An import is refused
+
+**Looks like:** the pharmacy's list will not upload.
+
+The import refuses rather than guessing, and says which row and which column.
+The usual causes are a changed column heading and a new pharmacy that has no
+mapping yet. Neither is an incident; both are a person looking at the preview
+screen, which shows what would be created before anything is.
+
+### Deliveries cannot be invoiced
+
+**Looks like:** the invoice draft lists exceptions and the total looks low.
+
+Out-of-area deliveries with no mileage recorded cannot be priced, because
+there is no distance to price them on. That needs ticket 1.4 (geocoding and a
+distance matrix), and it is not a defect in the invoice. In the simulated
+month it was 323 deliveries out of 7,772. Issuing an invoice past an exception
+is deliberate and explicit: `excludeUnpriceable: true`.
+
+### A doorstep delivery is refused
+
+Working as intended until ticket 0.10. Doorstep delivery needs a photograph,
+the photograph needs a bucket covered by a BAA, and there is no bucket. The
+stop screen refuses clearly and names the ticket, rather than recording a
+delivery with no evidence behind it.
+
+### `npm run db:generate` stops working
+
+**Looks like:** "Please install latest version of drizzle-orm".
+
+drizzle-kit resolving drizzle-orm from the wrong place in the workspace. It
+happened once, silently, when drizzle-orm was upgraded in ticket 4.2, and was
+only noticed one ticket later. `drizzle-orm` is now a root devDependency so it
+stays hoisted where drizzle-kit can find it. If it recurs, check where npm
+actually put it:
+
+```bash
+ls node_modules/drizzle-orm server/node_modules/drizzle-orm
+```
+
+Migrations can always be written by hand: the runner only reads the SQL files
+and `meta/_journal.json`.
+
+---
+
+## Routine checks
+
+| How often | What | Command |
+|---|---|---|
+| Every deploy | Tests and types | `npm run ci` |
+| Every deploy | Production dependency advisories | `npm run audit` |
+| Monthly | Invoice arithmetic against the rate card | `npm run reconcile -w server` |
+| Before go-live, then quarterly | Load and concurrency | `npm run loadtest -w server` |
+| Quarterly | Who can reach what | `npx vitest run test/access-matrix.test.mjs --root server` |
+
+The reconciliation and the load test both write dated reports into `docs/`,
+which is the point: they are things somebody signs, not things that scroll
+past in a terminal.

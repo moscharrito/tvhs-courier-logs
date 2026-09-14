@@ -77,14 +77,25 @@ describe('loadConfig validation', () => {
     });
 
     it('requires TURSO_AUTH_TOKEN and a proper scheme when a Turso URL is set', () => {
-        expect(problemsOf({ ...base, TURSO_DATABASE_URL: 'libsql://x.turso.io' })).toEqual([
+        // Deliberately pointing a local process at Turso, so the guard below is off.
+        const turso = { ...base, ALLOW_TURSO_OUTSIDE_PRODUCTION: 'true' };
+        expect(problemsOf({ ...turso, TURSO_DATABASE_URL: 'libsql://x.turso.io' })).toEqual([
             'TURSO_AUTH_TOKEN is required when TURSO_DATABASE_URL is set',
         ]);
-        expect(problemsOf({ ...base, TURSO_DATABASE_URL: 'x.turso.io', TURSO_AUTH_TOKEN: 't' })).toEqual([
+        expect(problemsOf({ ...turso, TURSO_DATABASE_URL: 'x.turso.io', TURSO_AUTH_TOKEN: 't' })).toEqual([
             'TURSO_DATABASE_URL must start with libsql://, https://, or wss://',
         ]);
-        const c = loadConfig({ ...base, TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' });
+        const c = loadConfig({ ...turso, TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' });
         expect(c.db).toEqual({ kind: 'turso', url: 'libsql://x.turso.io', authToken: 't' });
+    });
+
+    it('refuses a real database with NODE_ENV unset, which is a deploy that forgot', () => {
+        /* The failure this stops is silent: Secure cookies off, no HSTS, no
+           MFA enforcement, no proxy trust, and a health check that says ok. */
+        const p = problemsOf({ ...base, TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' });
+        expect(p).toHaveLength(1);
+        expect(p[0]).toMatch(/NODE_ENV is "development"/);
+        expect(p[0]).toMatch(/ALLOW_TURSO_OUTSIDE_PRODUCTION/);
     });
 
     it('rejects an invalid timezone, port and NODE_ENV', () => {
@@ -145,7 +156,8 @@ describe('trusting a proxy', () => {
 describe('describeConfig', () => {
     it('never includes secrets', () => {
         const c = loadConfig({
-            ...base, TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 'tok-secret',
+            ...base, ALLOW_TURSO_OUTSIDE_PRODUCTION: 'true',
+            TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 'tok-secret',
             FILES_ENABLED: 'true', S3_BUCKET: 'izy-pod', S3_REGION: 'us-east-2', S3_ACCESS_KEY_ID: 'AKIA-secret', S3_SECRET_ACCESS_KEY: 'shh-secret',
             ADMIN_PASS: 'admin-secret',
         });

@@ -95,6 +95,9 @@ const EnvSchema = z.object({
      * development and the test suite are not gated while production is.
      * Set explicitly to rehearse the production behaviour locally. */
     MFA_ENFORCED: z.enum(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']).optional(),
+    /* Escape hatch for the check below: pointing a local process at a Turso
+     * database on purpose, to inspect it or to rehearse a restore. */
+    ALLOW_TURSO_OUTSIDE_PRODUCTION: boolish,
     TURSO_DATABASE_URL: optionalString,
     TURSO_AUTH_TOKEN: optionalString,
     DB_FILE: z.string().trim().min(1).default('courier_logs.db'),
@@ -171,6 +174,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
         if (!e.TURSO_AUTH_TOKEN) {
             problems.push('TURSO_AUTH_TOKEN is required when TURSO_DATABASE_URL is set');
+        }
+        /* A Turso database is a real deployment, and half of this
+         * application's security posture hangs off NODE_ENV: Secure cookies,
+         * HSTS, the proxy hop count, and whether staff are made to hold a
+         * second factor. A deploy that forgot to set it would serve PHI with
+         * every one of those quietly relaxed and nothing to show for it in the
+         * logs. Refusing to start is the only honest answer (ticket 4.5). */
+        if (!isProduction && !e.ALLOW_TURSO_OUTSIDE_PRODUCTION) {
+            problems.push(
+                `TURSO_DATABASE_URL is set but NODE_ENV is "${e.NODE_ENV}". A real database with NODE_ENV unset means `
+                + 'insecure cookies, no HSTS, no MFA enforcement and no proxy trust. '
+                + 'Set NODE_ENV=production, or ALLOW_TURSO_OUTSIDE_PRODUCTION=true if this is deliberate.',
+            );
         }
     } else {
         if (isProduction) {

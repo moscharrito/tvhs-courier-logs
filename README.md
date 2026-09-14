@@ -7,7 +7,7 @@ Operations platform for Izy Global Services courier contracts. One login, one us
 ```
 server/        Express API. server/server.js is the legacy TVHS app, booted by server/src/index.ts
 web/           Frontend shell: Vite + React (login, project switcher, users, devices, audit, legacy TVHS mount)
-docs/          Plans and backlog
+docs/          Plans, backlog, runbook, and the dated reports somebody signs
 NorthBound/    Historical TVHS driver log spreadsheets (reference for the export format)
 SouthBound/    Historical TVHS driver invoice spreadsheets (reference for the export format)
 render.yaml    Render blueprint
@@ -18,6 +18,7 @@ render.yaml    Render blueprint
 ```bash
 npm ci                 # install every workspace from the root lockfile
 npm run ci             # typecheck + tests, what GitHub Actions runs
+npm run audit          # production dependency advisories, high and above
 npm run typecheck
 npm test
 npm run build          # compile server/src to server/dist
@@ -25,6 +26,31 @@ npm start              # run the compiled server
 npm run dev            # run server/src/index.ts with tsx and file watching
 npm run dev -w web     # Vite dev server on :5173, proxying /api and /legacy to :3000
 ```
+
+## Running it in production
+
+**`docs/runbook.md`** is the operational document: deploy, rollback, rotating a
+secret, revoking a lost phone, restoring from a backup, and the failure modes
+that have actually happened, with what each one looks like from outside. It is
+written to be read by somebody who did not write the code, at three in the
+morning.
+
+Two things in it are worth knowing before you need it.
+
+**The first deploy onto an empty database has an order that cannot be
+changed.** Two-factor authentication is enforced in production, so the
+bootstrap administrator signs in, can reach nothing but the setup screen,
+enrols, writes down the recovery codes, and only then creates anybody else.
+
+**The server refuses to start against a real database without
+`NODE_ENV=production`.** Half of the security posture hangs off that variable:
+Secure cookies, HSTS, whether staff are made to hold a second factor, and how
+many proxy hops are trusted. A deploy that lost it would serve PHI with every
+one of those quietly relaxed and a health check still saying `ok`, so the
+configuration check treats a Turso URL outside production as a fatal
+misconfiguration rather than a preference. `ALLOW_TURSO_OUTSIDE_PRODUCTION=true`
+is the deliberate exception, for inspecting or restoring a database from a
+laptop.
 
 ## Local configuration
 
