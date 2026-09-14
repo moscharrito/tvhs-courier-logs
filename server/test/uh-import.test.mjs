@@ -533,3 +533,74 @@ describe('access control', () => {
         expect(orderProjects.map((r) => r.code)).toEqual(['uh']);
     });
 });
+/* ------------------------------------------------- one transaction (4.9) */
+
+describe('the import is all or nothing', () => {
+    it('writes an order, its package and its custody event together, or none of them', async () => {
+        await reset();
+        const res = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        expect(res.status, res.text).toBe(201);
+        const imported = res.body.summary.imported;
+        expect(imported).toBeGreaterThan(0);
+
+        /* Every order has exactly one package and exactly one created event.
+           When these were three awaited statements per row, a failure part way
+           through left orders behind with neither. */
+        const orphans = await sql(`
+            SELECT COUNT(*) AS n FROM orders o
+            WHERE o.daily_list_id = ?
+              AND (NOT EXISTS (SELECT 1 FROM packages p WHERE p.order_id = o.id)
+                OR NOT EXISTS (SELECT 1 FROM custody_events c WHERE c.order_id = o.id AND c.type = 'created'))`,
+            [res.body.id]);
+        expect(Number(orphans.rows[0].n)).toBe(0);
+    });
+
+    it('leaves nothing behind when the write fails half way', async () => {
+        await reset();
+
+        /* Break the second batch and only the second batch: a trigger that
+           refuses one custody event insert. The orders batch has already
+           committed by then, which is the one partial state two batches can
+           produce, and the handler has to undo it. */
+        await sql(`CREATE TRIGGER test_block_custody BEFORE INSERT ON custody_events
+                   WHEN NEW.type = 'created'
+                   BEGIN SELECT RAISE(ABORT, 'blocked for the test'); END`);
+        let res;
+        try {
+            res = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        } finally {
+            await sql('DROP TRIGGER test_block_custody');
+        }
+
+        expect(res.status).toBe(500);
+        // No orders, no packages, and no list row claiming a count.
+        expect(Number((await sql('SELECT COUNT(*) AS n FROM orders')).rows[0].n)).toBe(0);
+        expect(Number((await sql('SELECT COUNT(*) AS n FROM packages')).rows[0].n)).toBe(0);
+        expect(Number((await sql('SELECT COUNT(*) AS n FROM daily_lists')).rows[0].n)).toBe(0);
+    });
+
+    it('can be retried after a failure, and imports exactly what a clean run would', async () => {
+        // What this list looks like when nothing has gone wrong.
+        await reset();
+        const clean = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        expect(clean.status, clean.text).toBe(201);
+
+        await reset();
+        await sql(`CREATE TRIGGER test_block_custody2 BEFORE INSERT ON custody_events
+                   WHEN NEW.type = 'created'
+                   BEGIN SELECT RAISE(ABORT, 'blocked for the test'); END`);
+        try {
+            await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        } finally {
+            await sql('DROP TRIGGER test_block_custody2');
+        }
+
+        /* The retry must import the whole list again, not report its own rows
+           as duplicates of the attempt that failed. */
+        const res = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        expect(res.status, res.text).toBe(201);
+        expect(res.body.summary.imported).toBe(clean.body.summary.imported);
+        expect(res.body.summary.duplicates).toBe(clean.body.summary.duplicates);
+    });
+});
+

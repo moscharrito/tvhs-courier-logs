@@ -39,7 +39,7 @@ export interface RecordOptions {
 }
 
 /** Insert one custody row. Never updates: the table forbids it. */
-export async function insertCustodyEvent(client: Client, e: {
+export interface CustodyEventInput {
     projectId: number;
     orderId: number;
     type: CustodyEventType;
@@ -54,8 +54,19 @@ export async function insertCustodyEvent(client: Client, e: {
     lng?: number | undefined;
     packageId?: number | undefined;
     fileId?: number | undefined;
-}): Promise<void> {
-    await client.execute({
+}
+
+/**
+ * The statement, without running it.
+ *
+ * Split out so the bulk import can put three hundred of these in one batch
+ * (ticket 4.9) while every other caller still writes one at a time. The
+ * column list exists once: two copies of it would disagree the first time a
+ * column is added, and the one that disagreed would be the bulk path, where
+ * nobody is watching.
+ */
+export function custodyEventStatement(e: CustodyEventInput): { sql: string; args: InValue[] } {
+    return {
         sql: `INSERT INTO custody_events
                 (project_id, order_id, package_id, type, at, actor, from_status, to_status,
                  signed_name, signature_key, reason, lat, lng, file_id)
@@ -65,7 +76,11 @@ export async function insertCustodyEvent(client: Client, e: {
             e.fromStatus, e.toStatus, e.signedName ?? '', e.signatureKey ?? '', e.reason ?? '',
             e.lat ?? null, e.lng ?? null, e.fileId ?? null,
         ],
-    });
+    };
+}
+
+export async function insertCustodyEvent(client: Client, e: CustodyEventInput): Promise<void> {
+    await client.execute(custodyEventStatement(e));
 }
 
 /**

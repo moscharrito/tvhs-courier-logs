@@ -27,7 +27,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
-import { insertCustodyEvent } from './order-events';
+import { custodyEventStatement } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
 import { resolveZone } from './pricing';
 import { zipZoneMap } from './zones';
@@ -371,11 +371,26 @@ export function createImportsRouter({ client }: { client: Client }): Router {
 
         // Row numbers line up: parsed and rows are built from the same array.
         const byRow = new Map(a.parsed.map((p) => [p.row.row, p.row]));
-        let created = 0;
-        for (const r of toImport) {
+
+        /* Written in two batches rather than three statements per row.
+         *
+         * A three hundred row list is nine hundred statements, and awaiting
+         * them one at a time took over a second while everything else in the
+         * process queued behind it: during a wave, a courier's pickup manifest
+         * waited the whole import (ticket 4.8 measured it, ticket 4.9 is this).
+         * The same nine hundred statements as two batches take about eighty
+         * milliseconds, because the cost was per round trip and per commit
+         * rather than per row.
+         *
+         * It also makes the import atomic, which it was not. Before, a failure
+         * halfway left the orders it had already written and a daily_lists row
+         * claiming a count that was no longer true. A batch is one
+         * transaction: it happens or it does not.
+         */
+        const orderStatements = toImport.map((r) => {
             const source = byRow.get(r.row)!;
             const due = dueTimesFor({ serviceType: source.serviceType, receivedAt: a.receivedAt }, a.settings);
-            const orderRs = await client.execute({
+            return {
                 sql: `INSERT INTO orders
                         (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                          recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
@@ -387,10 +402,21 @@ export function createImportsRouter({ client }: { client: Client }): Router {
                     source.city, source.state, source.zip, source.deliveryNotes,
                     r.zone as InValue, source.signatureRequired ? 1 : 0, receivedIso,
                     due.dueAt ? due.dueAt.toISOString() : null, source.dedupeKey,
-                ],
-            });
-            const orderId = Number(orderRs.rows[0]!['id']);
-            await client.execute({
+                ] as InValue[],
+            };
+        });
+
+        /* RETURNING inside a batch gives the ids back in the order they were
+         * sent, which is what lets the packages and custody events be built
+         * without a second read. */
+        const orderResults = await client.batch(orderStatements, 'write');
+        const orderIds = orderResults.map((rs) => Number(rs.rows[0]!['id']));
+
+        const childStatements: Array<{ sql: string; args: InValue[] }> = [];
+        toImport.forEach((r, i) => {
+            const source = byRow.get(r.row)!;
+            const orderId = orderIds[i]!;
+            childStatements.push({
                 sql: `INSERT INTO packages (project_id, order_id, description, quantity, signature_required)
                       VALUES (?, ?, ?, ?, ?)`,
                 args: [project.id, orderId, source.description, source.quantity, source.signatureRequired ? 1 : 0],
@@ -400,13 +426,31 @@ export function createImportsRouter({ client }: { client: Client }): Router {
              * that arrive on a list would begin at assignment, with nothing
              * saying where they came from, which is not a chain Scope 1.2.7
              * would accept. */
-            await insertCustodyEvent(client, {
+            childStatements.push(custodyEventStatement({
                 projectId: project.id, orderId, type: 'created', at: a.receivedAt,
                 actor: username, fromStatus: '', toStatus: 'ready',
                 reason: `Imported from the ${a.site.code} list for ${a.serviceDate}, row ${r.row}.`,
-            });
-            created += 1;
+            }));
+        });
+
+        try {
+            await client.batch(childStatements, 'write');
+        } catch (err) {
+            /* The orders are committed and their packages and custody events
+             * are not, which is the one partial state two batches can produce.
+             * An order with no chain of custody is worse than no order, so
+             * take them back out and fail. Deleting them is possible because
+             * nothing has been written about them yet: the append-only
+             * trigger is on custody_events, and there are none. */
+            await client.batch(
+                orderIds.map((id) => ({ sql: 'DELETE FROM orders WHERE id = ?', args: [id] as InValue[] })),
+                'write',
+            ).catch(() => { /* the throw below is what matters */ });
+            await client.execute({ sql: 'DELETE FROM daily_lists WHERE id = ?', args: [listId] });
+            throw err;
         }
+
+        const created = orderIds.length;
 
         if (options.saveMapping) {
             await client.execute({

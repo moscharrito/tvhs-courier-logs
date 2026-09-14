@@ -506,11 +506,26 @@ the choice unambiguous, and \`test/query-plans.test.mjs\` asserts the plan so it
 cannot drift back. At today's volumes that is worth a few percent. At a year of
 stops in one table it is the difference between a lookup and a scan.
 
-**The lever that remains is the import**, which writes its rows one statement
-at a time. Batching it would cut both its own duration and the wait it imposes
-on everything running beside it. That is a change to the path that creates
-every order, with deduplication and a custody event each, so it is its own
-ticket rather than a postscript to this one.
+**Ticket 4.9 then took the lever that remained**, which was the import's own
+write pattern: an order, a package and a custody event per row, each awaited
+separately, nine hundred statements for three hundred rows. They are now two
+batches. Measured on a quiet server with the same burst of twelve manifest
+reads beside it:
+
+| | one statement at a time | two batches |
+|---|---|---|
+| The import | 364 ms | 192 ms |
+| Slowest manifest read beside it | 364 ms | 195 ms |
+| The same burst with no import | 55 ms | 56 ms |
+
+Roughly halved, and the relationship is unchanged: the read still takes as long
+as the import, because it is still one process on one connection. The rest of
+the import's time is now the parse and the duplicate check rather than the
+writes.
+
+Batching also made the import atomic, which it was not. Before, a failure part
+way through left the orders it had already written behind a list row claiming a
+count that was no longer true.
 
 There is also an operational answer that costs nothing: pharmacies send lists
 in the morning and the wave is at noon. This test overlaps them deliberately,
