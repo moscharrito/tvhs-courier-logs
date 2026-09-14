@@ -219,12 +219,14 @@ describe('Login', () => {
                     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
                     listRelease: { earliest: '12:00', latest: '14:00' },
                     pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true },
+                    dispatch: { phone: '', name: 'Dispatch' },
                 },
                 defaults: {
                     sla: { clockStart: 'receipt', scheduledMinutes: 120, statMinutes: 120, statFromPickupMinutes: 60, adhocMinutes: 240 },
                     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
                     listRelease: { earliest: '12:00', latest: '14:00' },
                     pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true },
+                    dispatch: { phone: '', name: 'Dispatch' },
                 },
                 overridden: [],
                 canManage: false,
@@ -238,7 +240,7 @@ describe('Login', () => {
         renderApp('/projects/uh/uh');
         await waitFor(() => expect(screen.getByRole('heading', { name: 'UH Pharmacy Courier' })).toBeInTheDocument());
         expect(screen.getByText(/your role: Dispatcher/)).toBeInTheDocument();
-        expect(screen.getByText('Coming next')).toBeInTheDocument();
+        expect(screen.getByText('Not here yet')).toBeInTheDocument();
         // A dispatcher sees the sites but gets no management controls. The
         // name also appears in the import screen's pharmacy picker, so scope
         // the assertion to the sites table.

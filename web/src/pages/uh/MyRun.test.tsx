@@ -105,6 +105,8 @@ describe('MyRun', () => {
         await screen.findByRole('heading', { name: 'Today' });
         expect(screen.queryByRole('link', { name: /^Call/ })).not.toBeInTheDocument();
         expect(screen.getByText(/No dispatch number is set/)).toBeInTheDocument();
+        // And says who can fix it, since the courier reading it cannot.
+        expect(screen.getByText(/An administrator adds one/)).toBeInTheDocument();
     });
 
     it('counts progress and moves the next stop along', async () => {

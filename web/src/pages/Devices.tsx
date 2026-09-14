@@ -21,7 +21,7 @@ import { api, ApiError, fmtWhen, type SessionSummary, type EnrolledDevice, type 
 import { useAuth } from '../app/auth';
 
 export function Devices() {
-    const { user } = useAuth();
+    const { user, signOut } = useAuth();
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
     const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
@@ -49,10 +49,22 @@ export function Devices() {
     }, []);
     useEffect(() => { void load(); }, [load]);
 
-    const revoke = async (url: string, label_: string) => {
+    const revoke = async (url: string, label_: string, endsThisSession = false) => {
         setMsg(null);
         try {
             await api(url, { method: 'DELETE' });
+            /* Signing THIS phone out removes its PIN and ends the session it
+               is being done from, by design. Reloading the page afterwards
+               asks the server who is signed in, gets a 401, and leaves a
+               "Not authenticated" banner over a screen still showing the
+               phone that was just removed. Somebody reading that cannot tell
+               whether it worked. Ending the session properly puts them on the
+               sign-in page, which is the honest answer and the one they were
+               heading for anyway. */
+            if (endsThisSession) {
+                await signOut();
+                return;
+            }
             setMsg({ kind: 'ok', text: label_ });
             await load();
         } catch (err) {
@@ -185,7 +197,7 @@ export function Devices() {
                                             <button
                                                 className="izy-btn danger small"
                                                 type="button"
-                                                onClick={() => { void revoke(`/api/devices/${d.id}`, 'Phone signed out'); }}
+                                                onClick={() => { void revoke(`/api/devices/${d.id}`, 'Phone signed out', d.current); }}
                                             >
                                                 Sign out
                                             </button>

@@ -139,7 +139,9 @@ export async function measureOutOfArea(
     const unmeasured: MileageResult['unmeasured'] = [];
     if (noOrigin > 0) {
         unmeasured.push({
-            reason: 'The pickup pharmacy has no coordinates. Run the site lookup first: POST /uh/geocode/sites.',
+            // Ticket 1.4's site lookup, which nothing in the UI triggers yet.
+            reason: 'The pickup pharmacy has no coordinates, so there is nothing to measure the distance from. '
+                + 'An administrator has to run the address lookup for the pharmacies.',
             orders: noOrigin,
         });
     }

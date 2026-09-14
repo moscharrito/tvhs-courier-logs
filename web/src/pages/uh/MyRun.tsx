@@ -138,7 +138,13 @@ export function MyRun() {
                     Call {data.dispatch.name}
                 </a>
             ) : (
-                <p className="izy-muted">No dispatch number is set for this project yet.</p>
+                /* Says who fixes it. A courier reading this is the one person
+                   who cannot, and until the settings screen carried the field
+                   nobody could. */
+                <p className="izy-muted">
+                    No dispatch number is set yet, so there is no call button. An administrator adds one in the
+                    project&rsquo;s operating settings.
+                </p>
             )}
 
             {/* The shadow week only works if the people at the door can file

@@ -70,8 +70,21 @@ export function ProjectHome() {
                 </div>
             </div>
             <div className="izy-card">
-                <h2>Coming next</h2>
-                <p>Address lookup, then the dispatch board and the courier app. Admins can enrol staff and couriers from <Link to="/users">Users</Link>.</p>
+                {/* This card said "coming next: address lookup, then the
+                    dispatch board and the courier app" for two phases after
+                    the board and the courier app shipped. A page that
+                    describes the product as unfinished when it is not is a
+                    page nobody trusts the rest of. What is genuinely not here
+                    is one thing, so it says that one thing. */}
+                <h2>Not here yet</h2>
+                <p>
+                    Address lookup. Until it is switched on, pharmacies have no coordinates, a run cannot be
+                    ordered by distance, and out-of-area miles cannot be measured. Everything else on this
+                    page is in use.
+                </p>
+                <p className="izy-muted">
+                    Admins enrol staff and couriers from <Link to="/users">Users</Link>.
+                </p>
             </div>
         </>
     );

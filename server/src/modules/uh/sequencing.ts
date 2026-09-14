@@ -148,16 +148,30 @@ export function sequenceStops(
         return { strategy, orderIds: byDue(stops), estimatedMiles: null, notes };
     }
 
+    /* These two messages are read by a dispatcher in a banner on the board,
+     * so they say what happened and what to do instead. The endpoint to call
+     * and the ticket it belongs to are engineering's business and live in the
+     * code beside the `code` a developer would grep for: telling somebody
+     * mid-shift to POST to a URL is not an instruction they can follow.
+     *
+     * noOrigin is ticket 1.4, the pharmacy address lookup, which nothing in
+     * the UI triggers yet. missingCoordinates is ticket 1.9 and will not be
+     * fixed by anybody: a patient address may not be sent to the geocoder
+     * this system has, so ordering by distance is permanently unavailable for
+     * the stops themselves. */
     if (origin === null) {
         throw new SequencingError(
-            'The pickup site has no coordinates yet, so a route cannot be measured from it. Run the site lookup: POST /uh/geocode/sites (ticket 1.4).',
+            'The pharmacy addresses have not been looked up yet, so there is no point to measure a route from. '
+            + 'Order by deadline instead, or ask an administrator to run the address lookup.',
             'sequencing.noOrigin',
         );
     }
     const missing = stops.filter((s) => !hasPoint(s)).map((s) => s.orderId);
     if (missing.length > 0) {
         throw new SequencingError(
-            `${missing.length} of ${stops.length} stops have no coordinates yet, so the run cannot be sequenced by distance. A delivery address may not be sent to the configured geocoder, which is ticket 1.9.`,
+            `${missing.length} of ${stops.length} stops have no coordinates, so the run cannot be ordered by distance. `
+            + 'Delivery addresses are deliberately never sent to an address lookup service, so this will not change. '
+            + 'Order by deadline instead.',
             'sequencing.missingCoordinates',
             { orderIds: missing },
         );

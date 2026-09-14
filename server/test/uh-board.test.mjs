@@ -144,10 +144,14 @@ describe('sequenceStops', () => {
             expect(e).toBeInstanceOf(SequencingError);
             expect(e.code).toBe('sequencing.missingCoordinates');
             expect(e.detail.orderIds).toEqual([2]);
-            /* Stops have no coordinates because a delivery address may not be
-               sent to the geocoder this system has: ticket 1.9, not 1.4,
-               which covers the sites and is done. */
-            expect(e.message).toMatch(/ticket 1\.9/);
+            /* Stops have no coordinates because a delivery address may not
+               be sent to the geocoder this system has, so this one is never
+               getting fixed and the message has to say so rather than imply
+               somebody is working on it. Ticket numbers belong beside the
+               code, not in a banner a dispatcher reads mid-shift. */
+            expect(e.message).toMatch(/never sent to an address lookup/);
+            expect(e.message).toMatch(/Order by deadline instead/);
+            expect(e.message).not.toMatch(/ticket|POST |GET /i);
         }
     });
 
@@ -390,14 +394,19 @@ describe('moving an order between lanes', () => {
 /* ---------------------------------------------------------- auto-sequence */
 
 describe('auto-sequencing a run', () => {
-    it('refuses a distance route today, and says which ticket supplies it', async () => {
-        // Nothing has coordinates: ticket 1.4 has not run.
+    it('refuses a distance route today, in words a dispatcher can act on', async () => {
+        // Nothing has coordinates: the site lookup has not run.
         const [a, b] = [await makeOrder(), await makeOrder()];
         const run = await makeRun({ orderIds: [a.id, b.id] });
         const res = await admin.post(`${RUNS}/${run.id}/sequence/auto`).send({ strategy: 'nearest' });
         expect(res.status).toBe(409);
         expect(res.body.code).toBe('sequencing.noOrigin');
-        expect(res.body.error).toMatch(/ticket 1\.4/);
+        expect(res.body.error).toMatch(/addresses have not been looked up/);
+        expect(res.body.error).toMatch(/Order by deadline instead/);
+        /* This one lands in a banner on the board. Telling somebody mid-shift
+           to POST to a URL, or naming a ticket they cannot read, is not an
+           instruction they can follow; the code is what a developer greps. */
+        expect(res.body.error).not.toMatch(/ticket|POST |GET /i);
         // And points at the strategy that does work now.
         expect(res.body.alternative).toBe('due');
     });

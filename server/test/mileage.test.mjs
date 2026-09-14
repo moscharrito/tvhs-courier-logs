@@ -137,7 +137,9 @@ describe('what it refuses to measure', () => {
 
         const result = await measure();
         expect(result.measured).toEqual([]);
-        expect(result.unmeasured.some((u) => /geocode\/sites/.test(u.reason))).toBe(true);
+        expect(result.unmeasured.some((u) => /no coordinates/.test(u.reason))).toBe(true);
+        // Said to whoever reads the report, not to whoever wrote the server.
+        expect(result.unmeasured.every((u) => !/POST |ticket /i.test(u.reason))).toBe(true);
 
         await sql('UPDATE sites SET lat = ?, lng = ? WHERE id = ?', [PHARMACY.lat, PHARMACY.lng, siteId]);
     });

@@ -12,6 +12,7 @@ const defaults = {
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00' },
     pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true },
+    dispatch: { phone: '', name: 'Dispatch' },
 };
 
 const example = [
@@ -90,6 +91,41 @@ describe('ProjectSettings', () => {
         expect(screen.getByText('courier pickup')).toBeInTheDocument();
         expect(screen.getByText('changed')).toBeInTheDocument();
         expect(screen.getByText(/clock starts at pickup, which has not happened yet/)).toBeInTheDocument();
+    });
+
+    it('says plainly when no dispatch number is set, because couriers lose a button', async () => {
+        /* The setting existed from the start and nothing anywhere could set
+           it, so the courier run screen had been saying "No dispatch number
+           is set for this project yet" with no way to act on it. */
+        mockFetch({ 'GET /api/projects/uh/settings': payload() });
+        render(<ProjectSettings projectCode="uh" />);
+
+        const row = (await screen.findByText(/Dispatch number/)).closest('tr')!;
+        expect(within(row).getByText(/not set, so couriers have no call button/)).toBeInTheDocument();
+    });
+
+    it('sets the dispatch number, and sends it with the rest of the patch', async () => {
+        const withNumber = payload({
+            settings: { ...defaults, dispatch: { phone: '210-555-0100', name: 'Izy dispatch' } },
+            overridden: ['dispatch.phone', 'dispatch.name'],
+        });
+        const { calls, bodies } = mockFetch({
+            'GET /api/projects/uh/settings': payload(),
+            'PATCH /api/projects/uh/settings': withNumber,
+        });
+        render(<ProjectSettings projectCode="uh" />);
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+        fireEvent.change(screen.getByLabelText('Dispatch number'), { target: { value: '210-555-0100' } });
+        fireEvent.change(screen.getByLabelText(/What couriers call them/), { target: { value: 'Izy dispatch' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+        await waitFor(() => expect(calls).toContain('PATCH /api/projects/uh/settings'));
+        expect(bodies['PATCH /api/projects/uh/settings']).toMatchObject({
+            dispatch: { phone: '210-555-0100', name: 'Izy dispatch' },
+        });
+        const row = (await screen.findByText(/Dispatch number/)).closest('tr')!;
+        expect(within(row).getByText('210-555-0100')).toBeInTheDocument();
     });
 
     it('shows the validation details the API returns and stays in the form', async () => {

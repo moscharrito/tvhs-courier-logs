@@ -161,7 +161,13 @@ export async function buildDraft(
                 orderId: Number(order.id),
                 serviceDate: order.service_date,
                 reference,
-                reason: 'Out of area with no mileage recorded. The road distance needs a geocoder that may be sent a delivery address, which Google Maps may not be (ticket 1.9).',
+                /* Ticket 1.9. The distance is measured from the position the
+                   phone recorded on arrival, and no automatic road distance is
+                   coming: a patient address may not be sent to the geocoder
+                   this system has. So the resolution is a person's, and the
+                   message says which person and what they can do. */
+                reason: 'Out of area, and no distance was recorded at the door. '
+                    + 'Add the miles as an adjustment, or decide not to bill them.',
             });
             continue;
         }

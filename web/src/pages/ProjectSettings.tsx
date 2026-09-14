@@ -25,7 +25,15 @@ interface Settings {
     businessHours: { start: string; end: string; days: number[] };
     listRelease: { earliest: string; latest: string };
     pricing: { afterHoursStart: string; afterHoursEnd: string; dryRunReplacesBase: boolean };
+    /** The number the courier app's call button dials, and what it calls them.
+     *  Optional on the wire only so a client older than the server does not
+     *  crash on a payload that predates it. */
+    dispatch?: { phone: string; name: string };
 }
+/** Settings with every section present, which is what the screen works on
+ *  and what the server always sends. */
+type Resolved = Omit<Settings, 'dispatch'> & { dispatch: { phone: string; name: string } };
+
 interface Example {
     serviceType: string; receivedAt: string; dueAt: string | null;
     minutes: number; from: string; pending: boolean; basis: string;
@@ -44,7 +52,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function ProjectSettings({ projectCode }: { projectCode: string }) {
     const base = `/api/projects/${projectCode}/settings`;
     const [data, setData] = useState<Payload | null>(null);
-    const [draft, setDraft] = useState<(Settings & { timezone: string }) | null>(null);
+    const [draft, setDraft] = useState<(Resolved & { timezone: string }) | null>(null);
     const [editing, setEditing] = useState(false);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
@@ -56,7 +64,12 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
 
     if (data === null) return <div className="izy-card"><Loading label="Loading settings" /></div>;
 
-    const s = data.settings;
+    /* The server resolves every section against the contract defaults before
+       it answers, so all of these are always present. Guarded anyway: a
+       client left open across a deploy that adds a section would otherwise
+       take the whole project page down over a missing phone number, and this
+       card sits above the sites, the pricing and the dispatch links. */
+    const s: Resolved = { ...data.settings, dispatch: data.settings.dispatch ?? { phone: '', name: 'Dispatch' } };
     /* The page says "Times are {data.timezone}" a few lines down, and the
        worked examples underneath it have to be in the zone it just named. */
     const clock = clockFor(data.timezone);
@@ -85,6 +98,7 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                     businessHours: draft.businessHours,
                     listRelease: draft.listRelease,
                     pricing: draft.pricing,
+                    dispatch: draft.dispatch,
                 },
             });
             setData(next);
@@ -155,6 +169,20 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                                 <td>Dry run {mark('pricing.dryRunReplacesBase')}</td>
                                 <td>{s.pricing.dryRunReplacesBase ? 'replaces the delivery charge' : 'adds to the delivery charge'}</td>
                                 <td>replaces</td>
+                            </tr>
+                            <tr>
+                                {/* The courier app's call button. Empty until
+                                    somebody sets it, and a courier standing at
+                                    a door with a problem is exactly who needs
+                                    it, so it is on this table rather than
+                                    buried. */}
+                                <td>Dispatch number {mark('dispatch.phone')}</td>
+                                <td>
+                                    {s.dispatch.phone
+                                        ? <>{s.dispatch.phone} <span className="izy-muted">as {s.dispatch.name}</span></>
+                                        : <span className="izy-stat-warn">not set, so couriers have no call button</span>}
+                                </td>
+                                <td>not in the contract</td>
                             </tr>
                             <tr><td>Timezone {mark('timezone')}</td><td>{data.timezone}</td><td>America/Chicago</td></tr>
                         </tbody>
@@ -248,6 +276,32 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                             <input value={draft.timezone} onChange={(e) => setDraft({ ...draft, timezone: e.target.value })} placeholder="America/Chicago" />
                         </label>
                     </div>
+
+                    {/* Not a contract parameter, which is why it sat unset with
+                        no way to set it: the courier app has had a call button
+                        since the run screen existed and nothing anywhere could
+                        give it a number. */}
+                    <div className="izy-row">
+                        <label className="izy-field">Dispatch number
+                            <input
+                                type="tel"
+                                value={draft.dispatch.phone}
+                                onChange={(e) => setDraft({ ...draft, dispatch: { ...draft.dispatch, phone: e.target.value } })}
+                                placeholder="210-555-0100"
+                            />
+                        </label>
+                        <label className="izy-field">What couriers call them
+                            <input
+                                value={draft.dispatch.name}
+                                onChange={(e) => setDraft({ ...draft, dispatch: { ...draft.dispatch, name: e.target.value } })}
+                                placeholder="Dispatch"
+                            />
+                        </label>
+                    </div>
+                    <p className="izy-muted">
+                        The number a courier&rsquo;s <b>Call {draft.dispatch.name || 'Dispatch'}</b> button dials. Leave it empty and
+                        there is no button, which is a courier at a door with a problem and no way to raise it.
+                    </p>
 
                     <p className="izy-muted">
                         Changing the after-hours window or the dry-run rule changes what UH is billed.

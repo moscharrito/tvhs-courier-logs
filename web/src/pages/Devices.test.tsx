@@ -152,4 +152,34 @@ describe('a phone that is set up', () => {
         fireEvent.click(within(phones).getByRole('button', { name: 'Sign out' }));
         await waitFor(() => expect(calls).toContain('DELETE /api/devices/abc123def456'));
     });
+
+    it('lands on the sign-in page after signing THIS phone out, not on a dead one', async () => {
+        /* Signing this phone out removes its PIN and ends the session it is
+           being done from. Reloading afterwards used to leave a "Not
+           authenticated" banner over a screen still listing the phone that
+           had just been removed, which reads as a failure rather than as the
+           thing working exactly as described. */
+        const { calls } = renderDevices({
+            'GET /api/devices': [phone], // current: true, this phone
+            'GET /api/login/device': { enrolled: true, hasPin: true, name: 'Mohammed', label: "Mohammed's phone" },
+            'DELETE /api/devices/abc123def456': { ok: true },
+            'POST /api/logout': { ok: true },
+            'GET /api/login/projects': [{ code: 'uh', name: 'UH Pharmacy Courier' }],
+            'GET /api/drivers/list?project=uh': [],
+        });
+
+        const phones = (await screen.findByRole('heading', { name: 'Your phones' })).closest('.izy-card') as HTMLElement;
+        fireEvent.click(within(phones).getByRole('button', { name: 'Sign out' }));
+
+        await waitFor(() => expect(calls).toContain('DELETE /api/devices/abc123def456'));
+
+        /* The session is over, so the app is out of the shell and on the
+           sign-in page. Which sign-in page depends on what the server says
+           about this device afterwards, and that is not this test's business:
+           what matters is that the app left. */
+        expect(await screen.findByText(/Sign in another way/)).toBeInTheDocument();
+        expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Your phones' })).not.toBeInTheDocument();
+        expect(screen.queryByText(/Not authenticated/)).not.toBeInTheDocument();
+    });
 });

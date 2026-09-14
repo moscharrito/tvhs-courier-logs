@@ -221,10 +221,13 @@ describe('a delivery that cannot be priced', () => {
            settled, which is the worst of both. */
         const res = await admin.get(`${INVOICES}/${invoice.id}`);
         expect(res.body.exceptions).toHaveLength(1);
-        expect(res.body.exceptions[0].reason).toMatch(/mileage/i);
-        /* The road distance needs a geocoder that may be sent a delivery
-           address, which Google Maps may not be. Ticket 1.9. */
-        expect(res.body.exceptions[0].reason).toMatch(/1\.9/);
+        expect(res.body.exceptions[0].reason).toMatch(/no distance was recorded at the door/);
+        /* No automatic road distance is coming: a patient address may not be
+           sent to the geocoder this system has. So the message names the
+           person who resolves it and what they can do, rather than a ticket
+           they are not waiting on. */
+        expect(res.body.exceptions[0].reason).toMatch(/Add the miles as an adjustment/);
+        expect(res.body.exceptions[0].reason).not.toMatch(/ticket|1\.9/i);
         expect(res.body.lines).toHaveLength(1);
     });
 
