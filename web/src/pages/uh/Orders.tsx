@@ -12,8 +12,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import type { Site } from './Sites';
 
 export interface Sla {
@@ -66,12 +67,12 @@ export function slaLabel(sla: Sla): { text: string; tone: 'ok' | 'warn' | 'off' 
     }
 }
 
-const clock = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-
 export function Orders() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
+    /* The header already names the project's zone; these times are in it. */
+    const clock = clockFor(useProjectTimezone(code));
     const [params, setParams] = useSearchParams();
 
     const [orders, setOrders] = useState<OrderRow[] | null>(null);

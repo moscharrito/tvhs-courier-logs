@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import type { Site } from './Sites';
 
@@ -32,10 +33,14 @@ const EMPTY = {
  *  defaults in core/projects/settings; the server is the authority. */
 const WINDOW_MINUTES: Record<string, number> = { stat: 120, adhoc: 240 };
 
-const clock = (d: Date) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-
-export function NewOrder({ projectCode, canCreate }: { projectCode: string; canCreate: boolean }) {
+export function NewOrder({ projectCode, timezone, canCreate }: {
+    projectCode: string; timezone: string; canCreate: boolean;
+}) {
     const base = `/api/projects/${projectCode}/uh/orders`;
+    /* "Due by 4:01 PM" is a promise made to whoever is on the phone, so it is
+       said in the project's zone and not in the zone this machine happens to
+       be set to. */
+    const clock = clockFor(timezone);
     const [sites, setSites] = useState<Site[] | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
     const [form, setForm] = useState(EMPTY);
@@ -76,7 +81,7 @@ export function NewOrder({ projectCode, canCreate }: { projectCode: string; canC
                     externalRef: form.externalRef,
                 },
             });
-            const due = created.dueAt ? ` Due ${clock(new Date(created.dueAt))}.` : '';
+            const due = created.dueAt ? ` Due ${clock(created.dueAt)}.` : '';
             const zone = created.zone === null ? ' Out of area, so it needs a distance before it can be priced.' : ` Zone ${created.zone}.`;
             setMsg({ kind: 'ok', text: `Order ${created.id} created and ready for dispatch.${due}${zone}` });
             setForm(EMPTY);
@@ -151,7 +156,7 @@ export function NewOrder({ projectCode, canCreate }: { projectCode: string; canC
                     </div>
 
                     <p className="izy-muted">
-                        Saved now, this is due by {clock(dueIfSavedNow)}.
+                        Saved now, this is due by {clock(dueIfSavedNow.toISOString())}.
                         {form.serviceType === 'stat' && ' STAT also has to be delivered within one hour of pickup.'}
                     </p>
 

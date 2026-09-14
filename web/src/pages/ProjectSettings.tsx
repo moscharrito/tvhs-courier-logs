@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { clockFor } from '../lib/when';
 import { Loading } from '../app/Loading';
 
 interface Sla {
@@ -40,8 +41,6 @@ interface Payload {
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-
 export function ProjectSettings({ projectCode }: { projectCode: string }) {
     const base = `/api/projects/${projectCode}/settings`;
     const [data, setData] = useState<Payload | null>(null);
@@ -58,6 +57,9 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
     if (data === null) return <div className="izy-card"><Loading label="Loading settings" /></div>;
 
     const s = data.settings;
+    /* The page says "Times are {data.timezone}" a few lines down, and the
+       worked examples underneath it have to be in the zone it just named. */
+    const clock = clockFor(data.timezone);
     const isOverridden = (path: string) => data.overridden.includes(path);
     const mark = (path: string) => (isOverridden(path)
         ? <span className="izy-pill warn" title="Changed from the contract default">changed</span>

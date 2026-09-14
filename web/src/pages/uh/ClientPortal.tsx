@@ -14,8 +14,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 
 interface Pharmacy { id: number; code: string; name: string }
@@ -45,9 +46,6 @@ const STATUS_LABEL: Record<string, string> = {
     picked_up: 'On the way', delivered: 'Delivered', failed: 'Not delivered', cancelled: 'Cancelled',
 };
 
-const clock = (iso: string | null) =>
-    (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-
 /** Failures first: they are the only rows that need a person to do something. */
 const needsAttention = (o: ClientOrder) => o.status === 'failed' || o.sla.state === 'overdue';
 
@@ -55,6 +53,11 @@ export function ClientPortal() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
+    /* The zone that matters here is the contract's, because this is the page
+       University Health reads a proof of delivery against, and the PDF behind
+       the Proof button is printed in it. */
+    const timezone = useProjectTimezone(code);
+    const clock = clockFor(timezone);
     const [params, setParams] = useSearchParams();
     const base = `/api/projects/${code}/uh/client`;
 
@@ -116,6 +119,9 @@ export function ClientPortal() {
             <p className="izy-sub">
                 {summary.pharmacies.map((p) => p.name).join(', ') || 'No pharmacies assigned'}
                 {' · '}{summary.serviceDate}
+                {/* Named, because every time below it is in this zone and the
+                    reader may not be. */}
+                {' · '}{summary.timezone}
             </p>
 
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}
@@ -251,6 +257,9 @@ const EVENT_LABEL: Record<string, string> = {
 
 /** The proof of delivery, on screen. The printable document is ticket 3.2. */
 function ProofOfDelivery({ code, order, onClose }: { code: string; order: ClientOrder; onClose: () => void }) {
+    /* Same zone as the PDF this panel offers a link to. They used to
+       disagree by the reader's offset from Central. */
+    const clock = clockFor(useProjectTimezone(code));
     const [detail, setDetail] = useState<DetailResponse | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
 

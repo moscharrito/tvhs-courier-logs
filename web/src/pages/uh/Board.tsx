@@ -20,8 +20,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
 
@@ -72,8 +73,6 @@ interface BoardData {
     activity: Activity[];
 }
 
-const clock = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-
 /** Addendum 1's dry-run codes, in words a dispatcher would use out loud. */
 const REASON_LABEL: Record<string, string> = {
     recipient_not_located: 'could not find the recipient',
@@ -111,6 +110,9 @@ export function Board() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
+    /* The project's zone, not this laptop's. The header says America/Chicago
+       and the times beside it have to agree with it. */
+    const clock = clockFor(useProjectTimezone(code));
     const [params, setParams] = useSearchParams();
 
     const [data, setData] = useState<BoardData | null>(null);
@@ -450,6 +452,7 @@ function OrderCard({ order, sequence, current, action, draggable, onDragStart, o
     projectCode: string;
 }) {
     const label = slaLabel(order.sla);
+    const clock = clockFor(useProjectTimezone(projectCode));
     return (
         <div
             className={`izy-stop${current ? ' izy-stop-current' : ''}`}

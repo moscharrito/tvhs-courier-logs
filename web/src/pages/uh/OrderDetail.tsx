@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { stampFor } from '../../lib/when';
+import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
 
@@ -59,7 +61,6 @@ interface Detail extends OrderRow {
 }
 
 const usd = (n: number | undefined) => (n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-const stamp = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
 
 const EVENT_LABEL: Record<string, string> = {
     created: 'Created', released: 'Released', assigned: 'Assigned', unassigned: 'Unassigned',
@@ -69,6 +70,9 @@ const EVENT_LABEL: Record<string, string> = {
 
 export function OrderDetail() {
     const { code = '', orderId = '' } = useParams();
+    /* This page is the one somebody opens to answer "was it on time", so its
+       times have to be the ones the deadline was set in. */
+    const stamp = stampFor(useProjectTimezone(code));
     const [order, setOrder] = useState<Detail | null>(null);
     const [error, setError] = useState<string | null>(null);
 

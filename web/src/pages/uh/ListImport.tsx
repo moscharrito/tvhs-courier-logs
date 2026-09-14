@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { clockFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import type { Site } from './Sites';
 
@@ -66,22 +67,20 @@ const FIELD_LABELS: Record<string, string> = {
 const ALL_FIELDS = Object.keys(FIELD_LABELS);
 const REQUIRED = ['recipientName', 'addressLine', 'zip'];
 
-const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-
-/** Local date in YYYY-MM-DD, for the date input's default. */
-function todayLocal(): string {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-export function ListImport({ projectCode, canImport }: { projectCode: string; canImport: boolean }) {
+export function ListImport({ projectCode, timezone, canImport }: {
+    projectCode: string; timezone: string; canImport: boolean;
+}) {
     const base = `/api/projects/${projectCode}/uh/imports`;
+    /* The service date is a contract day and the received time starts the
+       two-hour clock, so both belong to the project's zone rather than to
+       whatever this machine is set to. */
+    const time = clockFor(timezone);
     const fileRef = useRef<HTMLInputElement>(null);
 
     const [sites, setSites] = useState<Site[] | null>(null);
     const [recent, setRecent] = useState<ImportSummary[] | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
-    const [serviceDate, setServiceDate] = useState(todayLocal());
+    const [serviceDate, setServiceDate] = useState(() => todayIn(timezone));
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<Preview | null>(null);
     const [mapping, setMapping] = useState<Record<string, string>>({});

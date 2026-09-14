@@ -75,7 +75,7 @@ const baseRoutes = {
 describe('ListImport', () => {
     it('will not import anything until the file has been reviewed', async () => {
         stub(baseRoutes);
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
 
         // No commit button exists before a preview.
@@ -86,7 +86,7 @@ describe('ListImport', () => {
 
     it('previews the file and shows the rows, the counts and the blocking reasons', async () => {
         const { calls } = stub(baseRoutes);
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
 
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
@@ -104,7 +104,7 @@ describe('ListImport', () => {
 
     it('marks a blocked row as blocked and gives it no checkbox', async () => {
         stub(baseRoutes);
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
         pickFile();
@@ -125,7 +125,7 @@ describe('ListImport', () => {
 
     it('commits and reports what was created', async () => {
         const { calls } = stub(baseRoutes);
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
         pickFile();
@@ -146,7 +146,7 @@ describe('ListImport', () => {
 
     it('shows the server validation details and keeps the preview on screen', async () => {
         stub(baseRoutes);
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
         pickFile();
@@ -162,7 +162,7 @@ describe('ListImport', () => {
 
     it('warns when a required column is not mapped and blocks the import', async () => {
         stub(baseRoutes, { status: 200, body: { ...preview, missingRequired: ['zip'], summary: { ...preview.summary, willImport: 0 }, rows: [] } });
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
         pickFile();
@@ -174,7 +174,7 @@ describe('ListImport', () => {
 
     it('says the file was already imported', async () => {
         stub(baseRoutes, { status: 200, body: { ...preview, alreadyImportedListId: 5 } });
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         await screen.findByText('Daily list import');
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
         pickFile();
@@ -184,7 +184,7 @@ describe('ListImport', () => {
 
     it('tells a member who cannot import why, and offers no controls', async () => {
         stub(baseRoutes);
-        render(<ListImport projectCode="uh" canImport={false} />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport={false} />);
         expect(await screen.findByText(/need the dispatcher, ops manager or admin role/)).toBeInTheDocument();
         expect(screen.queryByLabelText('Pharmacy')).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Review the file' })).not.toBeInTheDocument();
@@ -199,7 +199,7 @@ describe('ListImport', () => {
                 sourceFilename: 'manifest.xlsx', rowCount: 8, orderCount: 5, skippedCount: 3, importedBy: 'admin',
             }],
         });
-        render(<ListImport projectCode="uh" canImport />);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         const row3 = (await screen.findByText('manifest.xlsx')).closest('tr')!;
         expect(within(row3).getByText('2026-09-14')).toBeInTheDocument();
         expect(within(row3).getByText('5')).toBeInTheDocument();

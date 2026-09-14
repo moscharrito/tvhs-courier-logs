@@ -15,6 +15,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { clockFor } from '../../lib/when';
+import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
 import { sendOrQueue, pendingFor } from '../../lib/outbox';
@@ -50,8 +52,6 @@ const DRY_RUN_REASONS: Array<{ code: string; label: string }> = [
     { code: 'other', label: 'Something else' },
 ];
 
-const clock = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-
 async function currentPosition(): Promise<{ lat: number; lng: number } | null> {
     if (!navigator.geolocation) return null;
     return new Promise((resolve) => {
@@ -79,6 +79,9 @@ type Choice = null | 'deliver' | 'doorstep' | 'attempt';
 export function Stop() {
     const { code = '', orderId = '' } = useParams();
     const base = `/api/projects/${code}/uh/orders/${orderId}`;
+    /* The deadline this stop is measured against is a wall-clock time in the
+       project's zone, so it is shown in that zone and not the phone's. */
+    const clock = clockFor(useProjectTimezone(code));
 
     const [order, setOrder] = useState<OrderDetail | null>(null);
     const [filesAvailable, setFilesAvailable] = useState<boolean | null>(null);

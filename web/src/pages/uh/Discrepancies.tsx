@@ -17,8 +17,9 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, fmtWhen, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
-import { useAuth } from '../../app/auth';
+import { api, ApiError, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
+import { momentFor } from '../../lib/when';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 
 const KINDS: Array<{ value: string; label: string }> = [
@@ -45,6 +46,9 @@ export function Discrepancies() {
     const project = projects.find((p) => p.code === code);
     const canReview = project !== undefined && project.role !== 'courier' && project.role !== 'client_viewer';
     const base = `/api/projects/${code}/uh/discrepancies`;
+    /* When a courier filed it, in the zone the day it is about was worked
+       in. This is evidence for a go-live decision and it is read later. */
+    const when = momentFor(useProjectTimezone(code));
 
     const [list, setList] = useState<Discrepancy[] | null>(null);
     const [summary, setSummary] = useState<DiscrepancySummary | null>(null);
@@ -207,7 +211,7 @@ export function Discrepancies() {
                                 {' '}<b>{d.kind}</b>{' · '}{d.serviceDate}
                                 {d.reference && <>{' · '}{d.reference}</>}
                                 <div className="izy-muted">
-                                    {d.reportedBy}, {fmtWhen(d.reportedAt)}
+                                    {d.reportedBy}, {when(d.reportedAt)}
                                 </div>
                             </div>
                             <p><b>System:</b> {d.expected}</p>

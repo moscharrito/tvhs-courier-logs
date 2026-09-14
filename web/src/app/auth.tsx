@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError, type ProjectMembership, type SessionUser } from '../lib/api';
 import { clearOutbox, setOutboxUser, startOutbox } from '../lib/outbox';
+import { deviceZone } from '../lib/when';
 
 interface AuthState {
     loading: boolean;
@@ -72,4 +73,16 @@ export function useAuth(): AuthState {
     const ctx = useContext(AuthContext);
     if (!ctx) throw new Error('useAuth outside AuthProvider');
     return ctx;
+}
+
+/* The timezone every time on a project's screens is shown in. It is the
+   project's, not the device's: see lib/when.ts for why that distinction is
+   worth a module. Pages deep in a project (a stop, an order) have a code from
+   the URL but no project object, and this is how they get the zone without
+   threading it through every prop. Falls back to the device's zone before the
+   memberships have loaded, which is the same answer the app gave before and
+   is only ever on screen for one paint. */
+export function useProjectTimezone(code: string): string {
+    const { projects } = useAuth();
+    return projects.find((p) => p.code === code)?.timezone ?? deviceZone();
 }

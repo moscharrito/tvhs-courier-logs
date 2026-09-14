@@ -22,13 +22,13 @@ function fill() {
 describe('NewOrder', () => {
     it('offers nothing at all to someone who cannot create orders', () => {
         mockFetch(routes);
-        const { container } = render(<NewOrder projectCode="uh" canCreate={false} />);
+        const { container } = render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate={false} />);
         expect(container).toBeEmptyDOMElement();
     });
 
     it('says STAT is two hours, and that it is also one hour from pickup', async () => {
         mockFetch(routes);
-        render(<NewOrder projectCode="uh" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
 
         expect(screen.getByText(/Saved now, this is due by/)).toBeInTheDocument();
@@ -37,7 +37,7 @@ describe('NewOrder', () => {
 
     it('drops the pickup clock line for ad hoc, which has no such rule', async () => {
         mockFetch(routes);
-        render(<NewOrder projectCode="uh" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'adhoc' } });
         expect(screen.queryByText(/one hour of pickup/)).not.toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('NewOrder', () => {
                 dueAt: '2026-09-14T19:00:00.000Z', recipientName: 'Ines Vargas',
             },
         });
-        render(<NewOrder projectCode="uh" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fill();
         fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
@@ -71,7 +71,7 @@ describe('NewOrder', () => {
                 dueAt: '2026-09-14T19:00:00.000Z', recipientName: 'Theo Nakamura',
             },
         });
-        render(<NewOrder projectCode="uh" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fill();
         fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
@@ -83,7 +83,7 @@ describe('NewOrder', () => {
             ...routes,
             'POST /api/projects/uh/uh/orders': { status: 400, body: { error: 'Invalid request', details: ['zip: five digit ZIP, optionally ZIP+4'] } },
         });
-        render(<NewOrder projectCode="uh" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fill();
         fireEvent.click(screen.getByRole('button', { name: 'Create order' }));

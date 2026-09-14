@@ -134,6 +134,15 @@ export interface AuditEvent {
     detail: Record<string, unknown>;
 }
 
+/* Account and security screens: the audit log, the device list, a user's
+ * sessions. Deliberately the reader's own zone, not a project's, because
+ * these answer a personal question ("when did somebody sign in as me", "when
+ * did I last use that phone") and two of the three screens are not scoped to
+ * a project at all.
+ *
+ * Anything measured against the contract uses lib/when.ts instead, which
+ * formats in the project's zone. Mixing those two up is the bug that module
+ * exists to prevent, so the split is on purpose and worth leaving a note on. */
 export const fmtWhen = (iso: string | null | undefined): string => {
     if (!iso) return '';
     const d = new Date(iso);

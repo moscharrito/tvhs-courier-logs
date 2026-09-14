@@ -15,8 +15,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, type DeviceIdentity } from '../../lib/api';
+import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 
 interface Stop {
@@ -54,8 +55,6 @@ interface MineResponse {
 
 const DONE = ['delivered', 'failed', 'cancelled'];
 
-const clock = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-
 /** Address only. See the header comment: the name must not leave the app. */
 export function mapsUrl(stop: Pick<Stop, 'address' | 'city' | 'zip'>): string {
     const query = [stop.address, stop.city, stop.zip].filter(Boolean).join(', ');
@@ -66,6 +65,9 @@ export function MyRun() {
     const { code = '' } = useParams();
     const { user, projects } = useAuth();
     const project = projects.find((p) => p.code === code);
+    /* A deadline a courier is driving against. It is the project's clock,
+       whatever this phone thinks the time is. */
+    const clock = clockFor(useProjectTimezone(code));
     const [data, setData] = useState<MineResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     /** Whether this phone is set up for PIN sign-in (ticket 5.4). */

@@ -47,8 +47,8 @@ export function ProjectHome() {
         <>
             <h1>{project.name}</h1>
             <p className="izy-sub"><code>{project.code}</code> · {project.timezone} · your role: {ROLE_LABEL[project.role] ?? project.role}</p>
-            <NewOrder projectCode={project.code} canCreate={canImport} />
-            <ListImport projectCode={project.code} canImport={canImport} />
+            <NewOrder projectCode={project.code} timezone={project.timezone} canCreate={canImport} />
+            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} />
             <Sites projectCode={project.code} canManage={canManage} />
             <Pricing projectCode={project.code} />
             <ProjectSettings projectCode={project.code} />

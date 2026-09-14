@@ -103,6 +103,23 @@ describe('Board', () => {
         expect(within(lane).getByText('Priya Raman')).toBeInTheDocument();
     });
 
+    it('shows deadlines in the project timezone, not the one this machine is set to', async () => {
+        /* Found in the walkthrough of 2026-09-14. dueAt is 19:00Z, which is
+           2:00 PM in America/Chicago and something else everywhere else. The
+           header names the zone, so the times beside it have to be in it, and
+           they have to match the proof-of-delivery PDF the server prints.
+
+           This assertion is the whole regression: it fails on any machine not
+           set to Central if the board goes back to toLocaleTimeString with no
+           zone. It passes on every machine with the zone. */
+        renderBoard();
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        const pool = screen.getByRole('region', { name: 'Unassigned pool' });
+        expect(within(pool).getByText(/due 2:00 PM/)).toBeInTheDocument();
+        // And the board is still saying which zone that is.
+        expect(screen.getByText(/America\/Chicago/)).toBeInTheDocument();
+    });
+
     it('never shows the same order in the pool and on a lane', async () => {
         renderBoard();
         await screen.findByRole('heading', { name: 'Dispatch board' });
