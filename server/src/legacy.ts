@@ -26,6 +26,7 @@ import { Logger } from './core/http/logger';
 import { createRequestMiddleware } from './core/http/request';
 import { securityHeadersFor } from './core/http/security';
 import { createAuthThrottles, tooManyAttempts } from './core/auth/throttle';
+import { createMfaRouter, createMfaEnforcement, createChallengeStore, factsFor, sweepChallenges } from './core/auth/mfa';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
@@ -87,6 +88,17 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     const throttles = createAuthThrottles();
     bridge.set('authThrottles', throttles);
     bridge.set('tooManyAttempts', tooManyAttempts);
+    /* The second factor (ticket 4.3). server.js owns the password step, so it
+     * needs to know whether a person owes a code and how to open a challenge. */
+    const challenges = createChallengeStore(database.client);
+    bridge.set('mfaChallenges', challenges);
+    /* Registered on the bridge rather than mounted below, because it has to
+     * run before every route in the application, and server.js mounts its own
+     * before src/legacy.ts gets a turn. Mounted after the session middleware,
+     * which is what puts req.mfa there. */
+    bridge.set('mfaEnforcement', createMfaEnforcement({ enforced: config.mfa.enforced }));
+    bridge.set('mfaEnforced', config.mfa.enforced);
+    bridge.set('mfaFactsFor', (userId: number, role: string) => factsFor(database.client, userId, role));
     bridge.set('trustProxy', config.trustProxy);
     bridge.set('requestMiddleware', createRequestMiddleware(logger));
     const { middleware, store } = createSessionMiddleware({ client: database.client, config });
@@ -102,6 +114,8 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createDevicesRouter({ client: database.client, config, throttles }));
     legacy.app.use(createAuditRouter({ log }));
+    legacy.app.use(createMfaRouter({ client: database.client, throttles, enforced: config.mfa.enforced }));
+    void sweepChallenges(database.client).catch(() => { /* a stale row is harmless */ });
 
     // Project settings are core: every contract has operating parameters.
     // UH Pharmacy Courier module below. Project scoping is enforced here

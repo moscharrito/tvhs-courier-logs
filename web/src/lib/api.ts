@@ -31,6 +31,17 @@ export interface SessionUser {
     name: string;
     role: 'admin' | 'staff' | 'driver';
     route: string | null;
+    /** Where this account stands on a second factor (ticket 4.3).
+     *  `enforced` means the API will refuse everything else until it exists. */
+    mfa?: { required: boolean; confirmed: boolean; enforced: boolean };
+}
+
+export interface MfaStatus {
+    required: boolean;
+    enforced: boolean;
+    enrolled: boolean;
+    confirmed: boolean;
+    recoveryCodesRemaining: number;
 }
 
 export interface ProjectMembership {

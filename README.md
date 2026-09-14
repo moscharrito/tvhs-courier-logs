@@ -419,6 +419,34 @@ The review found one high advisory, `drizzle-orm` below 0.45.2, and upgraded it.
 
 Four moderate advisories were traced to the calling code rather than accepted or dismissed by their labels: the `uuid` bug needs a `buf` argument that `exceljs` never passes, and the react-router open redirect needs a user-controlled navigation target, of which this application has none. Both "fixes" are major-version changes. The reasoning is written down in the security review so the next person does not have to redo it.
 
+### A second factor for staff
+
+`POST /api/login` stops being the whole of signing in for anybody who runs the contract. Project roles admin, ops manager and dispatcher, plus any platform administrator, hold a TOTP factor; the password step answers with a short-lived challenge instead of a session, and `POST /api/login/mfa` finishes it.
+
+**Couriers are deliberately outside the policy.** Their second factor is the enrolled phone: a PIN works only from a device registered with the full password (ticket 2.3), which is something-you-have plus something-you-know already. Asking a courier to read a rotating code off a second device at a pharmacy counter, in the rain, is a control people find a way around, and a control that gets worked around is worse than none because it still looks like one. Client viewers are outside it for a different reason: they are outside contacts we cannot support through a lost-phone call, and they see only their own pharmacy's deliveries.
+
+**The TOTP is written here** (`server/src/core/auth/totp.ts`), on the same reasoning as the PDF writer and the SigV4 signer: the whole of RFC 6238 is an HMAC, a truncation and a base32 alphabet, and this code sits in the authentication path of every administrator. It is checked against the RFC's own test vectors rather than against itself, including the counter above 2^32 that is otherwise invisible until the year 6053.
+
+SHA-1 is correct here and not an oversight. The RFC allows SHA-256, essentially no authenticator app implements it, and a secret issued that way produces codes Google Authenticator will not match. The construction is HMAC, where SHA-1's collision weakness does not apply.
+
+**A code cannot be used twice.** The window is one step either side, which covers a phone whose clock is half a minute out, and the last accepted step is stored, so a code read over a shoulder or out of a screen share is dead the moment it is used rather than good for another ninety seconds.
+
+**Recovery codes are ten, single-use, and shown exactly once**, because the database holds only their SHA-256. Not bcrypt: these carry about 48 bits of entropy rather than being chosen by a person, so there is no dictionary to slow down, and ten bcrypt comparisons per sign-in attempt would be a second of server time per guess. The alphabet leaves out 0/O, 1/I/L and 5/S, because these get printed, photographed and read down a phone line. A recovery code goes in the same box as a real one at sign-in: somebody whose phone is in a taxi should not have to find a different form, and the server can tell the two apart without being told.
+
+**The challenge between the two steps is server-side**, like sessions. A signed token the client carries could not be revoked, could not count its own attempts, and would let one intercepted password be replayed against the code prompt for as long as it lived. It expires in five minutes, counts wrong codes, and tears itself up after five.
+
+**"Enforced in production" means the API refuses.** `src/core/auth/mfa.ts` holds a middleware that runs before every route in both halves of the application: a staff session that owes a factor may reach the enrolment endpoints, its own session, and nothing else. The first version of it was mounted after the user and audit routers, which left the platform administrator able to read the whole user directory, and the enforcement test caught that. Enforcement that lives only in the frontend is advice; the API is where the PHI is, and a stolen password reaches it without ever loading a page.
+
+That includes the first administrator on a fresh deployment: they sign in, they enrol, and only then can they create anybody. The test harness does exactly that sequence, because with enforcement on there is no other order that works.
+
+**A lost phone** is a recovery code, or `POST /api/users/:username/mfa/reset` from an administrator, which clears the enrolment and revokes every live session the person has, since the lost phone may be holding one. If the last administrator loses both their phone and their codes, the way back is the runbook (ticket 4.5) and not the application.
+
+**Turning it off is not an option for anybody the policy covers.** Removing the policy is a change to the policy, not a change to an account.
+
+**The QR code is drawn in the browser** from the `otpauth://` URI, as an inline SVG, by `qrcode-generator`: one dependency with no transitive tree of its own. Nothing is fetched to render it, which keeps `img-src` closed and means the secret never travels to anybody's QR service.
+
+**What the browser found that the tests did not.** Confirming an enrolment used to refresh the session, which lifted the setup gate, which swapped the screen for the project list, which threw away ten recovery codes that are shown exactly once. Every unit test passed, because they render that screen on its own. The session is now re-read when the codes are acknowledged and not before, and there is a test that pins it.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.

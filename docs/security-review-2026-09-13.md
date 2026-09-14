@@ -225,8 +225,9 @@ go-live.
 
 ## Still open
 
-- **MFA for staff** is ticket 4.3, not this one. Today a platform
-  administrator is protected by a password alone.
+- ~~**MFA for staff**~~ done in ticket 4.3, the day after this review: TOTP
+  for admin, ops manager and dispatcher, recovery codes, enforced in
+  production by a middleware ahead of every route.
 - **The throttle is per process.** See above.
 - **Everything here was tested against a local server.** TLS, HSTS in a real
   browser, and the proxy hop count are properties of the deployment, and the

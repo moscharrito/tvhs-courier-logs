@@ -4,14 +4,19 @@
  * is per project: TVHS has two drivers by route, UH will have twenty. Step 2
  * shows that project's couriers (PIN, or password plus a new PIN the first
  * time). Staff sign in with username and password from any step; their
- * projects come from their memberships after authentication. */
+ * projects come from their memberships after authentication.
+ *
+ * A staff member who holds a second factor gets one more step: the password
+ * reply is a challenge rather than a session, and the code finishes it
+ * (ticket 4.3). A recovery code goes in the same box, because somebody whose
+ * phone is in a taxi should not have to find a different form. */
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, type DriverPick } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { Loading } from '../app/Loading';
 
-type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'staff';
+type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'staff' | 'code';
 interface LoginProject { code: string; name: string }
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -27,6 +32,9 @@ export function Login() {
     const [pin, setPin] = useState('');
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
+    /** Set when the password was right and a second factor is still owed. */
+    const [challenge, setChallenge] = useState<string | null>(null);
+    const [code, setCode] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -63,7 +71,22 @@ export function Login() {
         setError(null);
         try {
             if (mode === 'staff') {
-                await api('/api/login', { method: 'POST', json: { username, password } });
+                const res = await api<{ mfaRequired?: boolean; challengeToken?: string }>(
+                    '/api/login', { method: 'POST', json: { username, password } },
+                );
+                if (res.mfaRequired && res.challengeToken) {
+                    /* No session yet. The password is cleared here and not
+                       held across the step: the challenge token is what the
+                       second request carries. */
+                    setChallenge(res.challengeToken);
+                    setPassword('');
+                    setCode('');
+                    setMode('code');
+                    return;
+                }
+            } else if (mode === 'code' && challenge) {
+                await api('/api/login/mfa', { method: 'POST', json: { challengeToken: challenge, code } });
+                setChallenge(null);
             } else if (mode === 'pin' && driver) {
                 await api('/api/login/pin', { method: 'POST', json: { route: driver.route, pin } });
             } else if (mode === 'setup' && driver) {
@@ -138,6 +161,33 @@ export function Login() {
                         {mode === 'pin' && (
                             <button className="izy-link" type="button" onClick={() => { setMode('setup'); setPin(''); }}>Forgot PIN? Use password</button>
                         )}
+                    </form>
+                )}
+
+                {mode === 'code' && (
+                    <form onSubmit={(e) => { void submit(e); }}>
+                        <div className="izy-muted">Enter the six-digit code from your authenticator app.</div>
+                        <label className="izy-field">Code
+                            <input
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                value={code}
+                                onChange={(e) => setCode(e.target.value)}
+                                required
+                                autoFocus
+                            />
+                        </label>
+                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
+                        <div className="izy-muted" style={{ textAlign: 'center' }}>
+                            Lost your phone? A recovery code goes in the same box.
+                        </div>
+                        <button
+                            className="izy-link"
+                            type="button"
+                            onClick={() => { setChallenge(null); setCode(''); setMode('staff'); setError(null); }}
+                        >
+                            Start again
+                        </button>
                     </form>
                 )}
 

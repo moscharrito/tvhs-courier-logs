@@ -140,6 +140,18 @@ const MATRIX = [
     ['GET', '/api/config', EVERYONE, 'timezone and date'],
     ['GET', '/health', EVERYONE, 'liveness'],
 
+    /* --- the second factor (ticket 4.3). Setting one up acts on your own
+       account, so any signed-in person may; the login step is public because
+       it is half of signing in; resetting somebody else's is an
+       administrator's job, because it is what happens after a lost phone. */
+    ['POST', '/api/login/mfa', EVERYONE, 'the code half of signing in', SIGN_IN],
+    ['GET', '/api/me/mfa', SIGNED_IN, 'where I stand'],
+    ['POST', '/api/me/mfa/enrol', SIGNED_IN, 'start, with my password again'],
+    ['POST', '/api/me/mfa/confirm', SIGNED_IN, 'prove the app has the secret'],
+    ['POST', '/api/me/mfa/recovery-codes', SIGNED_IN, 'new codes, old ones dead'],
+    ['DELETE', '/api/me/mfa', SIGNED_IN, 'turn it off, if the policy allows'],
+    ['POST', '/api/users/nobody/mfa/reset', PLATFORM_ADMIN, 'a lost phone'],
+
     /* --- a caller acting on themselves */
     ['GET', '/api/me/projects', SIGNED_IN, 'my memberships'],
     ['GET', '/api/me/sessions', SIGNED_IN, 'my live devices'],
