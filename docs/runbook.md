@@ -480,6 +480,19 @@ and `meta/_journal.json`.
 
 ---
 
+## Before go-live
+
+```bash
+curl -s https://<service>.onrender.com/api/projects/uh/uh/go-live
+```
+
+Thirteen checks against the database and the configuration. It never answers
+"ready": it answers "nothing automatic is in the way", and lists seven things a
+person has to confirm because no program can. Run it before the decision, not
+after.
+
+---
+
 ## During the shadow week
 
 `docs/shadow-week.md` is the plan. The log is at **Discrepancies** on the

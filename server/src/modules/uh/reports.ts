@@ -26,7 +26,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { Client, InValue } from '@libsql/client';
 import ExcelJS from 'exceljs';
+import { z } from 'zod';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { REPORT_CHANNELS } from '../../db/schema/uh';
 import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 
@@ -292,6 +294,92 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             byDayType: sliceBy(facts, (f) => ({ key: dayType(f.serviceDate), label: dayType(f.serviceDate) }), now),
         };
     }
+
+    /* ------------------------------------------- the daily report, as sent
+     *
+     * Ticket 5.3. Scope 1.2 requires reporting to University Health, and a
+     * report sent to a client is a statement about how the contract was
+     * performed. "What did we tell them on the third of December" has to have
+     * an answer in a year, and recomputing today's numbers from today's data
+     * does not answer it, because the data has moved since. So the figures
+     * are frozen at the moment of sending, exactly as an issued invoice
+     * freezes its lines.
+     *
+     * How it was sent is recorded rather than performed: no mail service is
+     * configured, and the channel is not decided. Whichever it turns out to
+     * be, a person records that it happened. */
+
+    const bill = requireProjectRole('admin', 'ops_manager');
+
+    const Sent = z.object({
+        serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        recipient: z.string().trim().min(2).max(200),
+        channel: z.enum(REPORT_CHANNELS),
+        note: z.string().trim().max(500).default(''),
+        /** The numbers as the sender saw them, not as they are now. */
+        figures: z.record(z.string(), z.unknown()),
+    });
+
+    router.get('/sent', staff, wrap(async (req, res) => {
+        const rs = await client.execute({
+            sql: `SELECT id, service_date, recipient, channel, note, sent_by, sent_at, figures
+                  FROM report_sends WHERE project_id = ? ORDER BY service_date DESC LIMIT 60`,
+            args: [req.project!.id],
+        });
+        res.json(rs.rows.map((r) => ({
+            id: Number(r['id']),
+            serviceDate: String(r['service_date']),
+            recipient: String(r['recipient']),
+            channel: String(r['channel']),
+            note: String(r['note']),
+            sentBy: String(r['sent_by']),
+            sentAt: String(r['sent_at']),
+            figures: JSON.parse(String(r['figures'])) as Record<string, unknown>,
+        })));
+    }));
+
+    router.post('/sent', bill, wrap(async (req, res) => {
+        const parsed = Sent.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: 'Invalid request',
+                details: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`),
+            });
+            return;
+        }
+        const body = parsed.data;
+
+        const existing = await client.execute({
+            sql: 'SELECT id, sent_at, sent_by FROM report_sends WHERE project_id = ? AND service_date = ?',
+            args: [req.project!.id, body.serviceDate],
+        });
+        if (existing.rows[0]) {
+            /* One send per day. Two rows would leave two answers to "what did
+             * we tell them", and a correction is a conversation rather than a
+             * second row. */
+            res.status(409).json({
+                error: `A report for ${body.serviceDate} was already recorded as sent by ${String(existing.rows[0]['sent_by'])} `
+                    + `at ${String(existing.rows[0]['sent_at'])}. If it was wrong, send a correction and say so in its note.`,
+                code: 'report.alreadySent',
+            });
+            return;
+        }
+
+        const now = new Date().toISOString();
+        const rs = await client.execute({
+            sql: `INSERT INTO report_sends (project_id, service_date, figures, recipient, channel, note, sent_by, sent_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+            args: [
+                req.project!.id, body.serviceDate, JSON.stringify(body.figures),
+                body.recipient, body.channel, body.note, req.session.user?.username ?? '', now,
+            ],
+        });
+        await req.audit('report.sent', 'daily_report', body.serviceDate, {
+            channel: body.channel, recipient: body.recipient.slice(0, 120),
+        });
+
+        res.status(201).json({ id: Number(rs.rows[0]!['id']), serviceDate: body.serviceDate, sentAt: now });
+    }));
 
     router.get('/sla', staff, wrap(async (req, res) => {
         const gathered = await gather(req, res);

@@ -778,3 +778,41 @@ export const discrepancies = sqliteTable(
 );
 
 export type Discrepancy = typeof discrepancies.$inferSelect;
+
+/* Daily SLA reports, as sent (ticket 5.3).
+ *
+ * Scope 1.2 requires reporting to University Health, and the report is a
+ * statement about how well the contract was performed. A statement made to a
+ * client is a document: "what did we tell them on the third of December" has
+ * to have an answer in a year, and recomputing today's numbers from today's
+ * data does not answer it, because the data will have moved.
+ *
+ * So the figures are frozen at the moment of sending, exactly as an issued
+ * invoice freezes its lines. The row also records HOW it went, because the
+ * transmission channel is not decided: an email, an attachment, a link to the
+ * client portal, a printout at a meeting. Whichever it is, a person records
+ * that it happened, and the record is what an audit reads.
+ */
+
+export const REPORT_CHANNELS = ['email', 'portal', 'meeting', 'other'] as const;
+
+export const reportSends = sqliteTable(
+    'report_sends',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** The operating day the report is about. */
+        serviceDate: text('service_date').notNull(),
+        /** JSON: the totals and rates as they stood when it was sent. */
+        figures: text('figures').notNull(),
+        /** Who it went to, in words. A role or a name, never a patient. */
+        recipient: text('recipient').notNull(),
+        channel: text('channel', { enum: REPORT_CHANNELS }).notNull(),
+        note: text('note').notNull().default(''),
+        sentBy: text('sent_by').notNull(),
+        sentAt: text('sent_at').notNull(),
+    },
+    (t) => [unique('report_sends_day_unique').on(t.projectId, t.serviceDate)],
+);
+
+export type ReportSend = typeof reportSends.$inferSelect;

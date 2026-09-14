@@ -614,6 +614,33 @@ out of the audit trail, because somebody under time pressure will type a
 patient's name into "what actually happened" however firmly the screen asks
 them to use the delivery number instead.
 
+### Retiring the manual process
+
+`GET /api/projects/:pid/uh/go-live` checks what can be checked, against the
+database and the configuration rather than against anybody's memory: open
+discrepancies, whether the shadow week found anything at all, how many
+administrators hold a second factor, whether there is a price schedule, whether
+this is really a production deployment, whether the database is sound and fully
+migrated.
+
+**It never says ready.** The most it says is that nothing automatic is in the
+way, which is a different claim. Seven things no program can check are listed
+as attestations and marked unknown rather than passed: the BAAs, a restore
+actually performed, somebody who did not write the runbook having followed it,
+real names in the on-call list, the written privacy programme, training, and
+University Health's answers to the clarification email. A checklist that quietly
+marks the unverifiable as fine is worse than no checklist, because it converts
+an unknown into a green light.
+
+**It fails a shadow week that found nothing.** Silence from the people at the
+door means the reporting path did not work, not that nothing went wrong.
+
+`POST .../uh/reports/sent` records the daily SLA report as sent, with its
+figures frozen. "What did we tell them on the third of December" cannot be
+answered by recomputing from today's data, because the data has moved; so the
+numbers are kept as they were, the way an issued invoice keeps its lines. One
+send per day, and a correction is a conversation rather than a second row.
+
 ### Keeping things, and stopping keeping them
 
 A sweep runs at boot and daily after that. It counts what is past its

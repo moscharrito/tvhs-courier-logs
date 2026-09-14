@@ -36,6 +36,8 @@ import { scopedTo, unavailableProvider } from './core/geo/provider';
 import { createGeoLookup } from './core/geo/lookup';
 import { createGeocodeRouter } from './modules/uh/geocode';
 import { createDiscrepancyRouter } from './modules/uh/discrepancies';
+import { createGoLiveRouter } from './modules/uh/go-live';
+import { MIGRATIONS_FOLDER } from './db/migrate';
 import { todayIn } from './core/dates';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
@@ -169,6 +171,20 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
 
     /* The shadow week's log of what did not match (ticket 5.2). */
     legacy.app.use('/api/projects/:pid/uh/discrepancies', requireProject, createDiscrepancyRouter({ client: database.client }));
+
+    /* Go-live readiness, and the daily report as a recorded send (5.3). */
+    legacy.app.use('/api/projects/:pid/uh/go-live', requireProject, createGoLiveRouter({
+        client: database.client,
+        deployment: {
+            databaseKind: config.db.kind,
+            mfaEnforced: config.mfa.enforced,
+            filesEnabled: config.files.enabled,
+            geocoderConfigured: config.geo.googleApiKey !== undefined,
+            trustProxy: config.trustProxy,
+            isProduction: config.isProduction,
+        },
+        expectedMigrations: fs.readdirSync(MIGRATIONS_FOLDER).filter((f) => f.endsWith('.sql')).length,
+    }));
 
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));

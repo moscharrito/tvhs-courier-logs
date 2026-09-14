@@ -286,7 +286,15 @@ const MATRIX = [
     ['GET', `${UH}/discrepancies/summary`, UH_STAFF, 'the go-live question'],
     ['PATCH', `${UH}/discrepancies/999999`, UH_STAFF, 'close one'],
 
+    /* --- go-live (ticket 5.3). Reading the readiness check is for anybody
+       running the contract; recording a report as sent to University Health
+       is a statement to the client and belongs to the people accountable for
+       one. */
+    ['GET', `${UH}/go-live`, UH_STAFF, 'what is in the way'],
+
     /* --- performance against the contract. */
+    ['GET', `${UH}/reports/sent`, UH_STAFF, 'what we have told University Health'],
+    ['POST', `${UH}/reports/sent`, UH_MANAGE, 'record the daily report as sent'],
     ['GET', `${UH}/reports/sla`, UH_STAFF, ''],
     ['GET', `${UH}/reports/sla.xlsx`, UH_STAFF, ''],
 
