@@ -48,7 +48,7 @@ export function amzDates(at: Date): { amzDate: string; dateStamp: string } {
 }
 
 export interface PresignInput {
-    method: 'GET' | 'PUT';
+    method: 'GET' | 'PUT' | 'DELETE';
     bucket: string;
     region: string;
     key: string;

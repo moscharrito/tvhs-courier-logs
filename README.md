@@ -473,6 +473,50 @@ That includes the first administrator on a fresh deployment: they sign in, they 
 
 **What the browser found that the tests did not.** Confirming an enrolment used to refresh the session, which lifted the setup gate, which swapped the screen for the project list, which threw away ten recovery codes that are shown exactly once. Every unit test passed, because they render that screen on its own. The session is now re-read when the codes are acknowledged and not before, and there is a test that pins it.
 
+### Keeping things, and stopping keeping them
+
+A sweep runs at boot and daily after that. It counts what is past its
+retention period and writes down that it ran; it deletes nothing. `GET
+/api/retention` shows the policy, the last sweep and the last twenty runs, to
+platform administrators only.
+
+**Almost nothing can be purged yet, on purpose.** `server/src/core/retention/policy.ts`
+carries a period and a basis for each category, and the four that matter most
+are marked `decided: false` with a seven-year placeholder so the sweep has
+something to count against. A retention period a developer picked is not a
+retention period. It is a number that turns up in an audit years later,
+attached to deleted evidence. The purge refuses an undecided category and
+prints the reason, which names who has to decide.
+
+The same decision is waiting in `docs/infra/s3-bucket.md`, where the bucket
+lifecycle rule is disabled for the same reason. One decision, two places.
+
+**The approval is a number, not a checkbox.** `POST /api/retention/purge`
+takes the exact count the approver read off the screen; if it has moved, the
+purge refuses with a conflict and the real figure. A count survives being
+pasted into a terminal at the wrong moment in a way that a confirmation
+dialog does not.
+
+**The audit trail is never purged.** It holds no PHI by construction, and it
+is the only record that can answer a question about a deletion. Purging it to
+satisfy a retention policy would destroy the proof that the policy was
+followed.
+
+**Retention and evidence pull against each other, and the resolution is
+written down rather than discovered.** Deleting a delivery record means
+deleting its custody events, and `custody_events` is append-only in the
+database, enforced by a trigger, because Scope 1.2.7 wants a chain of custody
+that is evidence and not a table somebody can tidy. The purge drops and
+recreates the trigger around its own delete, visibly, the way the simulator's
+cleanup does; a test asserts the trigger is back afterwards and that it still
+fires. A purge that silently could not remove half of what it claimed to
+remove would be worse than one that refuses.
+
+**Photographs are refused while there is no bucket.** Deleting the rows
+without deleting the objects would leave the images in S3 with nothing
+pointing at them: unreachable, undeletable, and still PHI. That waits for
+ticket 0.10.
+
 ### Registered devices and PIN sign-in
 
 A four-digit PIN is not an authentication factor on its own. Ten thousand possibilities is a number a person can work through, and an app that accepted a PIN from anywhere would be one stolen PIN away from a stranger reading a day of patient addresses. So a PIN only works from a **registered device**: the phone is enrolled once with the courier's full password (`POST /api/devices/enrol`, which also sets the PIN), and after that `POST /api/login/device` needs only the PIN. That is something-you-have plus something-you-know, which is the only reason four digits is acceptable on a screen showing PHI.

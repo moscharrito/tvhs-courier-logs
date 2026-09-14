@@ -443,6 +443,84 @@ and `meta/_journal.json`.
 
 ---
 
+## Retention and purging
+
+A sweep runs at boot and once a day after that. It **counts** what is past its
+retention period and writes a row saying so; it never deletes anything. The
+row is written whether or not it found something, because "nothing was past
+retention on 3 November" is what an auditor asks for and what nobody can prove
+after the fact.
+
+```
+GET  /api/retention          the policy, the last sweep, the last 20 runs
+POST /api/retention/sweep    count now rather than waiting for the timer
+```
+
+Platform administrators only.
+
+**Most categories cannot be purged yet, and that is deliberate.** Nobody has
+decided how long a delivery record, a signature or a proof-of-delivery
+photograph is kept. The policy carries a seven-year placeholder so the sweep
+has something to count against, marked `decided: false`, and the purge refuses
+any category in that state with the reason printed. A retention period a
+developer picked is not a retention period; it is a number that turns up in an
+audit years later attached to deleted evidence.
+
+**The decision is one decision in two places.** `docs/infra/s3-bucket.md` has
+a bucket lifecycle rule disabled for the same reason. Decide the number with
+University Health and Izy's compliance counsel, write it into the privacy and
+security program, then change both.
+
+### Purging, when there is a period
+
+```
+POST /api/retention/purge
+{ "category": "client_events", "expected": 412, "reason": "past the seven day window" }
+```
+
+`expected` is the exact count the approver read off the screen. If it has
+moved, the purge refuses with a 409 and the real number. That is the manual
+approval, in a form that survives being pasted into a terminal at the wrong
+moment: a checkbox would not.
+
+What it refuses, and why:
+
+| Code | Means |
+|---|---|
+| `retention.undecided` | Nobody has decided a period for this category. |
+| `retention.not_purgeable` | The audit trail, and issued invoices. Never removed by this job. |
+| `retention.count_moved` | The number changed since you looked. Look again. |
+| `retention.files_unavailable` | No bucket, so the photographs cannot actually be deleted. Removing the rows would leave them in S3 with nothing pointing at them. Needs ticket 0.10. |
+
+The audit trail is never purged. It holds no PHI, and it is the only record
+that can answer a question about a deletion; purging it to satisfy a retention
+policy would destroy the proof that the policy was followed.
+
+**Deleting a delivery record means deleting its custody events**, and
+`custody_events` is append-only in the database, enforced by a trigger, because
+Scope 1.2.7 wants a chain of custody that is evidence rather than a table
+somebody can tidy. The purge drops and recreates that trigger around its own
+delete, deliberately and visibly, the way the simulator's cleanup does. It is
+never relaxed for the application. If a purge is ever interrupted, check the
+trigger is back before anything else:
+
+```sql
+SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'custody_events_no_delete';
+```
+
+If it is missing, recreate it from `server/drizzle/0009_custody.sql` before
+letting anybody near the application, because until then the chain of custody
+is editable and the tests that prove it is not are the only thing that would
+notice.
+
+### What a purge leaves behind
+
+The audit trail records the request before the delete and the result after it,
+so an interrupted purge still says what was meant. `retention_runs` holds the
+counts, table by table. Neither is enough to undo one: see Restore.
+
+---
+
 ## Routine checks
 
 | How often | What | Command |
@@ -452,6 +530,7 @@ and `meta/_journal.json`.
 | Monthly | Invoice arithmetic against the rate card | `npm run reconcile -w server` |
 | Before go-live, then quarterly | Load and concurrency | `npm run loadtest -w server` |
 | Quarterly | Who can reach what | `npx vitest run test/access-matrix.test.mjs --root server` |
+| Automatic, daily | What is past retention | `GET /api/retention` to read the result |
 
 The reconciliation and the load test both write dated reports into `docs/`,
 which is the point: they are things somebody signs, not things that scroll

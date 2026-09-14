@@ -100,7 +100,11 @@ that is not ours to make alone**.
 ```
 
 `RetainProofOfDelivery` is **deliberately disabled**, and 2555 days (seven
-years) is a placeholder, not advice. How long proof of delivery has to be kept
+years) is a placeholder, not advice. The same placeholder, undecided in the
+same way, is in `server/src/core/retention/policy.ts` (ticket 4.6): the
+application counts what is past it and refuses to purge anything until
+somebody decides. **It is one decision and it has to be made in both places,
+or the bucket and the database will disagree about what still exists.** How long proof of delivery has to be kept
 is a contract and records-retention question for University Health and Izy's
 compliance counsel, not a default a developer should pick. Turning on a rule
 that deletes evidence is the kind of thing that is noticed years later during

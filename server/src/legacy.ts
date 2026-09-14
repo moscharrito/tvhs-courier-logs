@@ -24,9 +24,12 @@ import { createAuditMiddleware, type AuditLog } from './core/audit/audit';
 import { createAuditRouter } from './core/audit/routes';
 import { Logger } from './core/http/logger';
 import { createRequestMiddleware } from './core/http/request';
+import { errorFields } from './core/http/logger';
 import { securityHeadersFor } from './core/http/security';
 import { createAuthThrottles, tooManyAttempts } from './core/auth/throttle';
 import { createMfaRouter, createMfaEnforcement, createChallengeStore, factsFor, sweepChallenges } from './core/auth/mfa';
+import { createRetentionRouter } from './core/retention/routes';
+import { startRetentionSweep } from './core/retention/sweep';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
@@ -128,6 +131,11 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        routes and the staff screens do not need it: nobody replays a GET, and
        a dispatcher watching a reply arrive is not an unreliable network. */
     const idempotent = createIdempotency({ client: database.client });
+    /* Retention (ticket 4.6): counts what is past its period on a schedule
+     * and never deletes without an approval that names an exact number. */
+    legacy.app.use(createRetentionRouter({ client: database.client, storage: fileStorage }));
+    startRetentionSweep(database.client, (err) => logger.error('retention sweep failed', errorFields(err)));
+
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));

@@ -30,6 +30,8 @@ import { presign, type Presigned } from './sigv4';
 export const READ_URL_SECONDS = 5 * 60;
 /** Longer: a courier on cellular uploading a photo needs the headroom. */
 export const WRITE_URL_SECONDS = 15 * 60;
+/** A delete is signed and sent by the server in one breath (ticket 4.6). */
+export const DELETE_URL_SECONDS = 60;
 
 /** What a courier's phone can actually produce, and nothing else. */
 export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
@@ -76,6 +78,9 @@ export interface FileStorage {
     readonly reason: string | null;
     presignUpload(key: string, contentType: string, at?: Date): Presigned;
     presignDownload(key: string, at?: Date): Presigned;
+    /** For the retention purge (ticket 4.6), and nothing else. The server
+     *  sends this one itself; it is never handed to a browser. */
+    presignDelete(key: string, at?: Date): Presigned;
 }
 
 export function createFileStorage(config: Config): FileStorage {
@@ -86,7 +91,7 @@ export function createFileStorage(config: Config): FileStorage {
             ? 'FILES_ENABLED is set but the S3 values are incomplete.'
             : 'FILES_ENABLED is false.';
         const refuse = (): never => { throw new FilesUnavailableError(); };
-        return { available: false, reason, presignUpload: refuse, presignDownload: refuse };
+        return { available: false, reason, presignUpload: refuse, presignDownload: refuse, presignDelete: refuse };
     }
 
     const base = {
@@ -115,6 +120,13 @@ export function createFileStorage(config: Config): FileStorage {
 
         presignDownload(key: string, at = new Date()): Presigned {
             return presign({ ...base, method: 'GET', key, expiresIn: READ_URL_SECONDS, at });
+        },
+
+        /* Sixty seconds: this URL is signed and used in the same breath by the
+         * server itself, so there is no reason for it to outlive the request
+         * that made it. A long-lived delete URL is a loaded gun. */
+        presignDelete(key: string, at = new Date()): Presigned {
+            return presign({ ...base, method: 'DELETE', key, expiresIn: DELETE_URL_SECONDS, at });
         },
     };
 }

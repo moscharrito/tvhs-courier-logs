@@ -178,6 +178,12 @@ const MATRIX = [
     ['GET', '/api/users/nobody/devices', PLATFORM_ADMIN, 'somebody else s phones'],
     ['GET', '/api/audit', PLATFORM_ADMIN, 'the audit log'],
 
+    /* --- retention (ticket 4.6). A platform-wide policy, and a purge that
+       deletes patient records, so the same gate as the audit log. */
+    ['GET', '/api/retention', PLATFORM_ADMIN, 'the policy and what is flagged'],
+    ['POST', '/api/retention/sweep', PLATFORM_ADMIN, 'count now'],
+    ['POST', '/api/retention/purge', PLATFORM_ADMIN, 'remove a category, by approved count'],
+
     /* --- a project, and the TVHS module inside it. The uh principals are not
        members of tvhs, so every row below is also a cross-project check. */
     ['GET', '/api/projects/tvhs', TVHS_MEMBER, 'one project, members only'],

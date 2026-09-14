@@ -279,3 +279,38 @@ export const mfaChallenges = sqliteTable(
 );
 
 export type MfaChallenge = typeof mfaChallenges.$inferSelect;
+
+/* Retention sweeps and purges (ticket 4.6).
+ *
+ * Evidence that the job ran, and evidence of what a purge removed. The audit
+ * trail records who approved a purge and why; this table records the counts,
+ * which are too large and too structured to belong in an audit detail blob.
+ *
+ * A sweep writes a row whether or not it found anything. "Nothing was past
+ * retention on 3 November" is exactly the kind of thing an auditor asks for
+ * and exactly the kind of thing nobody can prove after the fact.
+ */
+
+export const RETENTION_RUN_KINDS = ['sweep', 'purge'] as const;
+
+export const retentionRuns = sqliteTable(
+    'retention_runs',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        kind: text('kind', { enum: RETENTION_RUN_KINDS }).notNull(),
+        ranAt: text('ran_at').notNull(),
+        /** 'scheduled' for the timer, or the username who asked for it. */
+        startedBy: text('started_by').notNull(),
+        /** Null for a sweep, which covers every category at once. */
+        category: text('category'),
+        /** JSON: the per-category findings for a sweep, the counts for a purge. */
+        detail: text('detail').notNull().default('{}'),
+        /** Rows found past retention (sweep), or actually removed (purge). */
+        rowCount: integer('row_count').notNull().default(0),
+        /** Why this purge was approved. Empty for a sweep. */
+        reason: text('reason').notNull().default(''),
+    },
+    (t) => [index('retention_runs_ran_at_idx').on(t.ranAt)],
+);
+
+export type RetentionRun = typeof retentionRuns.$inferSelect;
