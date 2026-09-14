@@ -162,6 +162,13 @@
       "when": 1789397854183,
       "tag": "0022_geocodes",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1789400265077,
+      "tag": "0023_out_of_area_basis",
+      "breakpoints": true
     }
   ]
 }

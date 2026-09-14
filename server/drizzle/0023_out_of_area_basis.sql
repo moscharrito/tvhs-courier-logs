@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `out_of_area_basis` text DEFAULT '' NOT NULL;

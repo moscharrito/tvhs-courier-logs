@@ -220,6 +220,7 @@ const MATRIX = [
        to a third party, so it takes the role that manages the contract. */
     ['GET', `${UH}/geocode`, UH_STAFF, 'what is located and what it has cost'],
     ['POST', `${UH}/geocode/sites`, UH_MANAGE, 'look up the pharmacies'],
+    ['POST', `${UH}/geocode/mileage`, UH_MANAGE, 'measure out-of-area miles, which decides what is billed'],
 
     /* --- the price schedule. What we charge, which is ours and the client
        finance team's, and nobody else's. */

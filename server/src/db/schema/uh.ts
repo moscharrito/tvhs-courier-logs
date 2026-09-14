@@ -203,6 +203,11 @@ export const orders = sqliteTable(
         /** Billing zone resolved from the ZIP map. Null means out of area. */
         zone: integer('zone'),
         outOfAreaMiles: real('out_of_area_miles'),
+        /* HOW those miles were arrived at, because an invoice line that bills
+         * a distance has to be able to say where the distance came from when
+         * University Health asks. Empty until something measures it.
+         * See src/modules/uh/mileage.ts (ticket 1.9). */
+        outOfAreaBasis: text('out_of_area_basis').notNull().default(''),
 
         signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
 

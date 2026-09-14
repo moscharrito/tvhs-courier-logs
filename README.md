@@ -543,12 +543,34 @@ address in code**. That is not belt and braces: somebody will eventually write
 a loop over orders, and if the only thing between that loop and a disclosure
 is a comment, the comment loses.
 
-What it unblocks and what it does not: a run now has a real origin to measure
-from. Out-of-area mileage on an invoice still needs a road distance to a
-delivery address, so the 323 unpriceable deliveries in the simulated month are
-still unpriceable. That waits on a vendor who will sign for it, which is ticket
-1.9, and the likely answer is AWS Location Service under the same BAA that
-ticket 0.10 opens for the photograph bucket.
+What it unblocks: a run now has a real origin to measure from, and so does the
+out-of-area mileage below.
+
+### The miles nobody had to be sent an address for
+
+Addendum 1 bills a delivery outside the zone map per mile. A mile needs two
+points and one of them is a patient's home, so ticket 1.9 was written as
+"choose a geocoder who will sign a BAA".
+
+**The answer was already in the database.** The courier was there, and the
+phone records its position on the arrival event, because Addendum 1 measures
+us on arrival time and the position came along with it. With the pharmacies
+geocoded there are two points, no third party, and no disclosure at all.
+
+`POST /uh/geocode/mileage` measures it over a date range, dry run first.
+Against the same simulated month the reconciliation used, it measured **all
+323** deliveries that could not previously be priced: 2,654 miles, about
+**$5,175** at $1.95 a mile that was simply not billable before.
+
+**Two things are on the record rather than buried.** It is a straight line and
+the contract says loaded miles, so it under-states by roughly a fifth to a
+third. That direction is deliberate: this basis can never over-bill University
+Health, only under-bill Izy, which is the safe way round for a figure nobody
+has agreed yet, and it belongs in the clarification email. And in a simulation
+every arrival carries a position; in reality a courier who denied the location
+permission recorded none, and those deliveries stay exceptions rather than
+becoming guesses. Every measured order stores **how** it was measured, so an
+invoice can answer the question when it is asked.
 
 **The cache is a control, not an optimisation.** Every lookup is a disclosure,
 so the cheapest one is the one that does not happen: results are keyed by

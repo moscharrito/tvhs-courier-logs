@@ -2,8 +2,10 @@
  *
  * Ticket 1.4.
  *
- *   GET  /api/projects/:pid/uh/geocode         what is looked up and what is not
- *   POST /api/projects/:pid/uh/geocode/sites   look up the sites that have no point
+ *   GET  /api/projects/:pid/uh/geocode          what is looked up and what is not
+ *   POST /api/projects/:pid/uh/geocode/sites    look up the sites that have no point
+ *   POST /api/projects/:pid/uh/geocode/mileage  measure out-of-area distances from
+ *                                               our own arrival positions (ticket 1.9)
  *
  * SITES ONLY, AND THAT IS THE WHOLE SHAPE OF THIS TICKET. A pharmacy's street
  * address is a business address. A patient's delivery address is protected
@@ -31,6 +33,7 @@ import type { Client } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { GeoUnavailableError, type Address } from '../../core/geo/provider';
 import { GeoQuotaError, type GeoLookup } from '../../core/geo/lookup';
+import { measureOutOfArea, BASIS_DESCRIPTION, GPS_BASIS } from './mileage';
 
 interface Deps {
     client: Client;
@@ -81,8 +84,14 @@ export function createGeocodeRouter({ client, lookup, providerName, providerReas
             patientAddresses: {
                 lookedUp: false,
                 why: 'A delivery address is protected health information and the configured provider has no business '
-                    + 'associate agreement covering it. Out of area mileage on invoices stays blocked until that vendor '
-                    + 'decision is made. See docs/build-backlog.md ticket 1.9.',
+                    + 'associate agreement covering it, so no delivery address is ever sent anywhere.',
+            },
+            /* The answer that needs nobody: the courier was there and the
+             * phone recorded where (ticket 1.9). */
+            outOfAreaMileage: {
+                basis: GPS_BASIS,
+                means: BASIS_DESCRIPTION[GPS_BASIS],
+                measure: 'POST /uh/geocode/mileage',
             },
         });
     }));
@@ -139,6 +148,33 @@ export function createGeocodeRouter({ client, lookup, providerName, providerReas
             failed,
             stopped,
             usage: await lookup.usage(),
+        });
+    }));
+
+    router.post('/mileage', manage, wrap(async (req, res) => {
+        const from = String(req.query['from'] ?? req.body?.from ?? '');
+        const to = String(req.query['to'] ?? req.body?.to ?? '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+            res.status(400).json({ error: 'A from and to service date are required, as YYYY-MM-DD.' });
+            return;
+        }
+        const dryRun = String(req.query['dryRun'] ?? req.body?.dryRun ?? '') === 'true';
+
+        const result = await measureOutOfArea(client, { projectId: req.project!.id, from, to, dryRun });
+        await req.audit('order.mileage', 'project', String(req.project!.id), {
+            from, to, dryRun, considered: result.considered, measured: result.measured.length,
+        });
+
+        res.status(dryRun ? 200 : 201).json({
+            ...result,
+            basis: GPS_BASIS,
+            /* Said in the response, every time, because this number goes on an
+             * invoice and the person running it has to know what they are
+             * about to bill. */
+            means: BASIS_DESCRIPTION[GPS_BASIS],
+            openQuestion: 'Whether University Health accepts a straight-line measurement for a contract that says loaded miles '
+                + 'is not settled. It under-states rather than over-states, which is the safe direction, and it belongs in the '
+                + 'clarification email.',
         });
     }));
 
