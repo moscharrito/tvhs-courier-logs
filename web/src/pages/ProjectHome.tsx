@@ -63,6 +63,7 @@ export function ProjectHome() {
                         a question about. */}
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
                     {canManage && (
                         <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>
                     )}

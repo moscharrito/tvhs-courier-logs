@@ -704,3 +704,77 @@ export const signatures = sqliteTable(
 );
 
 export type Signature = typeof signatures.$inferSelect;
+
+/* Discrepancies found while the system runs alongside the manual process
+ * (ticket 5.2).
+ *
+ * The shadow week's acceptance criterion is "every discrepancy logged and
+ * fixed", and a criterion with no mechanism behind it becomes a pile of
+ * messages in a group chat that nobody can count on the Friday. This is the
+ * mechanism: one row per thing that did not match, raised by whoever noticed,
+ * carried to a resolution or to a decision that it does not need one.
+ *
+ * PHI: `expected` and `actual` are free text typed by a person under time
+ * pressure, so they may contain a patient's name however firmly the screen
+ * asks otherwise. They are therefore treated as PHI: never logged, never put
+ * in an audit detail, and covered by the same retention decision as a
+ * delivery record. `orderId` is the right way to point at a delivery, and the
+ * screen says so.
+ */
+
+export const DISCREPANCY_KINDS = [
+    /** The list the pharmacy sent and what the import created. */
+    'import',
+    /** Who the system says has it, against who actually has it. */
+    'assignment',
+    /** What the system recorded at the door, against what happened. */
+    'delivery',
+    /** Times: arrival, due, or the SLA measurement itself. */
+    'timing',
+    /** What it would be billed, against what the manual process billed. */
+    'billing',
+    /** The application did something wrong, slowly, or not at all. */
+    'system',
+    'other',
+] as const;
+
+export const DISCREPANCY_SEVERITIES = [
+    /** A delivery record is wrong or missing. Stops go-live on its own. */
+    'critical',
+    /** Wrong, but caught and correctable within the day. */
+    'major',
+    /** Awkward, confusing, or slow. Worth fixing, not worth stopping for. */
+    'minor',
+] as const;
+
+export const DISCREPANCY_STATUSES = ['open', 'resolved', 'accepted'] as const;
+
+export const discrepancies = sqliteTable(
+    'discrepancies',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** The operating day it was about, not the day it was typed. */
+        serviceDate: text('service_date').notNull(),
+        kind: text('kind', { enum: DISCREPANCY_KINDS }).notNull(),
+        severity: text('severity', { enum: DISCREPANCY_SEVERITIES }).notNull(),
+        /** The delivery it concerns, when it concerns one. */
+        orderId: integer('order_id'),
+        /* PHI. What the system said, and what actually happened. */
+        expected: text('expected').notNull(),
+        actual: text('actual').notNull(),
+        reportedBy: text('reported_by').notNull(),
+        reportedAt: text('reported_at').notNull(),
+        status: text('status', { enum: DISCREPANCY_STATUSES }).notNull().default('open'),
+        /** What was done, or why nothing needed doing. PHI, same as above. */
+        resolution: text('resolution').notNull().default(''),
+        resolvedBy: text('resolved_by').notNull().default(''),
+        resolvedAt: text('resolved_at'),
+    },
+    (t) => [
+        index('discrepancies_project_date_idx').on(t.projectId, t.serviceDate),
+        index('discrepancies_status_idx').on(t.projectId, t.status),
+    ],
+);
+
+export type Discrepancy = typeof discrepancies.$inferSelect;

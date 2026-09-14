@@ -480,6 +480,16 @@ and `meta/_journal.json`.
 
 ---
 
+## During the shadow week
+
+`docs/shadow-week.md` is the plan. The log is at **Discrepancies** on the
+project, and the rule is that every item is resolved or accepted before the
+next morning, with anything `critical` dealt with that night. The Friday
+question is `GET /api/projects/uh/uh/discrepancies/summary`, which answers in
+numbers and does not make the decision.
+
+---
+
 ## Answering "do you have a control for that?"
 
 `docs/privacy-controls.md` is the inventory: each safeguard, the file that

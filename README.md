@@ -585,6 +585,35 @@ successes is one a failing loop runs inside all night. The count lives in the
 database, so it survives a restart and is shared by however many instances
 there are.
 
+### The week the system runs beside the old process
+
+`docs/shadow-week.md` is the plan for ticket 5.2: five days on real lists with
+the manual process still in charge, the system trusted for nothing that leaves
+the building, and every disagreement written down. **It cannot start until the
+BAAs are filed**, because a shadow week is real patients by definition.
+
+What exists now is the thing that makes its acceptance criterion checkable.
+"Every discrepancy logged and fixed" with no mechanism behind it becomes a pile
+of messages in a group chat that nobody can count on the Friday.
+
+**Couriers can file one.** The person holding the package is usually the one
+who notices, and a report they cannot file is a report that becomes a shrug.
+Reviewing and closing is staff, because it is a judgement about whether the
+contract was affected.
+
+**Nothing closes without a sentence.** Either something was changed, or nothing
+needed changing and here is why. The second answer is often the right one, and
+without somewhere to put it, it gets recorded as the first.
+
+**The go-live panel shows no green tick when the board is clean**, and says so
+in words: nothing open is necessary and not sufficient, and a person still
+decides. A tick is how a clean Friday becomes a sign-off nobody gave.
+
+The two free-text fields are treated as protected health information and kept
+out of the audit trail, because somebody under time pressure will type a
+patient's name into "what actually happened" however firmly the screen asks
+them to use the delivery number instead.
+
 ### Keeping things, and stopping keeping them
 
 A sweep runs at boot and daily after that. It counts what is past its

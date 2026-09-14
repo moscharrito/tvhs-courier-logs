@@ -86,6 +86,30 @@ export type DeviceIdentity =
     | { enrolled: false }
     | { enrolled: true; name: string; username: string; hasPin: boolean; label: string };
 
+/** A disagreement between the system and reality (ticket 5.2). */
+export interface Discrepancy {
+    id: number;
+    serviceDate: string;
+    kind: string;
+    severity: 'critical' | 'major' | 'minor';
+    orderId: number | null;
+    reference: string | null;
+    expected: string;
+    actual: string;
+    reportedBy: string;
+    reportedAt: string;
+    status: 'open' | 'resolved' | 'accepted';
+    resolution: string;
+    resolvedBy: string;
+    resolvedAt: string | null;
+}
+
+export interface DiscrepancySummary {
+    days: Array<{ serviceDate: string; open: number; resolved: number; accepted: number; critical: number; major: number; minor: number }>;
+    totals: { open: number; resolved: number; accepted: number };
+    goLive: { openCritical: number; openTotal: number; ready: boolean; why: string };
+}
+
 export interface SessionSummary {
     id: string;
     device: string;

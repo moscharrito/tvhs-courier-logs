@@ -278,6 +278,14 @@ const MATRIX = [
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999/pod.pdf`, UH_CLIENT_VIEW, ''],
 
+    /* --- the shadow week's log (ticket 5.2). A courier can report what they
+       see at the door; reviewing and closing is a judgement about the
+       contract and is not theirs to make. */
+    ['POST', `${UH}/discrepancies`, UH_STAFF_AND_COURIER, 'anybody who notices'],
+    ['GET', `${UH}/discrepancies`, UH_STAFF, 'the log'],
+    ['GET', `${UH}/discrepancies/summary`, UH_STAFF, 'the go-live question'],
+    ['PATCH', `${UH}/discrepancies/999999`, UH_STAFF, 'close one'],
+
     /* --- performance against the contract. */
     ['GET', `${UH}/reports/sla`, UH_STAFF, ''],
     ['GET', `${UH}/reports/sla.xlsx`, UH_STAFF, ''],

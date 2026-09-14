@@ -139,6 +139,12 @@ export function MyRun() {
                 <p className="izy-muted">No dispatch number is set for this project yet.</p>
             )}
 
+            {/* The shadow week only works if the people at the door can file
+                what they see (ticket 5.2). This is their only screen. */}
+            <p className="izy-muted">
+                Something not matching what you see? <Link to={`/projects/${code}/discrepancies`}>Tell us</Link>
+            </p>
+
             {toCollect.length > 0 && (
                 <div className="izy-card izy-collect">
                     <h2>Collect first</h2>

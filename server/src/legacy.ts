@@ -35,6 +35,7 @@ import { createGoogleProvider } from './core/geo/google';
 import { scopedTo, unavailableProvider } from './core/geo/provider';
 import { createGeoLookup } from './core/geo/lookup';
 import { createGeocodeRouter } from './modules/uh/geocode';
+import { createDiscrepancyRouter } from './modules/uh/discrepancies';
 import { todayIn } from './core/dates';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
@@ -165,6 +166,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         providerName: geoProvider.name,
         providerReason: geoProvider.reason,
     }));
+
+    /* The shadow week's log of what did not match (ticket 5.2). */
+    legacy.app.use('/api/projects/:pid/uh/discrepancies', requireProject, createDiscrepancyRouter({ client: database.client }));
 
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));

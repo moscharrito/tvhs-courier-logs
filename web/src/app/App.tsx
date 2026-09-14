@@ -18,6 +18,7 @@ import { Stop } from '../pages/uh/Stop';
 import { Returns } from '../pages/uh/Returns';
 import { ClientPortal } from '../pages/uh/ClientPortal';
 import { Security } from '../pages/Security';
+import { Discrepancies } from '../pages/uh/Discrepancies';
 import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
 import { OrderDetail } from '../pages/uh/OrderDetail';
@@ -58,6 +59,7 @@ export function App() {
                 <Route path="/projects/:code/returns" element={<Returns />} />
                 <Route path="/projects/:code/deliveries" element={<ClientPortal />} />
                 <Route path="/projects/:code/reports" element={<Reports />} />
+                <Route path="/projects/:code/discrepancies" element={<Discrepancies />} />
                 <Route path="/projects/:code/invoices" element={<Invoices />} />
                 <Route path="/projects/:code/orders" element={<Orders />} />
                 <Route path="/projects/:code/orders/:orderId/stop" element={<Stop />} />
