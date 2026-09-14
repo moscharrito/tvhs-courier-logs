@@ -31,6 +31,11 @@ import { createMfaRouter, createMfaEnforcement, createChallengeStore, factsFor, 
 import { createRetentionRouter } from './core/retention/routes';
 import { startRetentionSweep } from './core/retention/sweep';
 import { startOptimize } from './db/optimize';
+import { createGoogleProvider } from './core/geo/google';
+import { scopedTo, unavailableProvider } from './core/geo/provider';
+import { createGeoLookup } from './core/geo/lookup';
+import { createGeocodeRouter } from './modules/uh/geocode';
+import { todayIn } from './core/dates';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
@@ -141,6 +146,26 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     startOptimize(database.client);
 
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
+    /* Address lookup (ticket 1.4). Wrapped in scopedTo so that the provider
+     * can only ever be asked about site addresses: a patient's address is PHI
+     * and Google Maps is not covered by a BAA. The refusal is code rather
+     * than a comment because a comment does not stop a loop. */
+    const geoProvider = config.geo.googleApiKey
+        ? scopedTo(createGoogleProvider({ apiKey: config.geo.googleApiKey }), ['site'])
+        : unavailableProvider('No address lookup is configured. Set GOOGLE_MAPS_API_KEY (ticket 1.4).');
+    const geoLookup = createGeoLookup({
+        client: database.client,
+        provider: geoProvider,
+        today: () => todayIn(config.timezone),
+        ceiling: config.geo.dailyCeiling,
+    });
+    legacy.app.use('/api/projects/:pid/uh/geocode', requireProject, createGeocodeRouter({
+        client: database.client,
+        lookup: geoLookup,
+        providerName: geoProvider.name,
+        providerReason: geoProvider.reason,
+    }));
+
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/pricing', requireProject, createPricingRouter({ client: database.client }));
     // The daily list upload is the raw file body. express.json() in server.js

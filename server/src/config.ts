@@ -26,6 +26,12 @@ export interface Config {
          *  reach nothing but the enrolment endpoints (ticket 4.3). */
         enforced: boolean;
     };
+    geo: {
+        /** Google Maps key. Sites only: see src/core/geo/provider.ts. */
+        googleApiKey: string | undefined;
+        /** Lookups per provider per day before everything is refused. */
+        dailyCeiling: number;
+    };
     db: {
         /** libsql:// (Turso) or file: URL */
         url: string;
@@ -95,6 +101,10 @@ const EnvSchema = z.object({
      * development and the test suite are not gated while production is.
      * Set explicitly to rehearse the production behaviour locally. */
     MFA_ENFORCED: z.enum(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']).optional(),
+    /* Address lookup (ticket 1.4). Absent means every lookup is refused with
+     * a message saying so, which is the state until somebody buys a key. */
+    GOOGLE_MAPS_API_KEY: optionalString,
+    GEO_DAILY_CEILING: z.coerce.number().int().min(1).max(100000).optional(),
     /* Escape hatch for the check below: pointing a local process at a Turso
      * database on purpose, to inspect it or to rehearse a restore. */
     ALLOW_TURSO_OUTSIDE_PRODUCTION: boolish,
@@ -222,6 +232,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         sessionSecret: e.SESSION_SECRET as string,
         trustProxy: e.TRUST_PROXY ?? (isProduction ? 1 : 0),
         mfa: { enforced: e.MFA_ENFORCED === undefined ? isProduction : ['true', '1', 'yes', 'on'].includes(e.MFA_ENFORCED) },
+        geo: { googleApiKey: e.GOOGLE_MAPS_API_KEY, dailyCeiling: e.GEO_DAILY_CEILING ?? 2500 },
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
@@ -254,6 +265,8 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         log: `${c.log.level} ${c.log.format}`,
         trustProxy: c.trustProxy,
         mfa: c.mfa.enforced ? 'enforced for staff' : 'not enforced',
+        // The key itself never appears here, only whether there is one.
+        geo: c.geo.googleApiKey ? `google, ceiling ${c.geo.dailyCeiling}/day` : 'no address lookup configured',
     };
 }
 

@@ -8,7 +8,7 @@
  * users stays in tvhs.ts until ticket 0.7 turns it into the platform user
  * directory; memberships already reference it. */
 
-import { sqliteTable, integer, text, unique, check, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text, real, unique, check, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { users } from './tvhs';
 
@@ -314,3 +314,66 @@ export const retentionRuns = sqliteTable(
 );
 
 export type RetentionRun = typeof retentionRuns.$inferSelect;
+
+/* Geocoding results, cached (ticket 1.4).
+ *
+ * The obvious reason is money: the same nine pharmacies would otherwise be
+ * looked up once per delivery. The reason that matters is that every lookup
+ * is a disclosure to a third party, and a cached answer is a disclosure that
+ * does not happen a second time.
+ *
+ * `scope` records what kind of address this was, so a question nobody can
+ * answer later ("did we ever send patient addresses to Google?") has an
+ * answer in the data rather than in somebody's memory.
+ *
+ * The key is the normalised address and never a patient name, an order id or
+ * a delivery note. A row here is an address and a point: the same pair the
+ * postal service holds.
+ */
+
+export const GEO_SCOPES = ['site', 'patient'] as const;
+export const GEOCODE_QUALITIES = ['rooftop', 'interpolated', 'centroid', 'approximate'] as const;
+
+export const geocodes = sqliteTable(
+    'geocodes',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        /** Normalised address. See addressKey in core/geo/provider.ts. */
+        addressKey: text('address_key').notNull(),
+        scope: text('scope', { enum: GEO_SCOPES }).notNull(),
+        lat: real('lat').notNull(),
+        lng: real('lng').notNull(),
+        quality: text('quality', { enum: GEOCODE_QUALITIES }).notNull(),
+        /** What the provider believed the address to be. */
+        formatted: text('formatted').notNull().default(''),
+        /** Which provider answered, so a bad batch can be found and redone. */
+        provider: text('provider').notNull(),
+        lookedUpAt: text('looked_up_at').notNull(),
+    },
+    (t) => [unique('geocodes_key_unique').on(t.addressKey)],
+);
+
+export type Geocode = typeof geocodes.$inferSelect;
+
+/* How many lookups have been made today, per provider.
+ *
+ * A geocoding bill is one runaway loop away from being a surprise, and the
+ * loop that causes it is always a retry. This is the guard the ticket asks
+ * for: a hard daily ceiling, counted in the database so it survives a restart
+ * and is shared by however many instances there are.
+ */
+export const geoUsage = sqliteTable(
+    'geo_usage',
+    {
+        /** provider + local date, so the count resets with the day. */
+        id: text('id').primaryKey(),
+        provider: text('provider').notNull(),
+        day: text('day').notNull(),
+        lookups: integer('lookups').notNull().default(0),
+        /** Refused because the ceiling was reached, which is worth knowing. */
+        refused: integer('refused').notNull().default(0),
+    },
+    (t) => [index('geo_usage_day_idx').on(t.day)],
+);
+
+export type GeoUsage = typeof geoUsage.$inferSelect;

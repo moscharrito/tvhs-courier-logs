@@ -215,6 +215,12 @@ const MATRIX = [
     ['PATCH', `${UH}/sites/999999`, UH_MANAGE, ''],
     ['DELETE', `${UH}/sites/999999`, UH_MANAGE, ''],
 
+    /* --- address lookup (ticket 1.4). Reading it shows the pharmacies and
+       what has been spent; running it spends money and discloses an address
+       to a third party, so it takes the role that manages the contract. */
+    ['GET', `${UH}/geocode`, UH_STAFF, 'what is located and what it has cost'],
+    ['POST', `${UH}/geocode/sites`, UH_MANAGE, 'look up the pharmacies'],
+
     /* --- the price schedule. What we charge, which is ours and the client
        finance team's, and nobody else's. */
     ['GET', `${UH}/pricing`, UH_STAFF, ''],

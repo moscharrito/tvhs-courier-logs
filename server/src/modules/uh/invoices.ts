@@ -17,7 +17,8 @@
  * finance team a number and then show them a different one.
  *
  * NOTHING IS SILENTLY DROPPED. A delivery that cannot be priced, usually
- * because it went out of area and nobody has the mileage yet (ticket 1.4),
+ * because it went out of area and nobody has the mileage yet (ticket 1.9:
+ * a delivery address may not be sent to the geocoder we have),
  * is listed as an exception and excluded from the total. Issuing an invoice
  * with exceptions on it requires saying so explicitly, and the count and the
  * reason are recorded on the invoice.
@@ -160,7 +161,7 @@ export async function buildDraft(
                 orderId: Number(order.id),
                 serviceDate: order.service_date,
                 reference,
-                reason: 'Out of area with no mileage recorded. Needs the distance from ticket 1.4 before it can be billed.',
+                reason: 'Out of area with no mileage recorded. The road distance needs a geocoder that may be sent a delivery address, which Google Maps may not be (ticket 1.9).',
             });
             continue;
         }

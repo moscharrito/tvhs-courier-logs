@@ -110,6 +110,8 @@ recovery codes stored separately. **Nobody has done that yet.**
 | No third-party script on any page that carries a session. The one that existed was moved to our own origin. | `server/public/vendor/flatpickr/` | `docs/security-review-2026-09-13.md` |
 | The service worker never caches anything under `/api`. The test runs the real worker in a sandbox and hands it requests, rather than asserting on the file's text. | `web/public/sw.js` | `server/test/uh-courier-app.test.mjs` |
 | Signed URLs are short-lived: 5 minutes to read, 15 to write, 60 seconds to delete. | `server/src/core/files/storage.ts` | `server/test/files.test.mjs` |
+| A patient's address is never sent to a geocoder that has no BAA. The provider is scoped in code and refuses, rather than being trusted not to be asked. | `server/src/core/geo/provider.ts` | `server/test/geocode.test.mjs` |
+| Every address lookup is cached by normalised address, so the same disclosure is never made twice, and the cache records what kind of address it was. | `server/src/core/geo/lookup.ts` | `server/test/geocode.test.mjs` |
 | Uploads must be server-side encrypted: the encryption headers are inside the signature, so an unencrypted write is impossible rather than discouraged. | `server/src/core/files/storage.ts` | `server/test/files.test.mjs` |
 
 ### Encryption at rest
@@ -231,7 +233,10 @@ Nothing here is code that can be written to close them except where noted.
 
 **Blocked on ticket 0.10 (accounts and BAAs):**
 
-1. BAAs with Render, Turso and AWS.
+1. BAAs with Render, Turso and AWS. **And a geocoder**: Google Maps Platform
+   cannot be sent a patient address at any price, so out-of-area mileage waits
+   on a vendor that can (ticket 1.9). Until then nothing sends one, which is
+   enforced in code.
 2. Encryption at rest, confirmed rather than assumed.
 3. A real snapshot taken and restored. Ticket 4.4 rehearsed everything after the snapshot comes back; taking one has never been done.
 4. Doorstep photographs, and with them the file retention decision.

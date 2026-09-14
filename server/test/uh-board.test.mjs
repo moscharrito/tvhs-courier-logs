@@ -144,7 +144,10 @@ describe('sequenceStops', () => {
             expect(e).toBeInstanceOf(SequencingError);
             expect(e.code).toBe('sequencing.missingCoordinates');
             expect(e.detail.orderIds).toEqual([2]);
-            expect(e.message).toMatch(/ticket 1\.4/);
+            /* Stops have no coordinates because a delivery address may not be
+               sent to the geocoder this system has: ticket 1.9, not 1.4,
+               which covers the sites and is done. */
+            expect(e.message).toMatch(/ticket 1\.9/);
         }
     });
 
@@ -414,7 +417,8 @@ describe('auto-sequencing a run', () => {
     it('sequences by distance once the coordinates exist', async () => {
         const [near, far] = [await makeOrder(), await makeOrder()];
         const run = await makeRun({ orderIds: [far.id, near.id] });
-        // Stand in for ticket 1.4 having geocoded the site and the stops.
+        // Stand in for the sites being geocoded (1.4, done) and the stops
+        // being geocoded (1.9, which needs a vendor that may be sent one).
         await sql('UPDATE sites SET lat = 29.5085, lng = -98.5768 WHERE id = ?', [dischargeId]);
         await sql('UPDATE orders SET lat = 29.5100, lng = -98.5800 WHERE id = ?', [near.id]);
         await sql('UPDATE orders SET lat = 29.4241, lng = -98.4936 WHERE id = ?', [far.id]);

@@ -5,7 +5,7 @@
  * measured as one-way loaded miles from its origin site, so a site's
  * coordinates are part of pricing, not just display.
  *
- * lat/lng are null until ticket 1.4 geocodes them; nothing may invent them.
+ * lat/lng are null until the site lookup runs (ticket 1.4); nothing invents them.
  * geocodeStatus records how the coordinates were obtained. */
 
 import { sqliteTable, integer, text, real, unique, check, index } from 'drizzle-orm/sqlite-core';
@@ -192,7 +192,9 @@ export const orders = sqliteTable(
         /* PHI: free text from the pharmacy. May name the patient or the drug. */
         deliveryNotes: text('delivery_notes').notNull().default(''),
 
-        /* Coordinates stay null until ticket 1.4 geocodes them. Nothing
+        /* Coordinates stay null. A delivery address may not be sent to the
+         * geocoder this system has (ticket 1.9), so unlike sites these are not
+         * filled in yet. Nothing
          * invents them, exactly as with sites. */
         lat: real('lat'),
         lng: real('lng'),
@@ -411,7 +413,7 @@ export type CustodyEvent = typeof custodyEvents.$inferSelect;
  *
  * A stop is one order on one run, in sequence. Ordering matters: the
  * sequence is the route the courier drives, and ticket 2.2 will propose one
- * by nearest-neighbour from the origin site once ticket 1.4 supplies
+ * by nearest-neighbour from the origin site once ticket 1.9 supplies
  * coordinates. Until then a dispatcher sets it by hand.
  *
  * Adding a stop is what assigns an order, and it goes through the same

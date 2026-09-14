@@ -6,7 +6,7 @@
  *
  *   nearest   Nearest-neighbour from the origin pharmacy, which is what the
  *             dispatch strategy describes and what the backlog asks for. It
- *             needs coordinates on every stop, and ticket 1.4 has not
+ *             needs coordinates on every stop, and ticket 1.9 has not
  *             supplied them: nothing here invents one. Ask for it without
  *             coordinates and it refuses rather than guessing.
  *
@@ -67,7 +67,7 @@ const toRad = (deg: number) => (deg * Math.PI) / 180;
  * Straight-line, not driving distance. It is the right tool for ordering
  * stops relative to each other and the wrong one for billing: the contract
  * bills one-way LOADED miles, which is a road distance, and that comes from
- * the Distance Matrix call in ticket 1.4. Nothing here should ever reach an
+ * the road distance in ticket 1.9. Nothing here should ever reach an
  * invoice.
  */
 export function haversineMiles(a: Point, b: Point): number {
@@ -150,14 +150,14 @@ export function sequenceStops(
 
     if (origin === null) {
         throw new SequencingError(
-            'The pickup site has no coordinates yet, so a route cannot be measured from it. Address lookup is ticket 1.4.',
+            'The pickup site has no coordinates yet, so a route cannot be measured from it. Run the site lookup: POST /uh/geocode/sites (ticket 1.4).',
             'sequencing.noOrigin',
         );
     }
     const missing = stops.filter((s) => !hasPoint(s)).map((s) => s.orderId);
     if (missing.length > 0) {
         throw new SequencingError(
-            `${missing.length} of ${stops.length} stops have no coordinates yet, so the run cannot be sequenced by distance. Address lookup is ticket 1.4.`,
+            `${missing.length} of ${stops.length} stops have no coordinates yet, so the run cannot be sequenced by distance. A delivery address may not be sent to the configured geocoder, which is ticket 1.9.`,
             'sequencing.missingCoordinates',
             { orderIds: missing },
         );

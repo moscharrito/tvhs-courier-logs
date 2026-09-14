@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -176,6 +176,7 @@ describe('fresh database', () => {
                 'custody_events_order_idx', 'custody_events_project_at_idx',
                 'daily_lists_project_date_idx', 'daily_lists_site_date_idx', 'devices_user_id_idx',
                 'files_key_unique', 'files_order_idx', 'files_project_status_idx',
+                'geo_usage_day_idx', 'geocodes_key_unique',
                 'import_mappings_site_unique',
                 'invoice_adjustments_invoice_idx', 'invoice_lines_invoice_idx', 'invoice_lines_invoice_order_unique',
                 'invoices_project_number_unique', 'invoices_project_period_idx',

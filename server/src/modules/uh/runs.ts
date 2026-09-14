@@ -15,7 +15,7 @@
  * orders.status itself.
  *
  * The sequence is the route the courier drives. Ticket 2.2 will propose one
- * by nearest-neighbour from the origin site once ticket 1.4 supplies
+ * by nearest-neighbour from the origin site once ticket 1.9 supplies
  * coordinates; for now a dispatcher sets it.
  */
 
@@ -63,7 +63,7 @@ const Reorder = z.object({
 });
 
 const AutoSequence = z.object({
-    /** 'nearest' needs coordinates and refuses without them (ticket 1.4). */
+    /** 'nearest' needs coordinates and refuses without them (ticket 1.9). */
     strategy: z.enum(['nearest', 'due']).default('nearest'),
     /** Compute and return the proposal without applying it. */
     preview: z.boolean().default(false),

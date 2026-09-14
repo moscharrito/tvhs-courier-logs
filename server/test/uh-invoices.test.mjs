@@ -210,7 +210,7 @@ describe('the period', () => {
 describe('a delivery that cannot be priced', () => {
     let invoice;
     beforeAll(async () => {
-        // Out of area: no zone, and no mileage until ticket 1.4 exists.
+        // Out of area: no zone, and no mileage until ticket 1.9 exists.
         await billable('delivered', { serviceDate: '2026-07-06', zip: '78006' });
         await billable('delivered', { serviceDate: '2026-07-06' });
         invoice = await draft({ from: '2026-07-06', to: '2026-07-12' });
@@ -222,7 +222,9 @@ describe('a delivery that cannot be priced', () => {
         const res = await admin.get(`${INVOICES}/${invoice.id}`);
         expect(res.body.exceptions).toHaveLength(1);
         expect(res.body.exceptions[0].reason).toMatch(/mileage/i);
-        expect(res.body.exceptions[0].reason).toMatch(/1\.4/);
+        /* The road distance needs a geocoder that may be sent a delivery
+           address, which Google Maps may not be. Ticket 1.9. */
+        expect(res.body.exceptions[0].reason).toMatch(/1\.9/);
         expect(res.body.lines).toHaveLength(1);
     });
 

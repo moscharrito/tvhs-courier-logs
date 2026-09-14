@@ -523,6 +523,46 @@ That includes the first administrator on a fresh deployment: they sign in, they 
 
 **What the browser found that the tests did not.** Confirming an enrolment used to refresh the session, which lifted the setup gate, which swapped the screen for the project list, which threw away ten recovery codes that are shown exactly once. Every unit test passed, because they render that screen on its own. The session is now re-read when the codes are acknowledged and not before, and there is a test that pins it.
 
+### Addresses, and the one that cannot be looked up
+
+`POST /api/projects/:pid/uh/geocode/sites` puts coordinates on the nine
+University Health pharmacies. `GET .../uh/geocode` says what is located, what
+it has cost today, and what is deliberately not looked up.
+
+**Building this found the thing the ticket had not considered.** A delivery
+address held by a pharmacy is protected health information. Sending one to a
+third party is a disclosure, and a disclosure needs a business associate
+agreement with that third party. **Google Maps Platform is not covered by
+Google's BAA**, and Google's own terms exclude protected health information
+from the Maps services. So the integration the ticket describes cannot legally
+be pointed at patient addresses, at any price.
+
+A pharmacy's street address is a business address, so sites are fine. The
+provider is therefore wrapped in `scopedTo(['site'])` and **refuses a patient
+address in code**. That is not belt and braces: somebody will eventually write
+a loop over orders, and if the only thing between that loop and a disclosure
+is a comment, the comment loses.
+
+What it unblocks and what it does not: a run now has a real origin to measure
+from. Out-of-area mileage on an invoice still needs a road distance to a
+delivery address, so the 323 unpriceable deliveries in the simulated month are
+still unpriceable. That waits on a vendor who will sign for it, which is ticket
+1.9, and the likely answer is AWS Location Service under the same BAA that
+ticket 0.10 opens for the photograph bucket.
+
+**The cache is a control, not an optimisation.** Every lookup is a disclosure,
+so the cheapest one is the one that does not happen: results are keyed by
+normalised address, the nine pharmacies are sent once rather than once per
+delivery, and each row records the scope so that "did we ever send patient
+addresses to Google?" has an answer in the data rather than in somebody's
+memory.
+
+**The daily ceiling counts the attempt, not the success.** A geocoding bill is
+one runaway retry away from being a surprise, and a limit that only counts
+successes is one a failing loop runs inside all night. The count lives in the
+database, so it survives a restart and is shared by however many instances
+there are.
+
 ### Keeping things, and stopping keeping them
 
 A sweep runs at boot and daily after that. It counts what is past its
