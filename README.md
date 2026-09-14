@@ -50,6 +50,26 @@ feature is discoverable at all, and the devices page now separates **This
 phone**, **Your phones** and **Signed in** instead of listing sessions under a
 heading that promised devices.
 
+**Backups.** `npm run restore:drill -w server` rehearses the half of a restore
+that is ours: snapshot a day, record more work, lose the database, restore into
+a new file rather than over the top, migrate and verify the copy, and report
+the gap by name. It writes a dated report and exits non-zero if the copy is not
+sound. `npm run restore:check -w server` is the verification on its own, for
+use against a real restored database.
+
+The check exists because of one failure mode. A database that came back
+without `custody_events_no_delete` answers every query correctly and passes
+every other check; the only thing that changed is that the chain of custody
+Scope 1.2.7 turns on can be edited. So the check looks for the triggers by
+name, alongside integrity, foreign keys, the migrations applied against the
+number this build ships, and the newest row of each kind, which is how somebody
+sizes what a restore lost before promising anybody anything.
+
+**Taking and restoring a real snapshot has never been done**, because
+point-in-time restore is a paid Turso feature and the service is on the free
+plan. The drill's snapshot is a file copy. The runbook marks which steps are
+rehearsed and which are not, one by one.
+
 **`docs/privacy-controls.md`** is the control inventory: every safeguard this
 application and its hosting actually implement, with the file that implements
 it and the test that proves it, arranged under the headings a privacy and

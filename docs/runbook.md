@@ -237,39 +237,76 @@ contains PHI: ids, counts and field names only.
 
 ## Restore
 
-**This cannot be rehearsed yet.** Turso's point-in-time restore is a paid
-feature, and the service is on the free plan pending ticket 0.10. The drill is
-ticket 4.4 and it is blocked on the same thing. What follows is the intended
-procedure, and it is untested.
+**Half of this has been rehearsed and half has not, and the line between them
+matters.** Steps 3, 5 and 6 below were exercised by ticket 4.4 and there is a
+dated report: `docs/restore-drill-2026-09-14.md`. Steps 1, 2 and 4 involve
+Turso's point-in-time restore, which is a paid feature on a service still on
+the free plan, so **taking and restoring a real snapshot has never been done**.
+That waits on ticket 0.10.
 
 1. **Stop writing.** In Render, scale the service to zero, or suspend it. A
    restore while couriers are still recording deliveries produces a database
-   that disagrees with the phones in their pockets.
+   that disagrees with the phones in their pockets. *(Not rehearsed.)*
 2. Restore in Turso to a timestamp **before** the damage, into a **new
    database**. Never over the top of the live one: the broken state is
-   evidence, and the restore might be to the wrong moment.
-3. Point a local process at the restored copy and look at it before trusting
-   it:
+   evidence, and the restore might be to the wrong moment. *(Not rehearsed.)*
+3. **Migrate the restored copy, then check it before trusting it.**
    ```bash
    ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=<restored> TURSO_AUTH_TOKEN=... \
      npm run db:migrate -w server
+   ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=<restored> TURSO_AUTH_TOKEN=... \
+     npm run restore:check -w server
    ```
-   That applies any migrations the restored snapshot is missing and prints
-   what it did. Then check the obvious counts: orders for the affected days,
-   custody events, invoices.
-4. Repoint `TURSO_DATABASE_URL` at the restored database and restart.
-5. **Work out what was lost.** Anything recorded between the restore point and
-   the stop is gone from the database but may still exist on a courier's
-   phone: the offline queue holds unsent events and will replay them when they
-   next sign in. Events that were already sent and acknowledged will not
-   replay, and those are the ones to reconstruct from the audit trail and the
-   paper the pharmacy holds.
+   `restore:check` reads and never writes, and exits non-zero if the database
+   is not sound. It reports integrity, foreign key violations, the migrations
+   applied against the number this build ships, **whether the append-only
+   triggers came back**, the row counts, and the newest row of each kind.
+
+   The trigger check is the one worth understanding. A database that lost
+   `custody_events_no_delete` answers every query correctly and passes every
+   other check; the only thing that changed is that the chain of custody Scope
+   1.2.7 turns on can now be edited. Nothing else would notice.
+
+   "How far back this goes" is how you size step 5 before promising anybody
+   anything.
+4. Repoint `TURSO_DATABASE_URL` at the restored database and restart. *(Not
+   rehearsed.)*
+5. **Work out what was lost, by name.** Anything recorded between the restore
+   point and the stop is gone from the database but may not be gone from the
+   world:
+   - **The courier's phone.** The offline queue holds anything unsent and will
+     replay it when they next sign in. Do not tell anybody to sign out.
+   - **The audit trail**, which records what was done even when the row it was
+     done to is gone. `GET /api/audit?from=<restore point>` is the list.
+   - **The pharmacy's paper.**
+
+   The drill produces exactly this list for a simulated loss, which is what it
+   is for: a restore is not finished when the database answers again, it is
+   finished when somebody knows which deliveries are no longer recorded.
 6. Tell University Health. A delivery record that vanished is a records
    problem under the contract, whatever caused it.
 
-**What is not in the database.** Doorstep photographs will live in S3 when
-ticket 0.10 exists, and are not covered by a Turso restore. S3 versioning is
-part of ticket 4.4.
+### Rehearsing it
+
+```bash
+npm run restore:drill -w server
+```
+
+Seeds a day, snapshots it, records more work, loses the database, restores the
+snapshot into a new file, migrates and verifies it, and reports the gap by
+name. It writes `docs/restore-drill-<date>.md` and exits non-zero if the
+restored copy is not sound. The snapshot is a file copy, so **it rehearses our
+handling and not Turso's feature.**
+
+### What is still not covered
+
+- **Taking and restoring a real snapshot**, and how long that takes while the
+  service is down. Blocked on ticket 0.10.
+- **Doorstep photographs.** They live in S3 and are in no database snapshot.
+  The control is bucket versioning, specified in `docs/infra/s3-bucket.md` and
+  not enabled, because there is no bucket.
+- **Somebody other than the author following this page.** That is the part of
+  a drill that finds the ambiguous sentence, and it has not happened.
 
 ---
 
@@ -545,6 +582,7 @@ counts, table by table. Neither is enough to undo one: see Restore.
 | Before go-live, then quarterly | Load and concurrency | `npm run loadtest -w server` |
 | Quarterly | Who can reach what | `npx vitest run test/access-matrix.test.mjs --root server` |
 | Automatic, daily | What is past retention | `GET /api/retention` to read the result |
+| Quarterly, and after any schema change | The restore procedure | `npm run restore:drill -w server` |
 
 The reconciliation and the load test both write dated reports into `docs/`,
 which is the point: they are things somebody signs, not things that scroll

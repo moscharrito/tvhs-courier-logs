@@ -74,6 +74,36 @@ transport.
 }
 ```
 
+## 2b. Versioning
+
+**Enable it, and enable it before the first object is written.** Versioning
+cannot be applied retroactively to objects that already exist, and a bucket
+that held proof of delivery photographs unversioned for a month has a month of
+photographs that an accidental delete removes permanently.
+
+```bash
+aws s3api put-bucket-versioning --bucket <bucket> \
+  --versioning-configuration Status=Enabled
+```
+
+It is the backup for the half of the system a Turso restore does not cover
+(ticket 4.4). A database snapshot restores the `files` row that says a
+photograph exists; it does not restore the photograph. Without versioning, a
+delete is final, including the deletes this application makes itself during a
+retention purge.
+
+Two consequences to hold together:
+
+- **The retention purge deletes objects** (ticket 4.6). With versioning on, the
+  delete creates a delete marker and the object is still there as a noncurrent
+  version. **The `NoncurrentVersionExpiration` rule below is therefore part of
+  the disposal control, not housekeeping**: without it, purged photographs are
+  still in the bucket. Thirty days is the placeholder and it belongs in the
+  same retention decision as everything else.
+- **MFA delete** is worth considering for a bucket holding PHI, and it makes
+  automated deletion impossible, which would break the purge. Decide which is
+  wanted before turning either on.
+
 ## 3. Lifecycle
 
 Two rules. The first is housekeeping; the second is a **retention decision

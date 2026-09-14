@@ -138,7 +138,7 @@ statement about the provider rather than about this code.
 | Security awareness and training | **Gap.** Organisational, and the one most likely to be asked about first. |
 | Security incident procedures | **Gap.** See Breach notification below. |
 | Contingency: data backup | **Blocked on ticket 0.10.** Turso point-in-time restore is a paid feature and the service is on the free plan. |
-| Contingency: disaster recovery | **Partial.** The restore procedure is written (`docs/runbook.md`) and **has never been executed**. That is ticket 4.4, blocked on the same thing. |
+| Contingency: disaster recovery | **Partial, and the line is documented.** The half of the procedure that is ours was rehearsed in ticket 4.4 and has a dated report (`docs/restore-drill-2026-09-14.md`): restoring into a new database, migrating it, verifying it including the append-only triggers, and measuring the gap by name. The half that is Turso's, taking and restoring a real snapshot, has never been done. |
 | Contingency: emergency mode operation | **Gap.** The runbook asks who decides to fall back to telephone dispatch and where the paper fallback lives; nobody has answered. Deliveries do not stop because a system does, and Scope 1.2.8 still wants a signature. |
 | Contingency: testing and revision | **Gap.** Nothing has been exercised, because there is nothing to exercise it against yet. |
 | Evaluation | **Partial.** `npm run ci`, `npm run audit`, the access matrix and the load test are run every deploy or every quarter (`docs/runbook.md`). Periodic evaluation of the whole program is organisational. |
@@ -233,7 +233,7 @@ Nothing here is code that can be written to close them except where noted.
 
 1. BAAs with Render, Turso and AWS.
 2. Encryption at rest, confirmed rather than assumed.
-3. Data backup, and a restore that has actually been run (ticket 4.4).
+3. A real snapshot taken and restored. Ticket 4.4 rehearsed everything after the snapshot comes back; taking one has never been done.
 4. Doorstep photographs, and with them the file retention decision.
 
 **Decisions somebody has to make:**
