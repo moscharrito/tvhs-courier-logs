@@ -32,7 +32,7 @@ export function Layout() {
                         </NavLink>
                     ))}
                     <div className="izy-nav-title">Account</div>
-                    <NavLink to="/devices">My devices</NavLink>
+                    <NavLink to="/devices">This phone</NavLink>
                     <NavLink to="/security">Security</NavLink>
                     {user.role === 'admin' && (
                         <>

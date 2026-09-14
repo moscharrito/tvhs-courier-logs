@@ -70,6 +70,22 @@ export interface UserSummary {
     memberships: Array<{ project_id: number; code: string; project_name: string; role: ProjectMembership['role']; settings: Record<string, unknown> }>;
 }
 
+/** An enrolled phone (ticket 2.3), as distinct from a live session. */
+export interface EnrolledDevice {
+    id: string;
+    label: string;
+    userAgent: string;
+    createdAt: string;
+    lastSeenAt: string;
+    revokedAt: string | null;
+    current: boolean;
+}
+
+/** What GET /api/login/device says about the phone the app is open on. */
+export type DeviceIdentity =
+    | { enrolled: false }
+    | { enrolled: true; name: string; username: string; hasPin: boolean; label: string };
+
 export interface SessionSummary {
     id: string;
     device: string;

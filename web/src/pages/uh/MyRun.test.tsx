@@ -147,4 +147,19 @@ describe('MyRun', () => {
         expect(within(list).getByText('delivered')).toBeInTheDocument();
         expect(within(list).getByText('Ines Vargas')).toBeInTheDocument();
     });
+
+    it('offers PIN setup once, and stops offering once the phone is set up', async () => {
+        /* Ticket 5.4. Without a prompt nobody discovers the PIN exists, which
+           is exactly what happened between tickets 2.3 and 5.4: a complete,
+           tested enrolment API that no screen ever mentioned. */
+        renderRun(base({ 'GET /api/login/device': { enrolled: false } }));
+        expect(await screen.findByText(/a PIN signs you in instead of your password/i)).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Set up this phone' })).toBeInTheDocument();
+    });
+
+    it('says nothing about PINs on a phone that is already set up', async () => {
+        renderRun(base({ 'GET /api/login/device': { enrolled: true, name: 'Mohammed', username: 'mohammed', hasPin: true, label: 'phone' } }));
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.queryByText(/a PIN signs you in instead/i)).not.toBeInTheDocument();
+    });
 });

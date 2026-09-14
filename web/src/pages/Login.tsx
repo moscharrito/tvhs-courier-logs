@@ -9,14 +9,20 @@
  * A staff member who holds a second factor gets one more step: the password
  * reply is a challenge rather than a session, and the code finishes it
  * (ticket 4.3). A recovery code goes in the same box, because somebody whose
- * phone is in a taxi should not have to find a different form. */
+ * phone is in a taxi should not have to find a different form.
+ *
+ * Before any of that: if this phone has been set up (ticket 2.3, reachable
+ * since 5.4), the first thing shown is a PIN and the courier's own name. That
+ * is the point of the whole enrolment mechanism, and until 5.4 there was no
+ * screen that used it, so couriers typed a username and password at a
+ * pharmacy counter instead. */
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, ApiError, type DriverPick } from '../lib/api';
+import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { Loading } from '../app/Loading';
 
-type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'staff' | 'code';
+type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'staff' | 'code' | 'device';
 interface LoginProject { code: string; name: string }
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -25,6 +31,8 @@ const routeLabel = (r: string) => (r === 'northbound' ? 'NorthBound' : r === 'so
 export function Login() {
     const { refresh } = useAuth();
     const [projects, setProjects] = useState<LoginProject[] | null>(null);
+    /** Who this phone belongs to, when it has been set up. */
+    const [phone, setPhone] = useState<DeviceIdentity | null>(null);
     const [project, setProject] = useState<LoginProject | null>(null);
     const [drivers, setDrivers] = useState<DriverPick[] | null>(null);
     const [mode, setMode] = useState<Mode>('project');
@@ -40,6 +48,17 @@ export function Login() {
 
     useEffect(() => {
         api<LoginProject[]>('/api/login/projects').then(setProjects).catch(() => setProjects([]));
+    }, []);
+
+    /* Asked once, before anything is drawn. An enrolled phone goes straight to
+       its own lock screen; every other phone never notices this happened. */
+    useEffect(() => {
+        api<DeviceIdentity>('/api/login/device')
+            .then((d) => {
+                setPhone(d);
+                if (d.enrolled && d.hasPin) setMode('device');
+            })
+            .catch(() => setPhone({ enrolled: false }));
     }, []);
 
     const chooseProject = (p: LoginProject) => {
@@ -84,6 +103,8 @@ export function Login() {
                     setMode('code');
                     return;
                 }
+            } else if (mode === 'device') {
+                await api('/api/login/device', { method: 'POST', json: { pin } });
             } else if (mode === 'code' && challenge) {
                 await api('/api/login/mfa', { method: 'POST', json: { challengeToken: challenge, code } });
                 setChallenge(null);
@@ -112,6 +133,36 @@ export function Login() {
                 <h1>TAG</h1>
                 <p className="izy-sub">Izy Global Services LLC</p>
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
+
+                {mode === 'device' && phone?.enrolled && (
+                    <form onSubmit={(e) => { void submit(e); }}>
+                        <div className="izy-driver" style={{ cursor: 'default' }}>
+                            <span className="izy-avatar">{initials(phone.name)}</span>
+                            <span><b>{phone.name}</b><span>{phone.label}</span></span>
+                        </div>
+                        <label className="izy-field">PIN
+                            <input
+                                type="password"
+                                inputMode="numeric"
+                                pattern="\d{4,6}"
+                                autoComplete="one-time-code"
+                                value={pin}
+                                onChange={(e) => setPin(e.target.value)}
+                                required
+                                autoFocus
+                            />
+                        </label>
+                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
+                        {/* A shared phone, or somebody else's: always a way out. */}
+                        <button
+                            className="izy-link"
+                            type="button"
+                            onClick={() => { setMode('project'); setPin(''); setError(null); }}
+                        >
+                            Not {phone.name}? Sign in another way
+                        </button>
+                    </form>
+                )}
 
                 {mode === 'project' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

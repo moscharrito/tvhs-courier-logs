@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, type DeviceIdentity } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { useAuth } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
@@ -68,6 +68,8 @@ export function MyRun() {
     const project = projects.find((p) => p.code === code);
     const [data, setData] = useState<MineResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
+    /** Whether this phone is set up for PIN sign-in (ticket 5.4). */
+    const [phone, setPhone] = useState<DeviceIdentity | null>(null);
 
     const load = useCallback(async () => {
         setError(null);
@@ -80,6 +82,12 @@ export function MyRun() {
         }
     }, [code]);
     useEffect(() => { void load(); }, [load]);
+
+    /* Asked once. A failure here is not worth showing anybody: the prompt is
+       an offer, and a courier who cannot reach dispatch has a bigger problem. */
+    useEffect(() => {
+        api<DeviceIdentity>('/api/login/device').then(setPhone).catch(() => setPhone(null));
+    }, []);
 
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
@@ -111,6 +119,17 @@ export function MyRun() {
             </p>
 
             {error !== null && <div className="izy-alert warn" role="status">{error}</div>}
+
+            {/* Offered, never enforced: a courier at a pharmacy counter must
+                not be held up by a setup screen. Without a prompt nobody
+                discovers the PIN exists at all, which is exactly what happened
+                between tickets 2.3 and 5.4. */}
+            {phone?.enrolled === false && (
+                <div className="izy-alert muted" role="status">
+                    Set this phone up once and a PIN signs you in instead of your password.{' '}
+                    <Link to="/devices">Set up this phone</Link>
+                </div>
+            )}
 
             {data.dispatch.phone ? (
                 <a className="izy-btn izy-call" href={`tel:${data.dispatch.phone.replace(/[^0-9+]/g, '')}`}>

@@ -41,10 +41,14 @@ the application's own button text, because training material that paraphrases
 the interface makes somebody translate it at the worst possible moment.
 
 Writing them against the screens rather than from memory found a real gap: the
-device enrolment and PIN sign-in built in ticket 2.3 exists as a tested API and
-**nothing in the frontend calls it**, so a courier signs in with a username and
-password and the device-bound second factor is unreachable. That is now ticket
-5.4, and the courier card says what is actually true today.
+device enrolment and PIN sign-in built in ticket 2.3 existed as a tested API
+that **nothing in the frontend called**, for three phases, so no courier could
+reach a PIN and the device-bound second factor was unreachable in practice.
+Ticket 5.4 closed it: the sign-in page opens on a PIN and the courier's own
+name when the phone is enrolled, the run screen offers setup once so the
+feature is discoverable at all, and the devices page now separates **This
+phone**, **Your phones** and **Signed in** instead of listing sessions under a
+heading that promised devices.
 
 **`docs/privacy-controls.md`** is the control inventory: every safeguard this
 application and its hosting actually implement, with the file that implements

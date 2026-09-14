@@ -9,13 +9,30 @@ the card to the screen without translating.
 
 ## Signing in
 
-Open the app. Tap **Staff sign in**, then your username and password.
+**First time on this phone:** tap **Staff sign in**, then your username and
+password.
+
+Then set the phone up once, so you never type that again. The run screen
+offers it: **Set this phone up once and a PIN signs you in instead of your
+password.** Or find it any time under **This phone** in the menu.
+
+You will need your password again, a PIN you choose, and a name for the phone.
+
+**After that:** open the app and it shows your name and a **PIN** box. Four
+digits and you are in.
+
+> The PIN only works on **this** phone. It is worth nothing to somebody who
+> does not have it, which is why four digits is enough. If you lose the phone,
+> tell dispatch and they will cut it off.
+
+> **Not the driver picker.** The list of names with PINs on the very first
+> screen is the old TVHS system, and not yours.
+
+Shared phone, or somebody else's? **Not <your name>? Sign in another way**
+under the PIN box.
 
 You stay signed in for up to 30 days as long as you use it. If you have not
 opened it in 12 hours it will ask again.
-
-> **Not the driver picker.** The list of names with PINs on the first screen is
-> the old TVHS system. UH couriers sign in with a username and password.
 
 ---
 

@@ -190,6 +190,67 @@ describe('Login', () => {
         expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     });
 
+    it('opens on a PIN and the name of whoever owns the phone', async () => {
+        /* Ticket 5.4. The whole point of enrolling a phone (ticket 2.3): a
+           courier at a pharmacy counter taps four digits instead of typing a
+           username and a password one-handed. Until 5.4 nothing called this
+           endpoint and the screen did not exist. */
+        const { calls } = mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: true, name: 'Mohammed', username: 'mohammed', hasPin: true, label: "Mohammed's phone" },
+            'POST /api/login/device': { id: 7, username: 'mohammed', name: 'Mohammed', role: 'driver', route: null },
+        });
+        renderApp();
+
+        expect(await screen.findByText('Mohammed')).toBeInTheDocument();
+        expect(screen.getByText("Mohammed's phone")).toBeInTheDocument();
+        // Not the project picker, which is what an unenrolled phone opens on.
+        expect(screen.queryByText('Which project are you signing in to?')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('PIN'), { target: { value: '4417' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+        await waitFor(() => expect(calls).toContain('POST /api/login/device'));
+    });
+
+    it('always leaves a way out of the lock screen, for a shared or borrowed phone', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: true, name: 'Mohammed', username: 'mohammed', hasPin: true, label: "Mohammed's phone" },
+        });
+        renderApp();
+
+        fireEvent.click(await screen.findByRole('button', { name: /Not Mohammed\?/ }));
+        expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
+    });
+
+    it('shows a wrong PIN without dropping the lock screen', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: true, name: 'Mohammed', username: 'mohammed', hasPin: true, label: "Mohammed's phone" },
+            'POST /api/login/device': { status: 401, body: { error: 'Incorrect PIN' } },
+        });
+        renderApp();
+
+        fireEvent.change(await screen.findByLabelText('PIN'), { target: { value: '0000' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect PIN');
+        expect(screen.getByLabelText('PIN')).toBeInTheDocument();
+    });
+
+    it('opens on the project picker when the phone is not set up', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: false },
+        });
+        renderApp();
+        expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
+    });
+
     it('asks for a code when the password is not the whole of signing in', async () => {
         /* Ticket 4.3. The password reply carries a challenge rather than a
            session, and nothing about the account is shown until the code is
