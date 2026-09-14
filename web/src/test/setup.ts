@@ -4,7 +4,16 @@ import '@testing-library/jest-dom/vitest';
    the path a phone actually takes. */
 import 'fake-indexeddb/auto';
 import { afterEach, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
+
+/* findBy* and waitFor default to one second, which is generous on an idle
+   machine and tight when three vitest forks are sharing one. Two different
+   tests have gone red once each on a loaded run and passed on every rerun,
+   which is a false red: it reports a bug that is not there and teaches
+   whoever sees it to rerun rather than to read. Three seconds does not hide
+   anything, because a render that never happens never happens at one second
+   or at three; it only stops the machine's load deciding the result. */
+configure({ asyncUtilTimeout: 3000 });
 
 afterEach(() => {
     cleanup();

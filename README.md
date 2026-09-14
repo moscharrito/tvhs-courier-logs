@@ -505,6 +505,8 @@ The review found one high advisory, `drizzle-orm` below 0.45.2, and upgraded it.
 
 Four moderate advisories were traced to the calling code rather than accepted or dismissed by their labels: the `uuid` bug needs a `buf` argument that `exceljs` never passes, and the react-router open redirect needs a user-controlled navigation target, of which this application has none. Both "fixes" are major-version changes. The reasoning is written down in the security review so the next person does not have to redo it.
 
+Ticket 5.9 took the react-router one: `react-router-dom` is on 7.18.3, which also retires the two v6 future flags the test suite had been warning about on every run. It cost 19 kB gzipped, on a bundle couriers load over a phone connection, and that is the reason to do this deliberately rather than reflexively. The `uuid` advisory stays, because the only two levers are a downgrade of the library that parses pharmacy uploads and an `overrides` entry that npm 11.7 silently ignores in this workspaces tree. What changed is that the assessment is now enforced: `server/test/dependency-advisories.test.mjs` asserts exceljs uses uuid in one file, destructures `v4` and nothing else, never calls the affected `v3`/`v5`/`v6`, never passes `buf`, and that nothing we wrote imports uuid. An assessment nothing checks is a memory, and memories rot.
+
 ### A second factor for staff
 
 `POST /api/login` stops being the whole of signing in for anybody who runs the contract. Project roles admin, ops manager and dispatcher, plus any platform administrator, hold a TOTP factor; the password step answers with a short-lived challenge instead of a session, and `POST /api/login/mfa` finishes it.

@@ -201,6 +201,27 @@ These four should be revisited at each dependency refresh, and the react-router
 7 migration wants a ticket of its own rather than a rushed upgrade before
 go-live.
 
+> **Revisited, ticket 5.9 (14 September).** The two react-router items are
+> gone: `react-router-dom` is on 7.18.3, the 208 web tests pass unchanged, and
+> the two v6 future flags the suite had been warning about (`v7_startTransition`,
+> `v7_relativeSplatPath`) are now the default behaviour rather than a pending
+> migration. It cost 19 kB gzipped in the bundle, which is the honest price and
+> is recorded in the backlog.
+>
+> `uuid` is still here and still not reachable, and the reasoning is no longer
+> only prose: `server/test/dependency-advisories.test.mjs` asserts that exceljs
+> uses uuid in exactly one file, destructures `v4` and nothing else, never
+> calls `v3`/`v5`/`v6`, never passes the `buf` argument the advisory is about,
+> and that nothing we wrote imports uuid at all. If any of that stops being
+> true the suite fails, which is the difference between an assessment and a
+> memory.
+>
+> An `overrides` entry was tried and abandoned. npm 11.7 ignores root
+> `overrides` in this workspaces tree: the lockfile comes back with no
+> overrides recorded and `uuid` still resolved at 8.3.2. Leaving the block in
+> the manifest would have read as a fix that was in place when it was not, so
+> there is a test asserting the manifest has no `overrides` key.
+
 ## Checked and clean
 
 - **SQL injection.** Every query uses bound parameters. The handful of
