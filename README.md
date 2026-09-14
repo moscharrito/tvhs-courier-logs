@@ -35,6 +35,17 @@ that have actually happened, with what each one looks like from outside. It is
 written to be read by somebody who did not write the code, at three in the
 morning.
 
+**`docs/training/`** is what the people using it are given: a one-page courier
+quick card, a dispatcher guide, and a one-pager for pharmacy staff. They quote
+the application's own button text, because training material that paraphrases
+the interface makes somebody translate it at the worst possible moment.
+
+Writing them against the screens rather than from memory found a real gap: the
+device enrolment and PIN sign-in built in ticket 2.3 exists as a tested API and
+**nothing in the frontend calls it**, so a courier signs in with a username and
+password and the device-bound second factor is unreachable. That is now ticket
+5.4, and the courier card says what is actually true today.
+
 **`docs/privacy-controls.md`** is the control inventory: every safeguard this
 application and its hosting actually implement, with the file that implements
 it and the test that proves it, arranged under the headings a privacy and
