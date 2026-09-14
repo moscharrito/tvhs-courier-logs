@@ -16,6 +16,16 @@
  *
  * The cookie carries a random token; the row id is its SHA-256, the same
  * shape as sessions, so a copy of the table cannot be replayed as a phone.
+ *
+ * THE PIN BELONGS TO THE DEVICE, not to the person (ticket 5.8). It lived on
+ * users.pin until then, shared with the route PIN the legacy TVHS quick login
+ * is keyed on, and that route PIN is accepted from any device. So enrolling a
+ * phone quietly rewrote a credential that worked from anywhere, which is the
+ * exact property the device binding exists to remove. Two phones shared one
+ * PIN, resetting a route PIN changed what a phone expected, and an
+ * administrator setting a PIN set what somebody's phone would accept. One
+ * column per device fixes all four, and users.pin is now the route PIN and
+ * nothing else.
  */
 
 import crypto from 'node:crypto';
@@ -108,8 +118,11 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
 
     async function liveDevice(token: string) {
         if (!token) return null;
+        /* d.* carries d.pin, which is this phone's. The user's columns are
+           selected by name so u.pin cannot shadow it by accident: that
+           collision is what this ticket was about. */
         const rs = await client.execute({
-            sql: `SELECT d.*, u.username, u.name, u.role, u.route, u.status, u.pin
+            sql: `SELECT d.*, u.username, u.name, u.role, u.route, u.status
                   FROM devices d JOIN users u ON u.id = d.user_id
                   WHERE d.id = ? AND d.revoked_at IS NULL`,
             args: [hash(token)],
@@ -158,16 +171,18 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
         const token = crypto.randomBytes(32).toString('hex');
         const now = new Date().toISOString();
         const userAgent = describeUserAgent(req.get('user-agent') ?? '');
+        /* Enrolling sets the PIN: a phone with no PIN cannot be signed into,
+           so the two steps are one row and a half-finished enrolment is
+           impossible. It goes on the device and not on the user, so a second
+           phone does not change the first one's PIN and nothing here touches
+           the route PIN. */
         await client.execute({
-            sql: `INSERT INTO devices (id, user_id, label, user_agent, created_at, last_seen_at)
-                  VALUES (?, ?, ?, ?, ?, ?)`,
-            args: [hash(token), Number(user['id']), body.label || userAgent, userAgent, now, now],
-        });
-        // Enrolling sets the PIN: a phone with no PIN cannot be signed into,
-        // so the two steps are one and a half-finished enrolment is impossible.
-        await client.execute({
-            sql: 'UPDATE users SET pin = ? WHERE id = ?',
-            args: [bcrypt.hashSync(body.pin, 10), Number(user['id'])],
+            sql: `INSERT INTO devices (id, user_id, label, user_agent, pin, created_at, last_seen_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+                hash(token), Number(user['id']), body.label || userAgent, userAgent,
+                bcrypt.hashSync(body.pin, 10), now, now,
+            ],
         });
 
         setDeviceCookie(res, token);
@@ -301,8 +316,13 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
         }
 
         const now = new Date().toISOString();
+        /* The PIN goes with it. The devices screen has always said "signing
+           one out here removes the PIN", and until the PIN was on this row
+           there was nothing it could honestly remove: the hash sat on the
+           user and outlived every phone they had. The row itself is kept, so
+           the history still reads. */
         await client.execute({
-            sql: 'UPDATE devices SET revoked_at = ?, revoked_by = ? WHERE id = ?',
+            sql: 'UPDATE devices SET revoked_at = ?, revoked_by = ?, pin = NULL WHERE id = ?',
             args: [now, req.session.user.username, String(device['id'])],
         });
         await client.execute({

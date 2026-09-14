@@ -142,6 +142,9 @@ export function createUsersRouter({ client, store }: Deps): Router {
             email: u.email ?? null,
             role: u.role,
             status: u.status,
+            /* The legacy TVHS route PIN, which is all users.pin is since
+               ticket 5.8. A phone's PIN belongs to the phone and shows up in
+               that user's device list, not here. */
             hasPin: Boolean(u.has_pin),
             created_at: u.created_at,
             memberships: await membershipsOf(Number(u.id)),
@@ -242,21 +245,44 @@ export function createUsersRouter({ client, store }: Deps): Router {
         res.json({ ok: true, revokedSessions: revoked });
     }));
 
+    /* Sets the LEGACY TVHS ROUTE PIN, and only that.
+     *
+     * Until ticket 5.8 it also set the PIN every phone that person had
+     * enrolled would accept, so an administrator resetting a courier's PIN
+     * handed themselves the four digits that unlock that courier's phone.
+     * Now the two are separate columns, and this one authenticates through
+     * /api/login/pin, which is keyed on the route.
+     *
+     * Which means it does nothing at all for somebody without a route, and
+     * answering 200 to a request that changed nothing anybody can use is how
+     * an administrator comes away believing they reset a courier's PIN. */
     router.put('/api/users/:username/pin', requireAdmin, wrap(async (req, res) => {
         const u = await loadOr404(req, res);
         if (!u) return;
         const body = parse(SetPin, req.body, res);
         if (!body) return;
+        if (u.route === null) {
+            res.status(409).json({
+                error: `${u.username} signs in on a phone that was set up with their password, and that PIN belongs to the phone. `
+                    + 'There is no PIN to set here. To give them a new one, sign the phone out from their devices and let them set it up again.',
+                code: 'pin.noRoute',
+            });
+            return;
+        }
         await run('UPDATE users SET pin = ? WHERE id = ?', [bcrypt.hashSync(body.pin, BCRYPT_ROUNDS), Number(u.id)]);
-        await req.audit('user.pin_set', 'user', u.username);
+        await req.audit('user.pin_set', 'user', u.username, { kind: 'route' });
         res.json({ ok: true, hasPin: true });
     }));
 
+    /* Clears the route PIN. Left working for a user without a route, because
+     * clearing something that is already nothing is harmless and a database
+     * that predates 5.8's migration could still carry one. Revoking a phone
+     * is what clears a phone's PIN. */
     router.delete('/api/users/:username/pin', requireAdmin, wrap(async (req, res) => {
         const u = await loadOr404(req, res);
         if (!u) return;
         await run('UPDATE users SET pin = NULL WHERE id = ?', [Number(u.id)]);
-        await req.audit('user.pin_clear', 'user', u.username);
+        await req.audit('user.pin_clear', 'user', u.username, { kind: 'route' });
         res.json({ ok: true, hasPin: false });
     }));
 

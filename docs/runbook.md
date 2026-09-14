@@ -173,9 +173,17 @@ GET    /api/users/<username>/devices      (admin, to find the id)
 DELETE /api/devices/<id>                  (admin, or the owner)
 ```
 
-The row is kept and marked revoked, so the history stays readable. If anything
-was queued offline on that phone it is gone with it, which is the correct
-trade: a phone in somebody else's hands must not be able to send.
+The row is kept and marked revoked, and its PIN is nulled, so nothing on that
+phone is a credential any more. If anything was queued offline on it, that is
+gone with it, which is the correct trade: a phone in somebody else's hands
+must not be able to send.
+
+**Do not reach for `PUT /api/users/<username>/pin`.** That is the legacy TVHS
+route PIN, which is keyed on a route and accepted from any device, and it
+refuses outright for anybody who has not got one. A courier's PIN belongs to
+their phone: revoking the phone is how you take it away, and setting it up
+again is how they get a new one. The two shared a column until ticket 5.8,
+which is why this warning is here rather than obvious.
 
 ### A staff member lost their phone (two-factor)
 

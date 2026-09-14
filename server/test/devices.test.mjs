@@ -249,3 +249,111 @@ describe('the session knows which phone it came from', () => {
         expect(rows.some((r) => r.device_id === null)).toBe(true);
     });
 });
+
+/* ------------------------------------------------------- ticket 5.8
+ *
+ * The PIN a phone signs in with used to live on users.pin, the same column
+ * the legacy TVHS route quick-login is keyed on. The route PIN is accepted
+ * from ANY device, so the shared column quietly undid the one property that
+ * makes four digits acceptable in front of PHI: that they only work on the
+ * phone they were set on.
+ *
+ * Four separate consequences, one per test. Each of them is the behaviour
+ * before the split, written as the assertion that it does not happen.
+ */
+
+describe('a phone PIN belongs to the phone', () => {
+    it('is stored on the device row and never on the user', async () => {
+        const p = phone();
+        await enrol(p, 'ada.courier', '1234');
+
+        const device = (await sql(
+            `SELECT d.pin FROM devices d JOIN users u ON u.id = d.user_id
+             WHERE u.username = 'ada.courier' AND d.revoked_at IS NULL`,
+        )).rows[0];
+        expect(device.pin).toMatch(/^\$2[aby]\$/); // bcrypt, not the PIN itself
+        const user = (await sql(`SELECT pin FROM users WHERE username = 'ada.courier'`)).rows[0];
+        expect(user.pin).toBeNull();
+    });
+
+    it('does not become a route PIN that works from anywhere', async () => {
+        /* The serious one. A driver with a route who enrols a phone used to
+           have their route PIN rewritten to the phone's, and /api/login/pin
+           takes a route PIN from any browser on earth. */
+        const p = phone();
+        await enrol(p, 'north.driver', '4821', { password: srv.creds.north.password });
+
+        // Somebody else's browser, holding no device cookie at all.
+        const anywhere = srv.agent();
+        const res = await anywhere.post('/api/login/pin').send({ route: 'northbound', pin: '4821' });
+        expect(res.status).toBe(401);
+        expect((await anywhere.get('/api/session')).status).toBe(401);
+    });
+
+    it('is not changed by enrolling a second phone', async () => {
+        const first = phone();
+        await enrol(first, 'bo.courier', '1111');
+        const second = phone();
+        await enrol(second, 'bo.courier', '2222');
+
+        // Each phone still answers to the PIN it was set up with.
+        await first.post('/api/logout');
+        expect((await first.post('/api/login/device').send({ pin: '1111' })).status).toBe(200);
+        resetPinThrottle();
+        await second.post('/api/logout');
+        expect((await second.post('/api/login/device').send({ pin: '2222' })).status).toBe(200);
+        // And not to the other one's.
+        resetPinThrottle();
+        await first.post('/api/logout');
+        expect((await first.post('/api/login/device').send({ pin: '2222' })).status).toBe(401);
+    });
+
+    it('is really removed when the phone is signed out, which is what the screen says', async () => {
+        const p = phone();
+        await enrol(p, 'ada.courier', '1234');
+        const id = String((await sql(
+            `SELECT d.id FROM devices d JOIN users u ON u.id = d.user_id
+             WHERE u.username = 'ada.courier' AND d.revoked_at IS NULL`,
+        )).rows[0].id);
+
+        expect((await p.delete(`/api/devices/${id.slice(0, 12)}`)).status).toBe(200);
+        const row = (await sql('SELECT pin, revoked_at FROM devices WHERE id = ?', [id])).rows[0];
+        expect(row.pin).toBeNull();          // the credential is gone
+        expect(row.revoked_at).not.toBeNull(); // the row is kept, so the history reads
+    });
+});
+
+describe('an administrator resetting a PIN', () => {
+    it('cannot hand themselves the four digits that unlock somebody\'s phone', async () => {
+        /* Before the split, PUT /api/users/:username/pin wrote the column the
+           phone authenticated against. */
+        const p = phone();
+        await enrol(p, 'ada.courier', '1234');
+        await p.post('/api/logout');
+
+        const res = await admin.put('/api/users/ada.courier/pin').send({ pin: '9999' });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('pin.noRoute');
+
+        resetPinThrottle();
+        expect((await p.post('/api/login/device').send({ pin: '9999' })).status).toBe(401);
+        resetPinThrottle();
+        expect((await p.post('/api/login/device').send({ pin: '1234' })).status).toBe(200);
+    });
+
+    it('says what to do instead, rather than reporting a reset that reset nothing', async () => {
+        const res = await admin.put('/api/users/bo.courier/pin').send({ pin: '9999' });
+        expect(res.status).toBe(409);
+        expect(res.body.error).toMatch(/that PIN belongs to the phone/);
+        expect(res.body.error).toMatch(/sign the phone out/i);
+    });
+
+    it('still sets the route PIN for a driver who has a route', async () => {
+        const res = await admin.put('/api/users/north.driver/pin').send({ pin: '5150' });
+        expect(res.status).toBe(200);
+        expect(res.body.hasPin).toBe(true);
+        resetPinThrottle();
+        const anywhere = srv.agent();
+        expect((await anywhere.post('/api/login/pin').send({ route: 'northbound', pin: '5150' })).status).toBe(200);
+    });
+});

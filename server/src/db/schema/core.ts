@@ -133,6 +133,19 @@ export const devices = sqliteTable(
         label: text('label').notNull().default(''),
         /** Short description derived from the user agent, for recognition. */
         userAgent: text('user_agent').notNull().default(''),
+        /**
+         * bcrypt of the PIN that signs in on THIS phone, and nowhere else.
+         *
+         * It lived on users.pin until ticket 5.8, shared with the route PIN
+         * the legacy TVHS quick-login is keyed on. One column meant enrolling
+         * a phone silently rewrote the route PIN, which is accepted from any
+         * device: a four-digit secret whose whole justification is that it
+         * only works on the phone it was set on became one that worked
+         * everywhere. It also meant a second phone changed the first one's
+         * PIN, and that an administrator resetting somebody's PIN set what
+         * their phone expected.
+         */
+        pin: text('pin'),
         createdAt: text('created_at').notNull(),
         lastSeenAt: text('last_seen_at').notNull(),
         /** Set on revocation; the row is kept so the history stays readable. */

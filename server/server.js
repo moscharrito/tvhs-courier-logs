@@ -467,7 +467,13 @@ app.get('/api/login/projects', async (req, res) => {
     res.json(await dbAll('SELECT code, name FROM projects ORDER BY name'));
 });
 
-// Driver quick login with PIN
+/* Driver quick login with a PIN, keyed on the route.
+ *
+ * The legacy TVHS path: two vans, one driver each, a shared phone in the cab.
+ * It is accepted FROM ANY DEVICE, which is why ticket 2.3 built the
+ * device-bound alternative and why ticket 5.8 stopped the two sharing a
+ * column. Nothing new is keyed this way: a courier on a project without
+ * routes signs in with a password and then enrols the phone. */
 app.post('/api/login/pin', async (req, res) => {
     const { route, pin } = req.body;
     if (!route || !pin) return res.status(400).json({ error: 'Route and PIN required' });
@@ -500,6 +506,10 @@ app.post('/api/login/pin/setup', async (req, res) => {
         await req.audit('auth.login_failed', 'route', String(route).slice(0, 40), { method: 'pin_setup', reason: user ? 'bad_password' : 'no_driver' });
         return res.status(401).json({ error: 'Incorrect password' });
     }
+    /* The ROUTE PIN, which is all users.pin holds since ticket 5.8. It used
+       to be the same column an enrolled phone's PIN lived in, so resetting a
+       route PIN changed what that driver's phone expected and setting a
+       phone's PIN handed out a credential that works from any device. */
     await dbRun('UPDATE users SET pin = ? WHERE username = ?', [bcrypt.hashSync(String(pin), 10), user.username]);
     throttles.password.reset(req.ip, `route:${route}`);
     throttles.pin.reset(req.ip, `route:${route}`);

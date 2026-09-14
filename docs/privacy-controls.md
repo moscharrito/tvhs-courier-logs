@@ -97,7 +97,7 @@ recovery codes stored separately. **Nobody has done that yet.**
 | A used code is never accepted again, so one seen over a shoulder is dead rather than good for another 90 seconds. | `server/src/core/auth/totp.ts` | `server/test/mfa.test.mjs` |
 | Ten single-use recovery codes, stored as SHA-256, shown once. | `server/src/core/auth/mfa.ts` | `server/test/mfa.test.mjs` |
 | Enforcement is a middleware ahead of every route: a staff session without a second factor reaches the enrolment endpoints and nothing else. | `server/src/core/auth/mfa.ts` | `server/test/mfa-enforcement.test.mjs` |
-| Couriers authenticate with a PIN that works only from a device enrolled with the full password. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
+| Couriers authenticate with a PIN that works only from a device enrolled with the full password. The PIN is stored on the device row, so it is not also a credential that works from anywhere, a second phone does not change the first one's, and revoking a phone really does remove it. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
 | A lost phone is revoked, and revoking it revokes its live sessions. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
 
 ### Transmission security

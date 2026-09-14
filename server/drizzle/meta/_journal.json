@@ -183,6 +183,13 @@
       "when": 1789404796225,
       "tag": "0025_report_sends",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1789422054842,
+      "tag": "0026_device_pin",
+      "breakpoints": true
     }
   ]
 }

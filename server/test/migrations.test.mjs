@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -463,6 +463,64 @@ describe('0015 rebuilds signatures without losing rows', () => {
             // And the id sequence continues rather than restarting at 1.
             const ids = await client.execute('SELECT id FROM signatures ORDER BY id');
             expect(ids.rows.map((r) => Number(r.id))).toEqual([1, 2]);
+        } finally {
+            client.close();
+            await removeDir(dir);
+        }
+    });
+});
+
+describe('0026 moves a phone PIN off the user without locking the phone out', () => {
+    /* Ticket 5.8. Until this migration the only copy of a phone's PIN was
+       users.pin, shared with the legacy route PIN. Two things have to be true
+       afterwards: a phone enrolled before it still signs in, and the copy
+       that authenticated from any device is gone for anybody who has no route
+       to authenticate on. */
+    it('carries the PIN onto live devices and clears it from routeless users', async () => {
+        const { dir, absolute } = tempDb('pin-split-');
+        const client = createClient({ url: `file:${absolute}` });
+        try {
+            const journal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'));
+            const runFile = async (tag) => {
+                const sql = fs.readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), 'utf8');
+                for (const stmt of sql.split('--> statement-breakpoint')) {
+                    const trimmed = stmt.trim();
+                    if (trimmed) await client.execute(trimmed);
+                }
+            };
+            const tags = journal.entries.map((e) => e.tag);
+            for (const tag of tags.filter((t) => t < '0026')) await runFile(tag);
+
+            // The pre-5.8 world: the PIN on the user, and nowhere else.
+            await client.execute(
+                `INSERT INTO users (username, password, pin, name, role, route)
+                 VALUES ('ada.courier', 'pw-hash', 'pin-hash-ada', 'Ada', 'driver', NULL),
+                        ('north.driver', 'pw-hash', 'pin-hash-north', 'North', 'driver', 'northbound')`,
+            );
+            await client.execute(
+                `INSERT INTO devices (id, user_id, label, user_agent, created_at, last_seen_at, revoked_at)
+                 VALUES ('aaa', 1, 'her phone', '', '2026-01-01', '2026-01-01', NULL),
+                        ('bbb', 2, 'the van', '', '2026-01-01', '2026-01-01', NULL),
+                        ('ccc', 1, 'old phone', '', '2026-01-01', '2026-01-01', '2026-02-01')`,
+            );
+            expect(await columnNames(client, 'devices')).not.toContain('pin');
+
+            await runFile('0026_device_pin');
+
+            const devices = await client.execute('SELECT id, pin FROM devices ORDER BY id');
+            const byId = Object.fromEntries(devices.rows.map((r) => [String(r.id), r.pin]));
+            // Live phones keep the PIN they were enrolled with.
+            expect(byId.aaa).toBe('pin-hash-ada');
+            expect(byId.bbb).toBe('pin-hash-north');
+            // A revoked phone is history and is not signing in again.
+            expect(byId.ccc).toBeNull();
+
+            const users = await client.execute('SELECT username, pin FROM users ORDER BY username');
+            const byName = Object.fromEntries(users.rows.map((r) => [String(r.username), r.pin]));
+            // No route, so users.pin could authenticate nothing: it is cleared.
+            expect(byName['ada.courier']).toBeNull();
+            // A route PIN is still a route PIN, and this is the only column for it.
+            expect(byName['north.driver']).toBe('pin-hash-north');
         } finally {
             client.close();
             await removeDir(dir);
