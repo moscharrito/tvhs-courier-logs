@@ -1,0 +1,1 @@
+CREATE INDEX `run_stops_project_run_idx` ON `run_stops` (`project_id`,`run_id`,`sequence`);

@@ -470,23 +470,52 @@ Deliveries completed during the run: ${delivered}. Orders imported: ${imported?.
 ## Why the target is measured after the first ${WARMUP_MS / 1000} seconds
 
 Not to flatter the number. The first seconds of this test are ${COURIERS} couriers
-opening the app at the same instant, against a server that has answered nothing
-yet, while ${IMPORT_ROWS} orders are imported beside them. Every request in that
-window is a cold one: no compiled query plans, no warm page cache, ${COURIERS}
-manifest reads at once.
+opening the app at the same instant while ${IMPORT_ROWS} orders are imported beside them.
+That is the busiest moment this system will ever have, and it is deliberately
+more adversarial than a real morning.
 
-Measured as one figure, that burst moved the whole-run p95 between 152 ms and
-741 ms across four runs of identical code, depending on nothing more than what
-else the laptop was doing. A figure with that spread decides nothing. Measured
-apart, both say something: the wave is ${ms(steady.p95)} and the cold start is ${ms(coldStart.p95)}.
+Measured as one figure, that burst moved the whole-run p95 between 86 ms and
+741 ms across six runs, depending on what else the laptop was doing and on the
+import landing inside the window or beside it. A figure with that spread
+decides nothing. Measured apart, both say something: the wave is ${ms(steady.p95)} and the
+opening burst is ${ms(coldStart.p95)}.
 
-Every slow request in this run is in that first window, and the slowest is the
-pickup manifest (\`GET /runs/:id/pickup\`), which ${COURIERS} couriers ask for within a
-second of each other. In the worst of the four runs it took over two seconds.
-That is the thing to watch: an index review on that query, and a warm-up
-request at boot, are worth doing before a real morning. Neither is in this
-ticket, and the staging run in ticket 0.10 is where it has to be measured on
-hardware that is not a laptop.
+Every slow request is in that first window, and the slowest is the pickup
+manifest (\`GET /runs/:id/pickup\`), which ${COURIERS} couriers ask for within a second
+of each other.
+
+**Ticket 4.8 chased that down, and the answer was not what this report
+originally guessed.** It is not the query and it is not a cold cache. Look at
+the two figures in the table above: the manifest read and the ${IMPORT_ROWS}-row import take
+the same time, to within a few milliseconds, in every run. They take the same
+time because they are the same queue. One Node process holds one connection to
+one database file, the import is roughly nine hundred statements, and twelve
+manifest reads issued at that moment are interleaved with it. The manifest is
+not slow; it is waiting.
+
+Measured directly, away from the import: the first manifest read a freshly
+booted process ever serves takes about 18 ms and later ones about 6 ms, and
+twelve of them at once, cold, take 55 ms in total. A warm-up at boot would
+therefore buy about 18 milliseconds once, which is not worth the code.
+
+What ticket 4.8 did fix was a latent defect found on the way past: with no
+statistics, SQLite chose the unique index on \`(project_id, order_id)\` for that
+query, used only its leading column, and walked every stop in the PROJECT to
+return one courier's twenty. An index on \`(project_id, run_id, sequence)\` makes
+the choice unambiguous, and \`test/query-plans.test.mjs\` asserts the plan so it
+cannot drift back. At today's volumes that is worth a few percent. At a year of
+stops in one table it is the difference between a lookup and a scan.
+
+**The lever that remains is the import**, which writes its rows one statement
+at a time. Batching it would cut both its own duration and the wait it imposes
+on everything running beside it. That is a change to the path that creates
+every order, with deduplication and a custody event each, so it is its own
+ticket rather than a postscript to this one.
+
+There is also an operational answer that costs nothing: pharmacies send lists
+in the morning and the wave is at noon. This test overlaps them deliberately,
+to be adversarial. If they are not overlapped in practice, none of this is
+felt.
 
 ## By endpoint
 

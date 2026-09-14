@@ -465,6 +465,14 @@ export const runStops = sqliteTable(
          * prevents it in the database rather than only in a handler. */
         unique('run_stops_order_unique').on(t.projectId, t.orderId),
         index('run_stops_run_seq_idx').on(t.runId, t.sequence),
+        /* The courier's pickup manifest filters on project AND run (ticket
+         * 4.8). Without an index whose leading columns are exactly those,
+         * SQLite picked the unique index above, used only its project_id
+         * prefix, and walked every stop in the project to return one
+         * courier's twenty. Statistics happen to correct that today and are
+         * not something to rely on: an index the planner cannot get wrong is
+         * cheaper than a plan that depends on ANALYZE having run. */
+        index('run_stops_project_run_idx').on(t.projectId, t.runId, t.sequence),
     ],
 );
 

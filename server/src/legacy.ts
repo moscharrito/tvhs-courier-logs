@@ -30,6 +30,7 @@ import { createAuthThrottles, tooManyAttempts } from './core/auth/throttle';
 import { createMfaRouter, createMfaEnforcement, createChallengeStore, factsFor, sweepChallenges } from './core/auth/mfa';
 import { createRetentionRouter } from './core/retention/routes';
 import { startRetentionSweep } from './core/retention/sweep';
+import { startOptimize } from './db/optimize';
 import { createHealthRouter } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
@@ -135,6 +136,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
      * and never deletes without an approval that names an exact number. */
     legacy.app.use(createRetentionRouter({ client: database.client, storage: fileStorage }));
     startRetentionSweep(database.client, (err) => logger.error('retention sweep failed', errorFields(err)));
+    /* Query planner statistics, refreshed at boot and daily (ticket 4.8).
+     * Without them the pickup manifest walks every stop in the project. */
+    startOptimize(database.client);
 
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/sites', requireProject, createSitesRouter({ client: database.client }));
