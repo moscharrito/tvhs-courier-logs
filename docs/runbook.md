@@ -69,6 +69,9 @@ database:
 NODE_ENV=production TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run db:migrate -w server
 ```
 
+Setting the accounts up in the first place, and the agreements that have to
+exist before any of it holds real data, is `docs/infra/accounts-and-baas.md`.
+
 **The first deploy onto an empty database** has a sequence that cannot be
 reordered, because two-factor authentication is enforced (ticket 4.3):
 

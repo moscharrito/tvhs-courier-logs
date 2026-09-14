@@ -189,6 +189,11 @@ lifecycle rule in `docs/infra/s3-bucket.md`.
 | Turso | Every patient name and address in the contract | Not signed. |
 | AWS (S3 + KMS) | Doorstep photographs | No account yet. |
 
+The ordered procurement checklist, with what to ask each vendor and how to
+check the result, is `docs/infra/accounts-and-baas.md`. **Ask all three before
+buying anything**: a refusal from Turso is an architecture change, not a
+purchase.
+
 Until these exist, **no real patient data may be put into this system**, which
 is why every environment so far has been simulated. The file service refuses
 rather than degrades for exactly this reason: with no bucket under a BAA, a

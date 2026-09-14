@@ -70,6 +70,14 @@ point-in-time restore is a paid Turso feature and the service is on the free
 plan. The drill's snapshot is a file copy. The runbook marks which steps are
 rehearsed and which are not, one by one.
 
+**`docs/infra/accounts-and-baas.md`** is what has to happen before any of this
+holds real patient data: the AWS, Turso and Render accounts and the business
+associate agreements covering them, in the order they have to be done, with the
+verification for each. It is the keystone ticket, none of it is engineering,
+and the first instruction in it is to ask all three vendors before buying
+anything, because a refusal from the database vendor is an architecture change
+rather than a purchase.
+
 **`docs/privacy-controls.md`** is the control inventory: every safeguard this
 application and its hosting actually implement, with the file that implements
 it and the test that proves it, arranged under the headings a privacy and
