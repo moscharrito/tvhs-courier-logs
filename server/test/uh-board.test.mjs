@@ -260,11 +260,27 @@ describe('the board', () => {
         expect(adaRow.present).toBe(true);
         expect(adaRow.minutesSinceSeen).toBeLessThanOrEqual(1);
 
-        // Someone who has not signed in has no last-seen at all, and is not
-        // reported as present on the strength of nothing.
+        // Someone who has genuinely never signed in has no last-seen at all,
+        // and is not reported as present on the strength of nothing.
         const bo = res.body.couriers.find((c) => c.username === 'bo.courier');
         expect(bo.lastSeenAt).toBeNull();
         expect(bo.present).toBe(false);
+    });
+
+    it('says when a courier who signed out was last seen, not that they never were', async () => {
+        /* Signing out revokes the session. The presence query used to skip
+           revoked sessions, so a courier who finished their round and signed
+           out came back with last_seen null, and the board printed "never
+           signed in" next to the run they had just completed. Never and
+           not-any-more are different answers to a dispatcher deciding whether
+           to ring somebody. Found by walking docs/day-rehearsal.md. */
+        const bo = srv.agent();
+        await bo.post('/api/login').send({ username: 'bo.courier', password: 'courier-pass-1' });
+        await bo.post('/api/logout');
+
+        const row = (await board()).body.couriers.find((c) => c.username === 'bo.courier');
+        expect(row.lastSeenAt).not.toBeNull();
+        expect(row.minutesSinceSeen).toBeLessThanOrEqual(1);
     });
 
     it('stops calling a courier present once they have been quiet', async () => {

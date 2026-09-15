@@ -34,7 +34,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import ExcelJS from 'exceljs';
 import { requireProjectRole } from '../../core/projects/middleware';
-import { todayIn } from '../../core/dates';
+import { todayIn, dateIn } from '../../core/dates';
 import { priceOrder, type PricedOrderRow } from './order-pricing';
 import { buildPdf, Page, PAGE, wrap } from '../../core/pdf/writer';
 
@@ -745,6 +745,10 @@ export interface RenderableInvoice {
     excludedNote: string;
     notes: string;
     issuedAt: string | null;
+    /** The contract's zone. An issue date is a date on a document sent to
+     *  University Health, and slicing a UTC ISO string dated an invoice
+     *  issued at 8pm in Chicago to the following day. */
+    timezone: string;
 }
 
 const MARGIN = 48;
@@ -881,7 +885,7 @@ export function renderInvoice(view: RenderableInvoice, now: Date = new Date()): 
     for (const [index, p] of pages.entries()) {
         p.line(MARGIN, MARGIN + 22, PAGE.width - MARGIN, MARGIN + 22, { grey: 0.8 });
         p.text(
-            `${view.number}   ${view.issuedAt ? `issued ${view.issuedAt.slice(0, 10)}` : 'draft, not issued'}`,
+            `${view.number}   ${view.issuedAt ? `issued ${dateIn(new Date(view.issuedAt), view.timezone)}` : 'draft, not issued'}`,
             MARGIN, MARGIN + 10, { size: 8, grey: 0.45 },
         );
         p.textRight(`Page ${index + 1} of ${pages.length}`, PAGE.width - MARGIN, MARGIN + 10, { size: 8, grey: 0.45 });

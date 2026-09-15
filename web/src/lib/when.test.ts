@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { clockFor, stampFor, momentFor, safeZone, todayIn, deviceZone } from './when';
+import { clockFor, stampFor, momentFor, dateFor, safeZone, todayIn, deviceZone } from './when';
 
 /* 2026-09-14T18:08:54Z. In Chicago (CDT, UTC-5) that is 1:08 PM. In New York
    it is 2:08 PM, in Phoenix 11:08 AM, in London 7:08 PM. One instant, four
@@ -59,6 +59,32 @@ describe('when the zone is not usable', () => {
         expect(clock('')).toBe('');
         // Not "Invalid Date": the raw value is what somebody needs to debug it.
         expect(clock('not a timestamp')).toBe('not a timestamp');
+    });
+});
+
+describe('a date carried on a document', () => {
+    it('is the contract day, not the UTC day, for an invoice issued in the evening', () => {
+        /* `issuedAt.slice(0, 10)` dated an invoice issued at 8pm in Chicago to
+           the following day, on the screen and on its PDF. An issue date is a
+           date on a document sent to University Health. Found by walking
+           docs/day-rehearsal.md. */
+        const evening = '2026-09-15T01:05:00.000Z'; // 8:05 PM in Chicago, on the 14th
+        expect(dateFor('America/Chicago')(evening)).toBe('2026-09-14');
+        expect(evening.slice(0, 10)).toBe('2026-09-15'); // what it used to say
+    });
+});
+
+describe('a date in the project zone', () => {
+    it('resolves a past instant in the same zone, so a range is not a day out at one end', () => {
+        /* The performance page opened on "the last thirty days" with both ends
+           computed from toISOString(), which is UTC. From 7pm in Chicago that
+           range ended on a day that had not happened, and the header said so.
+           Found by walking docs/day-rehearsal.md. */
+        const evening = new Date('2026-09-15T00:35:00.000Z'); // 7:35 PM in Chicago, on the 14th
+        expect(todayIn('America/Chicago', evening)).toBe('2026-09-14');
+        expect(evening.toISOString().slice(0, 10)).toBe('2026-09-15'); // what it used to say
+        const thirtyBefore = new Date(evening.getTime() - 29 * 86400000);
+        expect(todayIn('America/Chicago', thirtyBefore)).toBe('2026-08-16');
     });
 });
 

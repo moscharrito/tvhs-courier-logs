@@ -14,7 +14,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
+import { dateFor } from '../../lib/when';
 
 interface Line {
     orderId: number; serviceDate: string; reference: string; pharmacy: string;
@@ -58,6 +59,8 @@ export function Invoices() {
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
     const base = `/api/projects/${code}/uh/invoices`;
+    /* The contract's zone. An issue date is a date on a document. */
+    const issuedDate = dateFor(useProjectTimezone(code));
 
     const [list, setList] = useState<Summary[] | null>(null);
     const [open, setOpen] = useState<Invoice | null>(null);
@@ -191,7 +194,7 @@ export function Invoices() {
                     </div>
                     <p className="izy-muted">
                         {open.periodFrom} to {open.periodTo} · {open.lineCount} {open.lineCount === 1 ? 'delivery' : 'deliveries'}
-                        {open.issuedAt && <> · issued {open.issuedAt.slice(0, 10)}</>}
+                        {open.issuedAt && <> · issued {issuedDate(open.issuedAt)}</>}
                         {open.paidAt && <> · paid {open.paidAt.slice(0, 10)}</>}
                     </p>
 

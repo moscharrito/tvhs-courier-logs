@@ -224,6 +224,25 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
  * API call, a legacy asset, or a real file falls back to index.html so the
  * React router can handle it. Without a build (development before
  * `npm run build -w web`, or tests) a plain-text pointer is served instead. */
+/* Extensions a browser asks for as a SUBRESOURCE. A request for one of these
+ * that got past express.static is a missing file and deserves a 404: serving
+ * index.html instead would hand the browser HTML where it expected a script,
+ * and the error it prints then describes the MIME type rather than the
+ * missing file.
+ *
+ * This used to be `path.extname(req.path)`, which is not the same question.
+ * Every username in this application is first.last, so path.extname of
+ * "/users/pat.pharmacy" is ".pharmacy" and the user detail page 404ed on a
+ * refresh or a pasted link. It only worked at all because clicking through
+ * from the directory is client-side routing and never asks the server.
+ * Found by walking docs/day-rehearsal.md. */
+const ASSET_EXTENSIONS = new Set([
+    '.js', '.mjs', '.css', '.map', '.json', '.webmanifest', '.txt', '.xml',
+    '.ico', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif',
+    '.woff', '.woff2', '.ttf', '.otf', '.eot',
+    '.mp4', '.webm', '.mp3', '.wav', '.pdf', '.wasm',
+]);
+
 function mountShell(app: Express, webDist: string): void {
     const indexFile = path.join(webDist, 'index.html');
     const built = fs.existsSync(indexFile);
@@ -238,8 +257,10 @@ function mountShell(app: Express, webDist: string): void {
     app.use((req: Request, res: Response, next: NextFunction) => {
         if (req.method !== 'GET' && req.method !== 'HEAD') return next();
         if (req.path.startsWith('/api/') || req.path.startsWith('/legacy/')) return next();
-        // Real files under the built shell were already served by express.static above.
-        if (path.extname(req.path) && req.path !== '/') return next();
+        // Real files under the built shell were already served by express.static
+        // above, so anything still here is missing. Only 404 it when it looks
+        // like a subresource; every other path belongs to the React router.
+        if (ASSET_EXTENSIONS.has(path.extname(req.path).toLowerCase())) return next();
         if (!built) {
             res.status(200).type('text/plain').send('Izy Ops shell is not built. Run `npm run build -w web`, or use `npm run dev -w web` during development.\n');
             return;

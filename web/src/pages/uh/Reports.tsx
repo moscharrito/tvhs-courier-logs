@@ -11,7 +11,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
+import { todayIn } from '../../lib/when';
 
 interface Totals {
     orders: number; delivered: number; notDelivered: number; cancelled: number;
@@ -39,12 +40,17 @@ const GROUPINGS = [
     { value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' },
 ];
 
-/** The last N days, as service dates. */
-function defaultRange(days: number): { from: string; to: string } {
-    const to = new Date();
-    const from = new Date(to.getTime() - (days - 1) * 86400000);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    return { from: iso(from), to: iso(to) };
+/** The last N days, as service dates in the project's zone.
+ *
+ * Not UTC. From 7pm in Chicago onwards `toISOString()` is already tomorrow,
+ * so the range this page opened on ended on a day that had not happened and
+ * the header said so. Service dates are questions about San Antonio. */
+function defaultRange(days: number, timezone: string): { from: string; to: string } {
+    const now = Date.now();
+    return {
+        from: todayIn(timezone, new Date(now - (days - 1) * 86400000)),
+        to: todayIn(timezone),
+    };
 }
 
 export function Reports() {
@@ -55,7 +61,7 @@ export function Reports() {
     const [report, setReport] = useState<Report | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
 
-    const fallback = defaultRange(30);
+    const fallback = defaultRange(30, useProjectTimezone(code));
     const from = params.get('from') ?? fallback.from;
     const to = params.get('to') ?? fallback.to;
     const groupBy = params.get('groupBy') ?? 'week';

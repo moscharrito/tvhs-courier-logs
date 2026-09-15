@@ -65,6 +65,13 @@ Read the first log line before going further. It should say
 curl -s http://127.0.0.1:3100/health
 ```
 
+> **Do not run `npm run ci` while this is up.** The suite starts servers of its
+> own, and with the rehearsal server and a browser also running, the machine
+> loses. A full run during this walkthrough failed nine access-matrix cases
+> with timeouts and 401s and passed cleanly the moment the rehearsal server
+> was stopped. A red suite that means "your laptop was busy" is worse than no
+> suite.
+
 ---
 
 ## 1. The people
@@ -77,9 +84,10 @@ Open `http://127.0.0.1:3100/` and sign in as `rehearsal` /
 staff: the two-factor step that lived here between tickets 4.3 and 5.10 was
 removed.
 
-Now, from **Users**, create these and grant each a membership on the UH
-project. Give everyone the same password so you are not hunting for one
-mid-rehearsal.
+Now, from **Users**, create these four. The form takes a username, a full
+name, an optional email, a temporary password and a platform role, and that
+is all it does: **it does not grant project access**. Give everyone the same
+password so you are not hunting for one mid-rehearsal.
 
 | Username | Name | Platform role | UH project role |
 |---|---|---|---|
@@ -87,6 +95,11 @@ mid-rehearsal.
 | `dee.dispatch` | Dee Dispatch | staff | dispatcher |
 | `ana.courier` | Ana Ruiz | driver | courier |
 | `pat.pharmacy` | Pat Ortega | staff | client viewer |
+
+Then open each one from the directory and grant a membership on **UH Pharmacy
+Courier** with the project role from the last column. A user with no
+membership can sign in and see nothing, which is its own useful thing to look
+at once.
 
 Two things worth doing properly:
 
@@ -115,15 +128,27 @@ RX-77403,Rosa Villanueva,210-555-0155,210 Nolan St,,San Antonio,TX,78202,1,Oral 
 ```
 
 On the project page, **Daily list import**: pharmacy `University Health Robert
-B. Green Pharmacy`, today's date, choose the file, **Review the file**.
+B. Green Pharmacy`, choose the file, **Review the file**. The service date
+already says today, in the project's timezone, so leave it.
 
-Read the preview rather than clicking past it. It tells you the zone each row
-priced into, which rows would be skipped as duplicates, and which are blocked
-and why. Nothing exists yet. Then confirm.
+**There are two screens after that, not one.**
 
-**Worth trying once:** import the same file twice. The second one is refused
-with every row named as a duplicate. That refusal is the thing standing
-between a pharmacy re-sending their list and a patient getting two deliveries.
+First **Columns**, which says "Guessed from the header row. Check it before
+importing." Every field is a dropdown onto a column of your file. With the
+header above it guesses all thirteen correctly, so this is a read-and-continue
+step, but it is the step that exists because pharmacies rename columns.
+**Re-read with these columns** applies a change.
+
+Then the preview: `3 of 3 rows will be imported`, `0 blocked, 0 duplicate, 0
+out of area, 0 with warnings`, a zone and a due time per row. Read it rather
+than clicking past it. Nothing exists until **Import 3 orders**.
+
+**Worth trying once:** attach the same file again and review it. The preview
+comes back with `This exact file was already imported as list 1`, `0 of 3
+rows will be imported`, `3 duplicate`, and the button reads **Import 0
+orders**. It is caught before anything is created, and it names the list it
+was caught against. That is what stands between a pharmacy re-sending their
+list and a patient getting two deliveries. **Cancel** out of it.
 
 ---
 
@@ -148,7 +173,8 @@ username typed at a pharmacy counter.
 
 If her name is not on that list, she has no courier membership on the project.
 
-Open the run. The first thing on it is **Collect first**: three stops are
+She lands on a project picker with one project on it, which is a wasted tap at
+a pharmacy counter and is on the record as such. Tap it, then **Today**. The first thing on it is **Collect first**: three stops are
 still at the pharmacy and the app will not let her deliver what she has not
 taken custody of.
 
@@ -156,8 +182,10 @@ taken custody of.
 cold packs. Type the pharmacy staff member's printed name, sign the pad, take
 custody.
 
-> Try typing the wrong count with no note. It is refused. A short handover
-> nobody explained is an unexplained missing medication.
+> Try typing 3 first. The form answers immediately, without waiting for you
+> to submit: **The list expects 4. Say why the count is different before you
+> continue**, and a Reason field appears. A short handover nobody explained is
+> an unexplained missing medication. Put it back to 4.
 
 Then work the stops. Each one is **I have arrived** first, because arrival is
 what the deadline is measured against, and it counts even when nobody answers.
@@ -193,8 +221,11 @@ below the 85 the contract requires. On-time 100 per cent, measured at arrival.
 Read *What these numbers mean* once: it is where the inverted completion
 formula in Scope 1.2.5 is written down as an open question.
 
-**Discrepancies.** Resolve the one Ana filed. Nothing closes without a
-sentence saying what changed, or why nothing needed to.
+**Discrepancies.** Resolve the one Ana filed: **Something was changed** opens
+a field asking what was changed, and nothing closes without a sentence in it.
+The summary above it then reads "Nothing is open. That is necessary and not
+sufficient: somebody still has to decide," which is the panel refusing to look
+like a sign-off.
 
 **An order.** Open any delivery and read the chain of custody, then download
 the proof of delivery. Both signatures, both times.
@@ -207,8 +238,13 @@ the proof of delivery. Both signatures, both times.
 
 ## 6. Billing, which is tomorrow's job
 
-**Invoices**, open a draft. Try today's date first: it refuses, because a
-period that is not over cannot be billed. That is the rule, not a limitation.
+**Sign in as `rehearsal` or `rehearsal2` first.** Billing is an admin or ops
+manager job; a dispatcher opening this screen gets `Requires project role:
+admin or ops_manager` and no draft.
+
+**Invoices**, open a draft. Try today's date first: it refuses with "That
+period is not over yet. Bill up to yesterday at the latest," because a period
+that is not over cannot be billed. That is the rule, not a limitation.
 
 So the day you just worked cannot be invoiced until tomorrow. To see a priced
 invoice now, do a second, shorter round dated yesterday and bill that: import
@@ -255,6 +291,22 @@ attestations no program can check. If you skipped `rehearsal2`, expect
 
 ---
 
+## A note on when you do this
+
+Two things depend on the clock and neither is a fault.
+
+**Rehearse in the evening and the numbers move.** Business hours are 08:00 to
+20:00, so a list imported at 19:35 has deliveries due at 21:35, which is after
+hours, and a delivery performed then carries the after-hours surcharge on the
+invoice. The walkthrough this document was checked against ran at 19:35 and
+saw exactly that.
+
+**Staff sessions idle out after thirty minutes.** Leave the rehearsal half
+done and come back, and you sign in again. That is the contract's setting, not
+a bug, and watching it happen once is worth more than reading it here.
+
+---
+
 ## 9. Put it away
 
 Stop the server, and delete the database. Nothing else was touched: no
@@ -274,8 +326,31 @@ had to stop and think, because each one is a moment somebody will have at a
 pharmacy counter with a patient waiting. File them as discrepancies of kind
 *The app itself*, or straight into `docs/build-backlog.md`.
 
-The four found in September were all of that shape: a courier told there was
-no dispatch number by the one person who could not set one, a dispatcher told
-to `POST /uh/geocode/sites`, a page advertising features that shipped two
-phases earlier, and a devices screen that left a dead page behind after doing
-exactly what it said it would.
+**This document was written from two walkthroughs and then checked by doing it
+a third time, start to finish, against a clean database.** That third pass
+found six things, which is the honest advertisement for the exercise:
+
+- `/users/pat.pharmacy` answered **404**. Every username here is first.last, and
+  the shell's fallback skipped any path `path.extname()` called an extension,
+  so every user detail page broke on a refresh or a pasted link. It had never
+  shown up because clicking through from the directory never asks the server.
+- The board said Ana Ruiz had **never signed in**, beside the run she had just
+  finished. Signing out revokes the session, and the presence query skipped
+  revoked ones. Never and not-any-more are different answers to a dispatcher
+  deciding whether to ring somebody.
+- Closing a discrepancy used **window.prompt**, which some browsers and most
+  embedded webviews refuse outright. There the button threw and did nothing.
+  It is a real field now.
+- The discrepancy filed at 7:42 PM was dated **tomorrow**, the performance page
+  opened on a range ending **tomorrow**, and the invoice issued at 8:05 PM was
+  dated **tomorrow**. Three separate places still computing a date from
+  `toISOString()`, which is UTC, five hours ahead of San Antonio in the
+  evening. The last one prints on a document sent to University Health.
+- Billing refuses a dispatcher, and this document did not say so.
+- The import has a **column-mapping step** that this document walked straight
+  past.
+
+Four of those six are the application telling somebody something untrue. None
+of them was caught by the test suite, because all of them are about what happens
+when the pieces are used in order, by four different people, at eight in the
+evening. The suite is 1,197 tests and it is not a rehearsal.

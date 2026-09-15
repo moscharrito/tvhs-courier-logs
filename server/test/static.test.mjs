@@ -32,6 +32,30 @@ describe('frontend shell at /', () => {
         }
     });
 
+    it('serves the shell for a route whose last segment has a dot in it', async () => {
+        /* Every username in this application is first.last, so the user detail
+           page is /users/pat.pharmacy, and the fallback used to skip anything
+           path.extname() called an extension. It 404ed on a refresh or a
+           pasted link and nobody noticed, because clicking through from the
+           directory is client-side routing and never asks the server.
+           Found by walking docs/day-rehearsal.md. */
+        for (const p of ['/users/pat.pharmacy', '/users/ana.courier', '/projects/uh/orders/12.5']) {
+            const res = await srv.agent().get(p);
+            expect(res.status, p).toBe(200);
+            expect(res.text).toContain('<div id="root">');
+        }
+    });
+
+    it('still 404s a missing subresource rather than answering it with HTML', async () => {
+        /* Answering a missing script with index.html hands the browser HTML
+           where it expected JavaScript, and the console error then describes a
+           MIME type instead of a missing file. */
+        for (const p of ['/assets/gone-abc123.js', '/assets/gone.css', '/missing.png', '/nope.woff2']) {
+            const res = await srv.agent().get(p);
+            expect(res.status, p).toBe(404);
+        }
+    });
+
     it('serves built assets as files', async () => {
         const res = await srv.agent().get('/assets/app-abc123.js');
         expect(res.status).toBe(200);

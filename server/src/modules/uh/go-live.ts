@@ -24,6 +24,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import type { Client } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { verifyDatabase } from '../../db/verify';
+import { todayIn } from '../../core/dates';
 
 interface Deps {
     client: Client;
@@ -140,7 +141,10 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations }: D
 
         /* ---------------------------------------------------- the contract */
 
-        const today = new Date().toISOString().slice(0, 10);
+        /* The project's day, not UTC's. An effective_from of tomorrow counts
+           as in effect from 7pm Chicago onwards if this asks UTC, which is
+           the exact trap core/dates.ts was written for. */
+        const today = todayIn(req.project!.timezone);
         const schedule = await count(
             `SELECT COUNT(*) AS n FROM price_schedules WHERE project_id = ? AND effective_from <= ?`,
             [projectId, today],

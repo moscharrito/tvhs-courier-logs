@@ -139,11 +139,18 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * location tracking, and the plan says the platform does not do that:
          * a courier's position is known from the events they send, and only
          * then. */
+        /* Every session, revoked ones included. The question is "when did this
+         * person last use the app", and signing out does not unmake that.
+         * With `revoked_at IS NULL` on the join, a courier who finished their
+         * round and signed out came back as last_seen NULL, which the board
+         * renders as "never signed in" beside the run they just completed.
+         * Never and not-any-more are different things to a dispatcher deciding
+         * whether to ring somebody. Found by walking docs/day-rehearsal.md. */
         const presence = await client.execute({
             sql: `SELECT u.username, u.name, MAX(s.last_seen_at) AS last_seen
                   FROM users u
                   JOIN memberships m ON m.user_id = u.id AND m.project_id = ? AND m.role = 'courier'
-                  LEFT JOIN sessions s ON s.user_id = u.id AND s.revoked_at IS NULL
+                  LEFT JOIN sessions s ON s.user_id = u.id
                   WHERE u.status = 'active'
                   GROUP BY u.username, u.name
                   ORDER BY u.name`,

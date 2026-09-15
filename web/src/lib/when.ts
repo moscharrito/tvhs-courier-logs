@@ -56,13 +56,13 @@ export type Formatter = (iso: string | null | undefined) => string;
    render is work nobody asked for. */
 const formatters = new Map<string, Formatter>();
 
-function formatter(kind: string, timeZone: string, options: Intl.DateTimeFormatOptions): Formatter {
+function formatter(kind: string, timeZone: string, options: Intl.DateTimeFormatOptions, locale = 'en-US'): Formatter {
     const zone = safeZone(timeZone);
     const key = `${kind}|${zone}`;
     const cached = formatters.get(key);
     if (cached) return cached;
 
-    const fmt = new Intl.DateTimeFormat('en-US', { ...options, timeZone: zone });
+    const fmt = new Intl.DateTimeFormat(locale, { ...options, timeZone: zone });
     const format: Formatter = (iso) => {
         if (!iso) return '';
         const d = new Date(iso);
@@ -89,12 +89,28 @@ export const momentFor = (timeZone: string): Formatter =>
         year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
 
-/** Today's date in the project's zone, as YYYY-MM-DD, for a date input.
+/** 2026-09-14. A date carried on a document, in the contract's zone.
+ *
+ * `issuedAt.slice(0, 10)` is the tempting one-liner and it is UTC: an invoice
+ * issued at 8pm in Chicago came out dated the following day, on the invoice
+ * and on its PDF. Found by walking docs/day-rehearsal.md.
+ *
+ * en-CA because every other date in this application is YYYY-MM-DD: service
+ * dates, billing periods, the import table. An invoice reading 09/14/2026
+ * beside a period reading 2026-09-01 is two date formats on one card. */
+export const dateFor = (timeZone: string): Formatter =>
+    formatter('date', timeZone, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-CA');
+
+/** A date in the project's zone, as YYYY-MM-DD. Defaults to now.
  *
  * A service date is a contract day, not a device day. Near midnight, or on a
  * phone left on the wrong zone, "today" from the browser is the wrong day and
- * a whole pharmacy list lands against it. en-CA is the short way to ask
- * Intl for an ISO-shaped date. */
-export function todayIn(timeZone: string): string {
-    return new Date().toLocaleDateString('en-CA', { timeZone: safeZone(timeZone) });
+ * a whole pharmacy list lands against it. en-CA is the short way to ask Intl
+ * for an ISO-shaped date.
+ *
+ * The `at` argument is for ranges: the start of "the last thirty days" has to
+ * be resolved in the same zone as its end, or the range is a day out at one
+ * end for part of every evening. */
+export function todayIn(timeZone: string, at: Date = new Date()): string {
+    return at.toLocaleDateString('en-CA', { timeZone: safeZone(timeZone) });
 }

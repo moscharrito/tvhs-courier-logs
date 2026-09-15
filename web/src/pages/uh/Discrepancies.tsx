@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
-import { momentFor } from '../../lib/when';
+import { momentFor, todayIn } from '../../lib/when';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 
@@ -38,17 +38,20 @@ const SEVERITIES: Array<{ value: string; label: string; help: string }> = [
     { value: 'minor', label: 'Minor', help: 'Awkward, slow or confusing. Nothing was recorded wrongly.' },
 ];
 
-const today = () => new Date().toISOString().slice(0, 10);
-
 export function Discrepancies() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
+    /* The contract's day. From 7pm in Chicago, UTC is already tomorrow, and a
+       courier filing something at the end of a round would date it to a day
+       that has not happened. */
+    const timezone = useProjectTimezone(code);
+    const today = () => todayIn(timezone);
     const canReview = project !== undefined && project.role !== 'courier' && project.role !== 'client_viewer';
     const base = `/api/projects/${code}/uh/discrepancies`;
     /* When a courier filed it, in the zone the day it is about was worked
        in. This is evidence for a go-live decision and it is read later. */
-    const when = momentFor(useProjectTimezone(code));
+    const when = momentFor(timezone);
 
     const [list, setList] = useState<Discrepancy[] | null>(null);
     const [summary, setSummary] = useState<DiscrepancySummary | null>(null);
@@ -61,6 +64,14 @@ export function Discrepancies() {
     const [reference, setReference] = useState('');
     const [expected, setExpected] = useState('');
     const [actual, setActual] = useState('');
+    /* Which row is being closed, and with what. Was window.prompt(), which is
+       unstyled, unlabelled, cannot be validated, and is blocked outright in
+       some browsers and embedded webviews: there the button threw and did
+       nothing at all. Closing a discrepancy is the sentence somebody reads
+       back at the end of the shadow week, so it deserves a real field.
+       Found by walking docs/day-rehearsal.md. */
+    const [closing, setClosing] = useState<{ id: number; status: 'resolved' | 'accepted' } | null>(null);
+    const [resolution, setResolution] = useState('');
 
     const load = useCallback(async () => {
         if (!canReview) return;
@@ -101,16 +112,15 @@ export function Discrepancies() {
         })();
     };
 
-    const close = (id: number, status: 'resolved' | 'accepted') => {
-        const resolution = window.prompt(
-            status === 'resolved'
-                ? 'What was changed? Code, data, process, or what somebody was taught.'
-                : 'Why does nothing need changing?',
-        );
-        if (resolution === null) return;
+    const close = (e: FormEvent) => {
+        e.preventDefault();
+        if (!closing) return;
+        const { id, status } = closing;
         void (async () => {
             try {
                 await api(`${base}/${id}`, { method: 'PATCH', json: { status, resolution } });
+                setClosing(null);
+                setResolution('');
                 await load();
             } catch (err) {
                 setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not close it' });
@@ -216,14 +226,50 @@ export function Discrepancies() {
                             </div>
                             <p><b>System:</b> {d.expected}</p>
                             <p><b>Actually:</b> {d.actual}</p>
-                            <div className="izy-row">
-                                <button className="izy-btn small" type="button" onClick={() => close(d.id, 'resolved')}>
-                                    Something was changed
-                                </button>
-                                <button className="izy-btn secondary small" type="button" onClick={() => close(d.id, 'accepted')}>
-                                    Nothing needs changing
-                                </button>
-                            </div>
+                            {closing?.id === d.id ? (
+                                <form onSubmit={close}>
+                                    <label className="izy-field">
+                                        {closing.status === 'resolved'
+                                            ? 'What was changed? Code, data, process, or what somebody was taught.'
+                                            : 'Why does nothing need changing?'}
+                                        <input
+                                            value={resolution}
+                                            onChange={(ev) => setResolution(ev.target.value)}
+                                            required
+                                            autoFocus
+                                        />
+                                    </label>
+                                    <div className="izy-row">
+                                        <button className="izy-btn small" type="submit" disabled={busy}>
+                                            {closing.status === 'resolved' ? 'Close as changed' : 'Close as accepted'}
+                                        </button>
+                                        <button
+                                            className="izy-btn secondary small"
+                                            type="button"
+                                            onClick={() => { setClosing(null); setResolution(''); }}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </form>
+                            ) : (
+                                <div className="izy-row">
+                                    <button
+                                        className="izy-btn small"
+                                        type="button"
+                                        onClick={() => { setClosing({ id: d.id, status: 'resolved' }); setResolution(''); }}
+                                    >
+                                        Something was changed
+                                    </button>
+                                    <button
+                                        className="izy-btn secondary small"
+                                        type="button"
+                                        onClick={() => { setClosing({ id: d.id, status: 'accepted' }); setResolution(''); }}
+                                    >
+                                        Nothing needs changing
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>

@@ -450,7 +450,7 @@ describe('the documents', () => {
             byServiceType: [{ serviceType: 'scheduled', count: 120, cents: 150000 }],
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 150000, totalCents: 150000, excludedCount: 0, excludedNote: '', notes: '',
-            issuedAt: '2026-09-01T12:00:00.000Z',
+            issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago',
         });
         const body = pdf.toString('latin1');
         expect(body).toMatch(/\/Count [2-9]/);
@@ -458,6 +458,24 @@ describe('the documents', () => {
         expect(text).toContain('Page 1 of');
         expect(text).toContain('(continued)');
         expect(text).toContain('$1,500.00');
+    });
+
+    it('dates the issue in the contract timezone, not in UTC', () => {
+        /* An invoice issued at 8:05 PM in Chicago used to print the following
+           day's date in its footer, because the renderer sliced the first ten
+           characters off a UTC ISO string. It is a date on a document sent to
+           University Health. Found by walking docs/day-rehearsal.md. */
+        const pdf = renderInvoice({
+            number: 'IZY-UH-2026-09-0001', status: 'issued', periodFrom: '2026-09-01', periodTo: '2026-09-13',
+            lines: [], adjustments: [], byZone: [], byServiceType: [],
+            dryRuns: { count: 0, items: 0, cents: 0 },
+            subtotalCents: 0, totalCents: 0, excludedCount: 0, excludedNote: '', notes: '',
+            issuedAt: '2026-09-15T01:05:00.000Z',
+            timezone: 'America/Chicago',
+        });
+        const text = pdfText(pdf.toString('latin1'));
+        expect(text).toContain('issued 2026-09-14');
+        expect(text).not.toContain('issued 2026-09-15');
     });
 
     it('says when a pharmacy name was too long for its column', () => {
@@ -474,7 +492,7 @@ describe('the documents', () => {
             adjustments: [], byZone: [], byServiceType: [],
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 1250, totalCents: 1250, excludedCount: 0, excludedNote: '', notes: '',
-            issuedAt: '2026-09-01T12:00:00.000Z',
+            issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago',
         });
         expect(pdfText(pdf.toString('latin1'))).toMatch(/University Health Medical Center\.\.\./);
     });

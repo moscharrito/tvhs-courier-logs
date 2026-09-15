@@ -11,7 +11,7 @@
  * said so.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../app/auth';
@@ -100,6 +100,39 @@ describe('a dispatcher', () => {
         renderAs('dispatcher');
         expect(await screen.findByRole('button', { name: 'Something was changed' })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Nothing needs changing' })).toBeInTheDocument();
+    });
+
+    it('asks for the sentence in a real field, not a window.prompt', async () => {
+        /* window.prompt is unstyled, unlabelled, cannot be validated, and is
+           blocked outright in some browsers and embedded webviews, where the
+           button threw and did nothing. The sentence is what somebody reads
+           back at the end of the shadow week. Found by walking
+           docs/day-rehearsal.md. */
+        const prompt = vi.spyOn(window, 'prompt');
+        const { calls, bodies } = renderAs('dispatcher', {
+            'PATCH /api/projects/uh/uh/discrepancies/9': { ...open1, status: 'resolved' },
+        });
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Something was changed' }));
+        expect(prompt).not.toHaveBeenCalled();
+
+        const field = await screen.findByLabelText(/What was changed/);
+        fireEvent.change(field, { target: { value: 'Run sheet count corrected at pickup.' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Close as changed' }));
+
+        await waitFor(() => expect(calls).toContain('PATCH /api/projects/uh/uh/discrepancies/9'));
+        expect(bodies['PATCH /api/projects/uh/uh/discrepancies/9']).toMatchObject({
+            status: 'resolved', resolution: 'Run sheet count corrected at pickup.',
+        });
+    });
+
+    it('lets somebody back out without closing anything', async () => {
+        const { calls } = renderAs('dispatcher');
+        fireEvent.click(await screen.findByRole('button', { name: 'Nothing needs changing' }));
+        expect(await screen.findByLabelText(/Why does nothing need changing/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByLabelText(/Why does nothing need changing/)).not.toBeInTheDocument();
+        expect(calls.some((c) => c.startsWith('PATCH'))).toBe(false);
     });
 });
 
