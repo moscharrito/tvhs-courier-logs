@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { clockFor } from '../lib/when';
 import { Loading } from '../app/Loading';
+import { Section } from '../app/Section';
 
 interface Sla {
     clockStart: 'receipt' | 'pickup';
@@ -114,15 +115,17 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
     };
 
     return (
-        <div className="izy-card">
-            <div className="izy-row-between">
-                <h2>Operating settings</h2>
-                {data.canManage && !editing && <button className="izy-btn secondary" onClick={startEdit}>Edit</button>}
-            </div>
-            <p className="izy-muted">
-                Contract parameters for this project. Defaults come from Addendum 1 and the Scope of Services;
-                anything a person changed is marked. Times are {data.timezone}.
-            </p>
+        <Section
+            id="project.settings"
+            title="Operating settings"
+            defaultOpen={false}
+            summary={`business hours ${s.businessHours.start} to ${s.businessHours.end} · ${data.timezone}`}
+            actions={(expand) => (data.canManage && !editing
+                ? <button className="izy-btn secondary" onClick={() => { expand(); startEdit(); }}>Edit</button>
+                : undefined)}
+            intro={'Contract parameters for this project. Defaults come from Addendum 1 and the Scope of '
+                + `Services; anything a person changed is marked. Times are ${data.timezone}.`}
+        >
 
             {msg && (
                 <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
@@ -313,6 +316,6 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                     </div>
                 </form>
             )}
-        </div>
+        </Section>
     );
 }

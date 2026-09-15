@@ -36,7 +36,12 @@ describe('ProjectSettings', () => {
         mockFetch({ 'GET /api/projects/uh/settings': payload() });
         render(<ProjectSettings projectCode="uh" />);
 
-        expect(await screen.findByText('Operating settings')).toBeInTheDocument();
+        /* Folded since ticket 5.14: contract parameters are reference, read
+           when something is being checked rather than as part of a day. */
+        const toggle = await screen.findByRole('button', { name: /Operating settings/ });
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        fireEvent.click(toggle);
+
         // "list received" is both the value and the default, so scope to the row.
         const clockRow = screen.getByText(/Scheduled clock starts at/).closest('tr')!;
         expect(within(clockRow).getAllByText('list received')).toHaveLength(2);
@@ -57,6 +62,7 @@ describe('ProjectSettings', () => {
         });
         render(<ProjectSettings projectCode="uh" />);
 
+        fireEvent.click(await screen.findByRole('button', { name: /Operating settings/ }));
         const row = (await screen.findByText(/After hours/)).closest('tr')!;
         expect(within(row).getByText('changed')).toBeInTheDocument();
         expect(within(row).getByText('20:00 to 08:00')).toBeInTheDocument();
@@ -100,6 +106,7 @@ describe('ProjectSettings', () => {
         mockFetch({ 'GET /api/projects/uh/settings': payload() });
         render(<ProjectSettings projectCode="uh" />);
 
+        fireEvent.click(await screen.findByRole('button', { name: /Operating settings/ }));
         const row = (await screen.findByText(/Dispatch number/)).closest('tr')!;
         expect(within(row).getByText(/not set, so couriers have no call button/)).toBeInTheDocument();
     });

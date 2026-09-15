@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { clockFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 import type { Site } from './Sites';
 
 interface Issue { row: number; field: string; code: string; severity: 'error' | 'warning'; message: string }
@@ -158,12 +159,13 @@ export function ListImport({ projectCode, timezone, canImport }: {
     if (sites === null) return <div className="izy-card"><Loading label="Loading sites" /></div>;
 
     return (
-        <div className="izy-card">
-            <h2>Daily list import</h2>
-            <p className="izy-muted">
-                Upload a pharmacy's delivery list as .xlsx or .csv. Nothing is created until you review the
-                rows below and confirm. The file itself is never stored; it is read in memory and discarded.
-            </p>
+        <Section
+            id="uh.import"
+            title="Daily list import"
+            summary={recent && recent.length > 0 ? `last imported ${recent[0]?.serviceDate ?? ''}` : undefined}
+            intro={"Upload a pharmacy's delivery list as .xlsx or .csv. Nothing is created until you review the "
+                + 'rows below and confirm. The file itself is never stored; it is read in memory and discarded.'}
+        >
 
             {msg && (
                 <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
@@ -344,6 +346,6 @@ export function ListImport({ projectCode, timezone, canImport }: {
                     </tbody>
                 </table>
             )}
-        </div>
+        </Section>
     );
 }

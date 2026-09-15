@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 
 interface Schedule {
     effectiveFrom: string;
@@ -56,8 +57,14 @@ export function Pricing({ projectCode }: { projectCode: string }) {
     const s = info.schedule;
 
     return (
-        <div className="izy-card">
-            <h2>Contract pricing</h2>
+        <Section
+            id="uh.pricing"
+            title="Contract pricing"
+            defaultOpen={false}
+            summary={s
+                ? `zones ${usd(s.zoneRates['1'] ?? 0)} to ${usd(s.zoneRates['5'] ?? 0)} · STAT +${usd(s.statSurcharge)} · from ${s.effectiveFrom}`
+                : 'no schedule in effect'}
+        >
             {!s ? <div className="izy-muted">No price schedule is in effect for this project.</div> : (
                 <>
                     <div className="izy-muted" style={{ marginBottom: 10 }}>
@@ -114,6 +121,6 @@ export function Pricing({ projectCode }: { projectCode: string }) {
                     )}
                 </>
             )}
-        </div>
+        </Section>
     );
 }

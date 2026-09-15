@@ -169,7 +169,14 @@ describe('OrderDetail', () => {
     it('shows both signatures the proof of delivery needs', async () => {
         renderOrders(routes, '/projects/uh/orders/12');
         await screen.findByRole('heading', { name: 'Order #12' });
-        const custody = (await screen.findByText('Chain of custody')).closest('.izy-card') as HTMLElement;
+        /* Folded since ticket 5.14: it is the longest thing on the page and
+           the one read least often. One click, and the header says how many
+           events are inside before you spend it. */
+        const toggle = await screen.findByRole('button', { name: /Chain of custody/ });
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        fireEvent.click(toggle);
+
+        const custody = toggle.closest('.izy-card') as HTMLElement;
         // Sending personnel at pickup, receiving personnel at the door.
         expect(within(custody).getByText('Pharmacy Tech')).toBeInTheDocument();
         expect(within(custody).getByText('Ines Vargas')).toBeInTheDocument();
@@ -177,12 +184,21 @@ describe('OrderDetail', () => {
 
     it('says the record cannot be edited, which is what makes it evidence', async () => {
         renderOrders(routes, '/projects/uh/orders/12');
+        fireEvent.click(await screen.findByRole('button', { name: /Chain of custody/ }));
         expect(await screen.findByText(/cannot be edited or deleted/)).toBeInTheDocument();
+    });
+
+    it('says how many custody events there are without being opened', async () => {
+        /* The point of folding: it must cost less information, not all of
+           it. A folded panel reading only "Chain of custody" would make you
+           open it to find out whether there is anything in it. */
+        renderOrders(routes, '/projects/uh/orders/12');
+        expect(await screen.findByRole('button', { name: /Chain of custody.*events, append-only/ })).toBeInTheDocument();
     });
 
     it('breaks the price down and says which instant it was measured at', async () => {
         renderOrders(routes, '/projects/uh/orders/12');
-        const card = (await screen.findByText('What it bills at')).closest('.izy-card') as HTMLElement;
+        const card = (await screen.findByRole('button', { name: /What it bills at/ })).closest('.izy-card') as HTMLElement;
         expect(within(card).getByText('Zone 1 delivery')).toBeInTheDocument();
         expect(within(card).getByText('$12.50')).toBeInTheDocument();
         expect(within(card).getByText('$22.00')).toBeInTheDocument();
@@ -195,7 +211,7 @@ describe('OrderDetail', () => {
             ...routes,
             'GET /api/projects/uh/uh/orders/12': { ...detail, status: 'assigned', pricing: { ...detail.pricing, provisional: true } },
         }, '/projects/uh/orders/12');
-        const card = (await screen.findByText('What it bills at')).closest('.izy-card') as HTMLElement;
+        const card = (await screen.findByRole('button', { name: /What it bills at/ })).closest('.izy-card') as HTMLElement;
         expect(within(card).getByText('provisional')).toBeInTheDocument();
     });
 

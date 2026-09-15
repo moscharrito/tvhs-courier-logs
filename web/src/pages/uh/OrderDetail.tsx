@@ -14,6 +14,7 @@ import { api, ApiError } from '../../lib/api';
 import { stampFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
 
 interface Package { id: number; description: string; quantity: number; signatureRequired: boolean; outcome: string }
@@ -155,8 +156,11 @@ export function OrderDetail() {
                 </table>
             </div>
 
-            <div className="izy-card">
-                <h2>Packages</h2>
+            <Section
+                id="uh.order.packages"
+                title="Packages"
+                summary={`${order.packages.length} ${order.packages.length === 1 ? 'item' : 'items'}`}
+            >
                 <table className="izy-table">
                     <thead><tr><th>Description</th><th>Quantity</th><th>Signature</th><th>Outcome</th></tr></thead>
                     <tbody>
@@ -170,14 +174,15 @@ export function OrderDetail() {
                         ))}
                     </tbody>
                 </table>
-            </div>
+            </Section>
 
             {p && (
-            <div className="izy-card">
-                <div className="izy-row-between">
-                    <h2>What it bills at</h2>
-                    {p.available && p.provisional && <span className="izy-pill muted">provisional</span>}
-                </div>
+            <Section
+                id="uh.order.pricing"
+                title="What it bills at"
+                summary={p.available ? usd(p.total) : 'not priced'}
+                actions={p.available && p.provisional ? <span className="izy-pill muted">provisional</span> : undefined}
+            >
                 {!p.available ? <div className="izy-muted">{p.reason}</div> : (
                     <>
                         <table className="izy-table">
@@ -199,15 +204,20 @@ export function OrderDetail() {
                         )}
                     </>
                 )}
-            </div>
+            </Section>
             )}
 
-            <div className="izy-card">
-                <h2>Chain of custody</h2>
-                <p className="izy-muted">
-                    Append-only: these rows cannot be edited or deleted, which is what makes them usable
-                    for a regulatory audit. Ordered as they were recorded.
-                </p>
+            {/* Folded. It is the longest thing on the page and the one read
+                least often: an audit record, opened when somebody disputes
+                what happened, not when somebody is checking an address. */}
+            <Section
+                id="uh.order.custody"
+                title="Chain of custody"
+                defaultOpen={false}
+                summary={`${order.custody.length} events, append-only`}
+                intro={'Append-only: these rows cannot be edited or deleted, which is what makes them usable '
+                    + 'for a regulatory audit. Ordered as they were recorded.'}
+            >
                 <table className="izy-table">
                     <thead><tr><th>When</th><th>Event</th><th>By</th><th>Signed</th><th>Detail</th></tr></thead>
                     <tbody>
@@ -230,7 +240,7 @@ export function OrderDetail() {
                         ))}
                     </tbody>
                 </table>
-            </div>
+            </Section>
         </>
     );
 }

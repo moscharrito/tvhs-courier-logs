@@ -35,6 +35,44 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 
 .izy-card { background: var(--izy-card); border: 1px solid var(--izy-line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
 .izy-card h2 { margin: 0 0 12px; font-size: 16px; }
+
+/* Folding cards (ticket 5.14). The header is one button across the full
+   width, because a 14px chevron is not a target anybody hits on the first
+   try; the whole row is the target and the chevron only says which way it
+   goes. */
+.izy-section { padding: 0; }
+.izy-section-head { display: flex; align-items: center; gap: 12px; padding: 0 20px 0 0; }
+.izy-section-head h2 { margin: 0; flex: 1; min-width: 0; font-size: 16px; }
+.izy-section-toggle {
+    display: flex; align-items: baseline; gap: 10px; width: 100%;
+    background: none; border: 0; padding: 16px 0 16px 20px; margin: 0;
+    font: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: 12px;
+}
+.izy-section-toggle:hover .izy-section-title { color: var(--izy-green); }
+.izy-section-toggle:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: -2px; }
+.izy-section-title { font-weight: 600; }
+/* The answer to "do I need to open this", so folding costs less information
+   rather than all of it. */
+.izy-section-summary { font-weight: 400; font-size: 13px; color: var(--izy-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.izy-section-actions { flex: 0 0 auto; }
+.izy-section-body { padding: 0 20px 18px; }
+.izy-section-intro { margin: 0 0 14px; color: var(--izy-muted); font-size: 13px; line-height: 1.5; }
+/* A folded card is a row, not a box: less ink, so a column of them reads as
+   a list of things you could open rather than a wall. */
+.izy-section.is-folded { margin-bottom: 8px; background: transparent; border-color: transparent; }
+.izy-section.is-folded:hover { background: var(--izy-card); border-color: var(--izy-line); }
+.izy-section.is-folded .izy-section-toggle { padding-top: 10px; padding-bottom: 10px; }
+.izy-chev { flex: 0 0 auto; align-self: center; color: var(--izy-muted); transition: transform 120ms ease; }
+.izy-chev.is-open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .izy-chev { transition: none; } }
+/* The body of a section keeps the spacing its children already expect. */
+.izy-section-body > :first-child { margin-top: 0; }
+.izy-section-body > :last-child { margin-bottom: 0; }
+
+/* The dispatch links, first thing on the project page. A row of targets, not
+   a card with a heading explaining what a board is. */
+.izy-quick { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.izy-footnote { font-size: 13px; line-height: 1.6; margin: 18px 2px 0; max-width: 70ch; }
 .izy-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .izy-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 160px; }
 .izy-row-blocked { background: var(--izy-danger-soft); }
@@ -182,9 +220,26 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
     .izy-table { min-width: 560px; }
 
     .izy { flex-direction: column; }
-    .izy-side { width: auto; flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 10px; }
-    .izy-side .izy-me { margin: 0 0 0 auto; border: 0; padding: 4px 8px; }
+    .izy-side { width: auto; flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px 10px; }
+    .izy-side .izy-me { margin: 0 0 0 auto; border: 0; padding: 0; display: flex; align-items: center; gap: 8px; }
     .izy-nav { display: flex; flex-wrap: wrap; gap: 4px; }
     .izy-nav-title { display: none; }
     .izy-main { padding: 16px; }
+
+    /* The courier's screen IS this screen, and the rail was taking the top
+       third of a phone before a single stop appeared: the wordmark and its
+       tagline on one row, the links on a second, then the name, the username
+       and Sign out stacked on a third. A driver holding a package needs the
+       next address, not our company name in 18px.
+
+       Nothing is removed that a person needs. The tagline is on the sign-in
+       page they just came through; the username is on This phone; the name
+       stays, because "am I signed in as me" is a real question at a counter
+       with two drivers and one phone. */
+    .izy-brand { font-size: 15px; padding: 4px 8px; }
+    .izy-brand small { display: none; }
+    .izy-side .izy-me b { display: inline; font-weight: 600; }
+    .izy-side .izy-me span { display: none; }
+    .izy-side .izy-me > div { margin: 0 !important; }
+    .izy-nav a { padding: 7px 10px; }
 }

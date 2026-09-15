@@ -48,45 +48,47 @@ export function ProjectHome() {
         <>
             <h1>{project.name}</h1>
             <p className="izy-sub"><code>{project.code}</code> · {project.timezone} · your role: {ROLE_LABEL[project.role] ?? project.role}</p>
-            <NewOrder projectCode={project.code} timezone={project.timezone} canCreate={canImport} />
+
+            {/* FIRST, because it is why anybody opens this page.
+                It used to be last: underneath the STAT form, the import, nine
+                pharmacies, a nine-row rate card and a twelve-row settings
+                table. Somebody coming in to see who is running late scrolled
+                past sixty rows of reference data that changes twice a year to
+                reach the one link they wanted. Order by how often a thing is
+                needed, not by how the components were written. */}
+            <nav className="izy-card izy-quick" aria-label="Dispatch">
+                <Link className="izy-btn" to={`/projects/${project.code}/board`}>Open the board</Link>
+                <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
+                <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
+                <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>
+                )}
+                {/* Staff see exactly what the client sees. A portal nobody on
+                    our side ever looks at is a portal nobody can answer a
+                    question about. */}
+                <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
+            </nav>
+
+            {/* The daily job, so it stays open. */}
             <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} />
+
+            {/* Everything below folds away and remembers that it did. These
+                are reference and occasional work: a phone order, the site
+                list, the rate card, the contract parameters. */}
+            <NewOrder projectCode={project.code} timezone={project.timezone} canCreate={canImport} />
             <Sites projectCode={project.code} canManage={canManage} />
             <Pricing projectCode={project.code} />
             <ProjectSettings projectCode={project.code} />
-            <div className="izy-card">
-                <h2>Dispatch</h2>
-                <p>The board is today's wave: what is waiting, who is carrying what, and what is running late. Orders is the searchable record behind it.</p>
-                <div className="izy-row">
-                    <Link className="izy-btn" to={`/projects/${project.code}/board`}>Open the board</Link>
-                    <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
-                    {/* Staff see exactly what the client sees. A portal nobody
-                        on our side ever looks at is a portal nobody can answer
-                        a question about. */}
-                    <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
-                    <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
-                    <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
-                    {canManage && (
-                        <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>
-                    )}
-                </div>
-            </div>
-            <div className="izy-card">
-                {/* This card said "coming next: address lookup, then the
-                    dispatch board and the courier app" for two phases after
-                    the board and the courier app shipped. A page that
-                    describes the product as unfinished when it is not is a
-                    page nobody trusts the rest of. What is genuinely not here
-                    is one thing, so it says that one thing. */}
-                <h2>Not here yet</h2>
-                <p>
-                    Address lookup. Until it is switched on, pharmacies have no coordinates, a run cannot be
-                    ordered by distance, and out-of-area miles cannot be measured. Everything else on this
-                    page is in use.
-                </p>
-                <p className="izy-muted">
-                    Admins enrol staff and couriers from <Link to="/users">Users</Link>.
-                </p>
-            </div>
+
+            <p className="izy-muted izy-footnote">
+                {/* This was a card headed "Not here yet". A whole card, with a
+                    border and a heading, to say one thing is missing. It is a
+                    footnote, so it looks like one. */}
+                Address lookup is not switched on, so pharmacies have no coordinates, a run cannot be ordered
+                by distance, and out-of-area miles cannot be measured. Everything else here is in use.
+                Admins enrol staff and couriers from <Link to="/users">Users</Link>.
+            </p>
         </>
     );
 }

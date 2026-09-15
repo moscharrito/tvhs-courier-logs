@@ -241,23 +241,39 @@ describe('Login', () => {
         renderApp('/projects/uh/uh');
         await waitFor(() => expect(screen.getByRole('heading', { name: 'UH Pharmacy Courier' })).toBeInTheDocument());
         expect(screen.getByText(/your role: Admin and dispatch/)).toBeInTheDocument();
-        expect(screen.getByText('Not here yet')).toBeInTheDocument();
+        expect(screen.getByText(/Address lookup is not switched on/)).toBeInTheDocument();
+
+        /* The board first, which is the whole reason for the reorder in
+           ticket 5.14: this link used to be the last thing on the page,
+           under about sixty rows of reference data. */
+        expect(screen.getByRole('link', { name: 'Open the board' })).toBeInTheDocument();
+
+        /* Reference sections are folded, and the header says enough to decide
+           whether to open one. */
+        expect(await screen.findByRole('button', { name: /Pickup locations/ })).toBeInTheDocument();
+        expect(screen.getByText(/1 pharmacy, 1 without coordinates/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Contract pricing/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Operating settings/ })).toBeInTheDocument();
+
         /* The sites, with management controls, because this is an admin.
            Until ticket 5.12 there was a third position here: a dispatcher who
            could read this page and change nothing on it. Those roles merged,
            so whoever works the board also adds a pharmacy and edits the
            settings. The name also appears in the import screen's pharmacy
-           picker, so scope the assertion to the sites table. */
-        const sitesTable = (await screen.findByText('Pickup locations')).closest('.izy-card') as HTMLElement;
+           picker, so scope the assertion to the sites section. */
+        fireEvent.click(screen.getByRole('button', { name: /Pickup locations/ }));
+        const sitesTable = (await screen.findByRole('button', { name: /Pickup locations/ })).closest('.izy-card') as HTMLElement;
         expect(within(sitesTable).getByText('University Health Vida Pharmacy')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'New site' })).toBeInTheDocument();
+
         // and the contract pricing
-        expect(await screen.findByText('Contract pricing')).toBeInTheDocument();
-        expect(screen.getByText('$12.50')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /Contract pricing/ }));
+        expect(await screen.findByText('$12.50')).toBeInTheDocument();
         expect(screen.getByText(/After hours 20:00 to 07:00/)).toBeInTheDocument();
+
         // and the operating settings, now editable
-        expect(await screen.findByText('Operating settings')).toBeInTheDocument();
-        expect(screen.getByText('120 minutes from the list being received.')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /Operating settings/ }));
+        expect(await screen.findByText('120 minutes from the list being received.')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     });
 

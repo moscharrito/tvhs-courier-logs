@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 import type { Site } from './Sites';
 
 interface Created {
@@ -98,15 +99,17 @@ export function NewOrder({ projectCode, timezone, canCreate }: {
     const dueIfSavedNow = new Date(Date.now() + (WINDOW_MINUTES[form.serviceType] ?? 120) * 60_000);
 
     return (
-        <div className="izy-card">
-            <div className="izy-row-between">
-                <h2>STAT or ad hoc order</h2>
-                {!open && <button className="izy-btn" type="button" onClick={() => { setOpen(true); setMsg(null); }}>Take an order</button>}
-            </div>
-            <p className="izy-muted">
-                For a phone call, not for scheduled work. Scheduled deliveries come in on a pharmacy's daily list,
-                where they are checked for duplicates first.
-            </p>
+        <Section
+            id="uh.neworder"
+            title="STAT or ad hoc order"
+            defaultOpen={false}
+            summary="for a phone call, not for scheduled work"
+            actions={(expand) => (!open && canCreate
+                ? <button className="izy-btn" type="button" onClick={() => { expand(); setOpen(true); setMsg(null); }}>Take an order</button>
+                : undefined)}
+            intro={'For a phone call, not for scheduled work. Scheduled deliveries come in on a pharmacy’s daily '
+                + 'list, where they are checked for duplicates first.'}
+        >
 
             {msg && (
                 <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
@@ -166,6 +169,6 @@ export function NewOrder({ projectCode, timezone, canCreate }: {
                     </div>
                 </form>
             )}
-        </div>
+        </Section>
     );
 }

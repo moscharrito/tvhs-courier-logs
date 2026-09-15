@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 
 export interface Site {
     id: number;
@@ -75,15 +76,49 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
     const pendingGeocode = sites?.filter((s) => s.lat === null).length ?? 0;
 
     return (
-        <>
-            <div className="izy-card">
-                <h2>Pickup locations</h2>
+        <Section
+            id="uh.sites"
+            title="Pickup locations"
+            defaultOpen={false}
+            summary={sites === null
+                ? undefined
+                : `${sites.length} ${sites.length === 1 ? 'pharmacy' : 'pharmacies'}`
+                    + (pendingGeocode > 0 ? `, ${pendingGeocode} without coordinates` : '')}
+            /* Adding a site was its own card, which put a button nobody
+               presses monthly on the same footing as the day's work. It
+               belongs to this list, so it sits on this list's header. */
+            actions={(expand) => (canManage && !adding
+                ? <button className="izy-btn secondary" type="button" onClick={() => { expand(); setAdding(true); }}>New site</button>
+                : undefined)}
+        >
                 {msg && (
                     <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
                         {msg.text}
                         {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
                     </div>
                 )}
+            {/* Directly under the header, because the button that opens it
+               is on the header. Below a nine-row table it would look like
+               nothing had happened. */}
+            {canManage && adding && (
+            <form className="izy-row" onSubmit={(e) => { void create(e); }}>
+                <label className="izy-field">Code<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required placeholder="palo.alto" /></label>
+                <label className="izy-field">Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+                <label className="izy-field">Type
+                    <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as Site['type'] })}>
+                        <option value="pharmacy">pharmacy</option>
+                        <option value="hospital">hospital</option>
+                        <option value="other">other</option>
+                    </select>
+                </label>
+                <label className="izy-field">Street address<input value={form.addressLine} onChange={(e) => setForm({ ...form, addressLine: e.target.value })} required /></label>
+                <label className="izy-field">City<input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} required /></label>
+                <label className="izy-field">State<input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} required maxLength={2} /></label>
+                <label className="izy-field">ZIP<input value={form.zip} onChange={(e) => setForm({ ...form, zip: e.target.value })} required placeholder="78229" /></label>
+                <button className="izy-btn" type="submit" disabled={busy}>Add</button>
+                <button className="izy-btn secondary" type="button" onClick={() => { setAdding(false); setForm(EMPTY); }}>Cancel</button>
+            </form>
+            )}
                 {sites === null ? <Loading label="Loading sites" /> : (
                     <>
                         {pendingGeocode > 0 && (
@@ -119,34 +154,7 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
                         </table>
                     </>
                 )}
-            </div>
 
-            {canManage && (
-                <div className="izy-card">
-                    <h2>Add a site</h2>
-                    {!adding ? (
-                        <button className="izy-btn secondary" type="button" onClick={() => setAdding(true)}>New site</button>
-                    ) : (
-                        <form className="izy-row" onSubmit={(e) => { void create(e); }}>
-                            <label className="izy-field">Code<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required placeholder="palo.alto" /></label>
-                            <label className="izy-field">Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
-                            <label className="izy-field">Type
-                                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as Site['type'] })}>
-                                    <option value="pharmacy">pharmacy</option>
-                                    <option value="hospital">hospital</option>
-                                    <option value="other">other</option>
-                                </select>
-                            </label>
-                            <label className="izy-field">Street address<input value={form.addressLine} onChange={(e) => setForm({ ...form, addressLine: e.target.value })} required /></label>
-                            <label className="izy-field">City<input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} required /></label>
-                            <label className="izy-field">State<input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} required maxLength={2} /></label>
-                            <label className="izy-field">ZIP<input value={form.zip} onChange={(e) => setForm({ ...form, zip: e.target.value })} required placeholder="78229" /></label>
-                            <button className="izy-btn" type="submit" disabled={busy}>Add</button>
-                            <button className="izy-btn secondary" type="button" onClick={() => { setAdding(false); setForm(EMPTY); }}>Cancel</button>
-                        </form>
-                    )}
-                </div>
-            )}
-        </>
+        </Section>
     );
 }

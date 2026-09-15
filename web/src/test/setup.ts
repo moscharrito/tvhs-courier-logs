@@ -18,6 +18,11 @@ configure({ asyncUtilTimeout: 3000 });
 afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    /* Folding panels remember whether they were open (app/Section.tsx), and
+       jsdom keeps one localStorage for the whole file. Without this, a test
+       that opens a panel decides what the next test sees, and the order of
+       the file becomes part of the result. */
+    try { window.localStorage.clear(); } catch { /* no storage, nothing to clear */ }
 });
 
 /** Stub fetch with a route table: { 'GET /api/x': body | { status, body } }. */
