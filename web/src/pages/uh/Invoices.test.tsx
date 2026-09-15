@@ -172,8 +172,24 @@ describe('Invoices', () => {
     it('requires a reason on an adjustment, through the form', async () => {
         renderInvoices();
         const panel = await openFirst();
+        /* Folded since ticket 5.14. An adjustment is a credit or a charge
+           agreed with University Health by name, which happens rarely; the
+           form for it sat open under every invoice anybody read. */
+        fireEvent.click(within(panel).getByRole('button', { name: /Add an adjustment/ }));
         const reason = within(panel).getByLabelText('Reason') as HTMLInputElement;
         expect(reason).toBeRequired();
         expect(within(panel).getByLabelText('Amount')).toBeRequired();
+    });
+
+    it('does not report a made-up delivery count for a draft', async () => {
+        /* line_count is only stored when an invoice is issued, so the list
+           read a confident "0 deliveries" for a draft that opens with three
+           and a total of $74.00. Somebody scanning for a period worth billing
+           would read the 0 and move on. */
+        renderInvoices();
+        const rows = await screen.findAllByRole('row');
+        const draft = rows.find((r) => within(r).queryByText('counted on open'));
+        expect(draft).toBeDefined();
+        expect(within(draft!).queryByText('0')).not.toBeInTheDocument();
     });
 });

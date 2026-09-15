@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { dateFor } from '../../lib/when';
 
@@ -176,7 +177,20 @@ export function Invoices() {
                                             <><br /><span className="izy-stat-bad">{i.excludedCount} left off</span></>
                                         )}
                                     </td>
-                                    <td>{i.lineCount}</td>
+                                    {/* A draft has no stored line count: the
+                                        lines are recomputed when it is opened
+                                        and only frozen at issue. This column
+                                        read a confident "0" for every draft,
+                                        beside a draft that opens with three
+                                        deliveries and a total of $74.00. A
+                                        dispatcher scanning for a period worth
+                                        billing would read 0 and move on. The
+                                        total column next to it already
+                                        declined to make up a number; this one
+                                        now does the same. */}
+                                    <td>{i.status === 'draft'
+                                        ? <span className="izy-muted">counted on open</span>
+                                        : i.lineCount}</td>
                                     <td>{i.status === 'draft' ? <span className="izy-muted">draft</span> : money(i.total)}</td>
                                     <td><button className="izy-btn secondary small" type="button" onClick={() => { void openInvoice(i.id); }}>Open</button></td>
                                 </tr>
@@ -321,6 +335,12 @@ export function Invoices() {
                     )}
 
                     {open.status !== 'paid' && open.status !== 'void' && (
+                        <Section
+                            id="uh.invoice.adjust"
+                            title="Add an adjustment"
+                            defaultOpen={false}
+                            summary="a credit or a charge agreed with University Health"
+                        >
                         <form className="izy-row" onSubmit={addAdjustment}>
                             <label className="izy-field">Description
                                 <input value={adjustment.description} onChange={(e) => setAdjustment({ ...adjustment, description: e.target.value })} required />
@@ -335,6 +355,7 @@ export function Invoices() {
                             </label>
                             <button className="izy-btn secondary" type="submit" disabled={busy}>Add adjustment</button>
                         </form>
+                        </Section>
                     )}
                 </section>
             )}

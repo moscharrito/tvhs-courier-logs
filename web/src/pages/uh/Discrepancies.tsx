@@ -21,6 +21,7 @@ import { api, ApiError, type Discrepancy, type DiscrepancySummary } from '../../
 import { momentFor, todayIn } from '../../lib/when';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 
 const KINDS: Array<{ value: string; label: string }> = [
     { value: 'delivery', label: 'What was recorded at the door' },
@@ -139,8 +140,19 @@ export function Discrepancies() {
             </p>
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
-            <form className="izy-card" onSubmit={report}>
-                <h2>Report one</h2>
+            {/* One screen, two jobs. A courier reaches this from "Something
+                not matching what you see?" on their run, to file one, so the
+                form is open and costs them nothing. Dispatch reaches it to
+                read what was filed, so for them it starts folded and the
+                week's state is the first thing on the page. Same screen, and
+                the default follows who is looking at it. */}
+            <Section
+                id="uh.discrepancies.report"
+                title="Report one"
+                defaultOpen={!canReview}
+                summary="something the system and the day disagree about"
+            >
+            <form onSubmit={report}>
                 <label className="izy-field">Which day it was about
                     <input type="date" value={serviceDate} onChange={(e) => setServiceDate(e.target.value)} required />
                 </label>
@@ -173,6 +185,7 @@ export function Discrepancies() {
                 </label>
                 <button className="izy-btn" type="submit" disabled={busy}>{busy ? 'Filing' : 'File it'}</button>
             </form>
+            </Section>
 
             {!canReview && (
                 <p className="izy-muted">

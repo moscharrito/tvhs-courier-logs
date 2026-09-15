@@ -70,6 +70,15 @@ describe('a courier', () => {
         expect(await screen.findByText(/nobody was looking/)).toBeInTheDocument();
     });
 
+    it('gets the form already open, because filing is why they came', async () => {
+        /* A courier reaches this from "Something not matching what you see?"
+           on their run. Making them open a panel first would be a tap
+           between a driver at a door and the thing they noticed. */
+        renderAs('courier');
+        expect(await screen.findByRole('button', { name: /Report one/ })).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByRole('button', { name: 'File it' })).toBeInTheDocument();
+    });
+
     it('is asked not to type a patient name, and given the right way instead', async () => {
         renderAs('courier');
         expect(await screen.findByLabelText(/Delivery number/)).toBeInTheDocument();
@@ -94,6 +103,17 @@ describe('a dispatcher', () => {
         expect(screen.getByText(/The board showed it as still on the way/)).toBeInTheDocument();
         expect(screen.getByText(/had it back and had signed for it/)).toBeInTheDocument();
         expect(screen.getByText('RX-4182', { exact: false })).toBeInTheDocument();
+    });
+
+    it('gets the form folded, because reading is why they came', async () => {
+        /* Same screen, opposite job. Dispatch opens this to read what was
+           filed, so the week's state is the first thing on the page and the
+           reporting form is one row they can open if they need it. */
+        renderAs('admin', { 'GET /api/projects/uh/uh/discrepancies/summary': summary() });
+        expect(await screen.findByRole('button', { name: /Report one/ })).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.queryByRole('button', { name: 'File it' })).not.toBeInTheDocument();
+        // And what they did come for is there without a click.
+        expect(screen.getByText('Where the week stands')).toBeInTheDocument();
     });
 
     it('closes one as changed or as not needing a change', async () => {

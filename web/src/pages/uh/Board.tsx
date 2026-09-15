@@ -22,6 +22,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
@@ -313,7 +314,47 @@ export function Board() {
                     ))}
                 </section>
 
-                <div className="izy-lanes">
+                <div className="izy-lanes-col">
+                    {/* Above the lanes, not after them. It was the last cell
+                        of a wrapping grid, so the control that starts a
+                        courier's day drifted further down the page with every
+                        courier who already had one: at the beginning of a
+                        shift, when it is the only thing a dispatcher wants, it
+                        sat below two rows of cards. Folded once everybody is
+                        out, because then it is a control with nothing to do. */}
+                    <Section
+                        id="uh.board.startrun"
+                        title="Start a run"
+                        /* Open while it has something to do, folded when it
+                           does not. "Is the start of the day" was the first
+                           rule here and it was the wrong one: a courier who
+                           comes on shift at two o'clock still needs a run,
+                           and by then the panel had folded itself away. */
+                        defaultOpen={data.idleCouriers.length > 0}
+                        summary={data.idleCouriers.length === 0
+                            ? 'everybody has a run today'
+                            : `${data.idleCouriers.length} without a run today`}
+                    >
+                        {data.idleCouriers.length === 0 ? (
+                            <p className="izy-muted">Every courier on this project already has a run today.</p>
+                        ) : (
+                            <div className="izy-row">
+                                <label className="izy-field">Courier
+                                    <select value={newRunCourier} onChange={(e) => setNewRunCourier(e.target.value)}>
+                                        <option value="">Choose a courier</option>
+                                        {data.idleCouriers.map((c) => (
+                                            <option key={c.username} value={c.username}>{c.name}{c.present ? '' : ' (not on shift)'}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <button className="izy-btn" type="button" disabled={busy || newRunCourier === ''} onClick={() => { void startRun(); }}>
+                                    Start run
+                                </button>
+                            </div>
+                        )}
+                    </Section>
+
+                    <div className="izy-lanes">
                     {data.lanes.map((lane) => (
                         <section
                             key={lane.run.id}
@@ -415,26 +456,7 @@ export function Board() {
                         )}
                     </section>
 
-                    <section className="izy-card izy-lane">
-                        <h2>Start a run</h2>
-                        {data.idleCouriers.length === 0 ? (
-                            <p className="izy-muted">Every courier on this project already has a run today.</p>
-                        ) : (
-                            <div className="izy-row">
-                                <label className="izy-field">Courier
-                                    <select value={newRunCourier} onChange={(e) => setNewRunCourier(e.target.value)}>
-                                        <option value="">Choose a courier</option>
-                                        {data.idleCouriers.map((c) => (
-                                            <option key={c.username} value={c.username}>{c.name}{c.present ? '' : ' (not on shift)'}</option>
-                                        ))}
-                                    </select>
-                                </label>
-                                <button className="izy-btn" type="button" disabled={busy || newRunCourier === ''} onClick={() => { void startRun(); }}>
-                                    Start run
-                                </button>
-                            </div>
-                        )}
-                    </section>
+                    </div>
                 </div>
             </div>
         </>
