@@ -15,6 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/cli.ts",
     "seed:demo": "tsx scripts/seed-demo.mjs",
+    "rehearse": "tsx scripts/rehearse.mjs",
     "sim": "tsx scripts/simulate-wave.mjs",
     "reconcile": "tsx scripts/reconcile.mjs",
     "loadtest": "tsx scripts/load-test.mjs",

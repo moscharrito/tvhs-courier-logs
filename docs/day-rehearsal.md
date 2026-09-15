@@ -84,7 +84,24 @@ Open `http://127.0.0.1:3100/` and sign in as `rehearsal` /
 staff: the two-factor step that lived here between tickets 4.3 and 5.10 was
 removed.
 
-Now, from **Users**, create these four. The form takes a username, a full
+### The short way
+
+```bash
+DB_FILE=rehearsal/day.db PORT=3100 ADMIN_USER=rehearsal ADMIN_PASS=rehearsal-pass-0001 npm run --silent rehearse -w server
+```
+
+Creates all four, grants their memberships, scopes the client viewer to
+Robert B. Green, writes `server/rehearsal/green-daily.xlsx` to upload, and
+prints the credentials. It refuses anything but a local file database, because
+these accounts have their password printed on the screen. Then skip to step 2.
+
+It does none of the day itself. The import, the wave, the round, the review,
+the invoice and the client's view are all yours, because what a person hits is
+the whole point.
+
+### Or by hand, which is worth doing once
+
+From **Users**, create these four. The form takes a username, a full
 name, an optional email, a temporary password and a platform role, and that
 is all it does: **it does not grant project access**. Give everyone the same
 password so you are not hunting for one mid-rehearsal.
