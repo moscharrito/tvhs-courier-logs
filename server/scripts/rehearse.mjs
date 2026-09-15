@@ -3,7 +3,7 @@
  *   npm run rehearse -w server
  *
  * Creates the four people docs/day-rehearsal.md needs, grants their project
- * memberships, scopes the client viewer to one pharmacy, and writes a
+ * memberships, scopes the pharmacy account to one pharmacy, and writes a
  * pharmacy's daily list as a real .xlsx to upload. Then prints the
  * credentials and gets out of the way.
  *
@@ -94,9 +94,13 @@ ok(await call('POST', '/api/login', { username: ADMIN.user, password: ADMIN.pass
 /** username, full name, platform role, project role on uh. */
 const PEOPLE = [
     ['rehearsal2', 'Second Admin', 'admin', 'admin'],
-    ['dee.dispatch', 'Dee Dispatch', 'staff', 'dispatcher'],
+    /* Dispatch is an admin since ticket 5.12 collapsed five project roles
+       into three. That widened what this account can do: Dee can now edit the
+       price schedule and issue invoices, which a dispatcher could not. The
+       rehearsal is where you look at that rather than read about it. */
+    ['dee.dispatch', 'Dee Dispatch', 'staff', 'admin'],
     ['ana.courier', 'Ana Ruiz', 'driver', 'courier'],
-    ['pat.pharmacy', 'Pat Ortega', 'staff', 'client_viewer'],
+    ['pat.pharmacy', 'Pat Ortega', 'staff', 'pharmacy'],
 ];
 
 for (const [username, name, role, projectRole] of PEOPLE) {
@@ -104,8 +108,9 @@ for (const [username, name, role, projectRole] of PEOPLE) {
     ok(await call('PUT', `/api/users/${username}/memberships/uh`, { role: projectRole, settings: {} }), `Membership for ${username}`);
 }
 
-/* The client viewer sees one pharmacy. An unscoped one sees every pharmacy's
-   patients, which proves nothing about the control that matters most here. */
+/* The pharmacy account sees one pharmacy. An unscoped one sees every
+   pharmacy's patients, which proves nothing about the control that matters
+   most here. */
 const sites = ok(await call('GET', '/api/projects/uh/uh/sites'), 'Reading the sites');
 const green = (sites.body ?? []).find((s) => s.code === 'green');
 if (!green) {
@@ -113,8 +118,8 @@ if (!green) {
     process.exit(1);
 }
 ok(
-    await call('PUT', '/api/users/pat.pharmacy/memberships/uh', { role: 'client_viewer', settings: { siteIds: [green.id] } }),
-    'Scoping the client viewer',
+    await call('PUT', '/api/users/pat.pharmacy/memberships/uh', { role: 'pharmacy', settings: { siteIds: [green.id] } }),
+    'Scoping the pharmacy account',
 );
 
 /* ------------------------------------------------- the pharmacy's list */
@@ -194,7 +199,7 @@ const csv = [HEADER.join(','), ...YESTERDAY_ROWS.map((r) => r.join(','))].join(N
 const importOptions = encodeURIComponent(JSON.stringify({ siteId: green.id, serviceDate: yesterday }));
 
 const dee = agent();
-ok(await dee('POST', '/api/login', { username: 'dee.dispatch', password: PASSWORD }), 'Signing in as the dispatcher');
+ok(await dee('POST', '/api/login', { username: 'dee.dispatch', password: PASSWORD }), 'Signing in as dispatch');
 
 const imported = await dee('POST', `/api/projects/uh/uh/imports?options=${importOptions}`, {
     body: csv,
@@ -264,9 +269,9 @@ line('password', PASSWORD);
 console.log('');
 line('rehearsal', 'admin - creates people, opens and issues invoices');
 line('rehearsal2', 'admin - the second one, so the go-live check passes');
-line('dee.dispatch', 'dispatcher - imports the list, runs the board');
-line('ana.courier', 'courier - picks her own name on the sign-in page');
-line('pat.pharmacy', 'client viewer - Robert B. Green only');
+line('dee.dispatch', 'admin/dispatch - imports the list, runs the board');
+line('ana.courier', 'driver - picks her own name on the sign-in page');
+line('pat.pharmacy', 'pharmacy staff - Robert B. Green only');
 console.log('');
 if (billed) {
     console.log('Already in the database, so there is something to bill:');

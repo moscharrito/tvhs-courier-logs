@@ -1,15 +1,24 @@
 # Rehearsing a day on the pharmacy courier
 
-A whole service day, four people, on a throwaway database. Import a
-pharmacy's list, dispatch it, deliver it, fail one, take it back, review it,
-bill it, and read it back as the client.
+A whole service day, four people, every role, on a throwaway database. Import
+a pharmacy's list, dispatch it, deliver it, fail one, take it back, review it,
+bill it, and read it back as the pharmacy.
+
+**There are three kinds of person on this contract** (ticket 5.12), and the
+walkthrough signs in as all of them:
+
+| Role | Who | What the day looks like from here |
+|---|---|---|
+| **Admin and dispatch** | `rehearsal`, `rehearsal2`, `dee.dispatch` | Imports the list, builds the wave, works the board, reviews the day, bills it |
+| **Driver** | `ana.courier` | Collects, drives, delivers, fails one, hands it back. Sees no prices |
+| **Pharmacy staff** | `pat.pharmacy` | Their own pharmacy's deliveries and proofs. No board, no invoices |
 
 Ninety minutes the first time. Under thirty once you have done it.
 
 **Why bother.** Every screen has tests behind it and they pass. What tests do
 not tell you is whether the day *holds together*: whether the courier's stop
 screen says the same time as the proof of delivery the pharmacy downloads,
-whether a dispatcher can act on a refusal, whether the invoice adds up to what
+whether dispatch can act on a refusal, whether the invoice adds up to what
 the board showed. Three of the four defects found in September came out of
 this, not out of the suite, and none of them was a wrong answer. They were the
 application telling somebody something they could not act on.
@@ -76,8 +85,8 @@ curl -s http://127.0.0.1:3100/health
 
 ## 1. The people
 
-Four, because a day needs four and because most of what goes wrong lives
-between them.
+Four people across three roles, because a day needs that many and because
+most of what goes wrong lives between them.
 
 Open `http://127.0.0.1:3100/` and sign in as `rehearsal` /
 `rehearsal-pass-0001`. Username and password is the whole of signing in for
@@ -90,7 +99,7 @@ removed.
 DB_FILE=rehearsal/day.db PORT=3100 ADMIN_USER=rehearsal ADMIN_PASS=rehearsal-pass-0001 npm run --silent rehearse -w server
 ```
 
-Creates all four, grants their memberships, scopes the client viewer to
+Creates all four, grants their memberships, scopes the pharmacy account to
 Robert B. Green, writes `server/rehearsal/green-daily.xlsx` to upload, and
 prints the credentials. It refuses anything but a local file database, because
 these accounts have their password printed on the screen. Then skip to step 2.
@@ -117,10 +126,16 @@ password so you are not hunting for one mid-rehearsal.
 
 | Username | Name | Platform role | UH project role |
 |---|---|---|---|
-| `rehearsal2` | Second Admin | admin | admin |
-| `dee.dispatch` | Dee Dispatch | staff | dispatcher |
-| `ana.courier` | Ana Ruiz | driver | courier |
-| `pat.pharmacy` | Pat Ortega | staff | client viewer |
+| `rehearsal2` | Second Admin | admin | Admin and dispatch |
+| `dee.dispatch` | Dee Dispatch | staff | Admin and dispatch |
+| `ana.courier` | Ana Ruiz | driver | Driver |
+| `pat.pharmacy` | Pat Ortega | staff | Pharmacy staff |
+
+**The platform role and the project role are different things**, and the two
+admins in that table show why. `dee.dispatch` is *staff* on the platform and
+*admin* on the project: she runs the whole contract and cannot open Users or
+the audit log. `rehearsal2` is admin on both. Sign in as each once and watch
+the left-hand nav change.
 
 Then open each one from the directory and grant a membership on **UH Pharmacy
 Courier** with the project role from the last column. A user with no
@@ -134,14 +149,14 @@ Two things worth doing properly:
   away from a database change. The go-live check fails until there are two, on
   purpose, and you want to see it stop failing.
 - **Scope `pat.pharmacy` to one pharmacy** in their membership settings.
-  Robert B. Green. The whole point of the client viewer is that they see their
+  Robert B. Green. The whole point of the pharmacy role is that they see their
   own pharmacy and nothing else, and an unscoped one proves nothing.
 
 ---
 
 ## 2. Midday: the list arrives
 
-Sign out, sign in as `dee.dispatch`.
+Sign out, sign in as `dee.dispatch`. **This is the dispatch half of the day.**
 
 Save a file called `green-daily.csv`. The header must match what the pharmacy
 sends, because matching it is half of what the importer does:
@@ -229,6 +244,23 @@ every handover, not only at the door.
 Finally, file a discrepancy from **Something not matching what you see?**.
 Anything will do. A shadow week that finds nothing did not work.
 
+**Two things to check while you are signed in as a driver**, because both are
+new and both are about what a driver is not shown:
+
+- **Open any stop's Details and look for a price. There is not one** (ticket
+  5.12). A driver knowing one address pays $12.50 and another $52.00 is an
+  invitation to work the round by the rate rather than by the deadline, and it
+  is commercial terms between Izy and University Health that no driver signed
+  up to carry. It is withheld by the server, not hidden by the screen: the
+  number is not in the response at all. Sign in as `dee.dispatch`, open the
+  same order, and the price is there.
+- **Directions opens in the app, not in a new tab** (ticket 5.13). On this
+  rehearsal it is still a link out to Google Maps, because the in-app map is
+  switched off and shipped off: embedding makes this application the sender of
+  a patient's address to Google, under our key, for every stop on every run,
+  and Google's BAA does not cover the Maps Platform. The boot log says which
+  mode you are in: `mapEmbed=off, directions link out`.
+
 > **No location was recorded** on the pickup and the return, because a desktop
 > browser will not give one. On a phone it will. The app records the absence
 > rather than inventing a position.
@@ -264,9 +296,18 @@ the proof of delivery. Both signatures, both times.
 
 ## 6. Billing, which is tomorrow's job
 
-**Sign in as `rehearsal` or `rehearsal2` first.** Billing is an admin or ops
-manager job; a dispatcher opening this screen gets `Requires project role:
-admin or ops_manager` and no draft.
+**Any of the three admin accounts can do this, `dee.dispatch` included.**
+
+That is worth stopping on, because it changed. Until ticket 5.12 there were
+five project roles and a dispatcher was refused here with `Requires project
+role: admin or ops_manager`. Collapsing five roles into three merged
+dispatcher into admin, so **dispatch can now edit the price schedule and issue
+invoices**, which it could not before. That was a deliberate trade for not
+having an operation where somebody waits on an administrator to do a
+five-second job, and this is the screen where you see what was traded. If that
+is not the boundary you want, it is one role back.
+
+Sign in as `dee.dispatch` and do it, precisely so you have looked at it.
 
 **Invoices**, open a draft. Try today's date first: it refuses with "That
 period is not over yet. Bill up to yesterday at the latest," because a period
@@ -298,9 +339,10 @@ Two more things on that screen:
   numbers below are recomputed every time it is opened" to an issued document
   with a date on it.
 
-## 7. The client's view
+## 7. The pharmacy's view
 
-Sign in as `pat.pharmacy`. This is what University Health sees.
+Sign in as `pat.pharmacy`. This is what University Health sees, and it is the
+third and last role.
 
 - Robert B. Green only.
 - Ana is "Ana". No surname.
@@ -314,14 +356,28 @@ Sign in as `pat.pharmacy`. This is what University Health sees.
 
 ## 8. What the checklist says
 
+**It needs a signed-in admin**, so a bare `curl` answers `Not authenticated`.
+Either read the summary at the top of **Discrepancies**, which is where the
+go-live state surfaces in the UI, or pass a session cookie:
+
 ```bash
-curl -s http://127.0.0.1:3100/api/projects/uh/uh/go-live
+curl -s -c j.txt -X POST http://127.0.0.1:3100/api/login -H 'Content-Type: application/json' -d '{"username":"rehearsal","password":"rehearsal-pass-0001"}' > /dev/null && curl -s -b j.txt http://127.0.0.1:3100/api/projects/uh/uh/go-live
 ```
 
-It never says ready. The most it says is that nothing automatic is in the way.
-Expect it to fail on the deployment being a local file, and on the seven
-attestations no program can check. If you skipped `rehearsal2`, expect
-`admins.second` as well.
+It never says ready. The most it says is that nothing automatic is in the way;
+the field to read is `verdict`. On a rehearsal database that has been through
+this document, expect three blocking failures and two advisories:
+
+| | |
+|---|---|
+| `deploy.production` | blocking. NODE_ENV is not production and the database is a local file |
+| `attestations` | blocking. Seven items a person has to confirm, listed in the response |
+| `discrepancies.any` | blocking **until you file one in step 4**. "Nothing has ever been filed. Either the week has not happened, or nobody was looking, and neither is a pass" |
+| `sites.geocoded` | advisory. 0 of 9, which is why *Sequence by distance* refused in step 3 |
+| `deploy.files` | advisory. No bucket, so a doorstep delivery is refused rather than recorded without evidence. Ticket 0.10 |
+
+If you skipped `rehearsal2`, expect `admins.second` as well. Note that
+`dee.dispatch` counts toward it now that dispatch is an admin role.
 
 ---
 
@@ -380,11 +436,32 @@ found six things, which is the honest advertisement for the exercise:
   dated **tomorrow**. Three separate places still computing a date from
   `toISOString()`, which is UTC, five hours ahead of San Antonio in the
   evening. The last one prints on a document sent to University Health.
-- Billing refuses a dispatcher, and this document did not say so.
+- Billing refuses a dispatcher, and this document did not say so. *(No longer
+  true, and left here because it is the record of a walkthrough: ticket 5.12
+  merged dispatcher into admin, so billing now accepts one. Step 6 says so.)*
 - The import has a **column-mapping step** that this document walked straight
   past.
 
 Four of those six are the application telling somebody something untrue. None
 of them was caught by the test suite, because all of them are about what happens
 when the pieces are used in order, by four different people, at eight in the
-evening. The suite is 1,197 tests and it is not a rehearsal.
+evening. The suite is 1,225 tests and it is not a rehearsal.
+
+**A fourth pass, on 15 September, after the three-roles change**, found three
+more, all of them in the setup rather than the application:
+
+- `npm run rehearse` **failed outright**. It still created people with the
+  roles `dispatcher` and `client_viewer`, which migration 0028 had abolished,
+  so the membership call was refused by the CHECK constraint. A setup script
+  is the first thing a rehearsal runs and the last thing anybody thinks to
+  test.
+- **Step 8's `curl` never worked.** The go-live endpoint needs a signed-in
+  admin and a bare `curl` gets `Not authenticated`. It had been copied from a
+  terminal that had a cookie jar in it.
+- **Step 6 said the opposite of the truth.** It said billing refuses a
+  dispatcher. Since 5.12 dispatch is an admin and can both draft and issue.
+  Checked by doing it: `dee.dispatch` issued invoice 1 for $74.00.
+
+The lesson is the same one as the third pass, pointed at the documentation
+instead of the code: a change that is mechanical in the application is not
+mechanical in the instructions that describe it.
