@@ -145,7 +145,7 @@ describe('with a configured bucket', () => {
 
     it('refuses a client viewer entirely', async () => {
         await admin.post('/api/users').send({ username: 'file.viewer', name: 'Viewer', password: 'member-pass-12', role: 'staff' });
-        await admin.put('/api/users/file.viewer/memberships/uh').send({ role: 'client_viewer', settings: {} });
+        await admin.put('/api/users/file.viewer/memberships/uh').send({ role: 'pharmacy', settings: {} });
         const viewer = srv.agent();
         await viewer.post('/api/login').send({ username: 'file.viewer', password: 'member-pass-12' });
         expect((await viewer.post(FILES).send({ kind: 'doorstep', contentType: 'image/jpeg', bytes: 100, orderId })).status).toBe(403);

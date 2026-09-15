@@ -199,7 +199,7 @@ describe('GET /api/projects/:pid/settings', () => {
         /* A client viewer does not. These are the operating parameters of the
            contract, including the internal goal we hold ourselves to above the
            85% University Health measures (ticket 4.2). */
-        const viewer = await memberWith('client_viewer', 'settings.viewer');
+        const viewer = await memberWith('pharmacy', 'settings.viewer');
         expect((await viewer.get(UH)).status).toBe(403);
 
         // A TVHS-only courier is not a member of uh.
@@ -298,14 +298,22 @@ describe('PATCH /api/projects/:pid/settings', () => {
         expect((await admin.get(UH)).body.overridden).toEqual([]);
     });
 
-    it('needs a manage role', async () => {
+    it('is read by a courier and written only by an admin', async () => {
+        /* A courier reads these: the run screen needs the business hours and
+           the clock rules. Writing them changes what the contract measures
+           against, and that is an admin's.
+
+           This used to test a third position, where a dispatcher could read
+           but not write and an ops manager could do both. Ticket 5.12 merged
+           those two, so the only line left is the one below. */
         await reset();
-        const dispatcher = await memberWith('dispatcher', 'settings.dispatcher');
-        const res = await dispatcher.patch(UH).send({ sla: { clockStart: 'pickup' } });
-        expect(res.status).toBe(403);
+        const courier = await memberWith('courier', 'settings.driver');
+        expect((await courier.get(UH)).status).toBe(200);
+        const denied = await courier.patch(UH).send({ sla: { clockStart: 'pickup' } });
+        expect(denied.status).toBe(403);
         expect((await admin.get(UH)).body.overridden).toEqual([]);
 
-        const ops = await memberWith('ops_manager', 'settings.ops');
+        const ops = await memberWith('admin', 'settings.ops');
         expect((await ops.patch(UH).send({ sla: { clockStart: 'pickup' } })).status).toBe(200);
         await reset();
     });

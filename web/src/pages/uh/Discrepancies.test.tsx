@@ -88,7 +88,7 @@ describe('a courier', () => {
 
 describe('a dispatcher', () => {
     it('sees what is open, worst first, with both sides of it', async () => {
-        renderAs('dispatcher');
+        renderAs('admin');
         expect(await screen.findByRole('heading', { name: 'Still open' })).toBeInTheDocument();
         expect(screen.getByText('critical')).toBeInTheDocument();
         expect(screen.getByText(/The board showed it as still on the way/)).toBeInTheDocument();
@@ -97,7 +97,7 @@ describe('a dispatcher', () => {
     });
 
     it('closes one as changed or as not needing a change', async () => {
-        renderAs('dispatcher');
+        renderAs('admin');
         expect(await screen.findByRole('button', { name: 'Something was changed' })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Nothing needs changing' })).toBeInTheDocument();
     });
@@ -109,7 +109,7 @@ describe('a dispatcher', () => {
            back at the end of the shadow week. Found by walking
            docs/day-rehearsal.md. */
         const prompt = vi.spyOn(window, 'prompt');
-        const { calls, bodies } = renderAs('dispatcher', {
+        const { calls, bodies } = renderAs('admin', {
             'PATCH /api/projects/uh/uh/discrepancies/9': { ...open1, status: 'resolved' },
         });
 
@@ -127,7 +127,7 @@ describe('a dispatcher', () => {
     });
 
     it('lets somebody back out without closing anything', async () => {
-        const { calls } = renderAs('dispatcher');
+        const { calls } = renderAs('admin');
         fireEvent.click(await screen.findByRole('button', { name: 'Nothing needs changing' }));
         expect(await screen.findByLabelText(/Why does nothing need changing/)).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -138,14 +138,14 @@ describe('a dispatcher', () => {
 
 describe('the go-live panel', () => {
     it('says what is in the way while anything is open', async () => {
-        renderAs('dispatcher');
+        renderAs('admin');
         expect(await screen.findByText(/critical one means a delivery record was wrong/)).toBeInTheDocument();
     });
 
     it('does not look like a decision when the board is clean', async () => {
         /* The failure this guards against is a green tick on Friday becoming
            the sign-off that nobody actually gave. */
-        renderAs('dispatcher', {
+        renderAs('admin', {
             'GET /api/projects/uh/uh/discrepancies?status=open': [],
             'GET /api/projects/uh/uh/discrepancies/summary': summary({
                 totals: { open: 0, resolved: 12, accepted: 3 },

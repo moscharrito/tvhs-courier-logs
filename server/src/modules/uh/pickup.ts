@@ -69,7 +69,7 @@ export function createPickupRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     // A courier collects their own work; staff can record it for them when a
     // phone has died, which happens and must not stop the wave.
-    const operate = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const operate = requireProjectRole('admin', 'courier');
 
     const actorOf = (req: Request) => req.session.user?.username ?? '';
 

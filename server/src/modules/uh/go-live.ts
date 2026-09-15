@@ -54,7 +54,7 @@ export interface Check {
 
 export function createGoLiveRouter({ client, deployment, expectedMigrations }: Deps): Router {
     const router = Router({ mergeParams: true });
-    const read = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const read = requireProjectRole('admin');
 
     async function count(sql: string, args: unknown[] = []): Promise<number> {
         const rs = await client.execute({ sql, args: args as never });

@@ -91,14 +91,14 @@ function parse<S extends z.ZodTypeAny>(schema: S, body: unknown, res: Response):
 
 export function createSitesRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const manage = requireProjectRole('admin', 'ops_manager');
+    const manage = requireProjectRole('admin');
     /* A site row is a University Health address, a phone number and a contact
      * name. A courier needs it to find the counter; the people running the
      * contract need it to plan. A client viewer does not: they are a pharmacy
      * contact who sees their own deliveries through the portal, and this list
      * is every location in the contract. Reading it was open to any member
      * until the access matrix in ticket 4.2 asked the question out loud. */
-    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const readers = requireProjectRole('admin', 'courier');
 
     async function findById(projectId: number, id: number): Promise<SiteRow | null> {
         const rs = await client.execute({ sql: 'SELECT * FROM sites WHERE project_id = ? AND id = ?', args: [projectId, id] });

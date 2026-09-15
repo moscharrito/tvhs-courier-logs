@@ -44,7 +44,7 @@ beforeAll(async () => {
     await admin.post('/api/users').send({ username: 'ada.courier', name: 'Ada Courier', password: 'courier-pass-1', role: 'driver' });
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
     await admin.post('/api/users').send({ username: 'dee.dispatcher', name: 'Dee Dispatcher', password: 'dispatch-pass-1', role: 'staff' });
-    await admin.put('/api/users/dee.dispatcher/memberships/uh').send({ role: 'dispatcher', settings: {} });
+    await admin.put('/api/users/dee.dispatcher/memberships/uh').send({ role: 'admin', settings: {} });
 });
 afterAll(async () => { await srv.stop(); });
 
@@ -366,11 +366,21 @@ describe('an adjustment', () => {
 /* ------------------------------------------------------------ access */
 
 describe('who may bill', () => {
-    it('lets a dispatcher read an invoice but not create or issue one', async () => {
+    it('lets an admin create and issue, which a dispatcher could not do before', async () => {
+        /* Billing used to be an ops manager's: a dispatcher could read an
+           invoice and was refused creating or issuing one. Ticket 5.12 merged
+           the two roles, so whoever works the board can now also open a
+           billing period and issue it. That widening is the price of the
+           consolidation and this is the test that says so out loud. */
         const dee = srv.agent();
         await dee.post('/api/login').send({ username: 'dee.dispatcher', password: 'dispatch-pass-1' });
         expect((await dee.get(INVOICES)).status).toBe(200);
-        expect((await dee.post(INVOICES).send({ from: FROM, to: TO })).status).toBe(403);
+        /* 201 for a new period, 409 for one this file already drafted. What
+           matters is that it is no longer 403: the refusal is now about the
+           billing period, not about who is asking. */
+        const opened = await dee.post(INVOICES).send({ from: FROM, to: TO });
+        expect(opened.status).not.toBe(403);
+        expect([201, 409]).toContain(opened.status);
     });
 
     it('keeps couriers and the client out entirely', async () => {
@@ -379,7 +389,7 @@ describe('who may bill', () => {
         expect((await ada.get(INVOICES)).status).toBe(403);
 
         await admin.post('/api/users').send({ username: 'uh.finance', name: 'Finance Person', password: 'client-pass-1', role: 'staff' });
-        await admin.put('/api/users/uh.finance/memberships/uh').send({ role: 'client_viewer', settings: { siteIds: [discharge.id] } });
+        await admin.put('/api/users/uh.finance/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
         const uh = srv.agent();
         await uh.post('/api/login').send({ username: 'uh.finance', password: 'client-pass-1' });
         /* The client receives an invoice from us as a document somebody has

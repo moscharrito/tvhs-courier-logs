@@ -35,7 +35,7 @@ export function createPricingRouter({ client }: { client: Client }): Router {
     /* The rate card is commercial, not operational. A courier does not need it
      * to do the job, and the client reading our own price schedule out of a
      * tracking portal is a negotiation we did not agree to have. */
-    const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const staff = requireProjectRole('admin');
 
     /* Which schedule and zone map are in force is a question about a date in
      * San Antonio. A UTC date would switch over five hours early every

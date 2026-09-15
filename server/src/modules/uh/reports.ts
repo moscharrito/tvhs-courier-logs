@@ -228,7 +228,7 @@ export const DEFINITIONS: Array<{ measure: string; definition: string; note: str
 
 export function createReportsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const staff = requireProjectRole('admin');
 
     const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -309,7 +309,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
      * configured, and the channel is not decided. Whichever it turns out to
      * be, a person records that it happened. */
 
-    const bill = requireProjectRole('admin', 'ops_manager');
+    const bill = requireProjectRole('admin');
 
     const Sent = z.object({
         serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

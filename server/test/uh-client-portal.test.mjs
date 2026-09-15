@@ -38,11 +38,11 @@ beforeAll(async () => {
 
     // A pharmacist who may see the Discharge Pharmacy and nothing else.
     await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'Karthik Pharmacist', password: 'client-pass-1', role: 'staff' });
-    await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'client_viewer', settings: { siteIds: [discharge.id] } });
+    await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 
     // And one with no pharmacies named at all.
     await admin.post('/api/users').send({ username: 'uh.newstarter', name: 'New Starter', password: 'client-pass-2', role: 'staff' });
-    await admin.put('/api/users/uh.newstarter/memberships/uh').send({ role: 'client_viewer', settings: {} });
+    await admin.put('/api/users/uh.newstarter/memberships/uh').send({ role: 'pharmacy', settings: {} });
 });
 afterAll(async () => { await srv.stop(); });
 
@@ -87,19 +87,19 @@ describe('a courier first name', () => {
 
 describe('what a viewer is scoped to', () => {
     it('gives staff the whole project, so they can check what the client sees', () => {
-        expect(scopeFor('dispatcher', {})).toEqual({ siteIds: [], wholeProject: true });
+        expect(scopeFor('admin', {})).toEqual({ siteIds: [], wholeProject: true });
     });
 
     it('gives a client viewer exactly the sites named on their membership', () => {
-        expect(scopeFor('client_viewer', { siteIds: [4, 7, 4] })).toEqual({ siteIds: [4, 7], wholeProject: false });
+        expect(scopeFor('pharmacy', { siteIds: [4, 7, 4] })).toEqual({ siteIds: [4, 7], wholeProject: false });
     });
 
     it('gives an unscoped client viewer nothing, not everything', () => {
         /* The failure mode this prevents: a mistake in a settings form quietly
            handing one pharmacy the other eight pharmacies' patients. */
-        expect(scopeFor('client_viewer', {})).toEqual({ siteIds: [], wholeProject: false });
-        expect(scopeFor('client_viewer', { siteIds: 'all' })).toEqual({ siteIds: [], wholeProject: false });
-        expect(scopeFor('client_viewer', { siteIds: [0, -3, 'x'] })).toEqual({ siteIds: [], wholeProject: false });
+        expect(scopeFor('pharmacy', {})).toEqual({ siteIds: [], wholeProject: false });
+        expect(scopeFor('pharmacy', { siteIds: 'all' })).toEqual({ siteIds: [], wholeProject: false });
+        expect(scopeFor('pharmacy', { siteIds: [0, -3, 'x'] })).toEqual({ siteIds: [], wholeProject: false });
     });
 });
 

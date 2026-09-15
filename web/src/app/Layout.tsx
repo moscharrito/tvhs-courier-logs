@@ -3,7 +3,7 @@ import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
 
 const ROLE_LABEL: Record<string, string> = {
-    admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
+    admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
 };
 
 export function Layout() {

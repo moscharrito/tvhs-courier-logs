@@ -185,7 +185,7 @@ describe('ListImport', () => {
     it('tells a member who cannot import why, and offers no controls', async () => {
         stub(baseRoutes);
         render(<ListImport projectCode="uh" timezone="America/Chicago" canImport={false} />);
-        expect(await screen.findByText(/need the dispatcher, ops manager or admin role/)).toBeInTheDocument();
+        expect(await screen.findByText(/need the admin role/)).toBeInTheDocument();
         expect(screen.queryByLabelText('Pharmacy')).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Review the file' })).not.toBeInTheDocument();
     });

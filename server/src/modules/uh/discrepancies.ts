@@ -89,8 +89,8 @@ export function createDiscrepancyRouter({ client }: { client: Client }): Router 
     /* Everybody who does the work can report. The courier holding the package
      * is usually the one who notices, and a report they cannot file is a
      * report that becomes a shrug. */
-    const report = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
-    const review = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const report = requireProjectRole('admin', 'courier');
+    const review = requireProjectRole('admin');
 
     router.get('/summary', review, wrap(async (req, res) => {
         const rs = await client.execute({

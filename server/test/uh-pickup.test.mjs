@@ -291,7 +291,7 @@ describe('access control and the record', () => {
         expect((await srv.agent().get(`${RUNS}/${run.id}/pickup`)).status).toBe(401);
 
         await admin.post('/api/users').send({ username: 'view.only', name: 'Viewer', password: 'member-pass-12', role: 'staff' });
-        await admin.put('/api/users/view.only/memberships/uh').send({ role: 'client_viewer', settings: {} });
+        await admin.put('/api/users/view.only/memberships/uh').send({ role: 'pharmacy', settings: {} });
         const viewer = srv.agent();
         await viewer.post('/api/login').send({ username: 'view.only', password: 'member-pass-12' });
         expect((await viewer.post(`${RUNS}/${run.id}/pickup`).send(pickupBody(dischargeId, { countedPackages: 1 }))).status).toBe(403);

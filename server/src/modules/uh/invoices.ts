@@ -240,8 +240,8 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     /* Money is not a dispatcher's job. Creating, issuing and voiding an
      * invoice is the ops manager or an admin. */
-    const bill = requireProjectRole('admin', 'ops_manager');
-    const read = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const bill = requireProjectRole('admin');
+    const read = requireProjectRole('admin');
 
     const actor = (req: Request) => req.session.user?.username ?? '';
 

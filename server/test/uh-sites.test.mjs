@@ -71,15 +71,20 @@ describe('access control', () => {
         const north = await srv.login('north');
         expect((await north.get(UH)).status).toBe(403);
 
-        // A dispatcher may read but not write.
-        const dispatcher = await memberWith('dispatcher', 'uh.dispatcher');
-        expect((await dispatcher.get(UH)).status).toBe(200);
-        const denied = await dispatcher.post(UH).send({ code: 'nope', name: 'No', addressLine: '1 A St', zip: '78229' });
+        /* A courier reads the pharmacy list, because they collect from those
+           addresses, and cannot change it. This used to be a three-way split
+           where a dispatcher could read but not write and an ops manager
+           could do both; ticket 5.12 merged those two into admin, so the line
+           that is left is between running the operation and driving for it. */
+        const courier = await memberWith('courier', 'uh.driver');
+        expect((await courier.get(UH)).status).toBe(200);
+        const denied = await courier.post(UH).send({ code: 'nope', name: 'No', addressLine: '1 A St', zip: '78229' });
         expect(denied.status).toBe(403);
-        expect(denied.body.error).toMatch(/admin or ops_manager/);
+        expect(denied.body.error).toMatch(/Requires project role: admin/);
 
-        // An ops manager may write.
-        const ops = await memberWith('ops_manager', 'uh.ops');
+        // An admin may read and write.
+        const ops = await memberWith('admin', 'uh.ops');
+        expect((await ops.get(UH)).status).toBe(200);
         const created = await ops.post(UH).send({ code: 'ops.made', name: 'Ops Made', addressLine: '2 B St', zip: '78229' });
         expect(created.status).toBe(201);
         await ops.delete(`${UH}/${created.body.id}`);

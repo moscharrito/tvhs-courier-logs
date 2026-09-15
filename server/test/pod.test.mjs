@@ -34,7 +34,7 @@ beforeAll(async () => {
     await admin.post('/api/users').send({ username: 'ada.courier', name: 'Ada Boleyn Fitzgerald', password: 'courier-pass-1', role: 'driver' });
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
     await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'Karthik Pharmacist', password: 'client-pass-1', role: 'staff' });
-    await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'client_viewer', settings: { siteIds: [discharge.id] } });
+    await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 });
 afterAll(async () => { await srv.stop(); });
 

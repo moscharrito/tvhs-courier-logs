@@ -156,15 +156,15 @@ describe('memberships', () => {
         expect(bad.status).toBe(400);
         expect(bad.body.error).toMatch(/settings.route/);
 
-        const disp = await admin.put('/api/users/dispatch.one@izy/memberships/tvhs').send({ role: 'dispatcher' });
+        const disp = await admin.put('/api/users/dispatch.one@izy/memberships/tvhs').send({ role: 'admin' });
         expect(disp.status).toBe(200);
-        expect(disp.body.memberships).toEqual([{ project_id: 1, code: 'tvhs', project_name: 'TVHS RMD Courier', role: 'dispatcher', settings: {} }]);
+        expect(disp.body.memberships).toEqual([{ project_id: 1, code: 'tvhs', project_name: 'TVHS RMD Courier', role: 'admin', settings: {} }]);
 
         // The member now reaches the project's routes.
         const a = srv.agent();
         await a.post('/api/login').send({ username: 'dispatch.one@izy', password: 'dispatch-pass-1' });
         expect((await a.get('/api/projects/tvhs/tvhs/routes')).status).toBe(200);
-        expect((await a.get('/api/me/projects')).body[0].role).toBe('dispatcher');
+        expect((await a.get('/api/me/projects')).body[0].role).toBe('admin');
 
         // Change to courier with a route: users.route mirror follows.
         const courier = await admin.put('/api/users/dispatch.one@izy/memberships/1').send({ role: 'courier', settings: { route: 'southbound' } });

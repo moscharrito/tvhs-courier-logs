@@ -200,9 +200,9 @@ describe('the transition table', () => {
         // yet in their hands. Reaching someone else's order is blocked at the
         // route, not by this table.
         expect(availableEvents('ready', ['courier'])).toEqual(['note']);
-        expect(availableEvents('ready', ['dispatcher'])).toEqual(expect.arrayContaining(['assigned', 'cancelled']));
+        expect(availableEvents('ready', ['admin'])).toEqual(expect.arrayContaining(['assigned', 'cancelled']));
         expect(availableEvents('picked_up', ['courier']).sort()).toEqual(['arrived', 'attempted', 'delivered', 'note']);
-        expect(availableEvents('delivered', ['dispatcher'])).toEqual(['note']);
+        expect(availableEvents('delivered', ['admin'])).toEqual(['note']);
     });
 });
 
@@ -453,7 +453,7 @@ describe('access control', () => {
            ticket 3.1, which is to say a pharmacist could have read every
            patient address in the contract through the staff search. Their own
            pharmacy's deliveries are at /uh/client. */
-        const viewer = await memberWith('client_viewer', 'orders.viewer');
+        const viewer = await memberWith('pharmacy', 'orders.viewer');
         expect((await viewer.get(BASE)).status).toBe(403);
         expect((await viewer.get(`${BASE}/summary`)).status).toBe(403);
         expect((await viewer.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER })).status).toBe(403);

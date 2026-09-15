@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -164,7 +164,12 @@ describe('fresh database', () => {
                 expect(pid).toMatchObject({ notnull: 1, dflt_value: '1' });
             }
             expect(await columnNames(database.client, 'projects')).toEqual(['id', 'code', 'name', 'timezone', 'settings', 'created_at']);
-            expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'created_at', 'settings']);
+            /* settings used to come last, because it arrived by ALTER TABLE
+               after the others. Migration 0028 rebuilt this table to change
+               the role CHECK, and a rebuild writes the columns in schema
+               order. Nothing was lost; the order simply stopped recording the
+               history of how the table was built. */
+            expect(await columnNames(database.client, 'memberships')).toEqual(['id', 'user_id', 'project_id', 'role', 'settings', 'created_at']);
             expect(await columnNames(database.client, 'sessions')).toEqual(['id', 'user_id', 'device', 'ip', 'created_at', 'last_seen_at', 'idle_expires_at', 'absolute_expires_at', 'revoked_at', 'device_id']);
             expect(await columnNames(database.client, 'audit_events')).toEqual(['id', 'at', 'project_id', 'user_id', 'username', 'action', 'entity', 'entity_id', 'ip', 'detail']);
 
@@ -462,6 +467,57 @@ describe('0015 rebuilds signatures without losing rows', () => {
             // And the id sequence continues rather than restarting at 1.
             const ids = await client.execute('SELECT id FROM signatures ORDER BY id');
             expect(ids.rows.map((r) => Number(r.id))).toEqual([1, 2]);
+        } finally {
+            client.close();
+            await removeDir(dir);
+        }
+    });
+});
+
+describe('0028 collapses five project roles into three', () => {
+    /* A CHECK constraint cannot be altered in SQLite, so this rebuilds the
+       memberships table. That is the shape of migration that lost every
+       packages row in 0009, and a lost membership is somebody who can no
+       longer sign into their own project. */
+    it('maps every old role onto a new one and keeps every row', async () => {
+        const { dir, absolute } = tempDb('roles-');
+        const client = createClient({ url: `file:${absolute}` });
+        try {
+            const journal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'));
+            const runFile = async (tag) => {
+                const sql = fs.readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), 'utf8');
+                for (const stmt of sql.split('--> statement-breakpoint')) {
+                    const trimmed = stmt.trim();
+                    if (trimmed) await client.execute(trimmed);
+                }
+            };
+            for (const tag of journal.entries.map((e) => e.tag).filter((t) => t < '0028')) await runFile(tag);
+
+            await client.execute(
+                `INSERT INTO users (username, password, name, role)
+                 VALUES ('a','x','A','admin'), ('b','x','B','staff'), ('c','x','C','staff'),
+                        ('d','x','D','driver'), ('e','x','E','staff')`,
+            );
+            // One membership of every role the old model had.
+            await client.execute(
+                `INSERT INTO memberships (user_id, project_id, role, settings)
+                 VALUES (1, 2, 'admin', '{}'), (2, 2, 'ops_manager', '{}'), (3, 2, 'dispatcher', '{}'),
+                        (4, 2, 'courier', '{"route":"north"}'), (5, 2, 'client_viewer', '{"siteIds":[2]}')`,
+            );
+
+            await runFile('0028_three_roles');
+
+            const rows = (await client.execute('SELECT user_id, role, settings FROM memberships ORDER BY user_id')).rows;
+            expect(rows).toHaveLength(5);
+            expect(rows.map((r) => String(r.role))).toEqual(['admin', 'admin', 'admin', 'courier', 'pharmacy']);
+            // Per-membership settings ride across the rebuild untouched.
+            expect(String(rows[3].settings)).toBe('{"route":"north"}');
+            expect(String(rows[4].settings)).toBe('{"siteIds":[2]}');
+
+            // And the old values are refused from here on.
+            await expect(client.execute(
+                `INSERT INTO memberships (user_id, project_id, role) VALUES (1, 1, 'dispatcher')`,
+            )).rejects.toThrow();
         } finally {
             client.close();
             await removeDir(dir);

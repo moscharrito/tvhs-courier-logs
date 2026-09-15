@@ -205,7 +205,7 @@ describe('Login', () => {
     it('shows a placeholder page for a project without a module yet', async () => {
         mockFetch({
             'GET /api/session': { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null },
-            'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'dispatcher' }],
+            'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }],
             'GET /api/projects/uh/uh/pricing': {
                 on: '2026-09-11',
                 schedule: { effectiveFrom: '2026-05-18', zoneRates: { 1: 12.5, 2: 14.5, 3: 22, 4: 36, 5: 52 }, statSurcharge: 22, afterHoursSurcharge: 18, dryRunFee: 9, outOfAreaPerMile: 1.95 },
@@ -229,7 +229,8 @@ describe('Login', () => {
                     dispatch: { phone: '', name: 'Dispatch' },
                 },
                 overridden: [],
-                canManage: false,
+                // An admin, since ticket 5.12 merged the read-only staff role away.
+                canManage: true,
                 example: [{ serviceType: 'scheduled', receivedAt: '2026-09-14T17:00:00.000Z', dueAt: '2026-09-14T19:00:00.000Z', minutes: 120, from: 'receipt', pending: false, basis: '120 minutes from the list being received.' }],
             },
             'GET /api/projects/uh/uh/imports': [],
@@ -239,23 +240,25 @@ describe('Login', () => {
         });
         renderApp('/projects/uh/uh');
         await waitFor(() => expect(screen.getByRole('heading', { name: 'UH Pharmacy Courier' })).toBeInTheDocument());
-        expect(screen.getByText(/your role: Dispatcher/)).toBeInTheDocument();
+        expect(screen.getByText(/your role: Admin and dispatch/)).toBeInTheDocument();
         expect(screen.getByText('Not here yet')).toBeInTheDocument();
-        // A dispatcher sees the sites but gets no management controls. The
-        // name also appears in the import screen's pharmacy picker, so scope
-        // the assertion to the sites table.
+        /* The sites, with management controls, because this is an admin.
+           Until ticket 5.12 there was a third position here: a dispatcher who
+           could read this page and change nothing on it. Those roles merged,
+           so whoever works the board also adds a pharmacy and edits the
+           settings. The name also appears in the import screen's pharmacy
+           picker, so scope the assertion to the sites table. */
         const sitesTable = (await screen.findByText('Pickup locations')).closest('.izy-card') as HTMLElement;
         expect(within(sitesTable).getByText('University Health Vida Pharmacy')).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'New site' })).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
-        // and sees the contract pricing
+        expect(screen.getByRole('button', { name: 'New site' })).toBeInTheDocument();
+        // and the contract pricing
         expect(await screen.findByText('Contract pricing')).toBeInTheDocument();
         expect(screen.getByText('$12.50')).toBeInTheDocument();
         expect(screen.getByText(/After hours 20:00 to 07:00/)).toBeInTheDocument();
-        // and the operating settings, read-only: a dispatcher cannot edit them
+        // and the operating settings, now editable
         expect(await screen.findByText('Operating settings')).toBeInTheDocument();
         expect(screen.getByText('120 minutes from the list being received.')).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     });
 
     it('opens on a PIN and the name of whoever owns the phone', async () => {

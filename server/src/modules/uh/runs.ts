@@ -99,10 +99,10 @@ const presentRun = (r: RunRow) => ({
 
 export function createRunsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const staff = requireProjectRole('admin');
     /* A run is a courier's day and every stop on it. Couriers read their own
      * (narrowed below); a client viewer has no business reading any of it. */
-    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const readers = requireProjectRole('admin', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';

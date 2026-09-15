@@ -157,15 +157,15 @@ const present = (o: OrderRow) => ({
 
 export function createOrdersRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const staff = requireProjectRole('admin');
     /* Reading an order means reading a patient's name and address. Couriers
      * are included and then narrowed to their own work further down; a client
      * viewer is not, because this endpoint is the whole project and their view
      * of their own pharmacy is the portal (ticket 3.1). */
-    const readers = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const readers = requireProjectRole('admin', 'courier');
     /* Everyone who may record any event at all. Which event is a second
      * question, answered per type below against EVENT_RULES. */
-    const records = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const records = requireProjectRole('admin', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';
@@ -499,7 +499,20 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
             args: [req.project!.id, Number(order.id)],
         });
 
-        const pricing = await priceOrder(client, order, req.project!);
+        /* What the delivery bills at is not the courier's business.
+         *
+         * They can open this page from the Details link on their own run, and
+         * it used to hand them the zone rate, the STAT surcharge, the dry-run
+         * fee and the total. A courier knowing that one address pays $12.50
+         * and another $52.00 is an invitation to work the round in an order
+         * that suits the rate rather than the deadline, and it is commercial
+         * terms between Izy and University Health that no driver signed up to
+         * carry. Withheld on the server rather than hidden on the screen: a
+         * field that only the UI declines to draw is still in the response,
+         * and the response is the thing anybody can read. */
+        const pricing = roleOf(req) === 'courier'
+            ? undefined
+            : await priceOrder(client, order, req.project!);
 
         // Reading one order means reading patient data; record that it happened.
         await req.audit('order.read', 'order', String(order.id), { events: events.rows.length });

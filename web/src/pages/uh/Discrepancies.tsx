@@ -47,7 +47,7 @@ export function Discrepancies() {
        that has not happened. */
     const timezone = useProjectTimezone(code);
     const today = () => todayIn(timezone);
-    const canReview = project !== undefined && project.role !== 'courier' && project.role !== 'client_viewer';
+    const canReview = project !== undefined && project.role === 'admin';
     const base = `/api/projects/${code}/uh/discrepancies`;
     /* When a courier filed it, in the zone the day it is about was worked
        in. This is evidence for a go-live decision and it is read later. */

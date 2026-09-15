@@ -92,7 +92,7 @@ export interface PreviewRow {
 
 export function createImportsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const operate = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const operate = requireProjectRole('admin');
     /* An import holds the pharmacy's whole list, patients included. Reading one
      * is the same disclosure as uploading one, so it takes the same role. */
     const readers = operate;

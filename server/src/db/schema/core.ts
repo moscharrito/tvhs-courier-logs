@@ -12,7 +12,22 @@ import { sqliteTable, integer, text, real, unique, check, index } from 'drizzle-
 import { sql } from 'drizzle-orm';
 import { users } from './tvhs';
 
-export const PROJECT_ROLES = ['admin', 'ops_manager', 'dispatcher', 'courier', 'client_viewer'] as const;
+/* Three, since ticket 5.12, because three is how many kinds of person
+ * actually exist on this contract:
+ *
+ *   admin     runs the operation. Imports the lists, works the board, edits
+ *             the rate card, issues the invoices. Was three roles (admin,
+ *             ops_manager, dispatcher) whose boundaries nobody could state
+ *             out loud, and which mattered most in a two-person company by
+ *             making somebody ask an administrator to do a five-second job.
+ *   courier   drives. Sees their own run and nothing else.
+ *   pharmacy  the University Health contact. Sees their own pharmacy's
+ *             deliveries and nothing else. Was called client_viewer.
+ *
+ * The consolidation gave the people who were dispatchers the power to change
+ * the price schedule and issue an invoice, which they did not have before.
+ * That is the trade, and it is on the record in docs/build-backlog.md. */
+export const PROJECT_ROLES = ['admin', 'courier', 'pharmacy'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
 export const projects = sqliteTable('projects', {
@@ -40,7 +55,7 @@ export const memberships = sqliteTable(
     (t) => [
         unique('memberships_user_project_unique').on(t.userId, t.projectId),
         index('memberships_project_id_idx').on(t.projectId),
-        check('memberships_role_check', sql`${t.role} IN ('admin','ops_manager','dispatcher','courier','client_viewer')`),
+        check('memberships_role_check', sql`${t.role} IN ('admin','courier','pharmacy')`),
     ],
 );
 

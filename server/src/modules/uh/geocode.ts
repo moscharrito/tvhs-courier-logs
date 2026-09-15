@@ -58,8 +58,8 @@ const addressOf = (s: SiteRow): Address => ({
 
 export function createGeocodeRouter({ client, lookup, providerName, providerReason }: Deps): Router {
     const router = Router({ mergeParams: true });
-    const manage = requireProjectRole('admin', 'ops_manager');
-    const read = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const manage = requireProjectRole('admin');
+    const read = requireProjectRole('admin');
 
     router.get('/', read, wrap(async (req, res) => {
         const sites = await client.execute({

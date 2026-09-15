@@ -56,7 +56,9 @@ interface Detail extends OrderRow {
     sla: Sla;
     packages: Package[];
     custody: CustodyEvent[];
-    pricing: Pricing;
+    /* Absent for a courier. The server withholds it rather than the screen
+       hiding it, so this is undefined rather than a blank card. */
+    pricing?: Pricing;
     allowed: string[];
 }
 
@@ -170,6 +172,7 @@ export function OrderDetail() {
                 </table>
             </div>
 
+            {p && (
             <div className="izy-card">
                 <div className="izy-row-between">
                     <h2>What it bills at</h2>
@@ -197,6 +200,7 @@ export function OrderDetail() {
                     </>
                 )}
             </div>
+            )}
 
             <div className="izy-card">
                 <h2>Chain of custody</h2>

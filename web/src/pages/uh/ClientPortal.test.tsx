@@ -13,7 +13,7 @@ import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
 
 const session = { id: 9, username: 'uh.pharmacist', name: 'Karthik Pharmacist', role: 'staff', route: null };
-const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'client_viewer' }];
+const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'pharmacy' }];
 const BASE = '/api/projects/uh/uh/client';
 
 const sla = (over = {}) => ({ state: 'met', minutesToDue: 12, onTime: true, measuredAt: null, measuredFrom: null, ...over });

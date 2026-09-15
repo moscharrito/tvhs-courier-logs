@@ -314,7 +314,7 @@ describe('access control and the record', () => {
     it('refuses a client viewer entirely', async () => {
         const order = await pickedUpOrder();
         await admin.post('/api/users').send({ username: 'stop.viewer', name: 'Viewer', password: 'member-pass-12', role: 'staff' });
-        await admin.put('/api/users/stop.viewer/memberships/uh').send({ role: 'client_viewer', settings: {} });
+        await admin.put('/api/users/stop.viewer/memberships/uh').send({ role: 'pharmacy', settings: {} });
         const viewer = srv.agent();
         await viewer.post('/api/login').send({ username: 'stop.viewer', password: 'member-pass-12' });
         expect((await viewer.post(`${ORDERS}/${order.id}/arrive`).send({})).status).toBe(403);

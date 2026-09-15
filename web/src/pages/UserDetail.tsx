@@ -4,7 +4,13 @@ import { api, ApiError, fmtWhen, type ProjectMembership, type SessionSummary, ty
 import { useAuth } from '../app/auth';
 
 type Msg = { kind: 'ok' | 'error'; text: string; details?: string[] } | null;
-const PROJECT_ROLES: ProjectMembership['role'][] = ['admin', 'ops_manager', 'dispatcher', 'courier', 'client_viewer'];
+const PROJECT_ROLES: ProjectMembership['role'][] = ['admin', 'courier', 'pharmacy'];
+
+/* The words people use, not the stored values. Three roles since ticket 5.12:
+   whoever runs the operation, whoever drives, whoever the pharmacy sends. */
+const ROLE_LABEL: Record<ProjectMembership['role'], string> = {
+    admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
+};
 const TVHS_ROUTES = ['northbound', 'southbound'];
 
 export function UserDetail() {
@@ -25,7 +31,7 @@ export function UserDetail() {
     const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
 
     useEffect(() => {
-        if (member.role !== 'client_viewer') { setSites([]); return; }
+        if (member.role !== 'pharmacy') { setSites([]); return; }
         api<Array<{ id: number; name: string }>>(`/api/projects/${member.project}/uh/sites`)
             .then(setSites)
             .catch(() => setSites([]));
@@ -128,7 +134,7 @@ export function UserDetail() {
                     e.preventDefault();
                     const settings = member.project === 'tvhs' && member.role === 'courier'
                         ? { route: member.route }
-                        : member.role === 'client_viewer'
+                        : member.role === 'pharmacy'
                             ? { siteIds: scopeSites }
                             : {};
                     void run('Membership saved', () => api(`${base}/memberships/${member.project}`, { method: 'PUT', json: { role: member.role, settings } }));
@@ -140,10 +146,10 @@ export function UserDetail() {
                     </label>
                     <label className="izy-field">Role
                         <select value={member.role} onChange={(e) => setMember({ ...member, role: e.target.value as ProjectMembership['role'] })}>
-                            {PROJECT_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                            {PROJECT_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                         </select>
                     </label>
-                    {member.role === 'client_viewer' && (
+                    {member.role === 'pharmacy' && (
                         <fieldset className="izy-fieldset">
                             <legend>Pharmacies this account may see</legend>
                             {sites.length === 0

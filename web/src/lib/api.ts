@@ -38,7 +38,7 @@ export interface ProjectMembership {
     code: string;
     name: string;
     timezone: string;
-    role: 'admin' | 'ops_manager' | 'dispatcher' | 'courier' | 'client_viewer';
+    role: 'admin' | 'courier' | 'pharmacy';
 }
 
 export interface DriverPick {

@@ -105,7 +105,7 @@ interface OrderRow extends OrderStateRow {
 export function createStopRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
     const router = Router({ mergeParams: true });
     // A courier does this at the door; staff can record it when a phone dies.
-    const operate = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const operate = requireProjectRole('admin', 'courier');
 
     const actorOf = (req: Request) => req.session.user?.username ?? '';
 

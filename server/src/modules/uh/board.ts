@@ -78,7 +78,7 @@ const presentOrder = (o: OrderRow) => ({
 
 export function createBoardRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin', 'ops_manager', 'dispatcher');
+    const staff = requireProjectRole('admin');
 
     router.get('/', staff, wrap(async (req, res) => {
         const project = req.project!;

@@ -517,12 +517,12 @@ describe('access control', () => {
            3.1: an import holds the pharmacy's whole list, patients included,
            so reading one is the same disclosure as uploading one. Their view
            of their own deliveries is the portal. */
-        const viewer = await memberWith('client_viewer', 'import.viewer');
+        const viewer = await memberWith('pharmacy', 'import.viewer');
         expect((await viewer.get(BASE)).status).toBe(403);
         expect((await upload(viewer, `${BASE}/preview`, XLSX, { siteId: dischargeId })).status).toBe(403);
         expect((await upload(viewer, BASE, XLSX, { siteId: dischargeId })).status).toBe(403);
 
-        const dispatcher = await memberWith('dispatcher', 'import.dispatcher');
+        const dispatcher = await memberWith('admin', 'import.dispatcher');
         expect((await upload(dispatcher, `${BASE}/preview`, XLSX, { siteId: dischargeId })).status).toBe(200);
     });
 

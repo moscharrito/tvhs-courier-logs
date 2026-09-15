@@ -34,19 +34,27 @@ const who = {};
 /** principal -> the credentials to open a second session with. */
 const CREDENTIALS = {};
 
-/* Every caller the application can have. The names are used in the table. */
-const PRINCIPALS = ['anon', 'outsider', 'viewer', 'courier', 'dispatcher', 'manager', 'projectAdmin', 'platformAdmin'];
+/* Every caller the application can have. The names are used in the table.
+ *
+ * Three project roles since ticket 5.12, so three project principals plus the
+ * two that hold no uh membership. `dispatcher` and `manager` used to be here
+ * as separate people; they are administrators now. */
+const PRINCIPALS = ['anon', 'outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
 
 /* Shorthand for the groups the table uses over and over. `platformAdmin` is a
  * member of every project at boot, so it appears in every project group. */
 const EVERYONE = PRINCIPALS;
-const SIGNED_IN = ['outsider', 'viewer', 'courier', 'dispatcher', 'manager', 'projectAdmin', 'platformAdmin'];
+const SIGNED_IN = ['outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
 const PLATFORM_ADMIN = ['platformAdmin'];
-const UH_MEMBER = ['viewer', 'courier', 'dispatcher', 'manager', 'projectAdmin', 'platformAdmin'];
-const UH_STAFF = ['dispatcher', 'manager', 'projectAdmin', 'platformAdmin'];
-const UH_STAFF_AND_COURIER = ['courier', 'dispatcher', 'manager', 'projectAdmin', 'platformAdmin'];
-const UH_MANAGE = ['manager', 'projectAdmin', 'platformAdmin'];
-const UH_CLIENT_VIEW = ['viewer', 'dispatcher', 'manager', 'projectAdmin', 'platformAdmin'];
+const UH_MEMBER = ['pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
+/* UH_MANAGE used to be narrower than UH_STAFF: editing the rate card and
+ * issuing an invoice were an ops manager's, and a dispatcher was refused
+ * them. The merge in 5.12 made those the same set of people, so there is one
+ * name for it now rather than two identical lists pretending otherwise. */
+const UH_STAFF = ['projectAdmin', 'platformAdmin'];
+const UH_STAFF_AND_COURIER = ['courier', 'projectAdmin', 'platformAdmin'];
+const UH_MANAGE = UH_STAFF;
+const UH_CLIENT_VIEW = ['pharmacy', 'projectAdmin', 'platformAdmin'];
 const TVHS_MEMBER = ['outsider', 'platformAdmin'];
 /* Three TVHS endpoints are for drivers and nobody else, checked by platform
  * role inside the handler. The platform administrator is refused them too. */
@@ -61,10 +69,8 @@ beforeAll(async () => {
        valid session for this application and must still be refused every uh
        endpoint. */
     const people = [
-        ['matrix.viewer', 'client_viewer'],
+        ['matrix.pharmacy', 'pharmacy'],
         ['matrix.courier', 'courier'],
-        ['matrix.dispatcher', 'dispatcher'],
-        ['matrix.manager', 'ops_manager'],
         ['matrix.projectadmin', 'admin'],
     ];
     for (const [username, role] of people) {
@@ -85,19 +91,15 @@ beforeAll(async () => {
     };
     Object.assign(CREDENTIALS, {
         outsider: { username: srv.creds.south.username, password: srv.creds.south.password },
-        viewer: { username: 'matrix.viewer', password: PASS },
+        pharmacy: { username: 'matrix.pharmacy', password: PASS },
         courier: { username: 'matrix.courier', password: PASS },
-        dispatcher: { username: 'matrix.dispatcher', password: PASS },
-        manager: { username: 'matrix.manager', password: PASS },
         projectAdmin: { username: 'matrix.projectadmin', password: PASS },
         platformAdmin: { username: srv.creds.admin.username, password: srv.creds.admin.password },
     });
     who.anon = srv.agent();
     who.outsider = await srv.login('south');
-    who.viewer = await signIn('matrix.viewer');
+    who.pharmacy = await signIn('matrix.pharmacy');
     who.courier = await signIn('matrix.courier');
-    who.dispatcher = await signIn('matrix.dispatcher');
-    who.manager = await signIn('matrix.manager');
     who.projectAdmin = await signIn('matrix.projectadmin');
     who.platformAdmin = admin;
 });

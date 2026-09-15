@@ -173,7 +173,7 @@ export function ListImport({ projectCode, timezone, canImport }: {
             )}
 
             {!canImport ? (
-                <div className="izy-muted">You need the dispatcher, ops manager or admin role in this project to import a list.</div>
+                <div className="izy-muted">You need the admin role in this project to import a list.</div>
             ) : (
                 <>
                     <div className="izy-row">

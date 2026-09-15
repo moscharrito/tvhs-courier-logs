@@ -139,7 +139,7 @@ export function createClientPortalRouter({ client }: { client: Client }): Router
     const router = Router({ mergeParams: true });
     /* Staff are allowed in so they can see exactly what the client sees. A
      * courier is not: they have no business reading a whole pharmacy's day. */
-    const viewer = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'client_viewer');
+    const viewer = requireProjectRole('admin', 'pharmacy');
 
     /** Sites the caller may see, with their names, ordered for display. */
     async function scopedSites(req: Request) {

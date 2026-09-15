@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../app/auth';
 
 const ROLE_LABEL: Record<string, string> = {
-    admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
+    admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
 };
 
 /* Project picker. Everyone lands here after sign-in, drivers included, and

@@ -263,7 +263,7 @@ describe('the report endpoint', () => {
         expect((await ada.get(`${REPORTS}/sla.xlsx`)).status).toBe(403);
 
         await admin.post('/api/users').send({ username: 'uh.quality', name: 'Quality Person', password: 'client-pass-1', role: 'staff' });
-        await admin.put('/api/users/uh.quality/memberships/uh').send({ role: 'client_viewer', settings: { siteIds: [discharge.id] } });
+        await admin.put('/api/users/uh.quality/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
         const uh = srv.agent();
         await uh.post('/api/login').send({ username: 'uh.quality', password: 'client-pass-1' });
         /* The client gets their numbers from us in a workbook we have looked

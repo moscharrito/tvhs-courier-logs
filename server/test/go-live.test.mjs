@@ -20,7 +20,7 @@ beforeAll(async () => {
     srv = await startServer();
     admin = await srv.login('admin');
     await admin.post('/api/users').send({ username: 'gl.dispatch', name: 'GL', password: 'gl-pass-1122', role: 'staff' });
-    await admin.put('/api/users/gl.dispatch/memberships/uh').send({ role: 'dispatcher', settings: {} });
+    await admin.put('/api/users/gl.dispatch/memberships/uh').send({ role: 'admin', settings: {} });
     dispatcher = srv.agent();
     await dispatcher.post('/api/login').send({ username: 'gl.dispatch', password: 'gl-pass-1122' });
 });
@@ -153,8 +153,13 @@ describe('the daily report, as sent', () => {
         expect(res.body.error).toMatch(/send a correction/);
     });
 
-    it('is not something a dispatcher records, because it is a statement to the client', async () => {
-        const res = await dispatcher.post(`${UH}/reports/sent`).send({
+    it('is not something a courier records, because it is a statement to the client', async () => {
+        /* This used to be refused to a dispatcher as well: saying what we told
+           University Health was an ops manager's. Ticket 5.12 merged those
+           roles, so the line is now between the people who run the contract
+           and everybody else. */
+        const north = await srv.login('north');
+        const res = await north.post(`${UH}/reports/sent`).send({
             serviceDate: '2026-12-02', recipient: 'UH', channel: 'email', figures: {},
         });
         expect(res.status).toBe(403);

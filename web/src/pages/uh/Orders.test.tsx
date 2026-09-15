@@ -14,7 +14,7 @@ import { OrderDetail } from './OrderDetail';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
 
-const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'dispatcher' }];
+const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
 const session = { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null };
 
 const sites = [

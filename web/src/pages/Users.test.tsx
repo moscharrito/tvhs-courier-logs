@@ -46,7 +46,7 @@ describe('Users', () => {
     it('blocks non-admins from the users page', async () => {
         mockFetch({
             'GET /api/session': { id: 9, username: 'dispatch', name: 'Dispatcher', role: 'staff', route: null },
-            'GET /api/me/projects': [{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'dispatcher' }],
+            'GET /api/me/projects': [{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin' }],
         });
         renderAt('/users');
         await waitFor(() => expect(screen.getByText('Welcome, Dispatcher')).toBeInTheDocument());

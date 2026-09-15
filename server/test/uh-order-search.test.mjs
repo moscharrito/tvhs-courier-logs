@@ -237,6 +237,36 @@ describe('the pricing breakdown on an order', () => {
         expect(detail.body.pricing.measuredFrom).toBe('requested');
     });
 
+    it('is withheld from a courier entirely, not merely hidden on the screen', async () => {
+        /* A courier reaches this endpoint from the Details link on their own
+           run, and it used to hand them the zone rate, the surcharges and the
+           total. What a delivery bills at is commercial terms between Izy and
+           University Health; a driver knowing one address pays $12.50 and
+           another $52.00 is an invitation to work the round by the rate
+           rather than by the deadline.
+
+           Withheld on the server, because a field the UI declines to draw is
+           still in the response and the response is what anybody can read. */
+        const order = await makeOrder({ requestedAt: BUSINESS_HOURS_PAST });
+        // A courier only reads their own work, so it has to be theirs first.
+        await ev(order.id, { type: 'assigned', courierUsername: 'sam.courier' });
+        const courier = srv.agent();
+        await courier.post('/api/login').send({ username: 'sam.courier', password: 'courier-pass-1' });
+
+        const asCourier = await courier.get(`${BASE}/${order.id}`);
+        expect(asCourier.status).toBe(200);
+        expect(asCourier.body.pricing).toBeUndefined();
+        expect(JSON.stringify(asCourier.body)).not.toMatch(/statSurcharge|dryRunFee|effectiveFrom/);
+
+        // Everything a courier does need is still there.
+        expect(asCourier.body.recipientName).toBeTruthy();
+        expect(asCourier.body.addressLine).toBeTruthy();
+        expect(Array.isArray(asCourier.body.custody)).toBe(true);
+
+        // And staff still see it.
+        expect((await admin.get(`${BASE}/${order.id}`)).body.pricing.available).toBe(true);
+    });
+
     it('measures after hours at the delivery, which is what a courier controls', async () => {
         const order = await makeOrder({ serviceType: 'adhoc', requestedAt: BUSINESS_HOURS_PAST });
         await ev(order.id, { type: 'assigned', courierUsername: 'sam.courier' });

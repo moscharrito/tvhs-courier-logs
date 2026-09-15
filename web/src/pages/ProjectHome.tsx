@@ -12,7 +12,7 @@ import { NewOrder } from './uh/NewOrder';
 import { ProjectSettings } from './ProjectSettings';
 
 const ROLE_LABEL: Record<string, string> = {
-    admin: 'Admin', ops_manager: 'Ops manager', dispatcher: 'Dispatcher', courier: 'Courier', client_viewer: 'Client viewer',
+    admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
 };
 
 export function ProjectHome() {
@@ -30,18 +30,19 @@ export function ProjectHome() {
         );
     }
 
-    const canManage = project.role === 'admin' || project.role === 'ops_manager';
-    const canImport = canManage || project.role === 'dispatcher';
+    /* One role runs the operation now, so one flag covers it. */
+    const canManage = project.role === 'admin';
+    const canImport = canManage;
 
     /* A courier gets their run and nothing else. The rest of this page is
        sites, pricing, settings and the whole day's list of patient addresses,
        none of which is theirs to see. */
     if (project.role === 'courier') return <Navigate to={`/projects/${project.code}/my-run`} replace />;
 
-    /* A client viewer gets their own deliveries and nothing else. This page is
+    /* Pharmacy staff get their own deliveries and nothing else. This page is
        our sites, our rate card, our settings and every pharmacy's patients;
        none of it is theirs. */
-    if (project.role === 'client_viewer') return <Navigate to={`/projects/${project.code}/deliveries`} replace />;
+    if (project.role === 'pharmacy') return <Navigate to={`/projects/${project.code}/deliveries`} replace />;
 
     return (
         <>

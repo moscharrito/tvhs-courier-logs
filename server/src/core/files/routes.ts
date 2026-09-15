@@ -73,7 +73,7 @@ const present = (f: FileRow) => ({
 
 export function createFilesRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
     const router = Router({ mergeParams: true });
-    const operate = requireProjectRole('admin', 'ops_manager', 'dispatcher', 'courier');
+    const operate = requireProjectRole('admin', 'courier');
 
     const unavailable = (res: Response) => {
         res.status(503).json({

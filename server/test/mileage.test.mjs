@@ -174,11 +174,14 @@ describe('over HTTP', () => {
         expect(res.body.error).toMatch(/from and to/);
     });
 
-    it('is closed to dispatchers, because it decides what is billed', async () => {
-        await admin.post('/api/users').send({ username: 'mile.dispatch', name: 'Mile', password: 'mile-pass-11', role: 'staff' });
-        await admin.put('/api/users/mile.dispatch/memberships/uh').send({ role: 'dispatcher', settings: {} });
+    it('is closed to couriers, because it decides what is billed', async () => {
+        /* Was closed to dispatchers too, when that was a role of its own.
+           Ticket 5.12 made whoever works the board an admin, so the remaining
+           line is between running the contract and driving for it. */
+        await admin.post('/api/users').send({ username: 'mile.driver', name: 'Mile', password: 'mile-pass-11', role: 'driver' });
+        await admin.put('/api/users/mile.driver/memberships/uh').send({ role: 'courier', settings: {} });
         const a = srv.agent();
-        await a.post('/api/login').send({ username: 'mile.dispatch', password: 'mile-pass-11' });
+        await a.post('/api/login').send({ username: 'mile.driver', password: 'mile-pass-11' });
         expect((await a.post(`${UH}/geocode/mileage?from=${DAY}&to=${DAY}`).send({})).status).toBe(403);
     });
 

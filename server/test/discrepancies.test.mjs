@@ -27,7 +27,7 @@ beforeAll(async () => {
     admin = await srv.login('admin');
     const siteId = (await admin.get(`${UH}/sites`)).body.find((s) => s.code === 'discharge').id;
 
-    for (const [username, role] of [['shadow.courier', 'courier'], ['shadow.dispatch', 'dispatcher']]) {
+    for (const [username, role] of [['shadow.courier', 'courier'], ['shadow.dispatch', 'admin']]) {
         await admin.post('/api/users').send({ username, name: username, password: 'shadow-pass-11', role: 'staff' });
         await admin.put(`/api/users/${username}/memberships/uh`).send({ role, settings: {} });
     }
