@@ -38,19 +38,25 @@ const BASE = process.env.REHEARSE_URL ?? `http://127.0.0.1:${config.port}`;
 const PASSWORD = process.env.REHEARSE_PASSWORD ?? 'rehearsal-pass-0001';
 const ADMIN = { user: process.env.ADMIN_USER ?? 'rehearsal', pass: process.env.ADMIN_PASS ?? 'rehearsal-pass-0001' };
 
-/** One cookie jar, so this behaves like one signed-in browser. */
+/** One cookie jar, so this behaves like one signed-in browser.
+ *
+ * Call it with a plain object for JSON, or with { body, headers } to send
+ * something else: the import endpoint takes the file itself, not a wrapper. */
 function agent() {
     let jar = {};
-    return async (method, p, json) => {
+    return async (method, p, payload) => {
+        const raw = payload !== undefined && payload !== null && typeof payload === 'object' && 'body' in payload;
+        const json = raw ? undefined : payload;
         const cookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
         const res = await fetch(`${BASE}${p}`, {
             method,
             headers: {
                 Accept: 'application/json',
                 ...(json ? { 'Content-Type': 'application/json' } : {}),
+                ...(raw ? payload.headers ?? {} : {}),
                 ...(cookie ? { Cookie: cookie } : {}),
             },
-            body: json ? JSON.stringify(json) : undefined,
+            body: raw ? payload.body : json ? JSON.stringify(json) : undefined,
         });
         for (const raw of res.headers.getSetCookie?.() ?? []) {
             const [pair] = raw.split(';');
@@ -142,6 +148,107 @@ fs.mkdirSync(outDir, { recursive: true });
 const xlsxPath = path.join(outDir, 'green-daily.xlsx');
 await workbook.xlsx.writeFile(xlsxPath);
 
+/* ------------------------------------------------------- yesterday, billed
+
+ * Three deliveries, priced three different ways, so the invoice screen shows
+ * the arithmetic rather than one repeated line:
+ *
+ *   zone 1, scheduled, delivered        $12.50
+ *   zone 1, scheduled, delivered        $12.50
+ *   zone 1, STAT, dry run of 3 items    $49.00   = 3 x $9.00 + $22.00 STAT
+ *                                       ------
+ *                                       $74.00
+ *
+ * Every timestamp is early afternoon in the project's timezone, well inside
+ * business hours, so no after-hours surcharge lands on top and the total is
+ * arithmetic somebody can check by hand. The STAT surcharge surviving a dry
+ * run is an open question with University Health (ticket 1.10); the
+ * application charges it, and this is where you can see what that looks like.
+ */
+
+const yesterday = (() => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toLocaleDateString('en-CA', { timeZone: config.timezone });
+})();
+
+/** An instant on that service date, at a wall-clock time in the project zone. */
+function at(hour, minute) {
+    const [y, m, d] = yesterday.split('-').map(Number);
+    /* Find the offset the zone was on that day rather than assuming one, so
+       this keeps working across a daylight-saving change. */
+    const guess = new Date(Date.UTC(y, m - 1, d, 12));
+    const local = new Date(guess.toLocaleString('en-US', { timeZone: config.timezone }));
+    const offsetMs = guess.getTime() - local.getTime();
+    return new Date(Date.UTC(y, m - 1, d, hour, minute) + offsetMs).toISOString();
+}
+
+const YESTERDAY_ROWS = [
+    ['RX-77301', 'Hector Salas', '210-555-0101', '1420 Guadalupe St', '', 'San Antonio', 'TX', '78207', 1, 'Oral solids', 'Scheduled', '', 'Yes'],
+    ['RX-77302', 'June Whitfield', '210-555-0102', '500 E Grayson St', 'Unit 4', 'San Antonio', 'TX', '78215', 1, 'Oral solids', 'Scheduled', '', 'Yes'],
+    ['RX-77303', 'Dev Nair', '210-555-0103', '9802 Huebner Rd', '', 'San Antonio', 'TX', '78240', 3, 'Cold pack', 'STAT', '', 'Yes'],
+];
+
+const NEWLINE = String.fromCharCode(10);
+const csv = [HEADER.join(','), ...YESTERDAY_ROWS.map((r) => r.join(','))].join(NEWLINE) + NEWLINE;
+const importOptions = encodeURIComponent(JSON.stringify({ siteId: green.id, serviceDate: yesterday }));
+
+const dee = agent();
+ok(await dee('POST', '/api/login', { username: 'dee.dispatch', password: PASSWORD }), 'Signing in as the dispatcher');
+
+const imported = await dee('POST', `/api/projects/uh/uh/imports?options=${importOptions}`, {
+    body: csv,
+    headers: { 'Content-Type': 'text/csv', 'X-Upload-Filename': 'green-yesterday.csv' },
+});
+
+let billed = false;
+if (imported.status === 201) {
+    const run = ok(await dee('POST', '/api/projects/uh/uh/runs', {
+        courierUsername: 'ana.courier', label: 'Wave', serviceDate: yesterday,
+    }), "Starting yesterday's run");
+
+    const board = ok(await dee('GET', `/api/projects/uh/uh/board?serviceDate=${yesterday}`), "Reading yesterday's board");
+    const orderIds = (board.body.pool ?? []).flatMap((g) => g.orders.map((o) => o.id));
+    ok(await dee('POST', `/api/projects/uh/uh/runs/${run.body.id}/stops`, { orderIds }), 'Assigning the stops');
+
+    const ana = agent();
+    ok(await ana('POST', '/api/login', { username: 'ana.courier', password: PASSWORD }), 'Signing in as the courier');
+
+    /* A drawn line, in the 0..1 space the signature pad records. */
+    const strokes = [[{ x: 0.05, y: 0.7, t: 0 }, { x: 0.5, y: 0.2, t: 90 }, { x: 0.92, y: 0.75, t: 180 }]];
+
+    ok(await ana('POST', `/api/projects/uh/uh/runs/${run.body.id}/pickup`, {
+        siteId: green.id, countedPackages: 5, signedName: 'L. Ortiz, RPh', strokes, at: at(12, 40),
+    }), 'Collecting from the pharmacy');
+
+    ok(await ana('POST', `/api/projects/uh/uh/orders/${orderIds[0]}/deliver`, {
+        signedName: 'H. Salas', strokes, at: at(13, 22),
+    }), 'Delivering the first');
+    ok(await ana('POST', `/api/projects/uh/uh/orders/${orderIds[1]}/deliver`, {
+        signedName: 'J. Whitfield', strokes, at: at(13, 52),
+    }), 'Delivering the second');
+
+    const third = ok(await ana('GET', `/api/projects/uh/uh/orders/${orderIds[2]}`), 'Reading the third');
+    ok(await ana('POST', `/api/projects/uh/uh/orders/${orderIds[2]}/attempt`, {
+        at: at(14, 34),
+        packages: (third.body.packages ?? []).map((pkg) => ({ packageId: pkg.id, reasonCode: 'recipient_not_located', note: '' })),
+    }), 'Recording the dry run');
+
+    ok(await ana('POST', '/api/projects/uh/uh/returns', {
+        siteId: green.id, orderIds: [orderIds[2]], countedPackages: 3,
+        signedName: 'L. Ortiz, RPh', strokes, at: at(15, 10),
+    }), 'Handing the undelivered back');
+    billed = true;
+} else if (imported.status === 400) {
+    /* Run twice. The importer refused the repeat as duplicates, which is the
+       correct answer and means yesterday is already there. */
+    billed = true;
+} else {
+    console.error('');
+    console.error(`Importing yesterday failed: ${imported.status} ${JSON.stringify(imported.body)}`);
+    process.exit(1);
+}
+
 /* ------------------------------------------------------------ the brief */
 
 const line = (label, value) => console.log(`  ${label.padEnd(16)} ${value}`);
@@ -160,6 +267,12 @@ line('rehearsal2', 'admin - the second one, so the go-live check passes');
 line('dee.dispatch', 'dispatcher - imports the list, runs the board');
 line('ana.courier', 'courier - picks her own name on the sign-in page');
 line('pat.pharmacy', 'client viewer - Robert B. Green only');
+console.log('');
+if (billed) {
+    console.log('Already in the database, so there is something to bill:');
+    line(yesterday, '3 deliveries, 2 delivered and 1 STAT dry run of 3 items');
+    line('', 'Invoices, period 1st to ' + yesterday + ', comes to $74.00');
+}
 console.log('');
 console.log(`Open ${BASE}/ and follow docs/day-rehearsal.md from step 2.`);
 console.log('');

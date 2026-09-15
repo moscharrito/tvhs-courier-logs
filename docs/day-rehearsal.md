@@ -95,9 +95,18 @@ Robert B. Green, writes `server/rehearsal/green-daily.xlsx` to upload, and
 prints the credentials. It refuses anything but a local file database, because
 these accounts have their password printed on the screen. Then skip to step 2.
 
-It does none of the day itself. The import, the wave, the round, the review,
-the invoice and the client's view are all yours, because what a person hits is
-the whole point.
+It also drives **yesterday**, start to finish, so step 6 has something to bill.
+A period that is not over cannot be invoiced, by design, so on a database made
+this morning the invoice screen is empty and the most contract-shaped part of
+the application cannot be looked at. Yesterday is history: in a real week it
+already happened and nobody rehearses it.
+
+**Today is untouched.** The import, the wave, the round, the review, the
+invoice and the client's view are all yours, because what a person hits is the
+whole point.
+
+Running it twice is safe: the accounts come back 409 and the importer refuses
+yesterday's list as a duplicate, which is the right answer to both.
 
 ### Or by hand, which is worth doing once
 
@@ -261,25 +270,33 @@ admin or ops_manager` and no draft.
 
 **Invoices**, open a draft. Try today's date first: it refuses with "That
 period is not over yet. Bill up to yesterday at the latest," because a period
-that is not over cannot be billed. That is the rule, not a limitation.
+that is not over cannot be billed. That is the rule, not a limitation, and it
+is why the setup script puts a day in the past there: on a database made this
+morning, the most contract-shaped screen in the application would be empty.
 
-So the day you just worked cannot be invoiced until tomorrow. To see a priced
-invoice now, do a second, shorter round dated yesterday and bill that: import
-a list with yesterday's service date, run it, and open a draft from the first
-of the month to yesterday.
+So bill **the first of the month to yesterday**. Three lines, priced three
+different ways:
 
-What to check on the draft:
+| | |
+|---|---|
+| zone 1, scheduled, delivered | $12.50 |
+| zone 1, scheduled, delivered | $12.50 |
+| zone 1, STAT, dry run of 3 items | $49.00 |
+| **total** | **$74.00** |
 
-- Zone 1 deliveries at the contract rate.
-- A dry run billed per item, plus the STAT surcharge if the order was STAT.
-  **Whether that surcharge survives a dry run is an open question with
-  University Health** (ticket 1.10). The app charges it. If they say otherwise,
-  this is the line that changes.
-- **No patient names anywhere.** Pharmacy reference only.
+The last one is the one to look at. $49.00 is 3 x $9.00 for the dry run, per
+item as Addendum 1 says, plus the $22.00 STAT surcharge. **Whether that
+surcharge survives a dry run is an open question with University Health**
+(ticket 1.10). The application charges it. If they say otherwise, this is the
+line that changes, and this is what it looks like before it does.
 
-Then **Issue** it, and watch the totals freeze.
+Two more things on that screen:
 
----
+- **No patient names anywhere.** Pharmacy reference only. Compare it with the
+  board, which shows names to the people who need them.
+- **Issue** freezes the totals. Do it, and watch the wording change from "the
+  numbers below are recomputed every time it is opened" to an issued document
+  with a date on it.
 
 ## 7. The client's view
 
