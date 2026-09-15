@@ -72,6 +72,14 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-stoplist { list-style: none; margin: 0; padding: 0; }
 .izy-stoplist li { border-top: 1px solid var(--izy-line); padding: 10px 0; font-size: 14px; }
 .izy-stoplist li:first-child { border-top: 0; }
+
+/* The in-app map (ticket 5.13). flex-basis 100% so that inside .izy-row it
+   drops below the buttons instead of being squeezed between two of them.
+   The height is a phone held upright: tall enough to read the next two turns,
+   short enough that the address and the stop buttons stay on screen. */
+.izy-directions { flex: 1 0 100%; margin-top: 10px; }
+.izy-directions-map { width: 100%; height: 320px; border: 1px solid var(--izy-line); border-radius: 8px; display: block; }
+@media (max-width: 600px) { .izy-directions-map { height: 260px; } }
 /* The activity feed: a time column so the eye can scan down it, and the
    event beside it. Newest first, no scrollbar of its own: a dispatcher
    scrolling a panel inside a board loses their place. */

@@ -232,6 +232,7 @@ const MATRIX = [
     ['GET', `${UH}/orders/summary`, UH_STAFF_AND_COURIER, ''],
     ['GET', `${UH}/orders/999999`, UH_STAFF_AND_COURIER, ''],
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_STAFF_AND_COURIER, ''],
+    ['GET', `${UH}/orders/999999/directions`, UH_STAFF_AND_COURIER, ''],
     ['POST', `${UH}/orders/999999/events`, UH_STAFF_AND_COURIER, 'which event is then gated by role again'],
 
     /* --- the door. */

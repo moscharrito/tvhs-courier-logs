@@ -26,6 +26,9 @@ export interface Config {
         googleApiKey: string | undefined;
         /** Lookups per provider per day before everything is refused. */
         dailyCeiling: number;
+        /** Draw a map of a patient's address inside the courier app.
+         *  Deliberately NOT implied by the key: see modules/uh/directions.ts. */
+        embedMaps: boolean;
     };
     db: {
         /** libsql:// (Turso) or file: URL */
@@ -96,6 +99,11 @@ const EnvSchema = z.object({
      * a message saying so, which is the state until somebody buys a key. */
     GOOGLE_MAPS_API_KEY: optionalString,
     GEO_DAILY_CEILING: z.coerce.number().int().min(1).max(100000).optional(),
+    /* Whether the courier app may draw a patient's address on an embedded
+     * Google map instead of linking out to one. Off unless somebody turns it
+     * on, because turning it on makes us the sender of that address to a
+     * vendor with no BAA. The reasoning is in modules/uh/directions.ts. */
+    UH_MAPS_EMBED: boolish,
     /* Escape hatch for the check below: pointing a local process at a Turso
      * database on purpose, to inspect it or to rehearse a restore. */
     ALLOW_TURSO_OUTSIDE_PRODUCTION: boolish,
@@ -222,7 +230,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         timezone: e.APP_TIMEZONE,
         sessionSecret: e.SESSION_SECRET as string,
         trustProxy: e.TRUST_PROXY ?? (isProduction ? 1 : 0),
-        geo: { googleApiKey: e.GOOGLE_MAPS_API_KEY, dailyCeiling: e.GEO_DAILY_CEILING ?? 2500 },
+        geo: {
+            googleApiKey: e.GOOGLE_MAPS_API_KEY,
+            dailyCeiling: e.GEO_DAILY_CEILING ?? 2500,
+            embedMaps: e.UH_MAPS_EMBED,
+        },
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
@@ -256,6 +268,10 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         trustProxy: c.trustProxy,
         // The key itself never appears here, only whether there is one.
         geo: c.geo.googleApiKey ? `google, ceiling ${c.geo.dailyCeiling}/day` : 'no address lookup configured',
+        /* Printed at every boot on purpose. This one decides whether patient
+         * addresses go to Google from our pages, and a setting like that
+         * should not be discoverable only by reading the code. */
+        mapEmbed: c.geo.embedMaps ? 'ON: patient addresses render on embedded Google maps' : 'off, directions link out',
     };
 }
 

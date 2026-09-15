@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
-import { buildCsp, createSecurityHeaders } from '../src/core/http/security.ts';
+import { buildCsp, createSecurityHeaders, securityHeadersFor } from '../src/core/http/security.ts';
 
 let srv;
 beforeAll(async () => { srv = await startServer(); });
@@ -78,6 +78,25 @@ describe('the content security policy', () => {
         expect(d.get('img-src')).toContain('blob:');
     });
 
+    it('keeps frame-src none unless an origin is named, and names only the map', () => {
+        /* frame-src was 'none' from ticket 4.2 until the courier map in 5.13
+           needed one origin. The thing worth asserting is that it is still
+           'none' for every installation that has not switched the map on, so
+           that a relaxation made for one feature does not become the default
+           for the whole application. */
+        expect(directives(buildCsp({ isProduction: true })).get('frame-src')).toEqual(["'none'"]);
+        expect(directives(buildCsp({ isProduction: true, frameOrigins: [] })).get('frame-src')).toEqual(["'none'"]);
+
+        const d = directives(buildCsp({ isProduction: true, frameOrigins: ['https://www.google.com'] }));
+        expect(d.get('frame-src')).toEqual(['https://www.google.com']);
+        // Opening frame-src must not have opened being framed BY somebody.
+        expect(d.get('frame-ancestors')).toEqual(["'none'"]);
+        // Nor anything else. One origin, one directive.
+        expect(d.get('default-src')).toEqual(["'self'"]);
+        expect(d.get('script-src')).toEqual(["'self'"]);
+        expect(d.get('connect-src')).toEqual(["'self'"]);
+    });
+
     it('opens connect-src and img-src to the bucket only when there is one', () => {
         const without = directives(buildCsp({ isProduction: true }));
         expect(without.get('connect-src')).toEqual(["'self'"]);
@@ -86,6 +105,42 @@ describe('the content security policy', () => {
         const with_ = directives(buildCsp({ isProduction: true, connectOrigins: [bucket], imageOrigins: [bucket] }));
         expect(with_.get('connect-src')).toEqual(["'self'", bucket]);
         expect(with_.get('img-src')).toContain(bucket);
+    });
+});
+
+describe('the policy the config actually produces', () => {
+    /* buildCsp is tested above with arguments handed to it. These test the
+       wiring, which is the half that fails silently: a switch that is on and
+       a frame-src that never heard about it shows the courier an empty grey
+       box and an error only the console sees. */
+    const headerFrom = (config) => {
+        const headers = new Map();
+        securityHeadersFor(config)({}, { setHeader: (k, v) => headers.set(k, v) }, () => {});
+        return headers.get('Content-Security-Policy');
+    };
+    const base = { isProduction: false, files: { enabled: false } };
+
+    it('keeps frames closed for the configuration everything ships with', () => {
+        const csp = headerFrom({ ...base, geo: { googleApiKey: undefined, dailyCeiling: 2500, embedMaps: false } });
+        expect(csp).toContain("frame-src 'none'");
+        expect(csp).not.toContain('google.com');
+    });
+
+    it('does not open frames just because a map key exists', () => {
+        /* The key is there so pharmacy sites can be geocoded, which is
+           lawful. It must not also be what starts putting patient addresses
+           on Google's servers from our pages. */
+        const csp = headerFrom({ ...base, geo: { googleApiKey: 'k', dailyCeiling: 2500, embedMaps: false } });
+        expect(csp).toContain("frame-src 'none'");
+    });
+
+    it('opens exactly one frame origin when the embed is switched on', () => {
+        const csp = headerFrom({ ...base, geo: { googleApiKey: 'k', dailyCeiling: 2500, embedMaps: true } });
+        expect(csp).toContain('frame-src https://www.google.com');
+        expect(csp).not.toContain("frame-src 'none'");
+        // And nothing else moved.
+        expect(csp).toContain("frame-ancestors 'none'");
+        expect(csp).toContain("script-src 'self'");
     });
 });
 

@@ -14,6 +14,7 @@
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { Config } from '../../config';
+import { MAPS_EMBED_ORIGIN } from '../../modules/uh/directions';
 
 export interface SecurityOptions {
     isProduction: boolean;
@@ -21,6 +22,8 @@ export interface SecurityOptions {
     connectOrigins?: string[];
     /** Origins images may be loaded from, beyond our own. */
     imageOrigins?: string[];
+    /** Origins that may be put in an iframe. Empty keeps frame-src 'none'. */
+    frameOrigins?: string[];
 }
 
 /** The S3 origin, when a bucket is configured. Presigned PUTs go straight
@@ -34,6 +37,7 @@ export function s3Origin(config: Pick<Config, 'files'>): string | null {
 export function buildCsp(options: SecurityOptions): string {
     const connect = ["'self'", ...(options.connectOrigins ?? [])];
     const img = ["'self'", 'data:', 'blob:', ...(options.imageOrigins ?? [])];
+    const frame = options.frameOrigins ?? [];
 
     const directives: Array<[string, string[]]> = [
         // Nothing loads from anywhere unless a directive below says otherwise.
@@ -64,7 +68,12 @@ export function buildCsp(options: SecurityOptions): string {
          * something is a real shape of attack, and this app has no reason to
          * be embedded. */
         ['frame-ancestors', ["'none'"]],
-        ['frame-src', ["'none'"]],
+        /* Nothing may be framed BY us either, unless an origin was named. The
+         * only caller that names one is the courier map (ticket 5.13), and it
+         * only names one when that embed is explicitly switched on. Keeping
+         * the default 'none' means an injected iframe still has nowhere to
+         * point, which is most of what this directive was doing. */
+        ['frame-src', frame.length > 0 ? frame : ["'none'"]],
         ['worker-src', ["'self'"]],
         // The service worker's scope, which must stay ours.
         ['manifest-src', ["'self'"]],
@@ -113,11 +122,16 @@ export function createSecurityHeaders(options: SecurityOptions): RequestHandler 
 }
 
 /** Everything the boot sequence needs, derived from the config. */
-export function securityHeadersFor(config: Pick<Config, 'files' | 'isProduction'>): RequestHandler {
+export function securityHeadersFor(config: Pick<Config, 'files' | 'isProduction' | 'geo'>): RequestHandler {
     const s3 = s3Origin(config);
+    /* The courier's in-app map. Opened only when the embed is switched on, so
+     * an installation that leaves it off keeps frame-src 'none' exactly as it
+     * was before ticket 5.13. */
+    const maps = config.geo.embedMaps ? [MAPS_EMBED_ORIGIN] : [];
     return createSecurityHeaders({
         isProduction: config.isProduction,
         connectOrigins: s3 ? [s3] : [],
         imageOrigins: s3 ? [s3] : [],
+        frameOrigins: maps,
     });
 }

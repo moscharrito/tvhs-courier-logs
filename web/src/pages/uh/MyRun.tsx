@@ -5,11 +5,14 @@
  * courier reaches for while holding a package in the other hand, directions
  * and dispatch, are single taps.
  *
- * The map link carries the ADDRESS ONLY. Never the patient's name. A maps
- * URL leaves this application: it goes into a URL bar, a third party's
- * servers, and the phone's own history. An address is what the courier needs
- * to drive there; the name adds nothing to the navigation and everything to
- * the disclosure.
+ * The map carries the ADDRESS ONLY. Never the patient's name. An address is
+ * what the courier needs to drive there; the name adds nothing to the
+ * navigation and everything to the disclosure. That rule holds whether the
+ * address goes out in a link the courier taps or into a frame this page
+ * draws, and which of those happens is decided on the server: see
+ * server/src/modules/uh/directions.ts, which keeps the in-app map behind its
+ * own switch because embedding makes US the sender of a patient's address to
+ * a vendor with no BAA.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -19,6 +22,7 @@ import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
+import { Directions } from './Directions';
 
 interface Stop {
     sequence: number;
@@ -51,11 +55,15 @@ interface MineResponse {
     courierUsername: string;
     runs: Run[];
     dispatch: { phone: string; name: string };
+    /** Whether this installation draws the map in place. See Directions.tsx. */
+    directions?: { embed: boolean };
 }
 
 const DONE = ['delivered', 'failed', 'cancelled'];
 
-/** Address only. See the header comment: the name must not leave the app. */
+/** Address only. See the header comment: the name must not leave the app.
+ *  Still used as the fallback link and as what the map panel opens into the
+ *  phone's own Google Maps, which is where turn-by-turn actually belongs. */
 export function mapsUrl(stop: Pick<Stop, 'address' | 'city' | 'zip'>): string {
     const query = [stop.address, stop.city, stop.zip].filter(Boolean).join(', ');
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
@@ -112,6 +120,10 @@ export function MyRun() {
     const toCollect = stops.filter((s) => s.status === 'assigned');
     const current = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
+    /* Defaults to the link-out. A server that has not been told about maps,
+       which is every server until somebody sets UH_MAPS_EMBED, behaves the
+       way it did before ticket 5.13. */
+    const embed = data.directions?.embed === true;
 
     return (
         <>
@@ -186,7 +198,7 @@ export function MyRun() {
                                 {current.zone === null && <> · <span className="izy-pill warn">out of area</span></>}
                             </p>
                             <div className="izy-row">
-                                <a className="izy-btn" href={mapsUrl(current)} target="_blank" rel="noreferrer">Directions</a>
+                                <Directions code={code} orderId={current.orderId} embed={embed} mapsUrl={mapsUrl(current)} />
                                 {/* The stop is the work. Details is for looking something up. */}
                                 <Link className="izy-btn" to={`/projects/${code}/orders/${current.orderId}/stop`}>Open the stop</Link>
                                 <Link className="izy-btn secondary" to={`/projects/${code}/orders/${current.orderId}`}>Details</Link>
@@ -205,7 +217,7 @@ export function MyRun() {
                                     </div>
                                     <div className="izy-muted">{s.address}, {s.city} {s.zip}</div>
                                     <div className="izy-row">
-                                        <a className="izy-btn secondary" href={mapsUrl(s)} target="_blank" rel="noreferrer">Directions</a>
+                                        <Directions code={code} orderId={s.orderId} embed={embed} className="izy-btn secondary" mapsUrl={mapsUrl(s)} />
                                         {!DONE.includes(s.status) && (
                                             <Link className="izy-btn secondary" to={`/projects/${code}/orders/${s.orderId}/stop`}>Open the stop</Link>
                                         )}

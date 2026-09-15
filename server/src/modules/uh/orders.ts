@@ -28,6 +28,8 @@ import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pric
 import { zipZoneMap, scheduleOn } from './zones';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
 import { recordOrderEvent, insertCustodyEvent } from './order-events';
+import { directionsFor, parseOrigin } from './directions';
+import { getConfig } from '../../config';
 import {
     availableEvents, dueForNewOrder, evaluateSla, EVENT_RULES, TransitionError,
     CUSTODY_EVENT_TYPES, ORDER_STATUSES,
@@ -480,6 +482,39 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
 
         await req.audit('order.pod', 'order', String(order.id), { status: data.status });
         sendPdf(res, renderPod(data), podFilename(Number(order.id), data.serviceDate));
+    }));
+
+    /* The map for one stop (ticket 5.13). Before /:id so "directions" is not
+     * read as an order id.
+     *
+     * The URL is built here rather than in the bundle so the map key is only
+     * ever handed to somebody who has already passed the check that says they
+     * may read this order at all. A key baked into the JavaScript is a key
+     * anybody who loads the sign-in page can lift.
+     *
+     * Whether there is a URL at all is decided in modules/uh/directions.ts,
+     * and the honest answer today is no: embedding puts a patient's address on
+     * a Google request that WE make. The endpoint still answers, with the
+     * link-out and a sentence saying why, so the phone has one code path. */
+    router.get('/:id/directions', readers, wrap(async (req, res) => {
+        const order = await loadOr404(req, res);
+        if (!order) return;
+
+        const answer = directionsFor(
+            getConfig(),
+            {
+                // The same two lines present() joins, and not the name beside them.
+                address: [order.address_line, order.address_line2].filter(Boolean).join(', '),
+                city: order.city ?? '',
+                zip: order.zip ?? '',
+            },
+            parseOrigin((req.query as Record<string, string | undefined>)['origin']),
+        );
+        /* An address left the building, or was about to. Recorded with which
+         * way it went, because "did we send patient addresses to Google" is a
+         * question somebody will eventually ask us in writing. */
+        await req.audit('order.directions', 'order', String(order.id), { embedded: answer.available });
+        res.json(answer);
     }));
 
     router.get('/:id', readers, wrap(async (req, res) => {

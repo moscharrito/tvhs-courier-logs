@@ -24,6 +24,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
+import { getConfig } from '../../config';
 import { resolveSettings } from '../../core/projects/settings';
 import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from './lifecycle';
@@ -591,7 +592,13 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         if (runs.length > 0) {
             await req.audit('run.read', 'run', runs.map((r) => r.id).join(','), { stops: runs.reduce((n, r) => n + r.stops.length, 0) });
         }
-        res.json({ serviceDate, timezone: project.timezone, courierUsername: username, runs, dispatch });
+        /* Whether the phone may draw a map in place, answered once for the
+           whole screen rather than per stop. It is a property of this
+           installation, not of an address, and asking per stop would mean a
+           run of twenty stops rendering twenty buttons that cannot yet say
+           whether they are buttons or links. See modules/uh/directions.ts. */
+        const directions = { embed: getConfig().geo.embedMaps && Boolean(getConfig().geo.googleApiKey) };
+        res.json({ serviceDate, timezone: project.timezone, courierUsername: username, runs, dispatch, directions });
     }));
 
     router.get('/:id', readers, wrap(async (req, res) => {

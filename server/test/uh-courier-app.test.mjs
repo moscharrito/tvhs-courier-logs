@@ -71,6 +71,21 @@ describe("a courier's own run", () => {
         expect(res.body.dispatch).toMatchObject({ phone: '(210) 555-0100', name: 'Izy dispatch' });
     });
 
+    it('tells the phone whether it may draw a map, so Directions is one tap', async () => {
+        /* The phone decides between a button that opens a frame and a link
+           that opens Google Maps. It has to know before it draws anything,
+           or a courier at a van door presses Directions and gets a button
+           that turns into a link they must press again.
+
+           False here is the configured state and the correct default: the
+           embed is off until somebody sets UH_MAPS_EMBED, because turning it
+           on makes this application the sender of a patient's address to a
+           vendor with no BAA. See src/modules/uh/directions.ts. */
+        const ada = await courierAgent('ada.courier');
+        const res = await ada.get(`${RUNS}/mine`);
+        expect(res.body.directions).toEqual({ embed: false });
+    });
+
     it('carries the deadline on every stop, which is what the badge shows', async () => {
         const ada = await courierAgent('ada.courier');
         const stops = (await ada.get(`${RUNS}/mine`)).body.runs.flatMap((r) => r.stops);

@@ -223,6 +223,57 @@ describe('summary', () => {
     });
 });
 
+/* ------------------------------------------------------------ directions */
+
+describe('the map for one stop', () => {
+    it('answers with the link-out and no embed, which is the configured state', async () => {
+        /* UH_MAPS_EMBED is off. The endpoint still answers rather than
+           404ing, so the phone has one code path and can say why there is no
+           map instead of drawing an empty frame. */
+        const order = await makeOrder({ requestedAt: BUSINESS_HOURS_PAST });
+        const res = await admin.get(`${BASE}/${order.id}/directions`);
+        expect(res.status).toBe(200);
+        expect(res.body.available).toBe(false);
+        expect(res.body.embedUrl).toBeNull();
+        expect(res.body.mapsUrl).toContain('google.com/maps/search');
+        expect(res.body.why).toBeTruthy();
+    });
+
+    it('carries the address and not the patient', async () => {
+        const order = await makeOrder({ recipientName: 'Priscilla Ochoa', requestedAt: BUSINESS_HOURS_PAST });
+        const res = await admin.get(`${BASE}/${order.id}/directions`);
+        expect(JSON.stringify(res.body)).not.toMatch(/Priscilla|Ochoa/i);
+        expect(decodeURIComponent(res.body.mapsUrl)).toContain(order.addressLine);
+    });
+
+    it('is not reachable for a stop that is not theirs', async () => {
+        // A courier may read their own work. An address they were not sent to
+        // is an address they have no reason to have.
+        const order = await makeOrder({ requestedAt: BUSINESS_HOURS_PAST });
+        const courier = srv.agent();
+        await courier.post('/api/login').send({ username: 'sam.courier', password: 'courier-pass-1' });
+        expect((await courier.get(`${BASE}/${order.id}/directions`)).status).toBe(403);
+
+        await ev(order.id, { type: 'assigned', courierUsername: 'sam.courier' });
+        expect((await courier.get(`${BASE}/${order.id}/directions`)).status).toBe(200);
+    });
+
+    it('is not mistaken for an order id', async () => {
+        // "directions" is declared before /:id. Without that it would 404 as
+        // an order, which is the bug the pod.pdf route already had to avoid.
+        const order = await makeOrder({ requestedAt: BUSINESS_HOURS_PAST });
+        expect((await admin.get(`${BASE}/${order.id}/directions`)).status).toBe(200);
+    });
+
+    it('records that an address was looked up, and which way it went', async () => {
+        const order = await makeOrder({ requestedAt: BUSINESS_HOURS_PAST });
+        await admin.get(`${BASE}/${order.id}/directions`);
+        const { rows } = await sql('SELECT action, detail FROM audit_events WHERE action = ? ORDER BY id DESC LIMIT 1', ['order.directions']);
+        expect(rows.length).toBe(1);
+        expect(JSON.parse(String(rows[0].detail))).toMatchObject({ embedded: false });
+    });
+});
+
 /* --------------------------------------------------------------- pricing */
 
 describe('the pricing breakdown on an order', () => {

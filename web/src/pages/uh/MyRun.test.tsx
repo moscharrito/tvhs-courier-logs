@@ -5,7 +5,7 @@
    a third party's servers and the phone's own history. */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { MyRun, mapsUrl } from './MyRun';
 import { AuthProvider } from '../../app/auth';
@@ -36,11 +36,13 @@ const mine = (over = {}) => ({
         ],
     }],
     dispatch: { phone: '(210) 555-0100', name: 'Izy dispatch' },
+    directions: { embed: false },
     ...over,
 });
 
 function renderRun(routes: Record<string, unknown>) {
-    mockFetch(routes);
+    const mock = mockFetch(routes);
+    Object.assign(globalThis, { lastMock: mock });
     return render(
         <MemoryRouter initialEntries={['/projects/uh/my-run']}>
             <AuthProvider>
@@ -83,14 +85,83 @@ describe('MyRun', () => {
         expect(within(next).getByText('45 min left')).toBeInTheDocument();
     });
 
-    it('puts no patient name in any link that leaves the app', async () => {
+    it('sends nothing anywhere until the courier asks, when maps are embedded', async () => {
+        /* With the embed on, the run screen renders with no third-party URL
+           on it at all. Twenty stops used to mean twenty addresses sitting in
+           the DOM as Google URLs whether or not anybody tapped one. */
+        renderRun(base({ 'GET /api/projects/uh/uh/runs/mine': mine({ directions: { embed: true } }) }));
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(document.querySelectorAll('a[href^="http"]').length).toBe(0);
+        expect(document.querySelectorAll('iframe').length).toBe(0);
+        expect(screen.getAllByRole('button', { name: 'Directions' }).length).toBeGreaterThan(0);
+    });
+
+    it('is a plain link on the first tap when this server embeds nothing', async () => {
+        /* The configured state today, and the one that matters most: a
+           courier at a van door presses Directions once and the map opens.
+           A button that turns into a link they have to press again would be
+           a regression dressed as a feature. */
         renderRun(base());
         await screen.findByRole('heading', { name: 'Today' });
-        const external = [...document.querySelectorAll('a[href^="http"]')].map((a) => a.getAttribute('href') ?? '');
-        expect(external.length).toBeGreaterThan(0);
-        for (const href of external) {
-            expect(href).not.toMatch(/Ines|Vargas|Marcus|Ibarra/i);
+        const next = screen.getByLabelText('Next stop');
+        const link = within(next).getByRole('link', { name: 'Directions' });
+        expect(link).toHaveAttribute('href', expect.stringContaining('google.com/maps/search'));
+        expect(link).toHaveAttribute('target', '_blank');
+        expect(within(next).queryByRole('button', { name: 'Directions' })).toBeNull();
+        expect(document.querySelectorAll('iframe').length).toBe(0);
+    });
+
+    it('puts no patient name in the map it opens, whichever way it opens', async () => {
+        /* The rule this whole feature is built around, asserted on both
+           branches: the frame when the server allows one, and the link when
+           it does not. The address is what it takes to drive there. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({ directions: { embed: true } }),
+            'GET /api/projects/uh/uh/orders/21/directions*': {
+                available: true,
+                embedUrl: 'https://www.google.com/maps/embed/v1/place?key=k&q=1100%20Broadway%20St%2C%20Apt%204B%2C%20San%20Antonio%2C%2078215',
+                mapsUrl: mapsUrl({ address: '1100 Broadway St, Apt 4B', city: 'San Antonio', zip: '78215' }),
+                why: '',
+            },
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        const next = screen.getByLabelText('Next stop');
+        fireEvent.click(within(next).getByRole('button', { name: 'Directions' }));
+
+        const frame = await screen.findByTitle('Directions to this stop');
+        const urls = [
+            frame.getAttribute('src') ?? '',
+            ...[...document.querySelectorAll('a[href^="http"]')].map((a) => a.getAttribute('href') ?? ''),
+            // The request we made to get it, which leaves this app too.
+            ...(globalThis as { lastMock?: { calls: string[] } }).lastMock!.calls,
+        ];
+        expect(urls.length).toBeGreaterThan(2);
+        for (const url of urls) {
+            expect(url).not.toMatch(/Ines|Vargas|Marcus|Ibarra/i);
         }
+    });
+
+    it('falls back to the link, not a dead frame, when one stop cannot be mapped', async () => {
+        /* Maps are on for this installation, but this stop came back without
+           one: no address on it, say. The courier still gets somewhere to
+           tap rather than an empty grey box. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({ directions: { embed: true } }),
+            'GET /api/projects/uh/uh/orders/21/directions*': {
+                available: false,
+                embedUrl: null,
+                mapsUrl: mapsUrl({ address: '1100 Broadway St, Apt 4B', city: 'San Antonio', zip: '78215' }),
+                why: 'This stop has no address on it.',
+            },
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        const next = screen.getByLabelText('Next stop');
+        fireEvent.click(within(next).getByRole('button', { name: 'Directions' }));
+
+        const link = await within(next).findByRole('link', { name: 'Directions' });
+        expect(link).toHaveAttribute('href', expect.stringContaining('google.com/maps/search'));
+        expect(link).toHaveAttribute('target', '_blank');
+        expect(document.querySelectorAll('iframe').length).toBe(0);
     });
 
     it('dials dispatch in one tap', async () => {
