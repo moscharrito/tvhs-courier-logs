@@ -15,6 +15,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
+import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { dateFor } from '../../lib/when';
 
@@ -103,6 +104,9 @@ export function Invoices() {
         }
     }
 
+    const pagedPeriods = usePaged(list ?? []);
+    const pagedLines = usePaged(open?.lines ?? []);
+
     if (!project) return (<><h1>Not available</h1><Link className="izy-btn secondary" to="/">Back</Link></>);
     if (list === null) {
         return msg
@@ -162,12 +166,13 @@ export function Invoices() {
             <div className="izy-card">
                 <h2>Billing periods</h2>
                 {list.length === 0 ? <p className="izy-muted">Nothing billed yet.</p> : (
+                    <>
                     <table className="izy-table">
                         <thead>
                             <tr><th>Invoice</th><th>Period</th><th>Status</th><th>Deliveries</th><th>Total</th><th /></tr>
                         </thead>
                         <tbody>
-                            {list.map((i) => (
+                            {pagedPeriods.rows.map((i) => (
                                 <tr key={i.id}>
                                     <td><code>{i.number}</code></td>
                                     <td>{i.periodFrom} to {i.periodTo}</td>
@@ -197,6 +202,8 @@ export function Invoices() {
                             ))}
                         </tbody>
                     </table>
+                        <Pager of={pagedPeriods} noun="billing periods" />
+                    </>
                 )}
             </div>
 
@@ -299,7 +306,7 @@ export function Invoices() {
                             </tr>
                         </thead>
                         <tbody>
-                            {open.lines.map((l) => (
+                            {pagedLines.rows.map((l) => (
                                 <tr key={l.orderId}>
                                     <td>{l.serviceDate}</td>
                                     <td><Link to={`/projects/${code}/orders/${l.orderId}`}>{l.reference || `#${l.orderId}`}</Link></td>
@@ -313,6 +320,7 @@ export function Invoices() {
                             ))}
                         </tbody>
                     </table>
+                    <Pager of={pagedLines} noun="lines" />
 
                     <h3>Adjustments</h3>
                     {open.adjustments.length === 0 ? <p className="izy-muted">None.</p> : (

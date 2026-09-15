@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, ApiError, fmtWhen, type AuditEvent } from '../lib/api';
+import { Pager, usePaged } from '../app/Pager';
 
 interface Page { events: AuditEvent[]; nextBefore: number | null }
 
@@ -34,6 +35,12 @@ export function Audit() {
 
     useEffect(() => { void query(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
+    /* Two layers, and they do different jobs. The server hands back fifty at
+       a time from a cursor; this pages through what has been handed back. The
+       "Load older" button below fetches the next fifty and appends, so the
+       page count grows rather than the list jumping. */
+    const paged = usePaged(events);
+
     const apply = (e: FormEvent) => {
         e.preventDefault();
         const next = new URLSearchParams();
@@ -60,7 +67,7 @@ export function Audit() {
                 <table className="izy-table">
                     <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entity</th><th>Detail</th><th>IP</th></tr></thead>
                     <tbody>
-                        {events.map((e) => (
+                        {paged.rows.map((e) => (
                             <tr key={e.id}>
                                 <td>{fmtWhen(e.at)}</td>
                                 <td>{e.username ?? <span className="izy-muted">anonymous</span>}</td>
@@ -73,6 +80,7 @@ export function Audit() {
                         {events.length === 0 && !busy && <tr><td colSpan={6} className="izy-muted">No events match.</td></tr>}
                     </tbody>
                 </table>
+                <Pager of={paged} noun="events" note={nextBefore ? 'there are older events than these' : undefined} />
                 {nextBefore && <div style={{ marginTop: 12 }}><button className="izy-btn secondary" type="button" disabled={busy} onClick={() => { void query(nextBefore); }}>Load older</button></div>}
             </div>
         </>

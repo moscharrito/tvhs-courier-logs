@@ -21,6 +21,7 @@ import { api, ApiError, type Discrepancy, type DiscrepancySummary } from '../../
 import { momentFor, todayIn } from '../../lib/when';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 
 const KINDS: Array<{ value: string; label: string }> = [
@@ -129,6 +130,9 @@ export function Discrepancies() {
         })();
     };
 
+    const pagedDays = usePaged(summary?.days ?? []);
+    const pagedOpen = usePaged(list ?? []);
+
     if (!project) return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
 
     return (
@@ -207,10 +211,11 @@ export function Discrepancies() {
                     {/* No green tick. A clean board is not a decision. */}
                     <p>{summary.goLive.why}</p>
                     {summary.days.length > 0 && (
+                        <>
                         <table className="izy-table">
                             <thead><tr><th>Day</th><th>Open</th><th>Resolved</th><th>Accepted</th><th>Critical</th></tr></thead>
                             <tbody>
-                                {summary.days.map((d) => (
+                                {pagedDays.rows.map((d) => (
                                     <tr key={d.serviceDate}>
                                         <td>{d.serviceDate}</td><td>{d.open}</td><td>{d.resolved}</td>
                                         <td>{d.accepted}</td><td>{d.critical}</td>
@@ -218,6 +223,8 @@ export function Discrepancies() {
                                 ))}
                             </tbody>
                         </table>
+                            <Pager of={pagedDays} noun="days" />
+                        </>
                     )}
                 </div>
             )}
@@ -227,7 +234,7 @@ export function Discrepancies() {
                     <h2>Still open</h2>
                     {list === null ? <Loading label="Loading the log" /> : list.length === 0 ? (
                         <div className="izy-muted">Nothing open.</div>
-                    ) : list.map((d) => (
+                    ) : (<>{pagedOpen.rows.map((d) => (
                         <div key={d.id} className="izy-pool-group">
                             <div>
                                 <span className={`izy-pill ${d.severity === 'critical' ? 'izy-stat-bad' : ''}`}>{d.severity}</span>
@@ -285,6 +292,11 @@ export function Discrepancies() {
                             )}
                         </div>
                     ))}
+                    {/* Resolving one removes it from this list, so the page
+                        can shrink under the reader. usePaged clamps rather
+                        than leaving them on an empty page 3 of 1. */}
+                    <Pager of={pagedOpen} noun="open discrepancies" />
+                    </>)}
                 </div>
             )}
         </>

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
+import { Pager, usePaged } from '../../app/Pager';
 
 export interface Site {
     id: number;
@@ -74,6 +75,7 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
     };
 
     const pendingGeocode = sites?.filter((s) => s.lat === null).length ?? 0;
+    const paged = usePaged(sites ?? []);
 
     return (
         <Section
@@ -131,7 +133,7 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
                                 <tr><th>Site</th><th>Address</th><th>Type</th><th>Daily list</th><th>Coordinates</th>{canManage && <th />}</tr>
                             </thead>
                             <tbody>
-                                {sites.map((s) => (
+                                {paged.rows.map((s) => (
                                     <tr key={s.id}>
                                         <td>
                                             <b>{s.name}</b>
@@ -152,6 +154,7 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
                                 {sites.length === 0 && <tr><td colSpan={canManage ? 6 : 5} className="izy-muted">No sites yet.</td></tr>}
                             </tbody>
                         </table>
+                        <Pager of={paged} noun="pharmacies" />
                     </>
                 )}
 

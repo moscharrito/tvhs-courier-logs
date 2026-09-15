@@ -125,6 +125,13 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    a card with a heading explaining what a board is. */
 .izy-quick { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .izy-footnote { font-size: 13px; line-height: 1.6; margin: 18px 2px 0; max-width: 70ch; }
+
+/* Pages of six (ticket 5.15). The count sits between the two buttons because
+   it is the part that matters: a page of six with no total reads exactly like
+   a list of six. */
+.izy-pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.izy-pager-count { font-size: 13px; color: var(--izy-muted); }
+.izy-pager-note { font-size: 13px; color: var(--izy-muted); margin: 10px 0 0; }
 .izy-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .izy-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 160px; }
 .izy-row-blocked { background: var(--izy-danger-soft); }

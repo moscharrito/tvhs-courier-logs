@@ -23,6 +23,7 @@ import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
+import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
@@ -159,6 +160,11 @@ export function Board() {
     useEffect(() => {
         api<Site[]>(`${base}/sites`).then(setSites).catch(() => setSites([]));
     }, [base]);
+
+    /* Above every early return: hooks run in the same order every render.
+       The feed only. The pool and the lanes are left whole on purpose, for
+       the reasons recorded above the lanes. */
+    const pagedFeed = usePaged(data?.activity ?? []);
 
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
@@ -433,7 +439,7 @@ export function Board() {
                             <p className="izy-muted">No courier has recorded anything today yet.</p>
                         ) : (
                             <ol className="izy-feed">
-                                {data.activity.map((a) => (
+                                {pagedFeed.rows.map((a) => (
                                     <li key={a.id}>
                                         <span className="izy-feed-when">{since(a.minutesAgo)}</span>
                                         <span>
@@ -454,6 +460,7 @@ export function Board() {
                                 ))}
                             </ol>
                         )}
+                        <Pager of={pagedFeed} noun="events" />
                     </section>
 
                     </div>

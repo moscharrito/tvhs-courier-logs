@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, fmtWhen, type SessionSummary, type EnrolledDevice, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
+import { Pager, usePaged } from '../app/Pager';
 
 export function Devices() {
     const { user, signOut } = useAuth();
@@ -102,6 +103,9 @@ export function Devices() {
 
     const thisPhoneEnrolled = identity?.enrolled === true;
 
+    const pagedDevices = usePaged(devices ?? []);
+    const pagedSessions = usePaged(sessions ?? []);
+
     return (
         <>
             <h1>Devices and sign-in</h1>
@@ -180,10 +184,11 @@ export function Devices() {
                 {devices === null ? <div className="izy-muted">Loading...</div> : devices.length === 0 ? (
                     <div className="izy-muted">No phones are set up yet.</div>
                 ) : (
+                    <>
                     <table className="izy-table">
                         <thead><tr><th>Phone</th><th>Set up</th><th>Last used</th><th></th></tr></thead>
                         <tbody>
-                            {devices.map((d) => (
+                            {pagedDevices.rows.map((d) => (
                                 <tr key={d.id}>
                                     <td>
                                         {d.label} {d.current && <span className="izy-pill">this phone</span>}
@@ -207,6 +212,8 @@ export function Devices() {
                             ))}
                         </tbody>
                     </table>
+                        <Pager of={pagedDevices} noun="phones" />
+                    </>
                 )}
             </div>
 
@@ -217,10 +224,11 @@ export function Devices() {
                     above: a phone can be set up and not signed in, or signed in without being set up.
                 </p>
                 {sessions === null ? <div className="izy-muted">Loading...</div> : (
+                    <>
                     <table className="izy-table">
                         <thead><tr><th>Device</th><th>IP</th><th>Signed in</th><th>Last seen</th><th></th></tr></thead>
                         <tbody>
-                            {sessions.map((s) => (
+                            {pagedSessions.rows.map((s) => (
                                 <tr key={s.id}>
                                     <td>{s.device} {s.current && <span className="izy-pill">this device</span>}</td>
                                     <td><code>{s.ip}</code></td>
@@ -241,6 +249,8 @@ export function Devices() {
                             ))}
                         </tbody>
                     </table>
+                        <Pager of={pagedSessions} noun="sessions" />
+                    </>
                 )}
                 <div style={{ marginTop: 12 }}>
                     <button

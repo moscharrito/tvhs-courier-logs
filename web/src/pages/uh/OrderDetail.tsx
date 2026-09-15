@@ -14,6 +14,7 @@ import { api, ApiError } from '../../lib/api';
 import { stampFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
 
@@ -87,6 +88,12 @@ export function OrderDetail() {
         }
     }, [code, orderId]);
     useEffect(() => { void load(); }, [load]);
+
+    /* Above every early return. Hooks run in the same order on every render
+       or React loses track of which state belongs to which call, and this
+       component returns early twice. */
+    const pagedPackages = usePaged(order?.packages ?? []);
+    const pagedCustody = usePaged(order?.custody ?? []);
 
     if (error) {
         return (
@@ -164,7 +171,7 @@ export function OrderDetail() {
                 <table className="izy-table">
                     <thead><tr><th>Description</th><th>Quantity</th><th>Signature</th><th>Outcome</th></tr></thead>
                     <tbody>
-                        {order.packages.map((pkg) => (
+                        {pagedPackages.rows.map((pkg) => (
                             <tr key={pkg.id}>
                                 <td>{pkg.description || <span className="izy-muted">none recorded</span>}</td>
                                 <td>{pkg.quantity}</td>
@@ -174,6 +181,7 @@ export function OrderDetail() {
                         ))}
                     </tbody>
                 </table>
+                <Pager of={pagedPackages} noun="packages" />
             </Section>
 
             {p && (
@@ -221,7 +229,7 @@ export function OrderDetail() {
                 <table className="izy-table">
                     <thead><tr><th>When</th><th>Event</th><th>By</th><th>Signed</th><th>Detail</th></tr></thead>
                     <tbody>
-                        {order.custody.map((e) => (
+                        {pagedCustody.rows.map((e) => (
                             <tr key={e.id}>
                                 <td>{stamp(e.at)}</td>
                                 <td>
@@ -240,6 +248,7 @@ export function OrderDetail() {
                         ))}
                     </tbody>
                 </table>
+                <Pager of={pagedCustody} noun="events" />
             </Section>
         </>
     );

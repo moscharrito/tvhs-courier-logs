@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type UserSummary } from '../lib/api';
+import { Pager, usePaged } from '../app/Pager';
 
 const ROLE_LABEL: Record<string, string> = { admin: 'Admin', staff: 'Staff', driver: 'Driver' };
 
@@ -19,6 +20,8 @@ export function Users() {
         }
     }, []);
     useEffect(() => { void load(); }, [load]);
+
+    const paged = usePaged(users ?? []);
 
     const create = async (e: FormEvent) => {
         e.preventDefault();
@@ -75,7 +78,7 @@ export function Users() {
                     <table className="izy-table">
                         <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Projects</th><th>PIN</th></tr></thead>
                         <tbody>
-                            {users.map((u) => (
+                            {paged.rows.map((u) => (
                                 <tr key={u.username}>
                                     <td><Link to={`/users/${encodeURIComponent(u.username)}`}>{u.name}</Link></td>
                                     <td><code>{u.username}</code></td>
@@ -90,6 +93,7 @@ export function Users() {
                         </tbody>
                     </table>
                 )}
+                <Pager of={paged} noun="people" />
             </div>
         </>
     );

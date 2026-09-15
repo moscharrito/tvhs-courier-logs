@@ -16,6 +16,7 @@ import { api, ApiError } from '../../lib/api';
 import { clockFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
+import { Pager, usePaged } from '../../app/Pager';
 import type { Site } from './Sites';
 
 interface Issue { row: number; field: string; code: string; severity: 'error' | 'warning'; message: string }
@@ -156,6 +157,13 @@ export function ListImport({ projectCode, timezone, canImport }: {
     const toggle = (list: number[], set: (v: number[]) => void, row: number) =>
         set(list.includes(row) ? list.filter((r) => r !== row) : [...list, row]);
 
+    const pagedRecent = usePaged(recent ?? []);
+    /* The preview is the one list where reading every row is the job: it is
+       the last look before patient addresses become orders. Paged like the
+       rest on the owner's instruction, and the count above the table still
+       says how many of how many will be imported. */
+    const pagedPreview = usePaged(preview?.rows ?? []);
+
     if (sites === null) return <div className="izy-card"><Loading label="Loading sites" /></div>;
 
     return (
@@ -264,7 +272,7 @@ export function ListImport({ projectCode, timezone, canImport }: {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {preview.rows.map((r) => {
+                                    {pagedPreview.rows.map((r) => {
                                         const blocked = r.issues.some((i) => i.severity === 'error');
                                         const isDup = r.duplicateOfRow !== null || r.duplicateOfOrderId !== null;
                                         return (
@@ -309,6 +317,7 @@ export function ListImport({ projectCode, timezone, canImport }: {
                                     })}
                                 </tbody>
                             </table>
+                                <Pager of={pagedPreview} noun="rows" />
 
                             <div className="izy-row" style={{ marginTop: 14 }}>
                                 <button
@@ -330,10 +339,11 @@ export function ListImport({ projectCode, timezone, canImport }: {
             {recent === null ? <Loading label="Loading imports" /> : recent.length === 0 ? (
                 <div className="izy-muted">Nothing imported yet.</div>
             ) : (
+                <>
                 <table className="izy-table">
                     <thead><tr><th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th></tr></thead>
                     <tbody>
-                        {recent.map((l) => (
+                        {pagedRecent.rows.map((l) => (
                             <tr key={l.id}>
                                 <td>{l.serviceDate}</td>
                                 <td>{l.site.name}</td>
@@ -345,6 +355,8 @@ export function ListImport({ projectCode, timezone, canImport }: {
                         ))}
                     </tbody>
                 </table>
+                    <Pager of={pagedRecent} noun="imports" />
+                </>
             )}
         </Section>
     );

@@ -14,6 +14,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import type { Site } from './Sites';
 
@@ -102,6 +103,10 @@ export function Orders() {
     useEffect(() => {
         api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
     }, [code]);
+
+    /* Above the early returns: it holds state, so it has to run every render
+       whether or not this member can see the project. */
+    const paged = usePaged(orders ?? []);
 
     if (!project) {
         return (
@@ -203,7 +208,7 @@ export function Orders() {
                             </tr>
                         </thead>
                         <tbody>
-                            {orders.map((o) => {
+                            {paged.rows.map((o) => {
                                 const label = slaLabel(o.sla);
                                 return (
                                     <tr key={o.id}>
@@ -227,6 +232,10 @@ export function Orders() {
                         </tbody>
                     </table>
                 )}
+                {/* The server caps this at 500, which is not the same as
+                    "these are all of them". Said here rather than left for
+                    somebody to infer from a round number. */}
+                <Pager of={paged} noun="orders" note={paged.total >= 500 ? 'the newest 500; narrow the filters to see past that' : undefined} />
             </div>
         </>
     );

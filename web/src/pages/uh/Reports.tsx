@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { todayIn } from '../../lib/when';
 
@@ -93,35 +94,17 @@ export function Reports() {
         setParams(next, { replace: true });
     };
 
+    /* A real component rather than a helper returning JSX, because it is
+       called five times and it now holds a pager: a hook inside a function
+       called N times per render is a hook order that changes with N. */
     const table = (title: string, first: string, slices: Slice[]) => (
-        <div className="izy-card" key={title}>
-            <h2>{title}</h2>
-            {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
-                <table className="izy-table">
-                    <thead>
-                        <tr>
-                            <th>{first}</th><th>Deliveries</th><th>Attempted</th><th>Delivered</th>
-                            <th>Not delivered</th><th>Completion</th><th>On time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {slices.map((s) => (
-                            <tr key={s.key}>
-                                <td>{s.label}</td>
-                                <td>{s.totals.orders}</td>
-                                <td>{s.totals.attempts}</td>
-                                <td>{s.totals.delivered}</td>
-                                <td>{s.totals.notDelivered}</td>
-                                <td className={s.rates.completionRate !== null && s.rates.completionRate < report.target.completion ? 'izy-stat-bad' : undefined}>
-                                    {pct(s.rates.completionRate)}
-                                </td>
-                                <td>{pct(s.rates.onTimeRate)}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            )}
-        </div>
+        <SliceTable
+            key={title}
+            title={title}
+            first={first}
+            slices={slices}
+            target={report.target.completion}
+        />
     );
 
     return (
@@ -211,5 +194,47 @@ export function Reports() {
                 )}
             </div>
         </>
+    );
+}
+
+function SliceTable({ title, first, slices, target }: {
+    title: string;
+    first: string;
+    slices: Slice[];
+    target: number;
+}) {
+    const paged = usePaged(slices);
+    return (
+        <div className="izy-card">
+            <h2>{title}</h2>
+            {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
+                <>
+                    <table className="izy-table">
+                        <thead>
+                            <tr>
+                                <th>{first}</th><th>Deliveries</th><th>Attempted</th><th>Delivered</th>
+                                <th>Not delivered</th><th>Completion</th><th>On time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {paged.rows.map((s) => (
+                                <tr key={s.key}>
+                                    <td>{s.label}</td>
+                                    <td>{s.totals.orders}</td>
+                                    <td>{s.totals.attempts}</td>
+                                    <td>{s.totals.delivered}</td>
+                                    <td>{s.totals.notDelivered}</td>
+                                    <td className={s.rates.completionRate !== null && s.rates.completionRate < target ? 'izy-stat-bad' : undefined}>
+                                        {pct(s.rates.completionRate)}
+                                    </td>
+                                    <td>{pct(s.rates.onTimeRate)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <Pager of={paged} noun="rows" />
+                </>
+            )}
+        </div>
     );
 }

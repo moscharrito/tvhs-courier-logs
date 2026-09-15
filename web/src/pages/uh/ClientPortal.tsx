@@ -16,6 +16,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 
@@ -95,6 +96,13 @@ export function ClientPortal() {
     }, [base, qs]);
     useEffect(() => { void load(); }, [load]);
 
+    /* Sorted here rather than below the early returns, because the pager
+       holds state and a hook cannot live after a conditional return.
+       Attention first: a pharmacist opening this wants the ones that went
+       wrong, and those must not be on page 4. */
+    const rows = [...(list?.orders ?? [])].sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)));
+    const pagedRows = usePaged(rows);
+
     if (!project) {
         return (<><h1>Not available</h1><Link className="izy-btn secondary" to="/">Back</Link></>);
     }
@@ -110,7 +118,6 @@ export function ClientPortal() {
         setParams(next, { replace: true });
     };
 
-    const rows = [...list.orders].sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)));
     const detail = rows.find((o) => o.id === open) ?? null;
 
     return (
@@ -197,6 +204,7 @@ export function ClientPortal() {
                 {rows.length === 0 ? (
                     <p className="izy-muted">Nothing for this day.</p>
                 ) : (
+                    <>
                     <table className="izy-table">
                         <thead>
                             <tr>
@@ -204,7 +212,7 @@ export function ClientPortal() {
                             </tr>
                         </thead>
                         <tbody>
-                            {rows.map((o) => (
+                            {pagedRows.rows.map((o) => (
                                 <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
                                     <td>
                                         {o.recipientName}
@@ -236,6 +244,8 @@ export function ClientPortal() {
                             ))}
                         </tbody>
                     </table>
+                    <Pager of={pagedRows} noun="deliveries" />
+                    </>
                 )}
             </div>
 

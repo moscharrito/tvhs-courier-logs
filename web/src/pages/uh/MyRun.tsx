@@ -23,6 +23,7 @@ import { Loading } from '../../app/Loading';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import { Directions } from './Directions';
+import { Pager, usePaged } from '../../app/Pager';
 
 interface Stop {
     sequence: number;
@@ -80,6 +81,11 @@ export function MyRun() {
     const [error, setError] = useState<string | null>(null);
     /** Whether this phone is set up for PIN sign-in (ticket 5.4). */
     const [phone, setPhone] = useState<DeviceIdentity | null>(null);
+
+    /* Declared before the early returns below, which is why it takes the
+       stops off `data` defensively rather than off the list computed further
+       down. */
+    const pagedStops = usePaged(data?.runs.flatMap((r) => r.stops) ?? []);
 
     const load = useCallback(async () => {
         setError(null);
@@ -209,7 +215,7 @@ export function MyRun() {
                     <div className="izy-card">
                         <h2>All stops</h2>
                         <ol className="izy-stoplist">
-                            {stops.map((s) => (
+                            {pagedStops.rows.map((s) => (
                                 <li key={s.orderId} className={DONE.includes(s.status) ? 'izy-stop-done' : undefined}>
                                     <div className="izy-row-between">
                                         <span><b>{s.sequence}.</b> {s.recipientName}</span>
@@ -226,6 +232,7 @@ export function MyRun() {
                                 </li>
                             ))}
                         </ol>
+                        <Pager of={pagedStops} noun="stops" />
                     </div>
                 </>
             )}
