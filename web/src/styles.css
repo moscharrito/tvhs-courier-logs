@@ -29,6 +29,58 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-nav a.active { background: var(--izy-green-2); color: #fff; }
 .izy-side .izy-me { margin-top: auto; padding: 12px; font-size: 13px; border-top: 1px solid rgba(255,255,255,0.15); }
 .izy-side .izy-me b { display: block; }
+
+/* Collapsing the rail (ticket 5.14). See app/Layout.tsx for why it goes to
+   initials rather than to nothing. */
+.izy-side-top { display: flex; align-items: flex-start; gap: 4px; }
+.izy-side-top .izy-brand { flex: 1; min-width: 0; }
+.izy-rail-toggle {
+    flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; margin-top: 6px;
+    background: none; border: 0; border-radius: 8px; padding: 0;
+    color: #bbf7d0; cursor: pointer;
+}
+.izy-rail-toggle:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.izy-rail-toggle:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: 2px; }
+/* The circle only appears once there is no room for words. */
+.izy-nav-ini { display: none; }
+.izy-nav a { display: flex; align-items: center; gap: 10px; }
+
+/* Only where there is width to win. Under 900px the rail is already a row
+   along the top, and these rules are three classes deep, so without this
+   media query they out-specify the mobile layout further down the file and a
+   rail somebody collapsed at a desk follows them onto a phone as a 60px
+   column of initials overlapping the page. Verified at 375px: it did. */
+@media (min-width: 901px) {
+    .izy.is-collapsed .izy-side { width: 60px; flex: 0 0 60px; padding: 16px 8px; align-items: center; }
+    .izy.is-collapsed .izy-side-top { flex-direction: column; align-items: center; gap: 0; }
+    .izy.is-collapsed .izy-brand,
+    .izy.is-collapsed .izy-nav-title,
+    .izy.is-collapsed .izy-nav-empty,
+    .izy.is-collapsed .izy-me b,
+    /* The username, and only the username. Written as `span:not(.izy-nav-ini)`
+       first, which also caught the Sign out button's own label and display:none'd
+       it out of the accessibility tree: the button became an unnamed icon. A
+       direct-child selector says what was meant. */
+    .izy.is-collapsed .izy-me > span { display: none; }
+    .izy.is-collapsed .izy-rail-toggle { margin: 0 0 8px; }
+    .izy.is-collapsed .izy-nav { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .izy.is-collapsed .izy-nav a { justify-content: center; padding: 6px; width: 44px; }
+    .izy.is-collapsed .izy-nav-ini {
+        display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+        background: var(--izy-green-soft); color: var(--izy-green); font-weight: 700; font-size: 12px;
+    }
+    .izy.is-collapsed .izy-nav a.active { background: none; }
+    .izy.is-collapsed .izy-nav a.active .izy-nav-ini { background: #fff; box-shadow: 0 0 0 2px var(--izy-green-2); }
+    /* The label stays in the document for a screen reader; only the eye loses it. */
+    .izy.is-collapsed .izy-nav-label,
+    .izy.is-collapsed .izy-me .izy-nav-label {
+        position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+    }
+    .izy.is-collapsed .izy-me { padding: 8px 0; display: grid; place-items: center; }
+    .izy.is-collapsed .izy-me > div { margin-top: 0 !important; }
+    .izy.is-collapsed .izy-me .izy-btn { padding: 6px 8px; }
+    .izy.is-collapsed .izy-me .izy-nav-ini { display: grid; background: none; width: auto; height: auto; }
+}
 .izy-main { flex: 1; min-width: 0; padding: 24px 28px; }
 .izy-main h1 { margin: 0 0 4px; font-size: 22px; }
 .izy-main .izy-sub { color: var(--izy-muted); margin: 0 0 20px; font-size: 14px; }
@@ -229,6 +281,10 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
     .izy-nav { display: flex; flex-wrap: wrap; gap: 4px; }
     .izy-nav-title { display: none; }
     .izy-main { padding: 16px; }
+
+    /* Collapsing wins no horizontal space in a row along the top, and the
+       rail is already compact here. */
+    .izy-rail-toggle { display: none; }
 
     /* The courier's screen IS this screen, and the rail was taking the top
        third of a phone before a single stop appeared: the wordmark and its

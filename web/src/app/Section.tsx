@@ -11,12 +11,8 @@
  * screen. Three things it has to get right.
  *
  * IT REMEMBERS. A dispatcher who folds the rate card away should not find it
- * open again tomorrow. Kept per browser in localStorage, which is the right
- * storage for it: this is a preference about a screen, not a fact about the
- * contract, and it has no business on the server or in anybody else's session.
- * Every read and write is wrapped, because a private window and blocked site
- * data both throw here, and a screen that will not render because it could not
- * remember whether a panel was open is a worse bug than the one being fixed.
+ * open again tomorrow. Kept per browser: see lib/remember.ts, which holds the
+ * storage rules and the guard, and which the side rail shares.
  *
  * IT SAYS WHAT IS INSIDE. A folded panel that reads only "Pickup locations"
  * makes you open it to find out whether you care. `summary` puts the answer on
@@ -30,27 +26,11 @@
  */
 
 import { useCallback, useState, type ReactNode } from 'react';
+import { rememberedFlag, rememberFlag } from '../lib/remember';
 
-const KEY = (id: string) => `izy.section.${id}`;
-
-/** Remembered state, or the default when there is none or storage refuses. */
-function remembered(id: string, fallback: boolean): boolean {
-    try {
-        const raw = window.localStorage.getItem(KEY(id));
-        return raw === null ? fallback : raw === '1';
-    } catch {
-        return fallback;
-    }
-}
-
-function remember(id: string, open: boolean): void {
-    try {
-        window.localStorage.setItem(KEY(id), open ? '1' : '0');
-    } catch {
-        /* A preference that could not be saved is not worth a word to
-           anybody. The panel still opens and closes for this visit. */
-    }
-}
+const NAME = (id: string) => `section.${id}`;
+const remembered = (id: string, fallback: boolean) => rememberedFlag(NAME(id), fallback);
+const remember = (id: string, open: boolean) => rememberFlag(NAME(id), open);
 
 interface Props {
     /** Stable across renders and releases: it is the localStorage key. */
