@@ -83,8 +83,8 @@ an afternoon.
 
 1. Confirm the BAA and the plan it needs. Get it in writing before upgrading.
 2. Create the **staging** service first, from `render.yaml`. The blueprint
-   already carries `NODE_ENV=production`, `TRUST_PROXY=1`, `MFA_ENFORCED=true`
-   and `FILES_ENABLED=false`; turn files on once the bucket exists.
+   already carries `NODE_ENV=production`, `TRUST_PROXY=1` and
+   `FILES_ENABLED=false`; turn files on once the bucket exists.
 3. Point staging at the staging Turso database and the bucket.
 4. Only then create production.
 
@@ -140,21 +140,23 @@ did not exist for the period it lapsed in.
 ## The first deploy, once all of this is done
 
 There is an order to this one too, and it cannot be changed, because
-two-factor authentication is enforced (ticket 4.3):
+an administrator has to exist before anybody else can:
 
 1. `ADMIN_USER` / `ADMIN_PASS` create the first administrator on first boot.
    They are ignored on every later boot.
-2. Sign in as that administrator. The only thing the account can reach is the
-   two-factor setup screen.
-3. Enrol. Scan the QR, type the code, **write down the ten recovery codes.**
-4. **Create the second administrator and enrol it too**, with its recovery
-   codes kept somewhere else entirely. This is five minutes of work and it is
-   the difference between a lost phone being an inconvenience and being a
-   database surgery: nobody can reset the last administrator, by design.
-5. Now create everybody else and grant project memberships.
+2. Sign in as that administrator and **change that password**. It is sitting
+   in the Render environment, where anybody with dashboard access can read it.
+3. **Create the second administrator**, with its password kept somewhere else
+   entirely. Five minutes of work, and it is the difference between a
+   forgotten password being an inconvenience and being database surgery:
+   nobody can reset the last administrator, because there is nobody left.
+4. Now create everybody else and grant project memberships.
 
-The go-live check fails until there are two enrolled administrators, on
-purpose.
+The go-live check fails until there are two administrators, on purpose.
+
+There is no second factor. One existed between tickets 4.3 and 5.10 and was
+removed as more friction than this operation warrants; the consequence is that
+a staff password is the whole of a staff account, so step 2 is not a nicety.
 
 ## One honest word about the estimate
 

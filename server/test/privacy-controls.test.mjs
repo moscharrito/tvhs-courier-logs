@@ -19,8 +19,6 @@ import path from 'node:path';
 import { SERVER_DIR } from './helpers/server.mjs';
 import { lifetimesFor } from '../src/core/auth/sessions.ts';
 import { LIMITS } from '../src/core/auth/throttle.ts';
-import { DIGITS, PERIOD_SECONDS, WINDOW_STEPS } from '../src/core/auth/totp.ts';
-import { RECOVERY_CODE_COUNT, CHALLENGE_MINUTES, MAX_CHALLENGE_ATTEMPTS } from '../src/core/auth/mfa.ts';
 import { RETENTION } from '../src/core/retention/policy.ts';
 import { READ_URL_SECONDS, WRITE_URL_SECONDS, DELETE_URL_SECONDS } from '../src/core/files/storage.ts';
 import { CLIENT_EVENT_RETENTION_DAYS } from '../src/core/http/idempotency.ts';
@@ -69,7 +67,10 @@ describe('the control inventory', () => {
         expect(prose).toMatch(/There is no written privacy and security program yet/);
         expect(prose).toMatch(/BAAs with Render, Turso and AWS/);
         expect(prose).toMatch(/Breach notification/);
-        expect(prose).toMatch(/A second enrolled administrator/);
+        expect(prose).toMatch(/A second administrator/);
+        /* Ticket 5.10 removed the second factor. The gap it leaves has to be
+           named in the document rather than quietly stop being mentioned. */
+        expect(prose).toMatch(/A decision on authentication strength/);
     });
 
     it('says plainly that it is not a legal assessment', () => {
@@ -100,17 +101,6 @@ describe('the numbers a programme would quote', () => {
         expect(LIMITS.pin.maxAttempts).toBe(5);
         expect(LIMITS.pin.windowMs).toBe(10 * 60 * 1000);
         expect(prose).toMatch(/10 password attempts per account and 50 per address in 15 minutes, 5 PIN attempts per account in 10/);
-    });
-
-    it('the second factor', () => {
-        expect(DIGITS).toBe(6);
-        expect(PERIOD_SECONDS).toBe(30);
-        expect(WINDOW_STEPS).toBe(1);
-        expect(RECOVERY_CODE_COUNT).toBe(10);
-        expect(CHALLENGE_MINUTES).toBe(5);
-        expect(MAX_CHALLENGE_ATTEMPTS).toBe(5);
-        expect(prose).toMatch(/TOTP, 6 digits, 30-second period, one step of tolerance either side/);
-        expect(prose).toMatch(/Ten single-use recovery codes/);
     });
 
     it('signed URL lifetimes', () => {

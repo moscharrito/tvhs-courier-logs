@@ -19,7 +19,7 @@ import { App } from '../../app/App';
 import { mockFetch } from '../../test/setup';
 
 const person = (role: string) => ({
-    session: { id: 3, username: `u.${role}`, name: `U ${role}`, role: 'staff', route: null, mfa: { required: false, confirmed: false, enforced: false } },
+    session: { id: 3, username: `u.${role}`, name: `U ${role}`, role: 'staff', route: null },
     projects: [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role }],
 });
 

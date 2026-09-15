@@ -14,7 +14,6 @@ import { loadConfig } from '../../src/config.ts';
 import { createDatabase } from '../../src/db/client.ts';
 import { runMigrations } from '../../src/db/migrate.ts';
 import { bootLegacy, createLogger } from '../../src/legacy.ts';
-import { totpAt, stepAt } from '../../src/core/auth/totp.ts';
 
 export const SERVER_DIR = path.resolve(import.meta.dirname, '..', '..');
 
@@ -107,19 +106,6 @@ export async function startServer(env = {}) {
     const adminLogin = await admin.post('/api/login').send({ username: CREDS.admin.username, password: CREDS.admin.password });
     if (adminLogin.status !== 200) throw new Error(`bootstrap admin login failed: ${adminLogin.status} ${adminLogin.text}`);
 
-    /* With two-factor enforcement on (ticket 4.3), the bootstrap admin can do
-       nothing until they have set one up, including creating the drivers
-       below. That is the real first-deploy sequence, not a test artefact: an
-       administrator enrols, then provisions. */
-    let adminMfaSecret = null;
-    if (config.mfa.enforced) {
-        const start = await admin.post('/api/me/mfa/enrol').send({ password: CREDS.admin.password });
-        if (start.status !== 201) throw new Error(`bootstrap admin could not enrol: ${start.status} ${start.text}`);
-        adminMfaSecret = start.body.secret;
-        const confirm = await admin.post('/api/me/mfa/confirm').send({ code: totpAt(adminMfaSecret, stepAt()) });
-        if (confirm.status !== 201) throw new Error(`bootstrap admin could not confirm: ${confirm.status} ${confirm.text}`);
-    }
-
     for (const who of ['south', 'north']) {
         const c = CREDS[who];
         const created = await admin.post('/api/users').send({ username: c.username, name: c.name, password: c.password, role: 'driver' });
@@ -142,20 +128,10 @@ export async function startServer(env = {}) {
         throttles,
         logs,
         agent: () => request.agent(url),
-        /** The bootstrap admin's TOTP secret, when enforcement is on. */
-        adminMfaSecret,
         async login(who) {
             const a = request.agent(url);
             const res = await a.post('/api/login').send({ username: CREDS[who].username, password: CREDS[who].password });
             if (res.status !== 200) throw new Error(`login as ${who} failed: ${res.status} ${res.text}`);
-            /* A password alone stops being a session once the account holds a
-               second factor, so finish the challenge the way a person would. */
-            if (res.body?.mfaRequired) {
-                if (who !== 'admin' || !adminMfaSecret) throw new Error(`login as ${who} needs a second factor this harness does not hold`);
-                const done = await a.post('/api/login/mfa')
-                    .send({ challengeToken: res.body.challengeToken, code: totpAt(adminMfaSecret, stepAt() + 1) });
-                if (done.status !== 200) throw new Error(`second factor for ${who} failed: ${done.status} ${done.text}`);
-            }
             return a;
         },
         async stop() {

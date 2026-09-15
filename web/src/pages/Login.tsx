@@ -16,12 +16,9 @@
  * adding a second four-digit any-device route to PHI would undo it.
  *
  * Staff sign in with username and password from any step; their projects
- * come from their memberships after authentication.
- *
- * A staff member who holds a second factor gets one more step: the password
- * reply is a challenge rather than a session, and the code finishes it
- * (ticket 4.3). A recovery code goes in the same box, because somebody whose
- * phone is in a taxi should not have to find a different form.
+ * come from their memberships after authentication. There is no second step:
+ * the two-factor prompt that lived here between tickets 4.3 and 5.10 went
+ * with the feature.
  *
  * Before any of that: if this phone has been set up (ticket 2.3, reachable
  * since 5.4), the first thing shown is a PIN and the courier's own name. That
@@ -34,7 +31,7 @@ import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api'
 import { useAuth } from '../app/auth';
 import { Loading } from '../app/Loading';
 
-type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'code' | 'device';
+type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'device';
 interface LoginProject { code: string; name: string }
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -57,9 +54,6 @@ export function Login() {
     const [pin, setPin] = useState('');
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
-    /** Set when the password was right and a second factor is still owed. */
-    const [challenge, setChallenge] = useState<string | null>(null);
-    const [code, setCode] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -113,27 +107,11 @@ export function Login() {
             if (mode === 'staff' || mode === 'password') {
                 /* Same endpoint either way. The only difference is where the
                    username came from: typed, or the courier the picker
-                   already knows. A courier who holds a second factor is
-                   challenged here exactly like anybody else. */
+                   already knows. */
                 const who = mode === 'password' ? driver?.username ?? '' : username;
-                const res = await api<{ mfaRequired?: boolean; challengeToken?: string }>(
-                    '/api/login', { method: 'POST', json: { username: who, password } },
-                );
-                if (res.mfaRequired && res.challengeToken) {
-                    /* No session yet. The password is cleared here and not
-                       held across the step: the challenge token is what the
-                       second request carries. */
-                    setChallenge(res.challengeToken);
-                    setPassword('');
-                    setCode('');
-                    setMode('code');
-                    return;
-                }
+                await api('/api/login', { method: 'POST', json: { username: who, password } });
             } else if (mode === 'device') {
                 await api('/api/login/device', { method: 'POST', json: { pin } });
-            } else if (mode === 'code' && challenge) {
-                await api('/api/login/mfa', { method: 'POST', json: { challengeToken: challenge, code } });
-                setChallenge(null);
             } else if (mode === 'pin' && driver) {
                 await api('/api/login/pin', { method: 'POST', json: { route: driver.route, pin } });
             } else if (mode === 'setup' && driver) {
@@ -262,33 +240,6 @@ export function Login() {
                         <div className="izy-muted" style={{ textAlign: 'center' }}>
                             Once you are in, set this phone up and a PIN signs you in next time.
                         </div>
-                    </form>
-                )}
-
-                {mode === 'code' && (
-                    <form onSubmit={(e) => { void submit(e); }}>
-                        <div className="izy-muted">Enter the six-digit code from your authenticator app.</div>
-                        <label className="izy-field">Code
-                            <input
-                                inputMode="numeric"
-                                autoComplete="one-time-code"
-                                value={code}
-                                onChange={(e) => setCode(e.target.value)}
-                                required
-                                autoFocus
-                            />
-                        </label>
-                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
-                        <div className="izy-muted" style={{ textAlign: 'center' }}>
-                            Lost your phone? A recovery code goes in the same box.
-                        </div>
-                        <button
-                            className="izy-link"
-                            type="button"
-                            onClick={() => { setChallenge(null); setCode(''); setMode(driver ? 'password' : 'staff'); setError(null); }}
-                        >
-                            Start again
-                        </button>
                     </form>
                 )}
 

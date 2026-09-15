@@ -18,7 +18,6 @@ import { mockFetch } from '../test/setup';
 
 const courier = {
     id: 7, username: 'mohammed', name: 'Mohammed', role: 'driver', route: null,
-    mfa: { required: false, confirmed: false, enforced: false },
 };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
 

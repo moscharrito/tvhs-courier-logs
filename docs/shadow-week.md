@@ -15,7 +15,7 @@ as everywhere else:
 |---|---|
 | BAAs with Render and Turso | Not signed |
 | A production environment on a paid plan | Does not exist |
-| An administrator with a second factor, and a second one | Not created |
+| Two administrators | Not created |
 | The restore procedure run once by somebody who did not write it | Not done |
 | The on-call list in `docs/runbook.md` | Empty |
 

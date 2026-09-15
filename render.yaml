@@ -38,8 +38,8 @@ services:
         value: "20"
 
       # Set explicitly rather than relied on. Half of this application's
-      # security posture hangs off it: Secure cookies, HSTS, whether staff are
-      # made to hold a second factor, and how many proxy hops are trusted.
+      # security posture hangs off it: Secure cookies, HSTS, and how many
+      # proxy hops are trusted.
       # The server now refuses to start against a Turso database without it
       # (ticket 4.5), so a deploy that lost this value fails the health check
       # instead of quietly serving PHI with every control relaxed.
@@ -58,12 +58,6 @@ services:
       - key: TRUST_PROXY
         value: "1"
 
-      # Two-factor authentication for admin, ops manager and dispatcher
-      # (ticket 4.3). On by default in production; set here so that turning it
-      # off is a visible change to this file and not a forgotten variable.
-      - key: MFA_ENFORCED
-        value: "true"
-
       # --- Turso database (create at turso.tech; paste when prompted) ---
       - key: TURSO_DATABASE_URL
         sync: false
@@ -71,9 +65,8 @@ services:
         sync: false
 
       # --- Bootstrap admin (only used when the database has no admin yet) ---
-      # With MFA_ENFORCED on, this account signs in and must enrol a second
-      # factor before it can create anybody. That is the intended first-deploy
-      # sequence; see docs/runbook.md.
+      # Signs in with this password and creates everybody else, including a
+      # second administrator. See docs/runbook.md for the first-deploy order.
       - key: ADMIN_USER
         sync: false
       - key: ADMIN_PASS

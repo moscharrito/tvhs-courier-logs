@@ -246,9 +246,26 @@ go-live.
 
 ## Still open
 
-- ~~**MFA for staff**~~ done in ticket 4.3, the day after this review: TOTP
-  for admin, ops manager and dispatcher, recovery codes, enforced in
-  production by a middleware ahead of every route.
+- **MFA for staff.** Built in ticket 4.3, the day after this review: TOTP for
+  admin, ops manager and dispatcher, recovery codes, enforced in production by
+  a middleware ahead of every route.
+
+  > **Removed in ticket 5.10 (14 September), on the owner's decision.** Judged
+  > more friction than the size of this operation warrants. The concern this
+  > review raised was put to them again before the work started, in these
+  > terms: staff accounts read every patient address on the contract, and a
+  > password alone is the weakest answer §164.312(d) accepts. They decided to
+  > remove it, which is theirs to decide, and this line stays unstruck because
+  > the finding did not stop being a finding.
+  >
+  > What remains against it: bcrypt at cost 10, the throttles below, staff
+  > sessions at thirty minutes idle and twelve hours absolute, revocable
+  > server-side sessions, and an audit trail that makes a stolen password's use
+  > visible afterwards. None of that stops one being used; it bounds how fast
+  > one can be found and leaves evidence. Couriers are unaffected: their PIN is
+  > bound to a phone enrolled with the full password and never involved TOTP.
+  >
+  > Tracked as a gap, not a control, in `docs/privacy-controls.md`.
 - **The throttle is per process.** See above.
 - **Everything here was tested against a local server.** TLS, HSTS in a real
   browser, and the proxy hop count are properties of the deployment, and the

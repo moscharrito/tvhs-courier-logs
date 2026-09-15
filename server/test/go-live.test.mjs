@@ -59,12 +59,23 @@ describe('the readiness check', () => {
         expect(res.body.blocking).toContain('discrepancies.any');
     });
 
-    it('fails on a single administrator, which is a way back in that does not exist', async () => {
+    it('fails on a single administrator, because nobody else can fix an account', async () => {
+        /* This used to check for two administrators holding a SECOND FACTOR.
+           The factor went in ticket 5.10; the reason for wanting two people
+           did not, and it is the plainer one: with one, a forgotten password
+           or a person leaving stops every account change. */
         const res = await admin.get(`${UH}/go-live`);
-        const admins = check(res.body, 'admins.second_factor');
+        const admins = check(res.body, 'admins.second');
         expect(admins.pass).toBe(false);
-        expect(admins.detail).toMatch(/database change/);
+        expect(admins.detail).toMatch(/stops every account change/);
         expect(admins.blocking).toBe(true);
+    });
+
+    it('stops failing it once there is a second administrator', async () => {
+        await admin.post('/api/users').send({ username: 'gl.admin2', name: 'GL Two', password: 'gl-pass-3344', role: 'admin' });
+        const res = await admin.get(`${UH}/go-live`);
+        expect(check(res.body, 'admins.second').pass).toBe(true);
+        expect(res.body.blocking).not.toContain('admins.second');
     });
 
     it('fails a file database, because it is lost on the next redeploy', async () => {

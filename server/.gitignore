@@ -4,3 +4,5 @@ courier_logs.db-wal
 courier_logs.db-shm
 .env
 test/.tmp/
+# Throwaway databases for docs/day-rehearsal.md
+rehearsal/

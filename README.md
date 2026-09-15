@@ -98,11 +98,11 @@ Two things in it are worth knowing before you need it.
 **The first deploy onto an empty database has an order that cannot be
 changed.** Two-factor authentication is enforced in production, so the
 bootstrap administrator signs in, can reach nothing but the setup screen,
-enrols, writes down the recovery codes, and only then creates anybody else.
+changes that password, creates a second administrator, and only then creates anybody else.
 
 **The server refuses to start against a real database without
 `NODE_ENV=production`.** Half of the security posture hangs off that variable:
-Secure cookies, HSTS, whether staff are made to hold a second factor, and how
+Secure cookies, HSTS, and how
 many proxy hops are trusted. A deploy that lost it would serve PHI with every
 one of those quietly relaxed and a health check still saying `ok`, so the
 configuration check treats a Turso URL outside production as a fatal
@@ -507,33 +507,19 @@ Four moderate advisories were traced to the calling code rather than accepted or
 
 Ticket 5.9 took the react-router one: `react-router-dom` is on 7.18.3, which also retires the two v6 future flags the test suite had been warning about on every run. It cost 19 kB gzipped, on a bundle couriers load over a phone connection, and that is the reason to do this deliberately rather than reflexively. The `uuid` advisory stays, because the only two levers are a downgrade of the library that parses pharmacy uploads and an `overrides` entry that npm 11.7 silently ignores in this workspaces tree. What changed is that the assessment is now enforced: `server/test/dependency-advisories.test.mjs` asserts exceljs uses uuid in one file, destructures `v4` and nothing else, never calls the affected `v3`/`v5`/`v6`, never passes `buf`, and that nothing we wrote imports uuid. An assessment nothing checks is a memory, and memories rot.
 
-### A second factor for staff
+### Authentication, and the second factor that is not there
 
-`POST /api/login` stops being the whole of signing in for anybody who runs the contract. Project roles admin, ops manager and dispatcher, plus any platform administrator, hold a TOTP factor; the password step answers with a short-lived challenge instead of a session, and `POST /api/login/mfa` finishes it.
+Staff sign in with a username and a password. That is the whole of it.
 
-**Couriers are deliberately outside the policy.** Their second factor is the enrolled phone: a PIN works only from a device registered with the full password (ticket 2.3), which is something-you-have plus something-you-know already. Asking a courier to read a rotating code off a second device at a pharmacy counter, in the rain, is a control people find a way around, and a control that gets worked around is worse than none because it still looks like one. Client viewers are outside it for a different reason: they are outside contacts we cannot support through a lost-phone call, and they see only their own pharmacy's deliveries.
+A second factor was built in ticket 4.3 and removed in 5.10 on the owner's decision: judged more friction than the size of this operation warrants. It was a hand-written TOTP implementation, ten single-use recovery codes, a server-side challenge between the two steps, an enrolment screen with a QR code, and a middleware ahead of every route. Three tables and about nine hundred lines. Migration `0027_drop_mfa` drops the tables, and the secrets in them go with it, which is the point rather than a side effect: a TOTP secret is as sensitive as a password, and keeping a table of live credentials for a door that no longer exists would be worse than either having the door or not.
 
-**The TOTP is written here** (`server/src/core/auth/totp.ts`), on the same reasoning as the PDF writer and the SigV4 signer: the whole of RFC 6238 is an HMAC, a truncation and a base32 alphabet, and this code sits in the authentication path of every administrator. It is checked against the RFC's own test vectors rather than against itself, including the counter above 2^32 that is otherwise invisible until the year 6053.
+**What this costs is worth writing down plainly.** A staff password is now the whole of a staff account, and those accounts read every patient address on the contract, change the price schedule and issue invoices. HIPAA §164.312(d) asks for procedures to verify that a person seeking access is who they claim to be, and a password alone is the weakest answer to that. `docs/privacy-controls.md` lists it as a gap rather than a control, because it is one. The argument for having it is on the record in `docs/security-review-2026-09-13.md` and the decision to remove it in `docs/build-backlog.md`, so whoever asks "was this considered" gets both halves.
 
-SHA-1 is correct here and not an oversight. The RFC allows SHA-256, essentially no authenticator app implements it, and a secret issued that way produces codes Google Authenticator will not match. The construction is HMAC, where SHA-1's collision weakness does not apply.
+**What stands in for it**: bcrypt at cost 10, ten password attempts per account and fifty per address in fifteen minutes with the lockout itself audited, thirty-minute idle and twelve-hour absolute sessions for staff, server-side sessions that can be revoked, and an append-only audit trail. None of those stops a stolen password; they bound how fast one can be found and make its use visible afterwards.
 
-**A code cannot be used twice.** The window is one step either side, which covers a phone whose clock is half a minute out, and the last accepted step is stored, so a code read over a shoulder or out of a screen share is dead the moment it is used rather than good for another ninety seconds.
+**Couriers are unaffected and always were.** Their PIN works only from a phone enrolled once with the full password (ticket 2.3, with its own column since 5.8), which is something-you-have plus something-you-know. That was never TOTP, and it is the strongest authentication left in the application.
 
-**Recovery codes are ten, single-use, and shown exactly once**, because the database holds only their SHA-256. Not bcrypt: these carry about 48 bits of entropy rather than being chosen by a person, so there is no dictionary to slow down, and ten bcrypt comparisons per sign-in attempt would be a second of server time per guess. The alphabet leaves out 0/O, 1/I/L and 5/S, because these get printed, photographed and read down a phone line. A recovery code goes in the same box as a real one at sign-in: somebody whose phone is in a taxi should not have to find a different form, and the server can tell the two apart without being told.
-
-**The challenge between the two steps is server-side**, like sessions. A signed token the client carries could not be revoked, could not count its own attempts, and would let one intercepted password be replayed against the code prompt for as long as it lived. It expires in five minutes, counts wrong codes, and tears itself up after five.
-
-**"Enforced in production" means the API refuses.** `src/core/auth/mfa.ts` holds a middleware that runs before every route in both halves of the application: a staff session that owes a factor may reach the enrolment endpoints, its own session, and nothing else. The first version of it was mounted after the user and audit routers, which left the platform administrator able to read the whole user directory, and the enforcement test caught that. Enforcement that lives only in the frontend is advice; the API is where the PHI is, and a stolen password reaches it without ever loading a page.
-
-That includes the first administrator on a fresh deployment: they sign in, they enrol, and only then can they create anybody. The test harness does exactly that sequence, because with enforcement on there is no other order that works.
-
-**A lost phone** is a recovery code, or `POST /api/users/:username/mfa/reset` from an administrator, which clears the enrolment and revokes every live session the person has, since the lost phone may be holding one. If the last administrator loses both their phone and their codes, the way back is the runbook (ticket 4.5) and not the application.
-
-**Turning it off is not an option for anybody the policy covers.** Removing the policy is a change to the policy, not a change to an account.
-
-**The QR code is drawn in the browser** from the `otpauth://` URI, as an inline SVG, by `qrcode-generator`: one dependency with no transitive tree of its own. Nothing is fetched to render it, which keeps `img-src` closed and means the secret never travels to anybody's QR service.
-
-**What the browser found that the tests did not.** Confirming an enrolment used to refresh the session, which lifted the setup gate, which swapped the screen for the project list, which threw away ten recovery codes that are shown exactly once. Every unit test passed, because they render that screen on its own. The session is now re-read when the codes are acknowledged and not before, and there is a test that pins it.
+**The first administrator on a fresh deployment** signs in with `ADMIN_USER`/`ADMIN_PASS` and should change that password immediately, because it sits in the Render environment where anybody with dashboard access can read it. Then create a second administrator: nobody can reset the last one, since there is nobody left to do it, and the go-live check fails until there are two.
 
 ### Addresses, and the one that cannot be looked up
 
@@ -631,7 +617,7 @@ them to use the delivery number instead.
 `GET /api/projects/:pid/uh/go-live` checks what can be checked, against the
 database and the configuration rather than against anybody's memory: open
 discrepancies, whether the shadow week found anything at all, how many
-administrators hold a second factor, whether there is a price schedule, whether
+administrators exist, whether there is a price schedule, whether
 this is really a production deployment, whether the database is sound and fully
 migrated.
 

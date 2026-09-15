@@ -30,7 +30,6 @@ interface Deps {
     /** Facts about how this instance is configured, not what it could be. */
     deployment: {
         databaseKind: 'turso' | 'file';
-        mfaEnforced: boolean;
         filesEnabled: boolean;
         geocoderConfigured: boolean;
         trustProxy: number;
@@ -106,19 +105,24 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations }: D
 
         /* ------------------------------------------------------- the people */
 
-        const enrolledAdmins = await count(
-            `SELECT COUNT(*) AS n FROM users u
-             JOIN mfa_enrolments m ON m.user_id = u.id
-             WHERE u.role = 'admin' AND u.status = 'active' AND m.confirmed_at IS NOT NULL`,
+        const admins = await count(
+            `SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'`,
         );
         add({
-            id: 'admins.second_factor',
-            what: 'At least two administrators hold a second factor',
-            /* One is a single point of failure with no route back: if that
-             * person loses their phone and their recovery codes, the only way
-             * in is a database change. Two is five minutes of work. */
-            pass: enrolledAdmins >= 2,
-            detail: `${enrolledAdmins} enrolled. With one, losing a phone and the recovery codes means a database change to get back in.`,
+            id: 'admins.second',
+            what: 'At least two administrators',
+            /* One administrator is one forgotten password, one person on
+             * holiday, one person leaving. Nobody else can create a user,
+             * grant a membership or reset a password, so the contract stops
+             * until somebody reaches a database. Two is five minutes of work.
+             *
+             * This used to check that two administrators held a SECOND FACTOR,
+             * which was the same argument with a sharper edge. The factor went
+             * in ticket 5.10; the reason for having two people did not. */
+            pass: admins >= 2,
+            detail: admins >= 2
+                ? `${admins} active.`
+                : `${admins} active. With one, a forgotten password or a person leaving stops every account change until somebody reaches the database.`,
             blocking: true,
         });
 
@@ -171,13 +175,6 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations }: D
             detail: deployment.isProduction && deployment.databaseKind === 'turso'
                 ? 'NODE_ENV is production against Turso.'
                 : `NODE_ENV is ${deployment.isProduction ? 'production' : 'not production'} and the database is ${deployment.databaseKind}. A local file is lost on redeploy.`,
-            blocking: true,
-        });
-        add({
-            id: 'deploy.mfa',
-            what: 'Two-factor authentication is enforced',
-            pass: deployment.mfaEnforced,
-            detail: deployment.mfaEnforced ? 'Enforced for staff.' : 'Not enforced. Set MFA_ENFORCED.',
             blocking: true,
         });
         add({

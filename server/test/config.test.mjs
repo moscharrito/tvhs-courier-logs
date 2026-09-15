@@ -91,7 +91,7 @@ describe('loadConfig validation', () => {
 
     it('refuses a real database with NODE_ENV unset, which is a deploy that forgot', () => {
         /* The failure this stops is silent: Secure cookies off, no HSTS, no
-           MFA enforcement, no proxy trust, and a health check that says ok. */
+           proxy trust, and a health check that says ok. */
         const p = problemsOf({ ...base, TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' });
         expect(p).toHaveLength(1);
         expect(p[0]).toMatch(/NODE_ENV is "development"/);

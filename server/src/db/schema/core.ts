@@ -206,92 +206,19 @@ export const files = sqliteTable(
 
 export type StoredFile = typeof files.$inferSelect;
 
-/* Multi-factor authentication for staff (ticket 4.3).
+/* Multi-factor authentication for staff was here, tickets 4.3 and 5.10.
  *
- * A password is one secret, and the people gated by these tables can read
- * every patient address in the contract, change the price schedule and issue
- * an invoice. A stolen or reused password should not be enough for that, and
- * on a system holding PHI it is the control an auditor asks about first.
+ * Three tables, a TOTP implementation and an enrolment screen, removed on the
+ * owner's decision: a second factor was judged too much friction for the size
+ * of this operation. Staff sign in with a username and a password; couriers
+ * keep the device-bound PIN from ticket 2.3, which never involved TOTP and is
+ * unchanged.
  *
- * Couriers are deliberately not here. Their second factor is the enrolled
- * phone: a PIN works only from a device registered with the full password
- * (ticket 2.3), which is something-you-have plus something-you-know already.
- * Asking a courier to read a rotating code off a second device at a pharmacy
- * counter, in the rain, would be a control they would find a way around.
+ * Migration 0027 drops mfa_enrolments, mfa_recovery_codes and mfa_challenges.
+ * The argument for having them is on the record in docs/security-review-2026-09-13.md
+ * and the decision to remove them in docs/build-backlog.md, so whoever asks
+ * "was this considered" gets both halves of the answer.
  */
-
-export const mfaEnrolments = sqliteTable('mfa_enrolments', {
-    /** One enrolment per person. The row existing means enrolment started. */
-    userId: integer('user_id').primaryKey().references(() => users.id),
-    /** The shared secret, base32. Readable by this server by necessity:
-     *  TOTP is symmetric, so there is nothing to hash. It is as sensitive as
-     *  a password and must never appear in a log, a response or an audit row
-     *  after enrolment is confirmed. */
-    secret: text('secret').notNull(),
-    /** Null until a first correct code proves the app really holds the
-     *  secret. An unconfirmed enrolment grants nothing and blocks nothing. */
-    confirmedAt: text('confirmed_at'),
-    /** The last time step accepted for this person. A code at or before it is
-     *  refused, so a code seen over a shoulder cannot be replayed inside its
-     *  own thirty-second window. */
-    lastStep: integer('last_step').notNull().default(-1),
-    createdAt: text('created_at').notNull(),
-});
-
-export type MfaEnrolment = typeof mfaEnrolments.$inferSelect;
-
-/* Recovery codes: what a person uses when the phone is lost, broken or in a
- * drawer at home. Without them, losing a phone means an administrator has to
- * reset the enrolment, and if the person who lost it IS the administrator
- * there is nobody left to do it. */
-export const mfaRecoveryCodes = sqliteTable(
-    'mfa_recovery_codes',
-    {
-        id: integer('id').primaryKey({ autoIncrement: true }),
-        userId: integer('user_id').notNull().references(() => users.id),
-        /** sha256 of the code, hex. Not bcrypt: these are generated with 50
-         *  bits of entropy rather than chosen by a person, so there is no
-         *  dictionary to slow down, and ten bcrypt comparisons per sign-in
-         *  attempt would be a second of server time per guess. */
-        codeHash: text('code_hash').notNull(),
-        createdAt: text('created_at').notNull(),
-        /** Set when spent. The row is kept so "I used one last month" has an
-         *  answer, and so the count of remaining codes is honest. */
-        usedAt: text('used_at'),
-    },
-    (t) => [index('mfa_recovery_user_idx').on(t.userId)],
-);
-
-export type MfaRecoveryCode = typeof mfaRecoveryCodes.$inferSelect;
-
-/* The gap between "the password was right" and "the second factor was right".
- *
- * Server-side, like sessions, rather than a signed token the client carries:
- * a stateless challenge cannot be revoked, cannot count its own attempts, and
- * would let one intercepted password be replayed against the code prompt for
- * as long as its lifetime lasts.
- */
-export const mfaChallenges = sqliteTable(
-    'mfa_challenges',
-    {
-        /** sha256(token), hex. The token itself only ever exists in the reply
-         *  to the password step and in the caller's next request. */
-        id: text('id').primaryKey(),
-        userId: integer('user_id').notNull().references(() => users.id),
-        createdAt: text('created_at').notNull(),
-        /** Five minutes. Long enough to find the phone, short enough that an
-         *  intercepted challenge is worth little. */
-        expiresAt: text('expires_at').notNull(),
-        /** Set when the challenge is spent, successfully or by giving up. */
-        consumedAt: text('consumed_at'),
-        /** Wrong codes against this one challenge. A six-digit code has a
-         *  million possibilities and a whole window to be guessed in. */
-        attempts: integer('attempts').notNull().default(0),
-    },
-    (t) => [index('mfa_challenges_user_idx').on(t.userId)],
-);
-
-export type MfaChallenge = typeof mfaChallenges.$inferSelect;
 
 /* Retention sweeps and purges (ticket 4.6).
  *

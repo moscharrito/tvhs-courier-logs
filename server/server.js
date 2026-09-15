@@ -127,12 +127,6 @@ app.use(bridge.get('sessionMiddleware'));
 // Audit trail (src/core/audit/audit.ts): req.audit(action, entity, id, detail)
 // records who did what, stamped with actor, project and IP. Append-only.
 app.use(bridge.get('auditMiddleware'));
-/* Two-factor enforcement (src/core/auth/mfa.ts, ticket 4.3). Here, before any
- * route in either half of the application: a staff session that owes a second
- * factor may reach the enrolment endpoints and nothing else. Enforcement that
- * covered only the routes mounted after it would be a gate with a path round
- * the side, and the first version of this was exactly that. */
-app.use(bridge.get('mfaEnforcement'));
 
 // Operating timezone — pinned in config so check-in dates don't depend on the host clock.
 // Override with APP_TIMEZONE (e.g. "America/New_York") in the environment / .env if needed.
@@ -290,8 +284,7 @@ function dayRows(routeDef, dayLogs) {
 async function loginSession(req, user) {
     await req.sessions.create({ id: user.id, username: user.username, name: user.name, role: user.role, route: user.route });
     const method = req.path === '/api/login' ? 'password'
-        : req.path === '/api/login/mfa' ? 'password_and_code'
-            : req.path === '/api/login/pin' ? 'pin' : 'pin_setup';
+        : req.path === '/api/login/pin' ? 'pin' : 'pin_setup';
     await req.audit('auth.login', 'user', user.username, { method, role: user.role });
     return req.session.user;
 }
@@ -302,11 +295,6 @@ async function loginSession(req, user) {
  * and none at all for passwords. */
 const throttles = bridge.get('authThrottles');
 const tooManyAttempts = bridge.get('tooManyAttempts');
-/* The second factor (src/core/auth/mfa.ts, ticket 4.3). The password step
- * lives in this file, so this is where a challenge is opened. */
-const mfaChallenges = bridge.get('mfaChallenges');
-const mfaFactsFor = bridge.get('mfaFactsFor');
-const mfaEnforced = bridge.get('mfaEnforced');
 
 /** Refuse a caller who has spent their attempts. Returns true when handled. */
 async function throttled(req, res, guard, identity, alternative, detail) {
@@ -341,70 +329,7 @@ app.post('/api/login', async (req, res) => {
     }
 
     throttles.password.reset(req.ip, name);
-
-    /* A password alone is not a session for anybody who holds a second
-       factor. The reply carries a challenge token instead: short-lived,
-       server-side, and useless without the code (ticket 4.3). */
-    const facts = await mfaFactsFor(user.id, user.role);
-    if (facts.confirmed) {
-        const challenge = await mfaChallenges.open(user.id);
-        await req.audit('auth.mfa_challenged', 'user', user.username, { method: 'password' });
-        return res.json({
-            mfaRequired: true,
-            challengeToken: challenge.token,
-            expiresAt: challenge.expiresAt.toISOString(),
-        });
-    }
-
     res.json(await loginSession(req, user));
-});
-
-/* The second step. The challenge token stands in for the password that has
- * already been checked, so this endpoint never sees one.
- *
- * A recovery code is accepted here too, in the same field. Asking a person
- * whose phone is in a taxi to find a different form is how they end up
- * telephoning an administrator instead, and the server can tell the two
- * apart without being told. */
-app.post('/api/login/mfa', async (req, res) => {
-    const { challengeToken, code } = req.body || {};
-    if (!challengeToken || !code) return res.status(400).json({ error: 'Challenge and code required' });
-
-    /* No separate throttle here. The challenge counts its own attempts and
-       tears itself up after five, which is the same control keyed to the
-       thing that actually matters, and opening a fresh challenge costs a
-       password that is throttled in its own right. Two counters over one
-       action would only mean the coarser one fired first and hid the other. */
-    const result = await mfaChallenges.answer(String(challengeToken), String(code));
-    if (!result.ok) {
-        await req.audit('auth.login_failed', 'user', '', { method: 'mfa', reason: result.reason });
-        if (result.reason === 'expired' || result.reason === 'exhausted' || result.reason === 'unknown') {
-            return res.status(401).json({
-                error: 'That sign-in attempt has expired. Start again.',
-                code: 'mfa.challenge_expired',
-            });
-        }
-        return res.status(401).json({ error: 'That code is not right.' });
-    }
-
-    const user = await dbGet('SELECT * FROM users WHERE id = ?', [result.userId]);
-    if (!user || user.status !== 'active') {
-        await req.audit('auth.login_failed', 'user', user ? user.username : '', { method: 'mfa', reason: 'disabled' });
-        return res.status(403).json({ error: 'Account disabled' });
-    }
-
-    const session = await loginSession(req, user);
-    /* Spending a recovery code is worth saying out loud: it usually means a
-       lost phone, and it is also what an attacker who stole the printout
-       would do. */
-    if (result.usedRecoveryCode) {
-        await req.audit('mfa.recovery_code_used', 'user', user.username, { remaining: result.recoveryCodesRemaining });
-    }
-    res.json({
-        ...session,
-        usedRecoveryCode: result.usedRecoveryCode,
-        recoveryCodesRemaining: result.recoveryCodesRemaining,
-    });
 });
 
 // Public: courier roster for the quick-login picker. No secrets, and no
@@ -524,11 +449,7 @@ app.post('/api/logout', async (req, res) => {
 
 app.get('/api/session', (req, res) => {
     if (req.session.user) {
-        /* mfa comes from the session middleware, which reads it alongside the
-           session row. The shell uses it to send a staff member straight to
-           the setup screen rather than into a wall of 403s (ticket 4.3). */
-        const mfa = req.mfa ?? { required: false, confirmed: false };
-        res.json({ ...req.session.user, mfa: { ...mfa, enforced: mfaEnforced && mfa.required } });
+        res.json(req.session.user);
     } else {
         res.status(401).json({ error: 'No session' });
     }

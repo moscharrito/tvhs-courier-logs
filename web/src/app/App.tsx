@@ -17,7 +17,6 @@ import { Pickup } from '../pages/uh/Pickup';
 import { Stop } from '../pages/uh/Stop';
 import { Returns } from '../pages/uh/Returns';
 import { ClientPortal } from '../pages/uh/ClientPortal';
-import { Security } from '../pages/Security';
 import { Discrepancies } from '../pages/uh/Discrepancies';
 import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
@@ -33,19 +32,6 @@ export function App() {
 
     if (loading) return <Loading full />;
     if (!user) return <Login />;
-
-    /* A staff account that owes a second factor can reach nothing else: the
-       API refuses it (ticket 4.3), so showing the rest of the shell would be
-       showing a wall of errors. The gate is the setup screen itself. */
-    if (user.mfa?.enforced && !user.mfa.confirmed) {
-        return (
-            <Routes>
-                <Route element={<Layout />}>
-                    <Route path="*" element={<Security />} />
-                </Route>
-            </Routes>
-        );
-    }
 
     // Everyone lands on the project picker after sign-in and chooses where to go.
     return (
@@ -66,7 +52,6 @@ export function App() {
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />
                 <Route path="/projects/:code/*" element={<ProjectHome />} />
                 <Route path="/devices" element={<Devices />} />
-                <Route path="/security" element={<Security />} />
                 <Route path="/users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="/users/:username" element={<AdminOnly><UserDetail /></AdminOnly>} />
                 <Route path="/audit" element={<AdminOnly><Audit /></AdminOnly>} />

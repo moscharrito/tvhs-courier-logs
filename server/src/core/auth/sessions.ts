@@ -19,14 +19,6 @@ import type { Config } from '../../config';
 export const COOKIE_NAME = 'izy_sid';
 const TOUCH_INTERVAL_MS = 60 * 1000;
 
-/** Where a caller stands on the second factor (ticket 4.3). Declared here
- *  rather than imported so that sessions has no dependency on the MFA module;
- *  core/auth/mfa.ts owns the policy that decides `required`. */
-export interface MfaFacts {
-    required: boolean;
-    confirmed: boolean;
-}
-
 export interface SessionUser {
     id: number;
     username: string;
@@ -134,18 +126,12 @@ export class SessionStore {
     }
 
     /** Resolve a cookie token to its user, refreshing the idle expiry. Null when missing, expired, or revoked. */
-    async resolve(token: string): Promise<{ id: string; user: SessionUser; mfa: MfaFacts } | null> {
+    async resolve(token: string): Promise<{ id: string; user: SessionUser } | null> {
         const id = hash(token);
         const now = this.now();
-        /* The two MFA facts come back with the session rather than from a
-           second round trip: the enforcement middleware needs them on every
-           request, and the board polls every fifteen seconds (ticket 4.3). */
         const rs = await this.run(
             `SELECT s.id, s.last_seen_at, s.idle_expires_at, s.absolute_expires_at, s.revoked_at,
-                    u.id AS user_id, u.username, u.name, u.role, u.route, u.status,
-                    (SELECT confirmed_at FROM mfa_enrolments e WHERE e.user_id = u.id) AS mfa_confirmed_at,
-                    (SELECT COUNT(*) FROM memberships m
-                      WHERE m.user_id = u.id AND m.role IN ('admin','ops_manager','dispatcher')) AS mfa_staff_memberships
+                    u.id AS user_id, u.username, u.name, u.role, u.route, u.status
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.id = ?`,
             [id],
@@ -167,17 +153,12 @@ export class SessionStore {
             route: row['route'] == null ? null : String(row['route']),
         };
 
-        const mfa: MfaFacts = {
-            required: user.role === 'admin' || Number(row['mfa_staff_memberships'] ?? 0) > 0,
-            confirmed: Boolean(row['mfa_confirmed_at']),
-        };
-
         const lastSeen = new Date(String(row['last_seen_at']));
         if (now.getTime() - lastSeen.getTime() >= TOUCH_INTERVAL_MS) {
             const { idleMinutes } = lifetimesFor(user.role, this.deps.config.sessions);
             await this.run('UPDATE sessions SET last_seen_at = ?, idle_expires_at = ? WHERE id = ?', [iso(now), iso(plusMinutes(now, idleMinutes)), id]);
         }
-        return { id, user, mfa };
+        return { id, user };
     }
 
     async revoke(id: string): Promise<boolean> {
@@ -255,9 +236,8 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
                 clearCookie(res);
                 return next();
             }
-            const { id, user, mfa } = found;
+            const { id, user } = found;
             req.session = { id, user };
-            req.mfa = mfa;
             return next();
         } catch (err) {
             return next(err);

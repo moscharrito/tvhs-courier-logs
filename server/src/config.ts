@@ -21,11 +21,6 @@ export interface Config {
     sessionSecret: string;
     /** Proxy hops to trust for req.ip and req.protocol. One on Render. */
     trustProxy: number;
-    mfa: {
-        /** When true, a staff account without a confirmed second factor can
-         *  reach nothing but the enrolment endpoints (ticket 4.3). */
-        enforced: boolean;
-    };
     geo: {
         /** Google Maps key. Sites only: see src/core/geo/provider.ts. */
         googleApiKey: string | undefined;
@@ -97,10 +92,6 @@ const EnvSchema = z.object({
      * non-zero value a client can set X-Forwarded-For and choose the address
      * that lands in the audit trail and in the throttle's bucket. */
     TRUST_PROXY: z.coerce.number().int().min(0).max(10).optional(),
-    /* Two-factor enforcement. On in production, off elsewhere, so that
-     * development and the test suite are not gated while production is.
-     * Set explicitly to rehearse the production behaviour locally. */
-    MFA_ENFORCED: z.enum(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']).optional(),
     /* Address lookup (ticket 1.4). Absent means every lookup is refused with
      * a message saying so, which is the state until somebody buys a key. */
     GOOGLE_MAPS_API_KEY: optionalString,
@@ -187,14 +178,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
         /* A Turso database is a real deployment, and half of this
          * application's security posture hangs off NODE_ENV: Secure cookies,
-         * HSTS, the proxy hop count, and whether staff are made to hold a
-         * second factor. A deploy that forgot to set it would serve PHI with
-         * every one of those quietly relaxed and nothing to show for it in the
-         * logs. Refusing to start is the only honest answer (ticket 4.5). */
+         * HSTS and the proxy hop count. A deploy that forgot to set it would
+         * serve PHI with every one of those quietly relaxed and nothing to
+         * show for it in the logs. Refusing to start is the only honest
+         * answer (ticket 4.5). */
         if (!isProduction && !e.ALLOW_TURSO_OUTSIDE_PRODUCTION) {
             problems.push(
                 `TURSO_DATABASE_URL is set but NODE_ENV is "${e.NODE_ENV}". A real database with NODE_ENV unset means `
-                + 'insecure cookies, no HSTS, no MFA enforcement and no proxy trust. '
+                + 'insecure cookies, no HSTS and no proxy trust. '
                 + 'Set NODE_ENV=production, or ALLOW_TURSO_OUTSIDE_PRODUCTION=true if this is deliberate.',
             );
         }
@@ -231,7 +222,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         timezone: e.APP_TIMEZONE,
         sessionSecret: e.SESSION_SECRET as string,
         trustProxy: e.TRUST_PROXY ?? (isProduction ? 1 : 0),
-        mfa: { enforced: e.MFA_ENFORCED === undefined ? isProduction : ['true', '1', 'yes', 'on'].includes(e.MFA_ENFORCED) },
         geo: { googleApiKey: e.GOOGLE_MAPS_API_KEY, dailyCeiling: e.GEO_DAILY_CEILING ?? 2500 },
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
@@ -264,7 +254,6 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         files: c.files.enabled ? `S3 ${c.files.s3?.bucket ?? ''} (${c.files.s3?.region ?? ''})` : 'disabled',
         log: `${c.log.level} ${c.log.format}`,
         trustProxy: c.trustProxy,
-        mfa: c.mfa.enforced ? 'enforced for staff' : 'not enforced',
         // The key itself never appears here, only whether there is one.
         geo: c.geo.googleApiKey ? `google, ceiling ${c.geo.dailyCeiling}/day` : 'no address lookup configured',
     };

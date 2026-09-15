@@ -72,18 +72,23 @@ NODE_ENV=production TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run db:migra
 Setting the accounts up in the first place, and the agreements that have to
 exist before any of it holds real data, is `docs/infra/accounts-and-baas.md`.
 
-**The first deploy onto an empty database** has a sequence that cannot be
-reordered, because two-factor authentication is enforced (ticket 4.3):
+**The first deploy onto an empty database:**
 
 1. `ADMIN_USER` / `ADMIN_PASS` create the first administrator on boot. They
    are ignored on every later boot.
-2. Sign in as that administrator. The only thing the account can reach is the
-   two-factor setup screen.
-3. Enrol: scan the QR, type the code, **write down the ten recovery codes**.
+2. Sign in as that administrator and **change that password**, because it is
+   sitting in the Render environment where anybody with dashboard access can
+   read it.
+3. **Create a second administrator.** Not optional in practice: with one, a
+   forgotten password or a person leaving stops every account change until
+   somebody reaches the database directly. The go-live check fails until
+   there are two.
 4. Now create everybody else, and grant project memberships.
 
-Step 3 is not optional and cannot be skipped from the outside. An
-administrator who abandons it has an account that can do nothing.
+There is no second factor to enrol. One existed between tickets 4.3 and 5.10
+and was removed; what a password protects is therefore the whole of a staff
+account, which is what makes step 2 and the throttles matter more than they
+otherwise would.
 
 ---
 
@@ -185,35 +190,26 @@ their phone: revoking the phone is how you take it away, and setting it up
 again is how they get a new one. The two shared a column until ticket 5.8,
 which is why this warning is here rather than obvious.
 
-### A staff member lost their phone (two-factor)
+### A staff member forgot their password
 
-They sign in with a recovery code, in the same box as the six-digit code.
-
-If they have no recovery codes left:
+An administrator resets it:
 
 ```
-POST /api/users/<username>/mfa/reset      (admin)
+PUT /api/users/<username>/password        (admin)
 ```
 
-This clears their enrolment **and revokes every live session they have**,
-because the lost phone may be holding one. They sign in with their password
-and are put straight back on the setup screen.
+This **revokes every live session they have**, including their own if they
+reset themselves.
 
-**If the last administrator loses both their phone and their recovery codes,
-the application has no way back in.** Nobody can reset the last
-administrator, by design. The way back is a direct database change:
+**If the last administrator forgets theirs, the application has no way back
+in.** There is nobody left to do the reset. The way back is a direct database
+change: write a fresh bcrypt hash into `users.password` from the Turso shell.
 
-```sql
-DELETE FROM mfa_recovery_codes WHERE user_id = (SELECT id FROM users WHERE username = '<admin>');
-DELETE FROM mfa_enrolments     WHERE user_id = (SELECT id FROM users WHERE username = '<admin>');
-```
-
-Run it from the Turso shell, then sign in and enrol again immediately. **Write
-it in the audit trail by hand afterwards** (a note to the security program),
-because a change made outside the application does not appear in it: the audit
-table is append-only to the app, not to somebody with the database token.
-Prevention is cheaper: a second administrator account, enrolled, with its
-recovery codes somewhere separate.
+**Write it in the audit trail by hand afterwards** (a note to the security
+program), because a change made outside the application does not appear in it:
+the audit table is append-only to the app, not to somebody with the database
+token. Prevention is cheaper and takes five minutes: a second administrator
+account, with its password stored somewhere separate.
 
 ### Somebody has left
 
@@ -363,8 +359,7 @@ problem at once, in plain English. The most likely ones:
 
 - `TURSO_DATABASE_URL is set but NODE_ENV is "development"`. The deploy lost
   `NODE_ENV=production`. Without it: cookies are not Secure, HSTS is not sent,
-  staff are not made to hold a second factor, and the proxy hop is not
-  trusted. It refuses on purpose (ticket 4.5).
+  and the proxy hop is not trusted. It refuses on purpose (ticket 4.5).
 - `SESSION_SECRET must be at least 32 characters in production`.
 - `TURSO_DATABASE_URL is required in production`. A local file would be lost
   on the next redeploy.
@@ -437,14 +432,6 @@ GET /api/audit?action=auth.throttled&limit=50
 
 Many different usernames from one address is a spray, not a forgotten
 password.
-
-### A staff account cannot reach anything, and says "Set up two-factor authentication"
-
-Working as intended (ticket 4.3). They have not enrolled. They can reach the
-setup screen and nothing else. If they cannot enrol because they have no
-phone, that is a real problem with no good answer inside the application: an
-administrator can create them a fresh account, but the policy applies to that
-one too.
 
 ### An import is refused
 

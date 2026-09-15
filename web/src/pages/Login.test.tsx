@@ -319,56 +319,6 @@ describe('Login', () => {
         expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
     });
 
-    it('asks for a code when the password is not the whole of signing in', async () => {
-        /* Ticket 4.3. The password reply carries a challenge rather than a
-           session, and nothing about the account is shown until the code is
-           right: the screen must not say "welcome back" first. */
-        const { calls } = mockFetch({
-            'GET /api/session': { status: 401, body: { error: 'No session' } },
-            'GET /api/login/projects': loginProjects,
-            'POST /api/login': { mfaRequired: true, challengeToken: 'chal-123', expiresAt: '2026-09-13T12:05:00Z' },
-            'POST /api/login/mfa': { id: 3, username: 'dee.dispatch', name: 'Dee Dispatch', role: 'staff', route: null },
-        });
-        renderApp();
-
-        fireEvent.click(await screen.findByRole('button', { name: 'Staff sign in' }));
-        fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'dee.dispatch' } });
-        fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-
-        expect(await screen.findByText(/six-digit code from your authenticator app/i)).toBeInTheDocument();
-        // A lost phone has an answer on the same screen, not a support call.
-        expect(screen.getByText(/recovery code goes in the same box/i)).toBeInTheDocument();
-        expect(screen.queryByText('Dee Dispatch')).not.toBeInTheDocument();
-
-        fireEvent.change(screen.getByLabelText('Code'), { target: { value: '081804' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-
-        await waitFor(() => expect(calls).toContain('POST /api/login/mfa'));
-    });
-
-    it('shows a wrong code as an error without dropping the challenge', async () => {
-        mockFetch({
-            'GET /api/session': { status: 401, body: { error: 'No session' } },
-            'GET /api/login/projects': loginProjects,
-            'POST /api/login': { mfaRequired: true, challengeToken: 'chal-123' },
-            'POST /api/login/mfa': { status: 401, body: { error: 'That code is not right.' } },
-        });
-        renderApp();
-
-        fireEvent.click(await screen.findByRole('button', { name: 'Staff sign in' }));
-        fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'dee.dispatch' } });
-        fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-
-        fireEvent.change(await screen.findByLabelText('Code'), { target: { value: '000000' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-
-        expect(await screen.findByRole('alert')).toHaveTextContent(/not right/);
-        // Still on the code step: a typo should not mean typing the password again.
-        expect(screen.getByLabelText('Code')).toBeInTheDocument();
-    });
-
     it('shows the TAG brand and the dotted loader while the session is resolving', async () => {
         let release = () => {};
         const gate = new Promise<void>((r) => { release = r; });

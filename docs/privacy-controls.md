@@ -55,13 +55,12 @@ When the program is written, for each control it names:
 | Sessions are server-side and revocable; the cookie holds only a random token and the row is keyed by its SHA-256. | `server/src/core/auth/sessions.ts` | `server/test/sessions.test.mjs` |
 | A disabled account loses every session on its next request, not on a sweep. | `server/src/core/auth/sessions.ts` | `server/test/sessions.test.mjs` |
 
-**Emergency access procedure.** Partial, and the weakest control here. An
-administrator can reset another person's second factor and revoke their
-sessions. If the last administrator loses both their phone and their recovery
-codes there is no route in through the application, and the way back is a
-documented database change that leaves no audit row. See `docs/runbook.md`.
-The mitigation is organisational: a second enrolled administrator, with
-recovery codes stored separately. **Nobody has done that yet.**
+**Emergency access procedure.** Partial. An administrator can reset another
+person's password, revoke their sessions and revoke their phone. With only one
+administrator, a forgotten password or a person leaving stops every account
+change until somebody reaches the database directly, which leaves no audit
+row. See `docs/runbook.md`. The mitigation is organisational and cheap: a
+second administrator. **Nobody has done that yet.**
 
 ### Audit controls
 
@@ -72,7 +71,7 @@ recovery codes stored separately. **Nobody has done that yet.**
 | A failed audit write fails the request. A request never completes unrecorded. | `server/src/core/audit/audit.ts` | `server/test/audit.test.mjs` |
 | Audit detail carries ids, counts, field names and outcomes. Never PHI, never secrets, never free text from a request body. | `server/src/core/audit/audit.ts` | `server/test/audit.test.mjs` |
 | Reading the audit log is itself audited. | `server/src/core/audit/routes.ts` | `server/test/audit.test.mjs` |
-| Authentication events: sign-in, failure, lockout, second-factor challenge, enrolment, reset. | `server/server.js`, `server/src/core/auth/mfa.ts` | `server/test/auth-throttle.test.mjs`, `server/test/mfa.test.mjs` |
+| Authentication events: sign-in, failure, lockout, password reset, device enrolment and revocation. | `server/server.js`, `server/src/core/auth/devices.ts` | `server/test/auth-throttle.test.mjs`, `server/test/devices.test.mjs` |
 | Retention sweeps and purges are recorded, with the request written before the delete. | `server/src/core/retention/routes.ts` | `server/test/retention.test.mjs` |
 
 ### Integrity
@@ -93,10 +92,7 @@ recovery codes stored separately. **Nobody has done that yet.**
 | Passwords are hashed with bcrypt at cost 10. | `server/src/core/users/routes.ts` | `server/test/users.test.mjs` |
 | Failed attempts are throttled by account and by address: 10 password attempts per account and 50 per address in 15 minutes, 5 PIN attempts per account in 10. | `server/src/core/auth/throttle.ts` | `server/test/auth-throttle.test.mjs` |
 | A lockout is written to the audit trail, so a spray across many accounts is visible and not merely blocked. | `server/src/core/auth/throttle.ts` | `server/test/auth-throttle.test.mjs` |
-| Second factor for admin, ops manager and dispatcher: TOTP, 6 digits, 30-second period, one step of tolerance either side. | `server/src/core/auth/totp.ts` | `server/test/totp.test.mjs`, against RFC 6238's own vectors |
-| A used code is never accepted again, so one seen over a shoulder is dead rather than good for another 90 seconds. | `server/src/core/auth/totp.ts` | `server/test/mfa.test.mjs` |
-| Ten single-use recovery codes, stored as SHA-256, shown once. | `server/src/core/auth/mfa.ts` | `server/test/mfa.test.mjs` |
-| Enforcement is a middleware ahead of every route: a staff session without a second factor reaches the enrolment endpoints and nothing else. | `server/src/core/auth/mfa.ts` | `server/test/mfa-enforcement.test.mjs` |
+| Staff authenticate with a username and a password. **There is no second factor**: one was built in ticket 4.3 and removed in 5.10 on the owner's decision, as more friction than the size of this operation warrants. This is a gap against §164.312(d) rather than a control, and it is listed as one below. | `server/server.js` | `server/test/auth.test.mjs` |
 | Couriers authenticate with a PIN that works only from a device enrolled with the full password. The PIN is stored on the device row, so it is not also a credential that works from anywhere, a second phone does not change the first one's, and revoking a phone really does remove it. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
 | A lost phone is revoked, and revoking it revokes its live sessions. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
 
@@ -134,7 +130,7 @@ statement about the provider rather than about this code.
 | Information system activity review | **Partial.** The audit trail exists and is queryable (`GET /api/audit`), the retention sweep records itself, and `docs/runbook.md` names the queries for reviewing sign-in failures and lockouts. Nobody is rostered to actually review them on a schedule. |
 | Assigned security responsibility | **Gap.** No named security official. Organisational, not code. |
 | Workforce security: authorisation and supervision | Implemented. Project memberships grant roles; only a platform administrator may grant them; every grant is audited. |
-| Workforce security: termination procedures | Implemented in the application (`PATCH /api/users/:username {status: disabled}`, session revocation, device revocation, MFA reset) and written up in `docs/runbook.md`. The organisational procedure that says who does it and when is a **gap**. |
+| Workforce security: termination procedures | Implemented in the application (`PATCH /api/users/:username {status: disabled}`, session revocation, device revocation, password reset) and written up in `docs/runbook.md`. The organisational procedure that says who does it and when is a **gap**. |
 | Workforce clearance | **Gap.** Background checks and the like. Organisational. |
 | Information access management: minimum necessary | Implemented; see Access control above. |
 | Security awareness and training | **Gap.** Organisational, and the one most likely to be asked about first. |
@@ -253,16 +249,23 @@ Nothing here is code that can be written to close them except where noted.
 6. On-call: who is called, after how long, and who tells University Health.
 7. Emergency mode: who declares telephone dispatch, and where the paper runs.
 8. A named security official.
-9. A second enrolled administrator, with recovery codes stored apart. This one
-   is five minutes of work and removes a single point of failure that
-   currently has no route back through the application.
+9. A second administrator. Five minutes of work, and it removes a single
+   point of failure that currently has no route back through the application.
+10. **A decision on authentication strength.** Staff hold a password and
+    nothing else since ticket 5.10. §164.312(d) asks for procedures to verify
+    that a person seeking access is who they claim to be, and a password alone
+    is the weakest answer to that. The decision was made knowingly and is
+    recorded in `docs/build-backlog.md`; what does not exist is a written
+    justification an auditor could read, or a compensating control. The
+    throttles, the audit trail and the session lifetimes are what stand in
+    for it today.
 
 **Documents to write:**
 
-10. The privacy and security program itself.
-11. Breach notification procedure.
-12. Workforce training, sanctions policy, clearance.
-13. A formal risk analysis, and a penetration test by somebody who did not
+11. The privacy and security program itself.
+12. Breach notification procedure.
+13. Workforce training, sanctions policy, clearance.
+14. A formal risk analysis, and a penetration test by somebody who did not
     write this code.
 
 ---
