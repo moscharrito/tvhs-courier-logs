@@ -281,6 +281,15 @@ const MATRIX = [
     ['POST', `${UH}/runs`, UH_STAFF, ''],
     ['GET', `${UH}/runs`, UH_STAFF_AND_COURIER, ''],
     ['GET', `${UH}/runs/mine`, UH_STAFF_AND_COURIER, ''],
+
+    /* --- shifts (ticket 6.3). A courier starts and ends their own; only
+       dispatch ends somebody else's, which is the escape hatch for a driver
+       who cannot hand packages back because the pharmacy has shut. */
+    ['POST', `${UH}/shifts/start`, UH_STAFF_AND_COURIER, 'go on shift'],
+    ['POST', `${UH}/shifts/end`, UH_STAFF_AND_COURIER, 'go off shift'],
+    ['GET', `${UH}/shifts/mine`, UH_STAFF_AND_COURIER, 'am I on shift, and what am I still carrying'],
+    ['GET', `${UH}/shifts`, UH_STAFF, 'who is out there'],
+    ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_STAFF, ''],

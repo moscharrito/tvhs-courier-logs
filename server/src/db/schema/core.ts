@@ -410,3 +410,44 @@ export const onboardingChecks = sqliteTable(
 );
 
 export type OnboardingCheck = typeof onboardingChecks.$inferSelect;
+
+/* A courier's shift (ticket 6.3).
+ *
+ * NOT the legacy `checkins` table, which is a TVHS idea: one timestamp per
+ * person per date, no end, no second one. A shift has an end, there can be
+ * two in a day, and three later tickets hang off it. Who may be
+ * auto-assigned an unclaimed STAT (6.5), whose phone is being tracked (6.6),
+ * and who the board draws as available (6.7) are all "is there an open shift",
+ * which is why this is an explicit row rather than something inferred from
+ * the last event somebody sent.
+ *
+ * ONE OPEN SHIFT PER COURIER PER PROJECT, enforced by a partial unique index
+ * rather than by the handler checking first. Two taps on a phone with bad
+ * signal is the ordinary case, not the attack.
+ *
+ * The table is here because the shape is not University Health's; the rule
+ * about when a shift may END is, so the routes live in modules/uh/shifts.ts.
+ */
+export const shifts = sqliteTable(
+    'shifts',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        courierUsername: text('courier_username').notNull(),
+        startedAt: text('started_at').notNull(),
+        /** Null while they are on it. This column IS the question everything
+         *  else asks, which is why it is not a status string. */
+        endedAt: text('ended_at'),
+        /** Their own name, normally. A dispatcher's when somebody was ended
+         *  for them, which is the escape hatch for a courier who cannot hand
+         *  packages back because the pharmacy has closed. */
+        endedBy: text('ended_by').notNull().default(''),
+        endedReason: text('ended_reason').notNull().default(''),
+    },
+    (t) => [
+        index('shifts_project_courier_idx').on(t.projectId, t.courierUsername),
+        index('shifts_started_idx').on(t.startedAt),
+    ],
+);
+
+export type Shift = typeof shifts.$inferSelect;
