@@ -152,6 +152,24 @@ Two things worth doing properly:
   Robert B. Green. The whole point of the pharmacy role is that they see their
   own pharmacy and nothing else, and an unscoped one proves nothing.
 
+### Two couriers, if you want to see the lanes separate
+
+```bash
+DB_FILE=rehearsal/day.db PORT=3100 ADMIN_USER=rehearsal ADMIN_PASS=rehearsal-pass-0001 npm run --silent rehearse:two -w server
+```
+
+Adds **Bo Reyes** (`bo.courier`) and seeds eleven orders for today out of two
+pharmacies, spanning zone 1 to zone 5 plus one address in no zone at all, then
+splits them into an inner loop for Ana and an outer loop for Bo and sequences
+both by deadline. It stops at "assigned": collecting and delivering is still
+yours to do, twice over.
+
+What it is for is the things one driver cannot show you. A lane belongs to one
+courier and holds nobody else's stops. A driver signing in sees their own run;
+asking for the other one's order is **refused with a 403**, not merely hidden.
+And sequencing by deadline visibly does not group by zone, which is the case
+for address lookup in one screen.
+
 ---
 
 ## 2. Midday: the list arrives

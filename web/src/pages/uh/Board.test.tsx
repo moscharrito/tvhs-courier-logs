@@ -98,7 +98,7 @@ describe('Board', () => {
         expect(within(pool).getByText('Discharge Pharmacy')).toBeInTheDocument();
         expect(within(pool).getByText('Ines Vargas')).toBeInTheDocument();
 
-        const lane = screen.getByRole('region', { name: 'Run for Ada Courier' });
+        const lane = screen.getByRole('region', { name: 'Noon wave for Ada Courier' });
         expect(within(lane).getByText('Marcus Ibarra')).toBeInTheDocument();
         expect(within(lane).getByText('Priya Raman')).toBeInTheDocument();
     });
@@ -120,11 +120,61 @@ describe('Board', () => {
         expect(screen.getByText(/America\/Chicago/)).toBeInTheDocument();
     });
 
+    it('says which zone every stop is in, not only the ones in none', async () => {
+        /* Found by running a day with two couriers and eleven stops across
+           all five zones: the board offered a zone filter while the cards a
+           dispatcher drags between vans said nothing about zone unless there
+           wasn't one. The exception was labelled and the rule was invisible. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{
+                    site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' },
+                    orders: [order({ id: 1, zone: 3 }), order({ id: 4, zone: null, recipientName: 'Ruth Calloway' })],
+                    overdue: 0,
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        const pool = screen.getByRole('region', { name: 'Unassigned pool' });
+        expect(within(pool).getByText('zone 3')).toBeInTheDocument();
+        expect(within(pool).getByText('out of area')).toBeInTheDocument();
+    });
+
+    it('tells two lanes apart when one courier is carrying both', async () => {
+        /* A second wave is one person with two runs in a day. Both lanes were
+           headed "Ada Courier" and both were labelled "Run for Ada Courier",
+           so neither the eye nor a screen reader could tell the finished
+           morning from the afternoon still to do. */
+        const lane = (id: number, label: string) => ({
+            run: { id, courierUsername: 'ada.courier', serviceDate: '2026-09-14', label, status: 'planned', startedAt: null },
+            courier: courier(),
+            stops: [{ sequence: 1, order: order({ id: id * 10, status: 'assigned', assignedTo: 'ada.courier' }) }],
+            currentStop: null,
+            counts: { total: 1, remaining: 1, done: 0, overdue: 0 },
+        });
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({ lanes: [lane(10, 'Noon wave'), lane(11, 'Afternoon wave')] }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(screen.getByRole('region', { name: 'Noon wave for Ada Courier' })).toBeInTheDocument();
+        expect(screen.getByRole('region', { name: 'Afternoon wave for Ada Courier' })).toBeInTheDocument();
+        // And on screen, not only in the accessibility tree.
+        expect(screen.getByRole('heading', { name: /Ada Courier · Noon wave/ })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /Ada Courier · Afternoon wave/ })).toBeInTheDocument();
+    });
+
+    it('does not clutter the heading when a courier has only one run', async () => {
+        renderBoard();
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        expect(screen.getByRole('heading', { name: 'Ada Courier' })).toBeInTheDocument();
+    });
+
     it('never shows the same order in the pool and on a lane', async () => {
         renderBoard();
         await screen.findByRole('heading', { name: 'Dispatch board' });
         const pool = screen.getByRole('region', { name: 'Unassigned pool' });
-        const lane = screen.getByRole('region', { name: 'Run for Ada Courier' });
+        const lane = screen.getByRole('region', { name: 'Noon wave for Ada Courier' });
         // Ines is waiting; Marcus and Priya are carried.
         expect(within(pool).queryByText('Marcus Ibarra')).not.toBeInTheDocument();
         expect(within(lane).queryByText('Ines Vargas')).not.toBeInTheDocument();
@@ -164,7 +214,7 @@ describe('Board', () => {
     it('returns a stop to the pool', async () => {
         const { calls } = renderBoard(routes({ 'DELETE /api/projects/uh/uh/runs/10/stops/2': { ok: true } }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
-        const lane = screen.getByRole('region', { name: 'Run for Ada Courier' });
+        const lane = screen.getByRole('region', { name: 'Noon wave for Ada Courier' });
         fireEvent.click(within(lane).getAllByRole('button', { name: 'Return to pool' })[0]!);
         await waitFor(() => expect(calls).toContain('DELETE /api/projects/uh/uh/runs/10/stops/2'));
     });

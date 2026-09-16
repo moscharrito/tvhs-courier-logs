@@ -225,6 +225,13 @@ export function Board() {
 
     if (data === null) return <div className="izy-card"><Loading label="Loading the board" /></div>;
 
+    /* Couriers carrying more than one run today. Their lanes say which. */
+    const runsPer = new Map<string, number>();
+    for (const lane of data.lanes) {
+        runsPer.set(lane.courier.username, (runsPer.get(lane.courier.username) ?? 0) + 1);
+    }
+    const twiceOver = new Set([...runsPer].filter(([, n]) => n > 1).map(([u]) => u));
+
     const s = data.summary;
 
     return (
@@ -365,12 +372,28 @@ export function Board() {
                         <section
                             key={lane.run.id}
                             className="izy-card izy-lane"
-                            aria-label={`Run for ${lane.courier.name}`}
+                            /* Always the run, never just the courier. One
+                               person can hold two runs in a day, which is what
+                               a second wave is, and two sections labelled
+                               "Run for Ana Ruiz" are two sections a screen
+                               reader cannot tell apart. */
+                            aria-label={`${runName(lane)} for ${lane.courier.name}`}
                             onDragOver={(e) => { e.preventDefault(); }}
                             onDrop={(e) => { e.preventDefault(); if (dragging !== null) void assign(dragging, lane.run.id); setDragging(null); }}
                         >
                             <div className="izy-row-between">
-                                <h2>{lane.courier.name}</h2>
+                                {/* The name alone is the heading until the
+                                    same courier has a second run on the day,
+                                    and then two lanes read identically and
+                                    you have to drop to the grey line beneath
+                                    to tell a finished morning wave from the
+                                    afternoon's work. */}
+                                <h2>
+                                    {lane.courier.name}
+                                    {twiceOver.has(lane.courier.username) && (
+                                        <span className="izy-lane-run"> · {runName(lane)}</span>
+                                    )}
+                                </h2>
                                 <span className={`izy-pill ${lane.courier.present ? '' : 'muted'}`} title={lane.courier.lastSeenAt ?? 'never signed in'}>
                                     {lane.courier.present ? 'on shift' : seenLabel(lane.courier)}
                                 </span>
@@ -494,7 +517,16 @@ function OrderCard({ order, sequence, current, action, draggable, onDragStart, o
                     {sequence !== undefined && <b>{sequence}. </b>}
                     <Link to={`/projects/${projectCode}/orders/${order.id}`}>#{order.id}</Link>
                     {' '}<span className="izy-muted">{order.serviceType}</span>
-                    {order.zone === null && <> <span className="izy-pill warn">out of area</span></>}
+                    {/* The zone was on the card only when there was not one:
+                        "out of area" showed, zone 1 to 5 showed nothing. So
+                        the board offered a zone filter while the cards a
+                        dispatcher drags between vans never said which zone
+                        they were in, which is the one thing you are splitting
+                        the work by. Found by running a day with two couriers
+                        and eleven stops across all five zones. */}
+                    {order.zone === null
+                        ? <> <span className="izy-pill warn">out of area</span></>
+                        : <> <span className="izy-pill muted">zone {order.zone}</span></>}
                 </span>
                 {label.text && <span className={`izy-pill ${label.tone === 'muted' ? 'muted' : label.tone}`}>{label.text}</span>}
             </div>
@@ -504,4 +536,9 @@ function OrderCard({ order, sequence, current, action, draggable, onDragStart, o
             {action}
         </div>
     );
+}
+
+/** What a run is called on screen: its label, or its number when it has none. */
+function runName(lane: { run: { id: number; label: string } }): string {
+    return lane.run.label.trim() || `Run ${lane.run.id}`;
 }

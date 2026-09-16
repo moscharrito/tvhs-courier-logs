@@ -157,6 +157,8 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-lanes-col { min-width: 0; }
 .izy-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .izy-pool-group { margin-bottom: 14px; }
+/* The run name beside a courier who is carrying two of them. */
+.izy-lane-run { font-weight: 400; color: var(--izy-muted); font-size: 13px; }
 .izy-pool-group h3 { margin: 10px 0 6px; font-size: 13px; }
 .izy-stop { border: 1px solid var(--izy-line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; background: #fff; }
 .izy-stop[draggable="true"] { cursor: grab; }

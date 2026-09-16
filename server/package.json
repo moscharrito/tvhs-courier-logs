@@ -16,6 +16,7 @@
     "db:migrate": "tsx src/db/cli.ts",
     "seed:demo": "tsx scripts/seed-demo.mjs",
     "rehearse": "tsx scripts/rehearse.mjs",
+    "rehearse:two": "tsx scripts/two-drivers.mjs",
     "sim": "tsx scripts/simulate-wave.mjs",
     "reconcile": "tsx scripts/reconcile.mjs",
     "loadtest": "tsx scripts/load-test.mjs",
