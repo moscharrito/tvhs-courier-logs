@@ -332,3 +332,81 @@ export const geoUsage = sqliteTable(
 );
 
 export type GeoUsage = typeof geoUsage.$inferSelect;
+
+/* ------------------------------------------------- the courier network
+ *
+ * Tickets 6.1 and 6.2. Twenty drivers signing themselves up is a compliance
+ * problem before it is a feature, so signup produces an APPLICATION and never
+ * an account. The rule that stands between a submitted form and a patient's
+ * address is in core/onboarding/clearance.ts, deliberately as a pure function
+ * over these two tables rather than as a screen that declines to draw.
+ */
+
+export const APPLICATION_STATUSES = ['submitted', 'in_review', 'approved', 'rejected', 'withdrawn'] as const;
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
+
+export const driverApplications = sqliteTable(
+    'driver_applications',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        name: text('name').notNull(),
+        email: text('email').notNull(),
+        phone: text('phone').notNull(),
+        /** What the applicant said about themselves. Verified by nothing, and
+         *  named so that nobody mistakes it for a fact. */
+        claims: text('claims').notNull().default(''),
+        status: text('status', { enum: APPLICATION_STATUSES }).notNull().default('submitted'),
+        submittedAt: text('submitted_at').default(sql`CURRENT_TIMESTAMP`),
+        decidedAt: text('decided_at'),
+        decidedBy: text('decided_by').notNull().default(''),
+        /** Required on a rejection. A rejection nobody can explain later is a
+         *  rejection somebody will have to defend later. */
+        decisionReason: text('decision_reason').notNull().default(''),
+        /** Null until approval creates the account. That null IS ticket 6.1:
+         *  an application is not an account and cannot sign in to anything. */
+        userId: integer('user_id').references(() => users.id),
+    },
+    (t) => [
+        index('driver_applications_project_idx').on(t.projectId),
+        index('driver_applications_status_idx').on(t.status),
+        check(
+            'driver_applications_status_check',
+            sql`${t.status} IN ('submitted','in_review','approved','rejected','withdrawn')`,
+        ),
+    ],
+);
+
+export type DriverApplication = typeof driverApplications.$inferSelect;
+
+/* One row per (application, requirement). The document itself is never here:
+ * this records that a named person saw it, when, and what it was called. A
+ * background check report in a courier database is a second breach waiting
+ * for the first one. */
+export const onboardingChecks = sqliteTable(
+    'onboarding_checks',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        applicationId: integer('application_id').notNull().references(() => driverApplications.id),
+        kind: text('kind').notNull(),
+        status: text('status').notNull().default('pending'),
+        verifiedBy: text('verified_by').notNull().default(''),
+        verifiedAt: text('verified_at'),
+        /** A certificate number, a vendor's report id. A pointer, not a copy. */
+        reference: text('reference').notNull().default(''),
+        /** YYYY-MM-DD. Training three years old is a filename, not training. */
+        expiresAt: text('expires_at'),
+        note: text('note').notNull().default(''),
+    },
+    (t) => [
+        unique('onboarding_checks_application_kind_unique').on(t.applicationId, t.kind),
+        index('onboarding_checks_application_idx').on(t.applicationId),
+        check('onboarding_checks_status_check', sql`${t.status} IN ('pending','verified','failed')`),
+        check(
+            'onboarding_checks_kind_check',
+            sql`${t.kind} IN ('hipaa_training','confidentiality','background_check','drivers_licence','insurance')`,
+        ),
+    ],
+);
+
+export type OnboardingCheck = typeof onboardingChecks.$inferSelect;

@@ -114,6 +114,11 @@ export const LIMITS = {
     passwordByAddress: { maxAttempts: 50, windowMs: 15 * 60 * 1000 },
     pin: { maxAttempts: 5, windowMs: 10 * 60 * 1000 },
     pinByAddress: { maxAttempts: 30, windowMs: 10 * 60 * 1000 },
+    /* The public driver-application form (ticket 6.1). No credential to
+       spray at, so this protects the table and whoever reads the queue in
+       the morning. Generous, because a genuine applicant who mistypes their
+       email and resubmits twice is not an attack. */
+    applications: { maxAttempts: 12, windowMs: 60 * 60 * 1000 },
 } as const;
 
 /** Normalise an address into a throttle key. */

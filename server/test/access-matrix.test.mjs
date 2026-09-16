@@ -26,6 +26,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 
 const UH = '/api/projects/uh/uh';
+/* Driver applications hang off the project, not off the uh module: they are
+   a platform concern that every future contract will want. */
+const UH_PROJECT = '/api/projects/uh';
 const PASS = 'matrix-pass-31';
 
 let srv;
@@ -167,6 +170,19 @@ const MATRIX = [
     ['DELETE', '/api/users/nobody/sessions/nope', PLATFORM_ADMIN, 'revoke one'],
     ['GET', '/api/users/nobody/devices', PLATFORM_ADMIN, 'somebody else s phones'],
     ['GET', '/api/audit', PLATFORM_ADMIN, 'the audit log'],
+
+    /* --- driver applications (tickets 6.1 and 6.2).
+     *
+     * The public one is EVERYONE on purpose and is the only write in this
+     * whole table a stranger may make. It can create an application and
+     * nothing else: no user, no session, no membership. The rest of the
+     * flow, including the approval that does create an account, is staff. */
+    ['POST', '/api/driver-applications', EVERYONE, 'apply to drive: public, and creates nothing that can sign in'],
+    ['GET', `${UH_PROJECT}/driver-applications`, UH_STAFF, 'the application queue'],
+    ['GET', `${UH_PROJECT}/driver-applications/999999`, UH_STAFF, 'one application'],
+    ['PUT', `${UH_PROJECT}/driver-applications/999999/checks/nope`, UH_STAFF, 'record an onboarding check'],
+    ['POST', `${UH_PROJECT}/driver-applications/999999/approve`, UH_STAFF, 'approve: the only door to an account'],
+    ['POST', `${UH_PROJECT}/driver-applications/999999/reject`, UH_STAFF, 'reject, with a reason'],
 
     /* --- retention (ticket 4.6). A platform-wide policy, and a purge that
        deletes patient records, so the same gate as the audit log. */
@@ -385,6 +401,7 @@ describe('the matrix covers the application', () => {
             p = p.replace(/^\/api\/projects\/[a-z]+\/tvhs(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+\/uh\/[a-z-]+(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+\/settings(?=\/|$)/, '');
+            p = p.replace(/^\/api\/projects\/[a-z]+\/driver-applications(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+$/, '/api/projects/:p');
             // A parameter is a parameter, however it is named or filled in.
             p = p.replace(/\/memberships\/[a-z]+/g, '/memberships/:p');
