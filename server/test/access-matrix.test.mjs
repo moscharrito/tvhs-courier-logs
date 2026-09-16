@@ -42,12 +42,17 @@ const CREDENTIALS = {};
  * Three project roles since ticket 5.12, so three project principals plus the
  * two that hold no uh membership. `dispatcher` and `manager` used to be here
  * as separate people; they are administrators now. */
-const PRINCIPALS = ['anon', 'outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
+/* `applicant` is the DoorDash model's cost, pinned. Since ticket 6.1 signup
+   creates a real account with a real password for somebody nobody has vetted,
+   and the property that makes that safe is that it belongs to no project. It
+   is in this table so that every row below is also the question "can an
+   unvetted stranger reach this", answered for the whole application at once. */
+const PRINCIPALS = ['anon', 'applicant', 'outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
 
 /* Shorthand for the groups the table uses over and over. `platformAdmin` is a
  * member of every project at boot, so it appears in every project group. */
 const EVERYONE = PRINCIPALS;
-const SIGNED_IN = ['outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
+const SIGNED_IN = ['applicant', 'outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
 const PLATFORM_ADMIN = ['platformAdmin'];
 const UH_MEMBER = ['pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
 /* UH_MANAGE used to be narrower than UH_STAFF: editing the rate card and
@@ -99,7 +104,18 @@ beforeAll(async () => {
         projectAdmin: { username: 'matrix.projectadmin', password: PASS },
         platformAdmin: { username: srv.creds.admin.username, password: srv.creds.admin.password },
     });
+    /* An applicant: signs up through the public form, so they hold a real
+       credential and no membership anywhere. */
+    const applicantEmail = 'matrix.applicant@example.com';
+    const applied = await srv.agent().post('/api/driver-applications').send({
+        projectCode: 'uh', name: 'Matrix Applicant', email: applicantEmail,
+        phone: '210-555-0400', password: PASS,
+    });
+    expect(applied.status, applied.text).toBe(202);
+    Object.assign(CREDENTIALS, { applicant: { username: applicantEmail, password: PASS } });
+
     who.anon = srv.agent();
+    who.applicant = await signIn(applicantEmail);
     who.outsider = await srv.login('south');
     who.pharmacy = await signIn('matrix.pharmacy');
     who.courier = await signIn('matrix.courier');
@@ -148,6 +164,10 @@ const MATRIX = [
     /* --- a caller acting on themselves */
     ['GET', '/api/me/projects', SIGNED_IN, 'my memberships'],
     ['GET', '/api/me/sessions', SIGNED_IN, 'my live devices'],
+    /* The one thing an unvetted account may read, and only ever their own:
+       the query is keyed on the session's username, so there is no id to
+       change. Anybody without an application gets a 404. */
+    ['GET', '/api/me/application', SIGNED_IN, 'my own application status'],
     ['DELETE', '/api/me/sessions/others', SIGNED_IN, 'sign out everywhere else'],
     ['DELETE', '/api/me/sessions/nope', SIGNED_IN, 'sign out one of mine'],
     ['GET', '/api/devices', SIGNED_IN, 'my enrolled phones'],

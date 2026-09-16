@@ -3,16 +3,35 @@
  * Tickets 6.1 and 6.2.
  *
  *   POST   /api/driver-applications                             PUBLIC, throttled
+ *   GET    /api/me/application                                  the applicant's own status
  *   GET    /api/projects/:pid/driver-applications               admin, the queue
  *   GET    /api/projects/:pid/driver-applications/:id           admin, one, with its checks
  *   PUT    /api/projects/:pid/driver-applications/:id/checks/:kind   admin, record one
  *   POST   /api/projects/:pid/driver-applications/:id/approve   admin, creates the account
  *   POST   /api/projects/:pid/driver-applications/:id/reject    admin, reason required
  *
- * THE PUBLIC ENDPOINT CREATES NOTHING THAT CAN SIGN IN. It writes one row
- * with a status. No user, no password, no session, no membership. That is
- * the whole of 6.1 and it is why the table's user_id is nullable: the null
- * is the security property, not an oversight.
+ * THE DOORDASH MODEL. Signup creates an account with the password the
+ * applicant chose, and that account can sign in from the moment it exists.
+ * It just cannot see anything. Approval does not mint a credential; it grants
+ * a membership.
+ *
+ * The first cut of this had approval typing a username and a temporary
+ * password for each driver. That is fine for two couriers and wrong for two
+ * hundred: it makes an administrator the bottleneck on hiring and it puts a
+ * password in an email, which is the weakest link in the whole flow.
+ *
+ * SO THE SECURITY PROPERTY MOVED, AND IT IS WORTH BEING PRECISE ABOUT WHERE.
+ * It is no longer "an applicant has no account". It is **no membership, no
+ * data**, which this codebase already enforced everywhere: every
+ * project-scoped route goes through requireProject, and a user who belongs to
+ * no project is refused all of them. An unvetted applicant holds a real login
+ * that reaches exactly one thing, their own application status, and the
+ * access matrix has a principal that proves it.
+ *
+ * The cost, stated plainly: there are now credentialed accounts for people
+ * nobody has vetted, so the password-spraying surface is every applicant
+ * rather than every employee. That is why signup is throttled, why a
+ * rejection disables the account, and why the matrix pins the property.
  *
  * APPROVAL IS THE ONLY DOOR, and core/onboarding/clearance.ts is the lock.
  * Five artifacts verified by a named person and still current, or the
@@ -54,6 +73,8 @@ const Apply = z.object({
     name: z.string().trim().min(2).max(120),
     email: z.string().trim().toLowerCase().email().max(200),
     phone: z.string().trim().min(7).max(40),
+    /* Theirs, chosen once, never seen by us and never emailed to them. */
+    password: z.string().min(8).max(200),
     /* What they say about themselves. Capped because a free-text box on a
      * public endpoint is where somebody eventually pastes something that
      * should not be in a database. */
@@ -65,13 +86,6 @@ const RecordCheck = z.object({
     reference: z.string().trim().max(200).default(''),
     expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').nullable().default(null),
     note: z.string().trim().max(1000).default(''),
-});
-
-const Approve = z.object({
-    /** The username they will sign in with. Chosen by an administrator, not
-     *  by the applicant: a username is an identifier in our audit trail. */
-    username: z.string().trim().toLowerCase().min(2).max(120).regex(/^[a-z0-9._@+-]+$/, 'letters, digits, . _ @ + - only'),
-    temporaryPassword: z.string().min(8).max(200),
 });
 
 const Reject = z.object({
@@ -123,21 +137,33 @@ export function createPublicApplicationsRouter({ client }: Deps): Router {
             return;
         }
 
-        const dupe = await run(
-            `SELECT id FROM driver_applications
-             WHERE project_id = ? AND email = ? AND status IN ('submitted','in_review','approved')`,
-            [Number(project['id']), body.email],
-        );
-        if (dupe.rows.length > 0) {
+        /* The email is the username. An address that already has an account
+           gets the same 202 and nothing is written: this is the branch that
+           must not tell a stranger whether somebody already drives for us,
+           and it is also what stops the signup form being a way to probe for
+           staff accounts by address. */
+        const taken = await run('SELECT id FROM users WHERE username = ?', [body.email]);
+        if (taken.rows.length > 0) {
             throttle.fail(key);
             res.status(202).json(accepted);
             return;
         }
 
+        /* The account, with the password they chose. It can sign in from this
+           moment, and it belongs to no project, so it reads nothing but its
+           own application status. The header says why that is the property
+           rather than "there is no account". */
+        const user = await run(
+            `INSERT INTO users (username, password, name, email, role, status)
+             VALUES (?, ?, ?, ?, 'driver', 'active') RETURNING id`,
+            [body.email, bcrypt.hashSync(body.password, BCRYPT_ROUNDS), body.name, body.email],
+        );
+        const userId = Number(user.rows[0]!['id']);
+
         const ins = await run(
-            `INSERT INTO driver_applications (project_id, name, email, phone, claims, status)
-             VALUES (?, ?, ?, ?, ?, 'submitted') RETURNING id`,
-            [Number(project['id']), body.name, body.email, body.phone, body.claims],
+            `INSERT INTO driver_applications (project_id, name, email, phone, claims, status, user_id)
+             VALUES (?, ?, ?, ?, ?, 'submitted', ?) RETURNING id`,
+            [Number(project['id']), body.name, body.email, body.phone, body.claims, userId],
         );
         const id = Number(ins.rows[0]!['id']);
 
@@ -155,6 +181,53 @@ export function createPublicApplicationsRouter({ client }: Deps): Router {
             project: String(project['code']),
         });
         res.status(202).json(accepted);
+    }));
+
+    /* The one thing an unvetted account may read: its own application.
+     *
+     * It is deliberately thin. The applicant sees which gates are done and
+     * which are not, because that is what tells them what to go and do. They
+     * do NOT see the reference numbers, the verifier's name or the notes: a
+     * background check reference is our record of somebody else's report, and
+     * the internal note on a failed check is the last thing to hand back to
+     * the person it is about. */
+    router.get('/api/me/application', wrap(async (req, res) => {
+        const me = req.session.user;
+        if (!me) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+        const rs = await run(
+            `SELECT a.*, p.code AS project_code, p.name AS project_name, p.timezone AS project_timezone
+               FROM driver_applications a
+               JOIN projects p ON p.id = a.project_id
+              WHERE a.user_id = (SELECT id FROM users WHERE username = ?)
+              ORDER BY a.id DESC LIMIT 1`,
+            [me.username],
+        );
+        const row = rs.rows[0];
+        if (!row) { res.status(404).json({ error: 'You have no application on file.' }); return; }
+
+        const checks = await run(
+            'SELECT kind, status, expires_at FROM onboarding_checks WHERE application_id = ? ORDER BY kind',
+            [Number(row['id'])],
+        );
+        const shaped: Check[] = checks.rows.map((c) => ({
+            kind: String(c['kind']) as CheckKind,
+            status: String(c['status']) as Check['status'],
+            verifiedBy: '',
+            verifiedAt: null,
+            expiresAt: c['expires_at'] === null ? null : String(c['expires_at']),
+        }));
+
+        res.json({
+            project: { code: String(row['project_code']), name: String(row['project_name']) },
+            status: String(row['status']),
+            submittedAt: row['submitted_at'] === null ? null : String(row['submitted_at']),
+            /* The reason IS handed back on a rejection. Being turned down
+               without being told why is the thing people write in about. */
+            decisionReason: String(row['decision_reason']),
+            clearance: clearanceOf(shaped, todayIn(String(row['project_timezone']))),
+            checks: shaped.map((c) => ({ kind: c.kind, status: c.status })),
+        });
     }));
 
     return router;
@@ -284,9 +357,6 @@ export function createApplicationsRouter({ client }: { client: Client }): Router
     router.post('/:id/approve', staff, wrap(async (req, res) => {
         const row = await loadOr404(req, res);
         if (!row) return;
-        const body = parse(Approve, req.body, res);
-        if (!body) return;
-
         const status = String(row['status']);
         if (status !== 'submitted' && status !== 'in_review') {
             res.status(409).json({ error: `This application is already ${status}.` });
@@ -304,34 +374,35 @@ export function createApplicationsRouter({ client }: { client: Client }): Router
             return;
         }
 
-        const taken = await run('SELECT id FROM users WHERE username = ?', [body.username]);
-        if (taken.rows.length > 0) {
-            res.status(409).json({ error: `The username ${body.username} is already in use.` });
+        /* The account already exists: it was created at signup and has been
+           able to sign in and see nothing ever since. Approval grants the
+           membership, which is the only thing it was missing. */
+        const userId = row['user_id'] === null ? null : Number(row['user_id']);
+        if (userId === null) {
+            res.status(409).json({
+                error: 'This application has no account behind it. It predates the current signup flow, so a user has to be created by hand.',
+                code: 'application.noAccount',
+            });
             return;
         }
 
-        const ins = await run(
-            `INSERT INTO users (username, password, name, email, role, status)
-             VALUES (?, ?, ?, ?, 'driver', 'active') RETURNING id`,
-            [body.username, bcrypt.hashSync(body.temporaryPassword, BCRYPT_ROUNDS), String(row['name']), String(row['email'])],
-        );
-        const userId = Number(ins.rows[0]!['id']);
-
         await run(
-            'INSERT INTO memberships (user_id, project_id, role, settings) VALUES (?, ?, \'courier\', \'{}\')',
+            `INSERT INTO memberships (user_id, project_id, role, settings) VALUES (?, ?, 'courier', '{}')
+             ON CONFLICT(user_id, project_id) DO UPDATE SET role = excluded.role`,
             [userId, req.project!.id],
         );
+        /* Re-enabled deliberately: a rejection disables the account, and an
+           appeal that succeeds has to undo that or the approval is a lie. */
+        await run("UPDATE users SET status = 'active' WHERE id = ?", [userId]);
         await run(
-            `UPDATE driver_applications
-                SET status = 'approved', decided_at = ?, decided_by = ?, user_id = ?
-              WHERE id = ?`,
-            [new Date().toISOString(), req.session.user?.username ?? '', userId, Number(row['id'])],
+            `UPDATE driver_applications SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ?`,
+            [new Date().toISOString(), req.session.user?.username ?? '', Number(row['id'])],
         );
 
         await req.audit('application.approved', 'driver_application', String(row['id']), {
-            username: body.username, project: req.project!.code,
+            username: String(row['email']), project: req.project!.code,
         });
-        res.status(201).json({ ok: true, username: body.username });
+        res.status(201).json({ ok: true, username: String(row['email']) });
     }));
 
     router.post('/:id/reject', staff, wrap(async (req, res) => {
@@ -355,7 +426,14 @@ export function createApplicationsRouter({ client }: { client: Client }): Router
             `UPDATE driver_applications SET status = 'rejected', decided_at = ?, decided_by = ?, decision_reason = ? WHERE id = ?`,
             [new Date().toISOString(), req.session.user?.username ?? '', body.reason, Number(row['id'])],
         );
-        await req.audit('application.rejected', 'driver_application', String(row['id']), {});
+        /* And the account goes with it. Leaving a live credential behind for
+           somebody who failed a background check is the cost of the DoorDash
+           model, paid here rather than left lying around. An appeal that
+           succeeds re-enables it, which approve does. */
+        if (row['user_id'] !== null) {
+            await run("UPDATE users SET status = 'disabled' WHERE id = ?", [Number(row['user_id'])]);
+        }
+        await req.audit('application.rejected', 'driver_application', String(row['id']), { accountDisabled: row['user_id'] !== null });
         res.json({ ok: true });
     }));
 

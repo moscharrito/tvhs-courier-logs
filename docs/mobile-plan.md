@@ -73,6 +73,17 @@ human grants it. Until onboarding is complete and verified, the account exists
 and can see nothing: no board, no addresses, no names. That gate is a server
 rule, not a screen that declines to draw.
 
+**The DoorDash shape, decided 16 September.** An applicant creates their own
+password at signup and can sign in immediately, exactly as a Dasher can. The
+security property is therefore **no membership, no data** rather than "no
+account", which this codebase already enforced everywhere: every
+project-scoped route goes through `requireProject`, and somebody who belongs
+to no project is refused all of them. The cost is real and is stated rather
+than hidden: there are credentialed accounts for unvetted people, so signup is
+throttled, a rejection disables the account, and the access matrix carries an
+`applicant` principal so that every row in it also answers "can a stranger who
+filled in a form reach this".
+
 This also raises worker classification, which is a question for an attorney
 and not for this document. It is flagged because self-signup plus
 choose-your-own-work is the fact pattern that raises it.
@@ -107,7 +118,7 @@ first; the phone app is a second client of the same endpoints.
 
 | # | Ticket | What it is |
 |---|---|---|
-| 6.1 | Driver applications | Public signup collects an application. Not an account with access: an application with a status. Rejections are recorded with a reason. |
+| 6.1 | Driver applications | Public signup creates the account with the applicant's own password, plus an application with a status. The account can sign in and reach nothing. Rejections are recorded with a reason and disable the account. |
 | 6.2 | Onboarding gates | Training, confidentiality agreement, background check and licence each a recorded artifact with who verified it and when. **No membership is granted, and no address is readable, until every gate is green.** |
 | 6.3 | Shifts | On shift and off shift as explicit events. Everything else in this phase hangs off them: who may be auto-assigned, who is tracked, who appears as available. |
 | 6.4 | Delivery requests | A courier requests one or more stops. Dispatch approves or denies with a reason. Approval is what creates the assignment, so it goes through the existing custody transition and nothing new can put work in a van without a recorded event. |
