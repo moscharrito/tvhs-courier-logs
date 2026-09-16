@@ -290,6 +290,17 @@ const MATRIX = [
     ['GET', `${UH}/shifts/mine`, UH_STAFF_AND_COURIER, 'am I on shift, and what am I still carrying'],
     ['GET', `${UH}/shifts`, UH_STAFF, 'who is out there'],
     ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
+
+    /* --- asking for work (tickets 6.4 and 6.5). A courier browses and asks;
+       only dispatch decides, and only dispatch runs the sweep. */
+    ['GET', `${UH}/requests/available`, UH_STAFF_AND_COURIER, 'what can I ask for: no patient names, no street addresses'],
+    ['POST', `${UH}/requests`, UH_STAFF_AND_COURIER, 'ask for some stops'],
+    ['GET', `${UH}/requests/mine`, UH_STAFF_AND_COURIER, 'what did I ask for'],
+    ['DELETE', `${UH}/requests/999999`, UH_STAFF_AND_COURIER, 'never mind'],
+    ['GET', `${UH}/requests`, UH_STAFF, 'the queue'],
+    ['POST', `${UH}/requests/999999/approve`, UH_STAFF, 'yes'],
+    ['POST', `${UH}/requests/999999/deny`, UH_STAFF, 'no, and why'],
+    ['POST', `${UH}/requests/sweep`, UH_STAFF, 'hand out what nobody claimed'],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_STAFF, ''],

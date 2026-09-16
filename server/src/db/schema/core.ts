@@ -451,3 +451,44 @@ export const shifts = sqliteTable(
 );
 
 export type Shift = typeof shifts.$inferSelect;
+
+/* A courier asking for work (tickets 6.4 and 6.5).
+ *
+ * The DoorDash shape: dispatch puts the day's deliveries up, couriers ask for
+ * the ones they want, dispatch says yes or no. A request is an expression of
+ * interest and nothing more. It moves no package and assigns nothing until
+ * somebody approves it, and approval goes through the same custody transition
+ * as every other assignment, so there is still no way to put work in a van
+ * without a recorded event.
+ *
+ * SEVERAL COURIERS MAY WANT THE SAME STOP. That is the normal case, not a
+ * conflict: the first two to open the app both see it. Approving one marks
+ * the rest superseded, which is a different thing from denied and reads
+ * differently to the person who asked.
+ */
+export const REQUEST_STATUSES = ['pending', 'approved', 'denied', 'withdrawn', 'superseded'] as const;
+export type RequestStatus = (typeof REQUEST_STATUSES)[number];
+
+export const deliveryRequests = sqliteTable(
+    'delivery_requests',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        orderId: integer('order_id').notNull(),
+        courierUsername: text('courier_username').notNull(),
+        requestedAt: text('requested_at').notNull(),
+        status: text('status', { enum: REQUEST_STATUSES }).notNull().default('pending'),
+        decidedAt: text('decided_at'),
+        decidedBy: text('decided_by').notNull().default(''),
+        /** Required on a denial. "No" with no reason, to somebody who asked
+         *  for work, is how a courier stops asking. */
+        decisionReason: text('decision_reason').notNull().default(''),
+    },
+    (t) => [
+        index('delivery_requests_project_status_idx').on(t.projectId, t.status),
+        index('delivery_requests_order_idx').on(t.orderId),
+        index('delivery_requests_courier_idx').on(t.courierUsername),
+    ],
+);
+
+export type DeliveryRequest = typeof deliveryRequests.$inferSelect;
