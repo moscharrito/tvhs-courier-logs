@@ -179,6 +179,45 @@ Phase 4 total: about 7 days.
 
 | 5.16 | A day with two couriers on it | 0.5 | Done, on the owner's instruction. `npm run rehearse:two -w server` adds a second driver and seeds eleven orders for today across zones 1 to 5 plus one in no zone, split into an inner and an outer loop. **Separation holds.** Each driver's `runs/mine` returns only their own runs, `GET /runs` is filtered to them, and asking for the other driver's order is refused with a 403 rather than hidden on the screen. **Two defects, both only visible with two couriers and five zones on one board.** The cards a dispatcher drags between vans said nothing about zone unless there wasn't one: `out of area` was labelled and zones 1 to 5 were invisible, on a board that offers a zone filter, while splitting the work by zone is the thing you are doing. And one courier can hold two runs in a day, which is what a second wave is; both lanes were headed with just the courier's name and both carried `aria-label="Run for Ana Ruiz"`, so neither the eye nor a screen reader could tell the finished morning from the afternoon still to do. Lanes now carry the run name when a courier has more than one, and always in the label. 1020 server and 235 web tests pass |
 
+## Phase 6 and 7: the courier network and the driver app (from 16 Sep)
+
+Decided 16 September 2026. **The plan, the alternatives and the reasoning are
+in `docs/mobile-plan.md`**; this is the ticket list.
+
+Three decisions: React Native (Expo) for a driver app only, because background
+location on a backgrounded phone is the one thing the PWA cannot do and the
+only thing that forces native. Drivers request work and dispatch approves, with
+unclaimed work auto-assigning at a deadline, because there is no surge pricing
+here to clear a pull market and Izy is answerable for 85% completion and
+two-hour STATs regardless. And go-live happens on the web system, with drivers
+cut over in phase two, because the contract start date must not sit behind an
+App Store review.
+
+Phase 6 is server-side and finishable before any React Native exists. The web
+app is the first client of every endpoint; the phone is the second.
+
+| # | Ticket | Est | Notes |
+|---|---|---|---|
+| 6.1 | Driver applications | 1 | Public signup collects an application with a status, not an account with access. Rejections recorded with a reason |
+| 6.2 | Onboarding gates | 1.5 | HIPAA training, confidentiality agreement, background check, licence. Each a recorded artifact with who verified it and when. **No membership granted and no address readable until every gate is green**, enforced on the server |
+| 6.3 | Shifts | 1 | On and off shift as explicit events. Auto-assignment, tracking and availability all hang off them |
+| 6.4 | Delivery requests | 1.5 | A courier requests stops, dispatch approves or denies with a reason. Approval creates the assignment through the existing custody transition, so nothing new can put work in a van without a recorded event |
+| 6.5 | The unclaimed deadline | 1 | Per service type. An unclaimed STAT auto-assigns to an on-shift courier and tells dispatch. This is what keeps 6.4 from costing the contract: an unclaimed STAT must never be nobody's problem |
+| 6.6 | Shift tracking | 1.5 | Position ingest while on shift, with a retention limit, an access rule and an audit row on any read that is not the live board. A continuous track is a different class of data from the per-event position the board uses today |
+| 6.7 | The live board | 1 | On-shift couriers moving, each fix shown with its age. Keeps the existing last-seen behaviour for couriers who are off shift |
+| 6.8 | Push | 1 | Approvals, denials, auto-assignments, new work |
+| 7.1 | Expo shell | 2 | One codebase, both stores. Sign in, project pick, run screen |
+| 7.2 | Signup and onboarding in the app | 1.5 | 6.1 and 6.2 through the phone, with document capture |
+| 7.3 | The board, in hand | 1.5 | Browse available work, request it, see the decision |
+| 7.4 | Background location | 2 | The reason this is native at all. Shift-scoped, with a visible indicator |
+| 7.5 | Offline parity | 1.5 | The web app already queues events offline; the phone must not be worse |
+| 7.6 | Store submission | 1 | **Apple rejects background location routinely on first submission.** Budget a rejection and a resubmission, and write the justification before building the feature |
+
+**Open, and not mine to close.** Worker classification: self-signup plus
+choose-your-own-work is the fact pattern that raises it, and it is a question
+for an attorney. It changes what the app records, so it wants an answer before
+6.1 ships.
+
 ## Deferred past go-live
 
 Route optimization beyond nearest-neighbor, patient SMS notifications, inter-campus community hospital flows, per-project Turso databases, continuous GPS tracking, TVHS screens rewritten in React.
