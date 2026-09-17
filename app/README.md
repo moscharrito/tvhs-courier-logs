@@ -86,12 +86,24 @@ number without telephoning for it. Sending a reference **verifies nothing**;
 a named member of staff still checks each one, and the screen says so rather
 than turning a row green.
 
-It deliberately does **not** collect, deliver, fail a stop or capture a
-signature. Those are 7.3 and 7.5 and they arrive together: a courier who can
-mark a delivery but cannot sign for it has broken the chain of custody this
-contract is built on, so half the flow is worse than none. The run screen says
-so on screen rather than leaving somebody to look for a button that is not
-there.
+Since 7.5 a stop can be worked from the phone: arrive, hand over against a
+signature, or record that it could not be delivered. It arrived in one piece
+rather than a button at a time, because a courier who can mark a delivery but
+cannot sign for it has broken the chain of custody this contract is built on.
+
+**Everything goes through the offline queue, always**, not only when the phone
+is offline. San Antonio has basements, lift shafts and loading docks, and a
+courier standing in one of them has still made the delivery. The alternative,
+try the network and fall back to a queue, has two code paths and only one of
+them is exercised on a good day, which is how an offline path rots.
+
+**Left at the door is not offered**, and it is not an oversight: a doorstep
+delivery needs a photograph and file storage is off until the AWS BAA in ticket
+0.10. The web shell refuses it for the same reason rather than recording an
+unwitnessed drop.
+
+Collecting from a pharmacy and handing undelivered packages back are still on
+the web app.
 
 ## The credential
 

@@ -18,12 +18,11 @@
  * Google under our key, which is why it is behind its own switch on the web
  * and is not here at all.
  *
- * WHAT IT DELIBERATELY DOES NOT DO YET: collect, deliver, fail a stop, or
- * capture a signature. Those are 7.3 and 7.5, and they arrive together,
- * because half a custody flow on a phone is worse than none. A courier who
- * can mark a delivery but cannot sign for it has broken the chain this whole
- * contract rests on, and the screen says so out loud rather than leaving
- * somebody to hunt for a button that is not there.
+ * SINCE 7.5 A STOP CAN BE WORKED FROM HERE. Arrive, hand over against a
+ * signature, or record that it could not be delivered, all through the
+ * offline queue. It arrived in one piece rather than a button at a time,
+ * because a courier who can mark a delivery but cannot sign for it has broken
+ * the chain this contract rests on.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -31,8 +30,11 @@ import {
     ActivityIndicator, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { theme } from '../theme';
-import { get, type MyRun, type Project, type Stop } from '../lib/api';
+import { get, type MyRun, type Project, type Stop as StopRow } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
+import { Stop } from './Stop';
+import { pendingLabel, type OutboxState } from '../lib/outbox';
+import { flush, readQueue } from '../lib/queue';
 
 interface Props {
     token: string;
@@ -44,7 +46,7 @@ interface Props {
 const DONE = ['delivered', 'failed', 'cancelled'];
 
 /** Address only. See the header: the name must not leave the app. */
-function openDirections(stop: Pick<Stop, 'address' | 'city' | 'zip'>): void {
+function openDirections(stop: Pick<StopRow, 'address' | 'city' | 'zip'>): void {
     const query = [stop.address, stop.city, stop.zip].map((p) => p.trim()).filter(Boolean).join(', ');
     if (query === '') return;
     /* geo: on Android, the Apple Maps scheme on iOS, and both fall back to
@@ -74,11 +76,15 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     const [data, setData] = useState<MyRun | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
+    const [working, setWorking] = useState<StopRow | null>(null);
+    const [outbox, setOutbox] = useState<OutboxState | null>(null);
 
     const load = useCallback(async () => {
         setError(null);
         try {
             setData(await get<MyRun>(`/api/projects/${project.code}/uh/runs/mine`, token));
+            /* Every visit is a chance to drain what a basement swallowed. */
+            setOutbox(await flush());
         } catch (err) {
             if (isUnauthorized(err)) { onSignedOut(); return; }
             /* A courier is often somewhere with no signal. Say that, rather
@@ -88,6 +94,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     }, [project.code, token, onSignedOut]);
 
     useEffect(() => { void load(); }, [load]);
+    useEffect(() => { void readQueue().then(setOutbox); }, []);
 
     const refresh = async () => {
         setRefreshing(true);
@@ -99,7 +106,19 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         return <View style={styles.centre}><ActivityIndicator color={theme.green} /></View>;
     }
 
-    const stops: Stop[] = data?.runs.flatMap((r) => r.stops) ?? [];
+    if (working !== null) {
+        return (
+            <Stop
+                token={token}
+                code={project.code}
+                stop={working}
+                onDone={() => { setWorking(null); void load(); }}
+                onBack={() => setWorking(null)}
+            />
+        );
+    }
+
+    const stops: StopRow[] = data?.runs.flatMap((r) => r.stops) ?? [];
     const remaining = stops.filter((s) => !DONE.includes(s.status));
     const next = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
@@ -116,6 +135,26 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
             </Pressable>
             <Text style={styles.title}>Today</Text>
             {data !== null && <Text style={styles.sub}>{data.serviceDate} · {done} of {stops.length} done</Text>}
+
+            {/* Above the run, not tucked under it. A courier who cannot
+                tell "sent" from "on this phone" will assume sent, which is
+                the failure the web shell put its sync banner above the fold
+                for. */}
+            {outbox !== null && outbox.queue.length > 0 && (
+                <View style={styles.pending} accessibilityLiveRegion="polite">
+                    <Text style={styles.pendingText}>{pendingLabel(outbox)}</Text>
+                </View>
+            )}
+            {outbox !== null && outbox.rejected.length > 0 && (
+                <View style={styles.error} accessibilityRole="alert">
+                    <Text style={styles.errorText}>
+                        {outbox.rejected.length === 1
+                            ? 'One thing was refused: '
+                            : `${outbox.rejected.length} things were refused: `}
+                        {outbox.rejected[outbox.rejected.length - 1]!.why}
+                    </Text>
+                </View>
+            )}
 
             {error !== null && (
                 <View style={styles.error} accessibilityRole="alert">
@@ -144,6 +183,9 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                     >
                         <Text style={styles.directionsText}>Directions</Text>
                     </Pressable>
+                    <Pressable style={styles.open} onPress={() => setWorking(next)} accessibilityRole="button">
+                        <Text style={styles.openText}>Open the stop</Text>
+                    </Pressable>
                 </View>
             )}
 
@@ -151,21 +193,26 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 <View style={styles.card}>
                     <Text style={styles.cardTitle}>All stops</Text>
                     {stops.map((s) => (
-                        <View key={s.orderId} style={[styles.stop, DONE.includes(s.status) ? styles.stopDone : null]}>
+                        <Pressable
+                            key={s.orderId}
+                            style={[styles.stop, DONE.includes(s.status) ? styles.stopDone : null]}
+                            onPress={() => { if (!DONE.includes(s.status)) setWorking(s); }}
+                            disabled={DONE.includes(s.status)}
+                            accessibilityRole="button"
+                        >
                             <Text style={styles.stopName}>{s.sequence}. {s.recipientName}</Text>
                             <Text style={styles.meta}>{s.address}, {s.city} {s.zip}</Text>
                             <Text style={styles.meta}>
                                 due {clock(s.dueAt, zone)} · {s.status}
                                 {s.zone === null ? ' · out of area' : ` · zone ${s.zone}`}
                             </Text>
-                        </View>
+                        </Pressable>
                     ))}
                 </View>
             )}
 
             <Text style={styles.footnote}>
-                Collecting, delivering and signing are still on the web app. They arrive here together, because
-                half a custody flow is worse than none.
+                Collecting from a pharmacy and handing undelivered packages back are still on the web app.
             </Text>
         </ScrollView>
     );
@@ -199,5 +246,9 @@ const styles = StyleSheet.create({
         paddingVertical: 13, alignItems: 'center',
     },
     directionsText: { color: theme.green, fontSize: 16, fontWeight: '600' },
+    open: { marginTop: 10, backgroundColor: theme.green, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+    openText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+    pending: { backgroundColor: theme.greenSoft, borderRadius: 10, padding: 14, marginBottom: 12 },
+    pendingText: { color: theme.green, fontSize: 14, lineHeight: 20 },
     footnote: { fontSize: 13, color: theme.muted, lineHeight: 19, marginTop: 8, paddingHorizontal: 4 },
 });
