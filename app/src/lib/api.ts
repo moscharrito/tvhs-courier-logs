@@ -122,3 +122,79 @@ export const submitCheck = (token: string, kind: CheckKind, reference: string, n
     request(fetch, baseUrl(), `/api/me/application/checks/${kind}`, {
         method: 'PUT', token, json: { reference, note },
     });
+
+/* ------------------------------------------------- shifts and work (7.3) */
+
+export interface ShiftState {
+    shift: { id: number; startedAt: string; open: boolean } | null;
+    carrying: Array<{ id: number; reference: string; status: string }>;
+}
+
+export const myShift = (token: string, code: string): Promise<ShiftState> =>
+    get<ShiftState>(`/api/projects/${code}/uh/shifts/mine`, token);
+
+export const startShift = (token: string, code: string): Promise<unknown> =>
+    post(`/api/projects/${code}/uh/shifts/start`, token, {});
+
+export const endShift = (token: string, code: string): Promise<unknown> =>
+    post(`/api/projects/${code}/uh/shifts/end`, token, {});
+
+/** One claimable delivery. No patient name and no street: see the server's
+ *  modules/uh/requests.ts, which decides what a courier may browse. */
+export interface Claimable {
+    orderId: number;
+    reference: string;
+    serviceType: string;
+    zone: number | null;
+    zip: string;
+    pickUpFrom: string | null;
+    dueAt: string | null;
+    packages: number;
+    requested: boolean;
+}
+
+export interface AvailableWork {
+    serviceDate: string;
+    onShift: boolean;
+    available: Claimable[];
+}
+
+export const availableWork = (token: string, code: string): Promise<AvailableWork> =>
+    get<AvailableWork>(`/api/projects/${code}/uh/requests/available`, token);
+
+export const askFor = (token: string, code: string, orderIds: number[]): Promise<{ requested: number[]; refused: unknown[] }> =>
+    post(`/api/projects/${code}/uh/requests`, token, { orderIds });
+
+export interface MyRequest {
+    id: number;
+    orderId: number;
+    status: 'pending' | 'approved' | 'denied' | 'withdrawn' | 'superseded';
+    requestedAt: string;
+    decidedAt: string | null;
+    decisionReason: string;
+    zip: string;
+    zone: number | null;
+    serviceType: string;
+    dueAt: string | null;
+}
+
+export const myRequests = (token: string, code: string): Promise<{ requests: MyRequest[] }> =>
+    get<{ requests: MyRequest[] }>(`/api/projects/${code}/uh/requests/mine`, token);
+
+export const withdrawRequest = (token: string, code: string, id: number): Promise<unknown> =>
+    request(fetch, baseUrl(), `/api/projects/${code}/uh/requests/${id}`, { method: 'DELETE', token });
+
+export interface Notification {
+    id: number;
+    kind: string;
+    body: string;
+    orderId: number | null;
+    createdAt: string;
+    readAt: string | null;
+}
+
+export const myNotifications = (token: string, code: string): Promise<{ unread: number; notifications: Notification[] }> =>
+    get<{ unread: number; notifications: Notification[] }>(`/api/projects/${code}/uh/notifications`, token);
+
+export const markRead = (token: string, code: string): Promise<unknown> =>
+    post(`/api/projects/${code}/uh/notifications/read`, token, {});

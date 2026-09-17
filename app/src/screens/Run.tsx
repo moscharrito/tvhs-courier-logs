@@ -4,12 +4,19 @@
  * having built phase 6 server-first: this screen is a second client of an API
  * that already works and is already tested.
  *
- * The web version carries a rule worth repeating here. The ADDRESS is what a
- * courier needs to drive somewhere; the patient's NAME adds nothing to the
- * navigation and everything to the disclosure. So nothing on this screen is
- * handed to a map. Directions arrive in 7.3 with the rest of the board, and
- * they will go through the same server decision that
- * web/src/pages/uh/Directions.tsx uses, for the same reason.
+ * DIRECTIONS CARRY THE ADDRESS AND NEVER THE NAME (ticket 7.3). That rule
+ * predates the app: web/src/pages/uh/MyRun.tsx has carried it since the
+ * beginning, and the reason is unchanged. An address is what it takes to
+ * drive there; the patient's name adds nothing to the navigation and
+ * everything to the disclosure.
+ *
+ * On a phone this hands the address to the platform's own maps app rather
+ * than drawing a map here, and that is the better privacy answer as well as
+ * the simpler one: the courier's own navigation app makes the request, the
+ * way it does when they type an address themselves. The embedded map decided
+ * in ticket 5.13 makes THIS APPLICATION the sender of a patient's address to
+ * Google under our key, which is why it is behind its own switch on the web
+ * and is not here at all.
  *
  * WHAT IT DELIBERATELY DOES NOT DO YET: collect, deliver, fail a stop, or
  * capture a signature. Those are 7.3 and 7.5, and they arrive together,
@@ -20,7 +27,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+    ActivityIndicator, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
+} from 'react-native';
 import { theme } from '../theme';
 import { get, type MyRun, type Project, type Stop } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
@@ -33,6 +42,19 @@ interface Props {
 }
 
 const DONE = ['delivered', 'failed', 'cancelled'];
+
+/** Address only. See the header: the name must not leave the app. */
+function openDirections(stop: Pick<Stop, 'address' | 'city' | 'zip'>): void {
+    const query = [stop.address, stop.city, stop.zip].map((p) => p.trim()).filter(Boolean).join(', ');
+    if (query === '') return;
+    /* geo: on Android, the Apple Maps scheme on iOS, and both fall back to
+       whatever the device has set as its maps app. Nothing is drawn here, so
+       nothing is requested from a third party by us. */
+    const url = Platform.OS === 'ios'
+        ? `http://maps.apple.com/?q=${encodeURIComponent(query)}`
+        : `geo:0,0?q=${encodeURIComponent(query)}`;
+    void Linking.openURL(url).catch(() => undefined);
+}
 
 /** In the project's zone, never the phone's.
  *
@@ -115,6 +137,13 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                         {next.serviceType} · due {clock(next.dueAt, zone)}
                         {next.zone === null ? ' · out of area' : ` · zone ${next.zone}`}
                     </Text>
+                    <Pressable
+                        style={styles.directions}
+                        onPress={() => openDirections(next)}
+                        accessibilityRole="button"
+                    >
+                        <Text style={styles.directionsText}>Directions</Text>
+                    </Pressable>
                 </View>
             )}
 
@@ -165,5 +194,10 @@ const styles = StyleSheet.create({
     stopName: { fontSize: 16, color: theme.ink, fontWeight: '500' },
     error: { backgroundColor: theme.dangerSoft, borderRadius: 10, padding: 14, marginBottom: 12 },
     errorText: { color: theme.danger, fontSize: 15, lineHeight: 21 },
+    directions: {
+        marginTop: 14, borderWidth: 1, borderColor: theme.green, borderRadius: 10,
+        paddingVertical: 13, alignItems: 'center',
+    },
+    directionsText: { color: theme.green, fontSize: 16, fontWeight: '600' },
     footnote: { fontSize: 13, color: theme.muted, lineHeight: 19, marginTop: 8, paddingHorizontal: 4 },
 });

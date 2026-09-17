@@ -30,7 +30,7 @@ import { SignIn } from './screens/SignIn';
 import { Apply } from './screens/Apply';
 import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
-import { Run } from './screens/Run';
+import { Driving } from './screens/Driving';
 
 export function App() {
     /* undefined while the Keychain is being read, null when there is nothing
@@ -98,7 +98,7 @@ export function App() {
                     onEmpty={() => setHasProjects(false)}
                 />
             ) : (
-                <Run
+                <Driving
                     token={token}
                     project={project}
                     onSignedOut={onSignedOut}

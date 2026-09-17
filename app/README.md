@@ -46,7 +46,17 @@ honest state of it, and it is the reason 7.1 stops where it does.
 ## What the app does
 
 Apply to drive, sign in, see what onboarding is outstanding, pick a contract,
-read today's run. That is 7.1 and 7.2.
+and then three tabs: today's run, work going, and what you asked for. That is
+7.1, 7.2 and 7.3.
+
+**No router, and that is a change of mind worth recording.** 7.1 said
+expo-router would arrive in 7.3 once there was something to route. Having
+built it, there is not: the three tabs have no history, no back stack, no deep
+links and no parameters. A router would add a dependency, a directory move and
+a build-time plugin to produce the same three taps, on an app nobody here can
+run to find out what it broke. Ticket 7.4 is what earns it: a push
+notification that opens one stop is a deep link, and deep links are what
+routers are for.
 
 **Document photographs are not part of it, and that is deliberate.** There is
 nowhere to put one: file storage is off until the AWS BAA in ticket 0.10 is
