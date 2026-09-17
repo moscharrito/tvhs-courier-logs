@@ -301,6 +301,13 @@ const MATRIX = [
     ['POST', `${UH}/requests/999999/approve`, UH_STAFF, 'yes'],
     ['POST', `${UH}/requests/999999/deny`, UH_STAFF, 'no, and why'],
     ['POST', `${UH}/requests/sweep`, UH_STAFF, 'hand out what nobody claimed'],
+
+    /* --- tracking (tickets 6.6 and 6.7). A courier posts their own fixes and
+       can read nobody's track, not even their own: a map of where they were
+       all day is a thing to be asked for, not a screen to browse. */
+    ['POST', `${UH}/tracking`, UH_STAFF_AND_COURIER, 'send my own fixes, only while on shift'],
+    ['GET', `${UH}/tracking/live`, UH_STAFF, 'who is where, now, with the age of each fix'],
+    ['GET', `${UH}/tracking/999999`, UH_STAFF, "one shift's track, and it writes an audit row"],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_STAFF, ''],

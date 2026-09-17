@@ -48,6 +48,19 @@ const COUNTERS: Record<RetentionCategory, Counter | null> = {
             return { count: Number(rs.rows[0]?.['n'] ?? 0), oldest: (rs.rows[0]?.['oldest'] as string | null) ?? null };
         },
     },
+    /* Counted like everything else, and it will report a growing pile until
+       somebody decides how long a breadcrumb trail is kept. That pile showing
+       up in the sweep is the point: an undecided period is visible rather
+       than quietly becoming "forever". */
+    location_traces: {
+        async count(client, cutoff) {
+            const rs = await client.execute({
+                sql: `SELECT COUNT(*) AS n, MIN(at) AS oldest FROM shift_positions WHERE at < ?`,
+                args: [cutoff],
+            });
+            return { count: Number(rs.rows[0]?.['n'] ?? 0), oldest: (rs.rows[0]?.['oldest'] as string | null) ?? null };
+        },
+    },
     signatures: {
         async count(client, cutoff) {
             const rs = await client.execute({

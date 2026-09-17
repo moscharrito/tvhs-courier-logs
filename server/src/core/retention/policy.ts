@@ -25,7 +25,8 @@ export type RetentionCategory =
     | 'signatures'
     | 'invoices'
     | 'audit_events'
-    | 'client_events';
+    | 'client_events'
+    | 'location_traces';
 
 export interface RetentionRule {
     category: RetentionCategory;
@@ -47,6 +48,14 @@ export interface RetentionRule {
  * long. It is here so the sweep has something to count against, and it is
  * marked undecided so that nothing acts on it. */
 const SEVEN_YEARS = 7 * 365;
+
+/** Read once, at load, from the environment. See `location_traces` below. */
+function traceDays(): number | null {
+    const raw = process.env['RETENTION_LOCATION_TRACE_DAYS'];
+    if (raw === undefined || raw.trim() === '') return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 1 && n <= 400 ? n : null;
+}
 
 export const RETENTION: Record<RetentionCategory, RetentionRule> = {
     delivery_records: {
@@ -104,6 +113,27 @@ export const RETENTION: Record<RetentionCategory, RetentionRule> = {
         basis: 'Decided, because it is not a record of anything. It exists so a courier\'s retry is answered rather than '
             + 'applied twice, and a week is far longer than any phone stays offline. Already swept automatically '
             + '(core/http/idempotency.ts).',
+        purgeable: true,
+    },
+    location_traces: {
+        category: 'location_traces',
+        /* ONE SOURCE OF TRUTH with the endpoint that collects it. Setting
+         * RETENTION_LOCATION_TRACE_DAYS is the decision: it makes the period
+         * real here and switches tracking on there. Without it, this is
+         * undecided AND nothing is collected, so the two can never disagree
+         * about whether a track exists and how long it lives. */
+        days: traceDays(),
+        decided: traceDays() !== null,
+        holds: 'Minute-by-minute positions of a courier while they were on shift (ticket 6.6). '
+            + 'No patient name, but joined to orders it says which homes were visited and when.',
+        basis: 'UNDECIDED, AND THE MOST IMPORTANT UNDECIDED ONE HERE. Every other category in this '
+            + 'table errs toward keeping things: a delivery record is evidence and the risk is deleting '
+            + 'it too early. This one is the opposite. A breadcrumb trail of an identified employee has '
+            + 'almost no operational value the day after the shift, and every day it is kept is a day it '
+            + 'can be subpoenaed, breached, or used for something nobody agreed to. Days, not years. '
+            + 'Nothing in the contract asks for it at all, which is why it cannot be inherited from the '
+            + 'delivery record. It needs a number from somebody with the authority to set one, and until '
+            + 'then core/tracking refuses to accept a single point.',
         purgeable: true,
     },
 };

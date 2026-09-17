@@ -30,6 +30,11 @@ export interface Config {
          *  Deliberately NOT implied by the key: see modules/uh/directions.ts. */
         embedMaps: boolean;
     };
+    retention: {
+        /** Days a courier's shift track is kept. Undefined means nobody has
+         *  decided, and tracking refuses to record anything at all. */
+        locationTraceDays: number | undefined;
+    };
     db: {
         /** libsql:// (Turso) or file: URL */
         url: string;
@@ -104,6 +109,13 @@ const EnvSchema = z.object({
      * on, because turning it on makes us the sender of that address to a
      * vendor with no BAA. The reasoning is in modules/uh/directions.ts. */
     UH_MAPS_EMBED: boolish,
+    /* How many days a courier's minute-by-minute track is kept (ticket 6.6).
+     * SETTING THIS IS THE DECISION. While it is unset the retention period
+     * for location traces is undecided, and the tracking endpoint refuses
+     * every point rather than collecting data with no agreed expiry. Days,
+     * not years: see core/retention/policy.ts for why this category runs the
+     * opposite way to every other one in that table. */
+    RETENTION_LOCATION_TRACE_DAYS: z.coerce.number().int().min(1).max(400).optional(),
     /* Escape hatch for the check below: pointing a local process at a Turso
      * database on purpose, to inspect it or to rehearse a restore. */
     ALLOW_TURSO_OUTSIDE_PRODUCTION: boolish,
@@ -235,6 +247,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             dailyCeiling: e.GEO_DAILY_CEILING ?? 2500,
             embedMaps: e.UH_MAPS_EMBED,
         },
+        retention: { locationTraceDays: e.RETENTION_LOCATION_TRACE_DAYS },
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
@@ -272,6 +285,11 @@ export function describeConfig(c: Config): Record<string, string | number | bool
          * addresses go to Google from our pages, and a setting like that
          * should not be discoverable only by reading the code. */
         mapEmbed: c.geo.embedMaps ? 'ON: patient addresses render on embedded Google maps' : 'off, directions link out',
+        /* Printed at boot for the same reason as the map: it decides whether
+         * a record of where an employee was all day exists at all. */
+        tracking: c.retention.locationTraceDays === undefined
+            ? 'off, no retention period decided'
+            : `ON: courier tracks kept ${c.retention.locationTraceDays} days`,
     };
 }
 

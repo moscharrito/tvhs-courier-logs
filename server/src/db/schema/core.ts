@@ -492,3 +492,61 @@ export const deliveryRequests = sqliteTable(
 );
 
 export type DeliveryRequest = typeof deliveryRequests.$inferSelect;
+
+/* Where a courier was, while they were working (tickets 6.6 and 6.7).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THIS IS A DIFFERENT CLASS OF DATA FROM EVERYTHING ABOVE IT.
+ *
+ * Until this table, a position was a fact about a moment: one point attached
+ * to a custody event, captured because somebody arrived somewhere, and the
+ * board shows it with its age precisely so nobody reads it as "now".
+ *
+ * A continuous track is not that. It is a minute-by-minute record of where an
+ * identified employee was, and joined to orders it says which patients' homes
+ * were visited and when. It is the most sensitive table in this database that
+ * contains no patient's name.
+ *
+ * Three rules follow, and all three are enforced rather than intended:
+ *
+ *   BOUND TO A SHIFT. Every row belongs to a shift, and a shift has an end.
+ *   Ingest is refused once the shift is over, so there is no path by which
+ *   somebody's evening is in here. Tracking a person off-shift is its own
+ *   legal problem and the shape of the table is the first defence.
+ *
+ *   KEPT FOR DAYS. The retention period is a decision, not a default: see
+ *   core/retention/policy.ts, where `location_traces` sits undecided and the
+ *   purge refuses to act on it until a person with the authority decides.
+ *
+ *   READ WITH A REASON. The live board reads the newest point per courier and
+ *   that is the operational screen. Reading a track back over a period is a
+ *   different act and writes an audit row saying who did it and why.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export const shiftPositions = sqliteTable(
+    'shift_positions',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        shiftId: integer('shift_id').notNull().references(() => shifts.id),
+        /** Denormalised so the live board does not join for every courier. */
+        courierUsername: text('courier_username').notNull(),
+        /** When the PHONE says it was there. */
+        at: text('at').notNull(),
+        /** When we heard. A phone out of signal for ten minutes sends a
+         *  backlog, and the gap between these two is the only honest way to
+         *  tell a stale fix from a stationary courier. */
+        receivedAt: text('received_at').notNull(),
+        lat: real('lat').notNull(),
+        lng: real('lng').notNull(),
+        /** Metres, as the phone reported it. A fix good to 2km is not a fix,
+         *  and without this the board cannot tell one from a good one. */
+        accuracyM: real('accuracy_m'),
+    },
+    (t) => [
+        index('shift_positions_shift_at_idx').on(t.shiftId, t.at),
+        index('shift_positions_courier_at_idx').on(t.projectId, t.courierUsername, t.at),
+    ],
+);
+
+export type ShiftPosition = typeof shiftPositions.$inferSelect;
