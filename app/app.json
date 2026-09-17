@@ -11,7 +11,9 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.izyglobalservices.courier",
       "infoPlist": {
-        "UIBackgroundModes": ["location"],
+        "UIBackgroundModes": [
+          "location"
+        ],
         "NSLocationWhenInUseUsageDescription": "Dispatch shows your position on the board while you are on shift, so they can tell whether a delivery is going to make its deadline.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Dispatch shows your position on the board while you are on shift, including when the app is in the background. Tracking starts when you go on shift and stops when you finish. It is never recorded outside a shift.",
         "NSLocationAlwaysUsageDescription": "Dispatch shows your position on the board while you are on shift. Tracking starts when you go on shift and stops when you finish."
@@ -36,9 +38,6 @@
           "locationAlwaysAndWhenInUsePermission": "Dispatch shows your position on the board while you are on shift, including when the app is in the background. Tracking starts when you go on shift and stops when you finish."
         }
       ]
-    ],
-    "extra": {
-      "apiBaseUrl": "http://127.0.0.1:3100"
-    }
+    ]
   }
 }
