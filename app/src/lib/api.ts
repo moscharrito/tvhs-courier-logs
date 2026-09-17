@@ -73,3 +73,52 @@ export const post = <T>(path: string, token: string | null, json?: unknown): Pro
     request<T>(fetch, baseUrl(), path, { method: 'POST', token, ...(json !== undefined ? { json } : {}) });
 
 export const signOut = (token: string | null): Promise<unknown> => post('/api/logout', token);
+
+/* ------------------------------------------------- applying to drive (7.2) */
+
+export interface ApplyInput {
+    projectCode: string;
+    name: string;
+    email: string;
+    phone: string;
+    password: string;
+}
+
+/** Public. Creates an account that can sign in and see nothing but its own
+ *  application, plus the application itself. See server ticket 6.1. */
+export async function applyToDrive(input: ApplyInput): Promise<{ ok: boolean; message: string }> {
+    return request<{ ok: boolean; message: string }>(fetch, baseUrl(), '/api/driver-applications', {
+        method: 'POST',
+        json: input,
+    });
+}
+
+export type CheckKind =
+    | 'hipaa_training'
+    | 'confidentiality'
+    | 'background_check'
+    | 'drivers_licence'
+    | 'insurance';
+
+export interface MyApplication {
+    project: { code: string; name: string };
+    status: 'submitted' | 'in_review' | 'approved' | 'rejected' | 'withdrawn';
+    submittedAt: string | null;
+    decisionReason: string;
+    clearance: { ready: boolean; missing: CheckKind[]; expired: CheckKind[]; failed: CheckKind[]; why: string };
+    checks: Array<{
+        kind: CheckKind;
+        status: 'pending' | 'verified' | 'failed';
+        submittedReference: string;
+        submittedAt: string | null;
+    }>;
+}
+
+export const myApplication = (token: string): Promise<MyApplication> =>
+    get<MyApplication>('/api/me/application', token);
+
+/** Supply a reference for one gate. Verifies nothing: see server ticket 7.2. */
+export const submitCheck = (token: string, kind: CheckKind, reference: string, note = ''): Promise<unknown> =>
+    request(fetch, baseUrl(), `/api/me/application/checks/${kind}`, {
+        method: 'PUT', token, json: { reference, note },
+    });

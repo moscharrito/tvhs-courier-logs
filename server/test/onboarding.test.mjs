@@ -170,6 +170,87 @@ describe('applying to drive', () => {
     });
 });
 
+describe('what an applicant can supply themselves (ticket 7.2)', () => {
+    async function applicant() {
+        const email = `sub.${Math.random().toString(36).slice(2, 8)}@example.com`;
+        await apply({ email });
+        const { agent } = await signIn(email);
+        const id = (await admin.get(QUEUE)).body.applications.find((a) => a.email === email).id;
+        return { agent, id, email };
+    }
+
+    it('takes a certificate number from the phone', async () => {
+        const { agent } = await applicant();
+        const res = await agent.put('/api/me/application/checks/hipaa_training')
+            .send({ reference: 'CERT-2026-8841', note: 'Completed 12 September.' });
+        expect(res.status).toBe(200);
+
+        const mine = await agent.get('/api/me/application');
+        const check = mine.body.checks.find((c) => c.kind === 'hipaa_training');
+        expect(check.submittedReference).toBe('CERT-2026-8841');
+        expect(check.submittedAt).toBeTruthy();
+    });
+
+    it('VERIFIES NOTHING, which is the whole point', async () => {
+        /* Ticket 6.2 says five artifacts verified by a named person.
+           Somebody typing their own certificate number is not that, and if it
+           were, the gate would be a form field. */
+        const { agent, id } = await applicant();
+        for (const kind of KINDS) {
+            await agent.put(`/api/me/application/checks/${kind}`).send({ reference: `SELF-${kind}` });
+        }
+
+        const detail = await admin.get(`${QUEUE}/${id}`);
+        expect(detail.body.clearance.ready, 'still not cleared').toBe(false);
+        expect(detail.body.clearance.missing).toHaveLength(5);
+        expect(detail.body.checks.every((c) => c.status === 'pending')).toBe(true);
+        expect(detail.body.checks.every((c) => c.verifiedBy === '')).toBe(true);
+
+        // And approval is still refused.
+        expect((await admin.post(`${QUEUE}/${id}/approve`).send({})).status).toBe(409);
+    });
+
+    it('keeps what they claimed apart from what staff checked', async () => {
+        /* Collapsing the two would make an unverified claim look exactly like
+           a verification, which is the one distinction this table holds. */
+        const { agent, id } = await applicant();
+        await agent.put('/api/me/application/checks/drivers_licence').send({ reference: 'CLAIMED-BY-ME' });
+        await admin.put(`${QUEUE}/${id}/checks/drivers_licence`).send({
+            status: 'verified', reference: 'SEEN-BY-STAFF', expiresAt: '2030-01-01', note: '',
+        });
+
+        const check = (await admin.get(`${QUEUE}/${id}`)).body.checks.find((c) => c.kind === 'drivers_licence');
+        expect(check.reference).toBe('SEEN-BY-STAFF');
+        expect(check.submitted.reference).toBe('CLAIMED-BY-ME');
+        expect(check.verifiedBy).toBeTruthy();
+    });
+
+    it('will not take an empty submission', async () => {
+        const { agent } = await applicant();
+        expect((await agent.put('/api/me/application/checks/insurance').send({})).status).toBe(400);
+    });
+
+    it('will not take one for a check that does not exist', async () => {
+        const { agent } = await applicant();
+        expect((await agent.put('/api/me/application/checks/blood_type').send({ reference: 'x' })).status).toBe(404);
+    });
+
+    it('stops once the application has been decided', async () => {
+        const { agent, id } = await applicant();
+        await admin.post(`${QUEUE}/${id}/reject`).send({ reason: 'Did not pass the background check.' });
+        const res = await agent.put('/api/me/application/checks/insurance').send({ reference: 'POL-1' });
+        expect([401, 409]).toContain(res.status);
+    });
+
+    it('is nobody else’s to file', async () => {
+        /* Keyed on the session, so there is no id in the path to change. An
+           applicant with no application gets a 404 rather than somebody
+           else’s form. */
+        const res = await admin.put('/api/me/application/checks/insurance').send({ reference: 'POL-1' });
+        expect(res.status).toBe(404);
+    });
+});
+
 describe('the gate in front of a patient address', () => {
     async function freshApplication() {
         const email = `gate.${Math.random().toString(36).slice(2, 8)}@example.com`;

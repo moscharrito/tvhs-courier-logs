@@ -394,6 +394,16 @@ export const onboardingChecks = sqliteTable(
         verifiedAt: text('verified_at'),
         /** A certificate number, a vendor's report id. A pointer, not a copy. */
         reference: text('reference').notNull().default(''),
+        /* What the APPLICANT supplied, from the phone (ticket 7.2). Kept in
+         * its own columns rather than written into `reference`, because these
+         * are different claims by different people: `reference` is what a
+         * named member of staff wrote down having seen the thing, and this is
+         * what somebody typed about themselves. Collapsing them would make an
+         * unverified claim indistinguishable from a verification, which is
+         * the one distinction this whole table exists to hold. */
+        submittedReference: text('submitted_reference').notNull().default(''),
+        submittedNote: text('submitted_note').notNull().default(''),
+        submittedAt: text('submitted_at'),
         /** YYYY-MM-DD. Training three years old is a filename, not training. */
         expiresAt: text('expires_at'),
         note: text('note').notNull().default(''),

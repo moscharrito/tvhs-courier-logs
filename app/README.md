@@ -45,7 +45,22 @@ honest state of it, and it is the reason 7.1 stops where it does.
 
 ## What the app does
 
-Sign in, pick a contract, read today's run. That is the whole of 7.1.
+Apply to drive, sign in, see what onboarding is outstanding, pick a contract,
+read today's run. That is 7.1 and 7.2.
+
+**Document photographs are not part of it, and that is deliberate.** There is
+nowhere to put one: file storage is off until the AWS BAA in ticket 0.10 is
+filed, which is the same reason a doorstep photo is refused rather than
+recorded without evidence. And even with a bucket, ticket 6.2 does not store
+documents at all: the table records that a named person saw one, when, and
+what it was called, because a background check report sitting in a courier
+database is a second breach waiting for the first one.
+
+What the app does instead is take a **reference** for each gate that is the
+applicant's to supply, so staff verifying a training certificate have its
+number without telephoning for it. Sending a reference **verifies nothing**;
+a named member of staff still checks each one, and the screen says so rather
+than turning a row green.
 
 It deliberately does **not** collect, deliver, fail a stop or capture a
 signature. Those are 7.3 and 7.5 and they arrive together: a courier who can

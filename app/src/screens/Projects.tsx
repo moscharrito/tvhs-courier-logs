@@ -16,9 +16,12 @@ interface Props {
     token: string;
     onPick: (project: Project) => void;
     onSignedOut: () => void;
+    /** Called when the list comes back empty, so the shell can send them to
+     *  their application instead of leaving them on a blank screen. */
+    onEmpty: () => void;
 }
 
-export function Projects({ token, onPick, onSignedOut }: Props) {
+export function Projects({ token, onPick, onSignedOut, onEmpty }: Props) {
     const [projects, setProjects] = useState<Project[] | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +44,12 @@ export function Projects({ token, onPick, onSignedOut }: Props) {
     useEffect(() => {
         if (projects?.length === 1) onPick(projects[0]!);
     }, [projects, onPick]);
+
+    /* And to their application when there are none, which is what an
+       applicant waiting on approval looks like (ticket 7.2). */
+    useEffect(() => {
+        if (projects?.length === 0 && error === null) onEmpty();
+    }, [projects, error, onEmpty]);
 
     if (projects === null) {
         return (

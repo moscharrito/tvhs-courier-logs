@@ -4,6 +4,7 @@
  *
  *   POST   /api/driver-applications                             PUBLIC, throttled
  *   GET    /api/me/application                                  the applicant's own status
+ *   PUT    /api/me/application/checks/:kind                     what the applicant can supply
  *   GET    /api/projects/:pid/driver-applications               admin, the queue
  *   GET    /api/projects/:pid/driver-applications/:id           admin, one, with its checks
  *   PUT    /api/projects/:pid/driver-applications/:id/checks/:kind   admin, record one
@@ -86,6 +87,19 @@ const RecordCheck = z.object({
     reference: z.string().trim().max(200).default(''),
     expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').nullable().default(null),
     note: z.string().trim().max(1000).default(''),
+});
+
+/* What an applicant can say about themselves from the phone (ticket 7.2).
+ *
+ * A reference and a sentence. Not a document: there is nowhere to put one
+ * yet, because file storage waits on the AWS BAA in ticket 0.10, and even
+ * once there is somewhere, a background check report in a courier database is
+ * a second breach waiting for the first. What this unblocks is the waiting:
+ * staff verifying a training certificate need its number, and an applicant
+ * can type it at eleven at night instead of being telephoned for it. */
+const Submit = z.object({
+    reference: z.string().trim().max(200).default(''),
+    note: z.string().trim().max(500).default(''),
 });
 
 const Reject = z.object({
@@ -207,7 +221,8 @@ export function createPublicApplicationsRouter({ client }: Deps): Router {
         if (!row) { res.status(404).json({ error: 'You have no application on file.' }); return; }
 
         const checks = await run(
-            'SELECT kind, status, expires_at FROM onboarding_checks WHERE application_id = ? ORDER BY kind',
+            `SELECT kind, status, expires_at, submitted_reference, submitted_at
+               FROM onboarding_checks WHERE application_id = ? ORDER BY kind`,
             [Number(row['id'])],
         );
         const shaped: Check[] = checks.rows.map((c) => ({
@@ -226,8 +241,75 @@ export function createPublicApplicationsRouter({ client }: Deps): Router {
                without being told why is the thing people write in about. */
             decisionReason: String(row['decision_reason']),
             clearance: clearanceOf(shaped, todayIn(String(row['project_timezone']))),
-            checks: shaped.map((c) => ({ kind: c.kind, status: c.status })),
+            checks: shaped.map((c) => {
+                const row = checks.rows.find((r) => String(r['kind']) === c.kind);
+                return {
+                    kind: c.kind,
+                    status: c.status,
+                    /* Echoed back so the phone can show what was already sent
+                       rather than an empty box that looks like it failed. */
+                    submittedReference: String(row?.['submitted_reference'] ?? ''),
+                    submittedAt: row?.['submitted_at'] === null || row?.['submitted_at'] === undefined
+                        ? null : String(row['submitted_at']),
+                };
+            }),
         });
+    }));
+
+    /* What the applicant can supply themselves.
+     *
+     * IT DOES NOT VERIFY ANYTHING, and that is the whole design. Ticket 6.2
+     * says five artifacts are verified by a named person, and somebody typing
+     * their own certificate number is not that. This writes to its own
+     * columns, never touches `status`, `verified_by` or `verified_at`, and
+     * there is a test asserting a submission cannot turn a gate green.
+     *
+     * What it removes is the telephone call: staff verifying a training
+     * certificate need its number, and an applicant can type it at eleven at
+     * night rather than being rung for it tomorrow.
+     */
+    router.put('/api/me/application/checks/:kind', wrap(async (req, res) => {
+        const me = req.session.user;
+        if (!me) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+        const kind = String(req.params['kind']);
+        if (!(CHECK_KINDS as readonly string[]).includes(kind)) {
+            res.status(404).json({ error: `Unknown check. One of: ${CHECK_KINDS.join(', ')}` });
+            return;
+        }
+        const body = parse(Submit, req.body ?? {}, res);
+        if (!body) return;
+        if (body.reference === '' && body.note === '') {
+            res.status(400).json({ error: 'Invalid request', details: ['reference: say something, or a note'] });
+            return;
+        }
+
+        const rs = await run(
+            `SELECT a.id, a.status FROM driver_applications a
+              WHERE a.user_id = (SELECT id FROM users WHERE username = ?)
+              ORDER BY a.id DESC LIMIT 1`,
+            [me.username],
+        );
+        const application = rs.rows[0];
+        if (!application) { res.status(404).json({ error: 'You have no application on file.' }); return; }
+
+        const status = String(application['status']);
+        if (status !== 'submitted' && status !== 'in_review') {
+            /* An approved application has an account with a membership; a
+               rejected one is closed. Neither is a thing to keep filing
+               paperwork against. */
+            res.status(409).json({ error: `Your application is ${status}, so there is nothing to add to it.` });
+            return;
+        }
+
+        await run(
+            `UPDATE onboarding_checks
+                SET submitted_reference = ?, submitted_note = ?, submitted_at = ?
+              WHERE application_id = ? AND kind = ?`,
+            [body.reference, body.note, new Date().toISOString(), Number(application['id']), kind],
+        );
+        await req.audit('onboarding.submitted', 'driver_application', String(application['id']), { kind });
+        res.json({ ok: true, kind });
     }));
 
     return router;
@@ -315,6 +397,14 @@ export function createApplicationsRouter({ client }: { client: Client }): Router
                 reference: String(c['reference']),
                 expiresAt: c['expires_at'] === null ? null : String(c['expires_at']),
                 note: String(c['note']),
+                /* Nested rather than flattened alongside `reference`, so a
+                   screen cannot accidentally show what somebody claimed as
+                   though a colleague had checked it. */
+                submitted: c['submitted_at'] === null ? null : {
+                    reference: String(c['submitted_reference']),
+                    note: String(c['submitted_note']),
+                    at: String(c['submitted_at']),
+                },
             })),
         });
     }));

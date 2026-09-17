@@ -15,9 +15,12 @@ import { ApiError } from '../lib/http';
 
 interface Props {
     onSignedIn: (token: string) => void;
+    /** Ticket 7.2: signing up is a first-class thing to do from this screen,
+     *  not a link somebody has to be sent. */
+    onApply: () => void;
 }
 
-export function SignIn({ onSignedIn }: Props) {
+export function SignIn({ onSignedIn, onApply }: Props) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [busy, setBusy] = useState(false);
@@ -85,6 +88,10 @@ export function SignIn({ onSignedIn }: Props) {
             >
                 {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign in</Text>}
             </Pressable>
+
+            <Pressable style={styles.apply} onPress={onApply} accessibilityRole="button">
+                <Text style={styles.applyText}>Apply to drive for Izy</Text>
+            </Pressable>
         </View>
     );
 }
@@ -104,6 +111,8 @@ const styles = StyleSheet.create({
     },
     buttonOff: { opacity: 0.4 },
     buttonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
+    apply: { alignItems: 'center', paddingVertical: 20 },
+    applyText: { color: theme.green, fontSize: 15 },
     error: { backgroundColor: theme.dangerSoft, borderRadius: 10, padding: 14 },
     errorText: { color: theme.danger, fontSize: 15, lineHeight: 21 },
 });

@@ -168,6 +168,7 @@ const MATRIX = [
        the query is keyed on the session's username, so there is no id to
        change. Anybody without an application gets a 404. */
     ['GET', '/api/me/application', SIGNED_IN, 'my own application status'],
+    ['PUT', '/api/me/application/checks/nope', SIGNED_IN, 'what I can supply about myself, which verifies nothing'],
     ['DELETE', '/api/me/sessions/others', SIGNED_IN, 'sign out everywhere else'],
     ['DELETE', '/api/me/sessions/nope', SIGNED_IN, 'sign out one of mine'],
     ['GET', '/api/devices', SIGNED_IN, 'my enrolled phones'],

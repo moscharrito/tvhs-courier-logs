@@ -1,11 +1,17 @@
 /* The shell (ticket 7.1).
  *
- * Three screens and the state between them: signed out, picking a contract,
- * driving. Plain state rather than a navigation library, on purpose. Three
- * screens with one linear path do not need a router, and expo-router arrives
- * in 7.3 when the board, a stop and the request queue give it something to
- * route. A dependency added before it earns its place is a dependency nobody
- * can later argue with.
+ * Signed out, applying, waiting to be approved, picking a contract, driving.
+ * Plain state rather than a navigation library, on purpose: one linear path
+ * does not need a router, and expo-router arrives in 7.3 when the board, a
+ * stop and the request queue give it something to route. A dependency added
+ * before it earns its place is a dependency nobody can later argue with.
+ *
+ * AN APPLICANT WITH NO MEMBERSHIP LANDS ON THEIR APPLICATION, not on an
+ * empty list of contracts (ticket 7.2). Since the DoorDash change in 6.1 an
+ * account exists from the moment somebody applies and belongs to no project
+ * until they are approved, so "no projects" is the ordinary state of a real
+ * person waiting on us, not an error. Showing them a blank screen would be
+ * the app's way of saying nothing is happening.
  *
  * ONE PLACE DECIDES WHAT A DEAD CREDENTIAL MEANS. Every screen that touches
  * the API takes `onSignedOut` and calls it on a 401, and this is where that
@@ -21,6 +27,8 @@ import { theme } from './theme';
 import { clearToken, loadToken, saveToken } from './lib/session';
 import { signOut, type Project } from './lib/api';
 import { SignIn } from './screens/SignIn';
+import { Apply } from './screens/Apply';
+import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
 import { Run } from './screens/Run';
 
@@ -31,6 +39,10 @@ export function App() {
        somebody who is already signed in. */
     const [token, setToken] = useState<string | null | undefined>(undefined);
     const [project, setProject] = useState<Project | null>(null);
+    const [applying, setApplying] = useState(false);
+    /* Undefined until the project list comes back. Null once it has and there
+       is nothing on it, which is what sends somebody to their application. */
+    const [hasProjects, setHasProjects] = useState<boolean | undefined>(undefined);
 
     useEffect(() => {
         void loadToken().then((found) => setToken(found));
@@ -48,6 +60,8 @@ export function App() {
         const had = token;
         setToken(null);
         setProject(null);
+        setHasProjects(undefined);
+        setApplying(false);
         void clearToken();
         /* Best effort, and after the local sign-out. The point of telling the
            server is to revoke the row so the token cannot be replayed; the
@@ -69,9 +83,20 @@ export function App() {
         <View style={styles.root}>
             <StatusBar style="dark" />
             {token === null ? (
-                <SignIn onSignedIn={onSignedIn} />
+                applying
+                    ? <Apply onDone={() => setApplying(false)} onCancel={() => setApplying(false)} />
+                    : <SignIn onSignedIn={onSignedIn} onApply={() => setApplying(true)} />
+            ) : hasProjects === false ? (
+                /* Signed in, on no contract. Not an error: it is what every
+                   applicant looks like until somebody approves them. */
+                <Onboarding token={token} onSignedOut={onSignedOut} />
             ) : project === null ? (
-                <Projects token={token} onPick={setProject} onSignedOut={onSignedOut} />
+                <Projects
+                    token={token}
+                    onPick={setProject}
+                    onSignedOut={onSignedOut}
+                    onEmpty={() => setHasProjects(false)}
+                />
             ) : (
                 <Run
                     token={token}
