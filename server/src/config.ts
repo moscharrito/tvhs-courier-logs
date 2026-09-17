@@ -35,6 +35,8 @@ export interface Config {
          *  decided, and tracking refuses to record anything at all. */
         locationTraceDays: number | undefined;
     };
+    /** Seconds between unclaimed sweeps. Undefined means it does not run. */
+    sweepIntervalSeconds: number | undefined;
     db: {
         /** libsql:// (Turso) or file: URL */
         url: string;
@@ -116,6 +118,12 @@ const EnvSchema = z.object({
      * not years: see core/retention/policy.ts for why this category runs the
      * opposite way to every other one in that table. */
     RETENTION_LOCATION_TRACE_DAYS: z.coerce.number().int().min(1).max(400).optional(),
+    /* How often the unclaimed sweep runs (tickets 6.5 and 6.8). Unset means
+     * it does not run at all, and the promise that an unclaimed STAT is never
+     * nobody's problem holds only if somebody calls the endpoint. Running
+     * twice is harmless: the sweep works from the unassigned pool, so an
+     * order handed out by one run is not there for the next. */
+    SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(15).max(3600).optional(),
     /* Escape hatch for the check below: pointing a local process at a Turso
      * database on purpose, to inspect it or to rehearse a restore. */
     ALLOW_TURSO_OUTSIDE_PRODUCTION: boolish,
@@ -248,6 +256,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             embedMaps: e.UH_MAPS_EMBED,
         },
         retention: { locationTraceDays: e.RETENTION_LOCATION_TRACE_DAYS },
+        sweepIntervalSeconds: e.SWEEP_INTERVAL_SECONDS,
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
@@ -287,6 +296,9 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         mapEmbed: c.geo.embedMaps ? 'ON: patient addresses render on embedded Google maps' : 'off, directions link out',
         /* Printed at boot for the same reason as the map: it decides whether
          * a record of where an employee was all day exists at all. */
+        sweep: c.sweepIntervalSeconds === undefined
+            ? 'not running: unclaimed work is handed out only when somebody calls the endpoint'
+            : `every ${c.sweepIntervalSeconds}s`,
         tracking: c.retention.locationTraceDays === undefined
             ? 'off, no retention period decided'
             : `ON: courier tracks kept ${c.retention.locationTraceDays} days`,

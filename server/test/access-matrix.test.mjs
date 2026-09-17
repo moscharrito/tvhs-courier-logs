@@ -308,6 +308,15 @@ const MATRIX = [
     ['POST', `${UH}/tracking`, UH_STAFF_AND_COURIER, 'send my own fixes, only while on shift'],
     ['GET', `${UH}/tracking/live`, UH_STAFF, 'who is where, now, with the age of each fix'],
     ['GET', `${UH}/tracking/999999`, UH_STAFF, "one shift's track, and it writes an audit row"],
+
+    /* --- being told (ticket 6.8). Every member reads their own and only
+       their own: the query is keyed on the session, so there is no id to
+       change. A phone belongs to a person, so push devices are not scoped to
+       a project at all. */
+    ['GET', `${UH}/notifications`, UH_MEMBER, 'what I was told'],
+    ['POST', `${UH}/notifications/read`, UH_MEMBER, 'mark mine read'],
+    ['POST', '/api/me/push-devices', SIGNED_IN, 'this phone will take push'],
+    ['DELETE', '/api/me/push-devices/999999', SIGNED_IN, 'it will not any more'],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_STAFF, ''],

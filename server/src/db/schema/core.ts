@@ -550,3 +550,88 @@ export const shiftPositions = sqliteTable(
 );
 
 export type ShiftPosition = typeof shiftPositions.$inferSelect;
+
+/* Telling somebody something happened (ticket 6.8).
+ *
+ * AN OUTBOX, NOT A SEND CALL. The obvious version of this ticket is a
+ * function that talks to Firebase at the moment a request is approved. It is
+ * the wrong shape for three reasons that all show up on a bad day:
+ *
+ *   A push that was attempted and lost is indistinguishable from one that was
+ *   never attempted, unless there is a row. "Did dispatch tell me?" is a
+ *   question a courier will ask, and the only good answer is a record.
+ *
+ *   There is no app yet and no Firebase credentials. A send call would have
+ *   to be stubbed, and a stub is a thing that quietly stays.
+ *
+ *   The web app needs these too. A dispatcher approving a request while the
+ *   courier is on the web shell should not depend on a phone existing.
+ *
+ * So every notification is written here first and delivered afterwards, by
+ * whatever channels are configured. With none configured they sit unsent and
+ * are read in the app, which is the state this ships in.
+ */
+export const NOTIFICATION_KINDS = [
+    'request.approved',
+    'request.denied',
+    'request.superseded',
+    'work.assigned',
+    'work.unclaimed',
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+export const notifications = sqliteTable(
+    'notifications',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        /** Who it is for. A username rather than a user id, to match the rest
+         *  of the courier-facing tables. */
+        username: text('username').notNull(),
+        kind: text('kind').notNull(),
+        /** One line, already written for a person. Composed at the moment it
+         *  happened, because a template rendered a week later against changed
+         *  data says something that was never true. */
+        body: text('body').notNull(),
+        /** What it is about, for the app to deep-link into. */
+        orderId: integer('order_id'),
+        createdAt: text('created_at').notNull(),
+        /** When a channel took it. Null means nobody has, which is the state
+         *  while no push credentials exist. */
+        sentAt: text('sent_at'),
+        /** When the person actually saw it in the app. */
+        readAt: text('read_at'),
+    },
+    (t) => [
+        index('notifications_user_idx').on(t.projectId, t.username, t.createdAt),
+        index('notifications_unsent_idx').on(t.sentAt),
+    ],
+);
+
+export type Notification = typeof notifications.$inferSelect;
+
+/* A phone that has agreed to be told (ticket 6.8).
+ *
+ * Empty until the React Native app of phase 7 exists, and that is why the
+ * sender in core/notify is an interface with no implementation yet rather
+ * than a Firebase call with a TODO next to it. */
+export const pushDevices = sqliteTable(
+    'push_devices',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        username: text('username').notNull(),
+        platform: text('platform').notNull(),
+        /** The token the store's push service issued. Rotates; the unique
+         *  index is what stops one phone becoming three rows. */
+        token: text('token').notNull(),
+        createdAt: text('created_at').notNull(),
+        lastSeenAt: text('last_seen_at').notNull(),
+        revokedAt: text('revoked_at'),
+    },
+    (t) => [
+        unique('push_devices_token_unique').on(t.token),
+        index('push_devices_user_idx').on(t.username),
+    ],
+);
+
+export type PushDevice = typeof pushDevices.$inferSelect;

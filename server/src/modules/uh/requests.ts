@@ -62,6 +62,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { resolveSettings } from '../../core/projects/settings';
 import { todayIn } from '../../core/dates';
 import { assignToCourier } from './assign';
+import { notify, notifyAll, dispatchersOf } from '../../core/notify/outbox';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -300,9 +301,24 @@ export function createRequestsRouter({ client }: { client: Client }): Router {
            and those are different sentences to read on a phone. */
         const others = await run(
             `UPDATE delivery_requests SET status = 'superseded', decided_at = ?, decided_by = ?
-              WHERE project_id = ? AND order_id = ? AND status = 'pending' RETURNING id`,
+              WHERE project_id = ? AND order_id = ? AND status = 'pending' RETURNING id, courier_username`,
             [now, actorOf(req), project.id, orderId],
         );
+
+        await notify(client, {
+            projectId: project.id, username: courier, kind: 'request.approved', orderId,
+            body: `Approved: delivery ${orderId} is yours. It is on run ${result.runId}.`,
+        });
+        /* The superseded are told too, and told the true thing. "Somebody got
+           there first" is a different sentence from "no", and a courier who
+           reads the wrong one twice stops asking. */
+        for (const other of others.rows) {
+            await notify(client, {
+                projectId: project.id, username: String(other['courier_username']),
+                kind: 'request.superseded', orderId,
+                body: `Delivery ${orderId} went to somebody else this time. Nothing wrong with the request.`,
+            });
+        }
 
         await req.audit('request.approved', 'delivery_request', String(id), {
             courier, orderId, runId: result.runId, superseded: others.rows.length,
@@ -325,6 +341,11 @@ export function createRequestsRouter({ client }: { client: Client }): Router {
             "UPDATE delivery_requests SET status = 'denied', decided_at = ?, decided_by = ?, decision_reason = ? WHERE id = ?",
             [new Date().toISOString(), actorOf(req), body.reason, id],
         );
+        await notify(client, {
+            projectId: req.project!.id, username: String(row['courier_username']),
+            kind: 'request.denied', orderId: Number(row['order_id']),
+            body: `Not this time: ${body.reason}`,
+        });
         await req.audit('request.denied', 'delivery_request', String(id), { courier: String(row['courier_username']) });
         res.json({ ok: true });
     }));
@@ -487,8 +508,32 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
             [now.toISOString(), projectId, orderId],
         );
 
+        await notify(client, {
+            projectId, username: pick.courierUsername, kind: 'work.assigned', orderId,
+            body: `Delivery ${orderId} has been added to your run: a ${serviceType.toUpperCase()} nobody claimed, `
+                + `due in ${minutesToDue} minutes.`,
+        });
+
         assigned.push({ orderId, courierUsername: pick.courierUsername, serviceType, minutesToDue, runId: result.runId });
         pick.open += 1;
+    }
+
+    /* THE LOUD CASE. A STAT running out with nobody on shift is the one thing
+       the sweep cannot fix, and until now it was only visible to whoever read
+       the response. It goes to every dispatcher by name, because a problem
+       that lives in an HTTP body is a problem nobody is holding. */
+    if (unassignable.length > 0 && !input.dryRun) {
+        const worst = unassignable.reduce((a, b) => (a.minutesToDue <= b.minutesToDue ? a : b));
+        await notifyAll(client, await dispatchersOf(client, projectId), {
+            projectId,
+            kind: 'work.unclaimed',
+            orderId: worst.orderId,
+            body: unassignable.length === 1
+                ? `Nobody can take delivery ${worst.orderId}, a ${worst.serviceType.toUpperCase()} due in `
+                    + `${worst.minutesToDue} minutes. ${worst.reason}`
+                : `${unassignable.length} deliveries have nobody to take them. The tightest is ${worst.orderId}, a `
+                    + `${worst.serviceType.toUpperCase()} due in ${worst.minutesToDue} minutes. ${worst.reason}`,
+        });
     }
 
     return { serviceDate, assigned, unassignable, couriers };

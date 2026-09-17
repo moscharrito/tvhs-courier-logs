@@ -55,6 +55,7 @@ import { createApplicationsRouter, createPublicApplicationsRouter } from './core
 import { createShiftsRouter } from './modules/uh/shifts';
 import { createRequestsRouter } from './modules/uh/requests';
 import { createTrackingRouter } from './modules/uh/tracking';
+import { createNotificationsRouter, createPushDevicesRouter } from './core/notify/routes';
 import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createBoardRouter } from './modules/uh/board';
@@ -211,6 +212,8 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/shifts', requireProject, createShiftsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/requests', requireProject, createRequestsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/tracking', requireProject, createTrackingRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/notifications', requireProject, createNotificationsRouter({ client: database.client }));
+    legacy.app.use(createPushDevicesRouter({ client: database.client }));
 
     /* Driver applications (tickets 6.1 and 6.2). Two mount points, and the
        split is the security property: the public one takes a form from a

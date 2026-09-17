@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -177,29 +177,22 @@ describe('fresh database', () => {
             const idx = await database.client.execute("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name");
             expect(idx.rows.map((r) => r.name)).toEqual([
                 'audit_events_at_idx', 'audit_events_entity_idx', 'audit_events_project_id_idx', 'audit_events_user_id_idx',
-                'checkins_project_id_idx', 'client_events_created_idx', 'client_events_key_unique',
-                'custody_events_order_idx', 'custody_events_project_at_idx',
-                'daily_lists_project_date_idx', 'daily_lists_site_date_idx',
-                'delivery_requests_courier_idx', 'delivery_requests_one_pending_per_courier',
-                'delivery_requests_order_idx', 'delivery_requests_project_status_idx',
-                'devices_user_id_idx',
-                'discrepancies_project_date_idx', 'discrepancies_status_idx',
-                'driver_applications_project_idx', 'driver_applications_status_idx',
-                'files_key_unique', 'files_order_idx', 'files_project_status_idx',
-                'geo_usage_day_idx', 'geocodes_key_unique',
-                'import_mappings_site_unique',
-                'invoice_adjustments_invoice_idx', 'invoice_lines_invoice_idx', 'invoice_lines_invoice_order_unique',
-                'invoices_project_number_unique', 'invoices_project_period_idx',
-                'logs_project_id_idx', 'memberships_project_id_idx', 'memberships_user_project_unique',
-                'onboarding_checks_application_idx', 'onboarding_checks_application_kind_unique',
-                'orders_dedupe_idx', 'orders_list_idx', 'orders_project_date_idx', 'orders_site_date_idx', 'orders_status_idx',
-                'packages_order_idx', 'price_schedules_project_from_unique', 'projects_code_unique',
-                'report_sends_day_unique', 'retention_runs_ran_at_idx',
-                'run_stops_order_unique', 'run_stops_project_run_idx', 'run_stops_run_seq_idx', 'runs_courier_date_idx', 'runs_project_date_idx',
-                'sessions_user_id_idx', 'shift_positions_courier_at_idx', 'shift_positions_shift_at_idx',
-                'shifts_one_open_per_courier', 'shifts_project_courier_idx', 'shifts_started_idx',
-                'signatures_project_idx',
-                'sites_project_code_unique', 'sites_project_id_idx', 'zone_zips_project_zip_from_unique', 'zone_zips_project_zip_idx',
+                'checkins_project_id_idx', 'client_events_created_idx', 'client_events_key_unique', 'custody_events_order_idx',
+                'custody_events_project_at_idx', 'daily_lists_project_date_idx', 'daily_lists_site_date_idx', 'delivery_requests_courier_idx',
+                'delivery_requests_one_pending_per_courier', 'delivery_requests_order_idx', 'delivery_requests_project_status_idx', 'devices_user_id_idx',
+                'discrepancies_project_date_idx', 'discrepancies_status_idx', 'driver_applications_project_idx', 'driver_applications_status_idx',
+                'files_key_unique', 'files_order_idx', 'files_project_status_idx', 'geo_usage_day_idx',
+                'geocodes_key_unique', 'import_mappings_site_unique', 'invoice_adjustments_invoice_idx', 'invoice_lines_invoice_idx',
+                'invoice_lines_invoice_order_unique', 'invoices_project_number_unique', 'invoices_project_period_idx', 'logs_project_id_idx',
+                'memberships_project_id_idx', 'memberships_user_project_unique', 'notifications_unsent_idx', 'notifications_user_idx',
+                'onboarding_checks_application_idx', 'onboarding_checks_application_kind_unique', 'orders_dedupe_idx', 'orders_list_idx',
+                'orders_project_date_idx', 'orders_site_date_idx', 'orders_status_idx', 'packages_order_idx',
+                'price_schedules_project_from_unique', 'projects_code_unique', 'push_devices_token_unique', 'push_devices_user_idx',
+                'report_sends_day_unique', 'retention_runs_ran_at_idx', 'run_stops_order_unique', 'run_stops_project_run_idx',
+                'run_stops_run_seq_idx', 'runs_courier_date_idx', 'runs_project_date_idx', 'sessions_user_id_idx',
+                'shift_positions_courier_at_idx', 'shift_positions_shift_at_idx', 'shifts_one_open_per_courier', 'shifts_project_courier_idx',
+                'shifts_started_idx', 'signatures_project_idx', 'sites_project_code_unique', 'sites_project_id_idx',
+                'zone_zips_project_zip_from_unique', 'zone_zips_project_zip_idx',
             ]);
             const triggers = await database.client.execute("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name");
             expect(triggers.rows.map((r) => r.name)).toEqual([

@@ -99,6 +99,39 @@ export async function assignToCourier(client: Client, input: AssignInput): Promi
         createdRun = true;
     }
 
+    /* THE CLAIM GOES FIRST, AND THAT ORDERING IS LOAD-BEARING.
+     *
+     * The obvious sequence is: record the custody event, then insert the
+     * stop. It is wrong under concurrency, and the sweep made it happen for
+     * real. Two sweeps running at once, which is exactly what two Render
+     * instances do, both read the unassigned pool, both see this order, and
+     * both get past the check above. The first inserts its stop; the second
+     * hits `run_stops.project_id, order_id` UNIQUE and throws, having ALREADY
+     * written an 'assigned' custody event for a courier who does not have it.
+     * An append-only table cannot take that back.
+     *
+     * So the unique index is used as the lock it already is. Inserting the
+     * stop is the claim; losing that race is an ordinary answer, not an
+     * exception; and the custody event is only written by whoever won.
+     */
+    const count = await client.execute({
+        sql: 'SELECT COUNT(*) AS n FROM run_stops WHERE project_id = ? AND run_id = ?',
+        args: [projectId, runId],
+    });
+    try {
+        await client.execute({
+            sql: 'INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES (?, ?, ?, ?)',
+            args: [projectId, runId, orderId, Number(count.rows[0]?.['n'] ?? 0) + 1],
+        });
+    } catch {
+        /* Somebody claimed it between the check above and this line. */
+        return {
+            ok: false,
+            code: 'stop.taken',
+            error: `Order ${orderId} was taken by somebody else a moment ago.`,
+        };
+    }
+
     /* THE LINE THAT MATTERS. The transition table decides whether this order
        may be assigned at all, and writes the custody row if it may. */
     try {
@@ -110,20 +143,18 @@ export async function assignToCourier(client: Client, input: AssignInput): Promi
             event: { type: 'assigned', at: new Date(), courierUsername },
         });
     } catch (err) {
+        /* The claim has to come back off, or the order is on a run with no
+           custody event saying how it got there, which is the inconsistency
+           this whole module exists to prevent. */
+        await client.execute({
+            sql: 'DELETE FROM run_stops WHERE project_id = ? AND order_id = ?',
+            args: [projectId, orderId],
+        });
         if (err instanceof TransitionError) {
             return { ok: false, code: err.code, error: err.message };
         }
         throw err;
     }
-
-    const count = await client.execute({
-        sql: 'SELECT COUNT(*) AS n FROM run_stops WHERE project_id = ? AND run_id = ?',
-        args: [projectId, runId],
-    });
-    await client.execute({
-        sql: 'INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES (?, ?, ?, ?)',
-        args: [projectId, runId, orderId, Number(count.rows[0]?.['n'] ?? 0) + 1],
-    });
 
     return { ok: true, runId, createdRun };
 }
