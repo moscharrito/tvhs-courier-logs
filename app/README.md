@@ -49,6 +49,20 @@ Apply to drive, sign in, see what onboarding is outstanding, pick a contract,
 and then three tabs: today's run, work going, and what you asked for. That is
 7.1, 7.2 and 7.3.
 
+**Background location is the only reason this is native at all** (7.4).
+Everything else the app does, the PWA already did: install to the home screen,
+work offline, use the camera, read a position when asked. What a web app
+cannot do on iOS, and will not be able to, is report a position while it is in
+the background. That single requirement is what made this React Native rather
+than a saved bookmark, and it is worth remembering when somebody asks why
+there are two front ends.
+
+Tracking starts and stops with the shift, on the same tap, and the screen says
+which state it is in at all times. **It records nothing until somebody sets
+`RETENTION_LOCATION_TRACE_DAYS` on the server**, because there is no agreed
+period to keep it for; the app treats that answer as a permanent stop rather
+than something to retry.
+
 **No router, and that is a change of mind worth recording.** 7.1 said
 expo-router would arrive in 7.3 once there was something to route. Having
 built it, there is not: the three tabs have no history, no back stack, no deep

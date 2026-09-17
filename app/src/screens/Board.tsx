@@ -20,6 +20,18 @@
  * ON SHIFT TO ASK. A request from somebody who is not working is one dispatch
  * cannot honour, so the shift control is on this screen rather than buried:
  * it is the first thing that has to be true.
+ *
+ * AND GOING ON SHIFT IS WHAT STARTS LOCATION TRACKING (ticket 7.4). The two
+ * are deliberately the same tap: a courier should never have to wonder
+ * whether the thing that follows them is running, and separating them would
+ * create a state where they are working and not tracked, or tracked and not
+ * working. The second is the one that matters.
+ *
+ * The banner under the button says which it is, in words, at all times. That
+ * is not decoration. A driver is entitled to know whether their employer is
+ * recording where they are without going looking for it, and the platforms
+ * agree: iOS shows its own indicator and Android requires a permanent
+ * notification. This is ours.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -28,6 +40,8 @@ import { theme } from '../theme';
 import { askFor, availableWork, endShift, myShift, startShift, type AvailableWork, type ShiftState } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { byUrgency, countdown, selectionState, toggle, whereLabel } from '../lib/work';
+import { trackingState, type StopReason } from '../lib/trace';
+import { askPermission, permissionState, startTracking, stoppedBecause, stopTracking, type PermissionState } from '../lib/tracking';
 
 interface Props {
     token: string;
@@ -43,6 +57,8 @@ export function Board({ token, code, onSignedOut }: Props) {
     const [note, setNote] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [permission, setPermission] = useState<PermissionState>('undetermined');
+    const [stopped, setStopped] = useState<StopReason | null>(null);
 
     const load = useCallback(async () => {
         setError(null);
@@ -58,6 +74,13 @@ export function Board({ token, code, onSignedOut }: Props) {
 
     useEffect(() => { void load(); }, [load]);
 
+    /* Asked, never requested, on mount. Prompting for "always" location the
+       moment somebody opens a screen is the request people refuse. */
+    useEffect(() => {
+        void permissionState().then(setPermission);
+        setStopped(stoppedBecause());
+    }, []);
+
     const onShift = shift?.shift !== null && shift?.shift !== undefined;
     const state = selectionState(selected, onShift);
 
@@ -66,7 +89,22 @@ export function Board({ token, code, onSignedOut }: Props) {
         setError(null);
         setNote(null);
         try {
-            if (onShift) await endShift(token, code); else await startShift(token, code);
+            if (onShift) {
+                await endShift(token, code);
+                /* Stopped before the reload, so there is no window where the
+                   shift is over and the phone is still reporting. */
+                await stopTracking('notOnShift');
+                setStopped(null);
+            } else {
+                await startShift(token, code);
+                /* Asked here, not on mount: this is the moment it makes sense
+                   to a courier, which is the moment they are most likely to
+                   agree to it. */
+                const granted = permission === 'granted' ? permission : await askPermission();
+                setPermission(granted);
+                if (granted === 'granted') await startTracking(code);
+                setStopped(stoppedBecause());
+            }
             await load();
         } catch (err) {
             if (isUnauthorized(err)) { onSignedOut(); return; }
@@ -129,6 +167,11 @@ export function Board({ token, code, onSignedOut }: Props) {
                         {onShift ? 'On shift. Tap to finish' : 'Go on shift'}
                     </Text>
                 </Pressable>
+
+                {/* Always shown, in every state. See the header. */}
+                <Text style={styles.tracking}>
+                    {trackingState({ onShift, permission, stopped }).text}
+                </Text>
 
                 {shift !== null && shift.carrying.length > 0 && (
                     <Text style={styles.carrying}>
@@ -215,6 +258,7 @@ const styles = StyleSheet.create({
     shiftOn: { backgroundColor: theme.greenSoft },
     shiftText: { color: theme.green, fontSize: 16, fontWeight: '600' },
     shiftTextOn: { color: theme.green },
+    tracking: { fontSize: 13, color: theme.muted, marginBottom: 10, paddingHorizontal: 4, lineHeight: 19 },
     carrying: { fontSize: 13, color: theme.muted, marginBottom: 12, paddingHorizontal: 4 },
     card: {
         backgroundColor: theme.card, borderWidth: 1, borderColor: theme.line,

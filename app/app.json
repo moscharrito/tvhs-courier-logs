@@ -7,8 +7,36 @@
     "scheme": "izycourier",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": false, "bundleIdentifier": "com.izyglobalservices.courier" },
-    "android": { "package": "com.izyglobalservices.courier" },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.izyglobalservices.courier",
+      "infoPlist": {
+        "UIBackgroundModes": ["location"],
+        "NSLocationWhenInUseUsageDescription": "Dispatch shows your position on the board while you are on shift, so they can tell whether a delivery is going to make its deadline.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Dispatch shows your position on the board while you are on shift, including when the app is in the background. Tracking starts when you go on shift and stops when you finish. It is never recorded outside a shift.",
+        "NSLocationAlwaysUsageDescription": "Dispatch shows your position on the board while you are on shift. Tracking starts when you go on shift and stops when you finish."
+      }
+    },
+    "android": {
+      "package": "com.izyglobalservices.courier",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true,
+          "locationAlwaysAndWhenInUsePermission": "Dispatch shows your position on the board while you are on shift, including when the app is in the background. Tracking starts when you go on shift and stops when you finish."
+        }
+      ]
+    ],
     "extra": {
       "apiBaseUrl": "http://127.0.0.1:3100"
     }
