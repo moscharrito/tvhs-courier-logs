@@ -17,6 +17,25 @@ import type { Client, InValue } from '@libsql/client';
 import type { Config } from '../../config';
 
 export const COOKIE_NAME = 'izy_sid';
+
+/* A native app asks for its credential in the response body instead of a
+ * cookie, by sending this header on the login request (ticket 7.1).
+ *
+ * WHY NOT JUST USE COOKIES. React Native's fetch does have a cookie jar on
+ * both platforms, so the lazy answer works on a good day. It is the wrong
+ * answer anyway: that jar is shared process-wide, its persistence across app
+ * restarts differs between iOS and Android, nothing in the app can see
+ * whether a credential is present, and there is no way to put it in the
+ * Keychain where a credential belongs. An explicit token the app holds and
+ * stores deliberately is the shape every other mobile client uses.
+ *
+ * WHY NOT GIVE THE TOKEN TO EVERYBODY. The web shell does not need it and
+ * must not have it: a session token in a JSON body can land in a log, a
+ * service-worker cache, or localStorage the first time somebody is clever.
+ * So the body carries it only when asked, and when it is asked for, NO COOKIE
+ * IS SET. One credential per client, and the client says which it wants. */
+export const NATIVE_CLIENT_HEADER = 'x-izy-client';
+export const NATIVE_CLIENT_VALUE = 'app';
 const TOUCH_INTERVAL_MS = 60 * 1000;
 
 export interface SessionUser {
@@ -31,6 +50,11 @@ export interface SessionUser {
 export interface RequestSession {
     id: string | null;
     user: SessionUser | null;
+    /** The raw token, present for one request only and only when a native
+     *  client asked for it (NATIVE_CLIENT_HEADER). The login handler reads it
+     *  into its response and nothing else ever should: this is the one place
+     *  in the process where a live session token is in memory in the clear. */
+    token?: string;
 }
 
 export interface SessionControls {
@@ -86,6 +110,17 @@ export function deviceLabel(userAgent: string | undefined): string {
     const os = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'Other';
     const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
     return `${browser} on ${os}`;
+}
+
+/** The token out of an `Authorization: Bearer <token>` header, or null.
+ *
+ *  Deliberately strict: the scheme must be exactly "Bearer", case-insensitive,
+ *  with one space and a non-empty token. A loose parser here is how a header
+ *  somebody typed by hand starts working and then stops. */
+export function bearerToken(header: string | undefined): string | null {
+    if (!header) return null;
+    const match = /^Bearer[ ]+(\S+)$/i.exec(header.trim());
+    return match ? match[1]! : null;
 }
 
 export function readCookie(header: string | undefined, name: string): string | null {
@@ -204,6 +239,11 @@ export class SessionStore {
     }
 }
 
+/** Whether this caller asked for its credential in the body (ticket 7.1). */
+export function wantsToken(req: Request): boolean {
+    return (req.get(NATIVE_CLIENT_HEADER) ?? '').trim().toLowerCase() === NATIVE_CLIENT_VALUE;
+}
+
 export function createSessionMiddleware(deps: Deps): { middleware: RequestHandler; store: SessionStore } {
     const store = new SessionStore(deps);
     const secure = deps.config.isProduction;
@@ -218,6 +258,13 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
             create: async (user: SessionUser, deviceId?: string | null) => {
                 const { token, absoluteExpiresAt } = await store.create(user, { userAgent: req.get('user-agent'), ip: req.ip, deviceId: deviceId ?? null });
                 req.session = { id: hash(token), user: { id: user.id, username: user.username, name: user.name, role: user.role, route: user.route } };
+                if (wantsToken(req)) {
+                    /* The app holds it and puts it in the Keychain. No cookie
+                       at all: see NATIVE_CLIENT_HEADER for why one credential
+                       per client rather than two. */
+                    req.session.token = token;
+                    return;
+                }
                 res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: 'lax', secure, path: '/', expires: absoluteExpiresAt });
             },
             destroy: async () => {
@@ -227,13 +274,21 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
             },
         };
 
-        const token = readCookie(req.get('cookie'), COOKIE_NAME);
+        /* Either credential, never both preferred silently. A bearer token
+           is checked first because a native client that sent one meant it;
+           falling back to a cookie it did not know it had would make an
+           expired token look like a working session. */
+        const bearer = bearerToken(req.get('authorization'));
+        const token = bearer ?? readCookie(req.get('cookie'), COOKIE_NAME);
         if (!token) return next();
 
         try {
             const found = await store.resolve(token);
             if (!found) {
-                clearCookie(res);
+                /* Only a cookie is worth clearing. Clearing one because a
+                   bearer token expired would sign out a browser that happens
+                   to share this connection. */
+                if (bearer === null) clearCookie(res);
                 return next();
             }
             const { id, user } = found;

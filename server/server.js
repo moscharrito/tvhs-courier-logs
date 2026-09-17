@@ -285,8 +285,19 @@ async function loginSession(req, user) {
     await req.sessions.create({ id: user.id, username: user.username, name: user.name, role: user.role, route: user.route });
     const method = req.path === '/api/login' ? 'password'
         : req.path === '/api/login/pin' ? 'pin' : 'pin_setup';
-    await req.audit('auth.login', 'user', user.username, { method, role: user.role });
-    return req.session.user;
+    await req.audit('auth.login', 'user', user.username, {
+        method, role: user.role,
+        /* Which kind of credential was issued, because "was that a phone or a
+           browser" is the first question about any session in the log. */
+        client: req.session.token ? 'app' : 'web',
+    });
+    /* The token is present only when a native client asked for it, and it
+       replaces the cookie rather than joining it. See NATIVE_CLIENT_HEADER in
+       src/core/auth/sessions.ts. A web caller gets exactly what it got
+       before, with no token anywhere in the body. */
+    return req.session.token
+        ? { ...req.session.user, token: req.session.token }
+        : req.session.user;
 }
 
 /* Failed-attempt throttling (src/core/auth/throttle.ts), shared with the

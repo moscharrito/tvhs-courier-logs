@@ -66,9 +66,12 @@ describe('what gets recorded', () => {
         await srv.agent().post('/api/login/pin').send({ route: 'southbound', pin: '0000' });
         expect(await last('auth.login_failed')).toMatchObject({ entity: 'route', entity_id: 'southbound', detail: { method: 'pin', reason: 'no_pin' } });
         await srv.agent().post('/api/login/pin/setup').send({ route: 'southbound', password: srv.creds.south.password, pin: '4444' });
-        expect((await last('auth.login')).detail).toEqual({ method: 'pin_setup', role: 'driver' });
+        /* `client` since ticket 7.1: a bearer token for the app, a cookie for
+           the web, and "was that a phone or a browser" is the first question
+           anybody asks about a session in this log. */
+        expect((await last('auth.login')).detail).toEqual({ method: 'pin_setup', role: 'driver', client: 'web' });
         await srv.agent().post('/api/login/pin').send({ route: 'southbound', pin: '4444' });
-        expect((await last('auth.login')).detail).toEqual({ method: 'pin', role: 'driver' });
+        expect((await last('auth.login')).detail).toEqual({ method: 'pin', role: 'driver', client: 'web' });
     });
 
     it('project-scoped writes carry the project id: check-in, log save, log clear', async () => {

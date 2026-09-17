@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Izy Courier",
+    "slug": "izy-courier",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "izycourier",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.izyglobalservices.courier" },
+    "android": { "package": "com.izyglobalservices.courier" },
+    "extra": {
+      "apiBaseUrl": "http://127.0.0.1:3100"
+    }
+  }
+}
