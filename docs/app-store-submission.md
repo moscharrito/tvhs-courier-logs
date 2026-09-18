@@ -123,7 +123,21 @@ neither, by design (ticket 6.4).
 Things that are done:
 
 - [x] Permission strings that say what the feature does, not "to improve your
-      experience" (`app.json`, and the `expo-location` plugin)
+      experience" (`app.json`, and the `expo-location` plugin). **The two
+      sources are now byte-identical on purpose:** `infoPlist` and the plugin
+      props both set the three `NSLocation*` keys, they disagreed in wording,
+      and `expo prebuild --platform ios` cannot run on Windows so nothing here
+      can prove which one wins. Confirm the built Info.plist on a Mac or from
+      an EAS build before submitting
+- [x] Expo SDK 57, `targetSdkVersion` 36. **This was not on the list and
+      should have been.** The app was on SDK 52, from November 2024: too old
+      to install on a current Expo Go, and below the Play Store's rolling
+      target-API requirement, so it could not have been submitted at all.
+      Verified by `expo prebuild` rather than assumed
+- [x] `NSMotionUsageDescription` is deliberately omitted
+      (`motionUsagePermission: false`). The plugin adds it by default, and a
+      permission string for motion data would have contradicted the table
+      above, which says we do not collect it
 - [x] Background modes declared for iOS, foreground service for Android
 - [x] A release build refuses to point at localhost or plain HTTP (ticket 7.6)
 - [x] Tracking scoped to a shift, enforced on the server, not only in the app

@@ -1,7 +1,11 @@
 {
+    "extends": "expo/tsconfig.base",
     "compilerOptions": {
         "target": "ESNext",
-        "lib": ["ESNext", "DOM"],
+        "lib": [
+            "ESNext",
+            "DOM"
+        ],
         "jsx": "react-jsx",
         "module": "ESNext",
         "moduleResolution": "bundler",
@@ -16,7 +20,13 @@
         "skipLibCheck": true,
         "resolveJsonModule": true,
         "noEmit": true,
-        "types": ["react"]
+        "types": [
+            "react"
+        ]
     },
-    "include": ["index.ts", "src/**/*.ts", "src/**/*.tsx"]
+    "include": [
+        "index.ts",
+        "src/**/*.ts",
+        "src/**/*.tsx"
+    ]
 }

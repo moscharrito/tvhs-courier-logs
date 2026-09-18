@@ -1,0 +1,15 @@
+node_modules/
+
+# Expo's local scratch directory. devices.json holds identifiers for the
+# phones that have connected to this machine's dev server, which is nobody
+# else's business and changes per developer.
+.expo/
+
+# Native projects, if `expo prebuild` is ever run. They are generated from
+# app.json and app.config.ts, and committing them means two sources of truth
+# for the same settings.
+/android/
+/ios/
+
+# Bundles from `expo export`.
+/dist/

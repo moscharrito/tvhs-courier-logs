@@ -1,6 +1,9 @@
 # The driver app
 
-Expo, TypeScript, iOS and Android from one codebase. Ticket 7.1.
+Expo SDK 57, React Native 0.86, React 19, TypeScript. iOS and Android from
+one codebase. Ticket 7.1, upgraded from SDK 52 when it turned out SDK 52
+could not be installed on a current Expo Go and would not have passed a
+Play Store target-API check.
 
 ```bash
 cd app
@@ -8,6 +11,13 @@ npm install
 npm run typecheck
 npm test
 npm start          # then scan the QR with Expo Go
+```
+
+`npm start` needs the server reachable from the phone, which means the
+laptop's LAN address and not localhost:
+
+```bash
+EXPO_PUBLIC_API_URL=http://192.168.1.x:3000 npm start
 ```
 
 ## It is outside the root npm workspaces, on purpose
@@ -42,6 +52,49 @@ is a Windows machine with no Android SDK and no way to build for iOS.
 
 So the app in this ticket **has been typechecked and never run**. That is the
 honest state of it, and it is the reason 7.1 stops where it does.
+
+## What the SDK 57 upgrade could and could not verify here
+
+"Typechecked and never run" hid a real defect for three tickets:
+`app.config.ts` imported a TypeScript module, Expo's config loader can only
+require plain JavaScript, and so **every build failed at startup** while
+typecheck and 102 tests stayed green. Bundling is now part of checking this
+app, not an afterthought.
+
+**Verified on this machine, against SDK 57:**
+
+- `npx expo export --platform android` bundles: 731 modules.
+- `npx expo-doctor`: 21 of 21 checks pass.
+- Typecheck under TypeScript 6, and all 102 tests.
+- The release-build guard in `src/lib/apiUrl.cjs` refuses an unset URL, a
+  localhost URL and a plain-HTTP URL against a real export, and builds with
+  a good one.
+- `npx expo prebuild --platform android` produces a manifest carrying
+  `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE` and
+  `FOREGROUND_SERVICE_LOCATION`, and `expo-location` contributes the
+  `LocationTaskService` with `foregroundServiceType="location"`.
+- `targetSdkVersion` is 36, which is what a current Play Store submission
+  needs.
+
+**NOT verified here, and it needs saying:**
+
+- **The iOS Info.plist.** `expo prebuild --platform ios` refuses to run on
+  Windows, so nothing on this machine can show what permission strings
+  actually land in the built app. The App Store reviewer reads those
+  strings, so they matter.
+  
+  Mitigated rather than left to chance: the three `NSLocation*` values in
+  `app.json`'s `infoPlist` and the three matching `expo-location` plugin
+  props are now **byte-identical**, so whichever source Expo applies last,
+  the text is the one in `docs/app-store-submission.md`. Check it on a Mac
+  or on an EAS build before submitting anyway.
+
+- **Anything on a device.** No emulator, no Mac. Background location, the
+  Keychain and the signature pad have still never executed.
+
+- **iOS Expo Go.** Not a gap in this project: Apple does not allow
+  sideloading older versions, so only the current Expo Go installs, which is
+  the reason the SDK had to move.
 
 ## What the app does
 
