@@ -4,3 +4,8 @@ dist/
 .DS_Store
 
 # Local databases and secrets live under server/ (see server/.gitignore)
+
+# Basic-auth credential for the ttyd terminal in .claude/launch.json. It is
+# generated on first run and must never be committed: launch.json is tracked,
+# which is exactly why the secret lives in its own file and not in there.
+.claude/ttyd-credential
