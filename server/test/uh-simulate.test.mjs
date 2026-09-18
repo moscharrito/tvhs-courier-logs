@@ -181,8 +181,20 @@ describe('a simulated day', () => {
         expect(board.body.summary.total).toBe(40);
         expect(board.body.lanes.length).toBe(4);
         expect(board.body.activity.length).toBeGreaterThan(0);
-        // The board's position comes from events, and the simulation sends them.
-        expect(board.body.lanes.some((l) => l.courier.position !== null)).toBe(true);
+
+        /* This used to assert that some lane carried a position, and it was a
+           time bomb. The simulated day is a fixed date, 2026-09-16, while the
+           board looks back POSITION_WINDOW_HOURS (12) from now for a position,
+           on purpose: a position from yesterday says nothing about where a van
+           is today. So the assertion passed while the calendar was near that
+           date and started failing once it was not, reporting a bug in code
+           that was behaving exactly as designed.
+
+           The rule is the thing worth asserting, and this is it: a day older
+           than the window shows no positions at all rather than drawing a dot
+           where a courier was last Wednesday. Live positions, fresh and stale,
+           are covered in uh-board.test.mjs where the clock is controlled. */
+        expect(board.body.lanes.every((l) => l.courier.position === null)).toBe(true);
     });
 });
 

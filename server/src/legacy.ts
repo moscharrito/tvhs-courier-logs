@@ -210,7 +210,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/invoices', requireProject, createInvoicesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/files', requireProject, idempotent, createFilesRouter({ client: database.client, storage: fileStorage }));
     legacy.app.use('/api/projects/:pid/uh/shifts', requireProject, createShiftsRouter({ client: database.client }));
-    legacy.app.use('/api/projects/:pid/uh/requests', requireProject, createRequestsRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/requests', requireProject, createRequestsRouter({ client: database.client, config }));
     legacy.app.use('/api/projects/:pid/uh/tracking', requireProject, createTrackingRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/notifications', requireProject, createNotificationsRouter({ client: database.client }));
     legacy.app.use(createPushDevicesRouter({ client: database.client }));

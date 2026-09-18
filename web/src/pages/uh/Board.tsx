@@ -27,6 +27,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
+import { Requests } from './Requests';
 
 const POLL_MS = 15_000;
 
@@ -292,6 +293,13 @@ export function Board() {
                     <span className={s.overdue > 0 ? 'izy-stat-bad' : undefined}><b>{s.overdue}</b> overdue</span>
                 </div>
             </div>
+
+            {/* Above the pool, deliberately. Everything below this line is
+                work sitting still; this is the only thing on the board with
+                a courier standing still behind it, waiting to be told yes or
+                no. Staff only, so a courier who reaches /board directly does
+                not fire a request the server will refuse. */}
+            {project.role === 'admin' && <Requests projectCode={code} timezone={data.timezone} />}
 
             <div className="izy-board">
                 <section className="izy-card izy-pool" aria-label="Unassigned pool">

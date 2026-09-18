@@ -72,6 +72,12 @@ const routes = (over = {}) => ({
     'GET /api/projects/uh/uh/sites': sites,
     // Wildcard: the board refetches with a query string when filtered.
     'GET /api/projects/uh/uh/board*': boardData(),
+    /* The requests card above the pool (ticket 8.2) is part of the board
+       now. Without this it fails to load and puts its own alert on the
+       page, which is then the alert these tests find instead of the
+       board's. Empty by default: what it does with a queue is its own
+       file's business. */
+    'GET /api/projects/uh/uh/requests?status=pending': { requests: [], sweep: { automatic: false, everySeconds: null } },
     ...over,
 });
 

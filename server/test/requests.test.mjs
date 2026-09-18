@@ -289,4 +289,16 @@ describe('what nobody asks for', () => {
         expect(Array.isArray(res.body.assigned)).toBe(true);
         expect(Array.isArray(res.body.couriers)).toBe(true);
     });
+
+    it('tells the queue whether the clock is actually running (8.2)', async () => {
+        /* A dispatcher looking at a button that hands out deliveries has no
+           other way to tell whether it also happens on its own, and the two
+           readings lead to opposite behaviour: one person presses it every
+           ten minutes for nothing, the next assumes it is automatic and a
+           STAT sits there. SWEEP_INTERVAL_SECONDS is unset in the test
+           environment, as it is everywhere else today. */
+        const res = await admin.get(`${REQ}?status=pending`);
+        expect(res.status).toBe(200);
+        expect(res.body.sweep).toEqual({ automatic: false, everySeconds: null });
+    });
 });

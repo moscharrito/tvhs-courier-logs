@@ -63,6 +63,7 @@ import { resolveSettings } from '../../core/projects/settings';
 import { todayIn } from '../../core/dates';
 import { assignToCourier } from './assign';
 import { notify, notifyAll, dispatchersOf } from '../../core/notify/outbox';
+import type { Config } from '../../config';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -98,7 +99,7 @@ export const SWEEP_THRESHOLDS: Record<string, number> = {
     scheduled: 60,
 };
 
-export function createRequestsRouter({ client }: { client: Client }): Router {
+export function createRequestsRouter({ client, config }: { client: Client; config?: Config }): Router {
     const router = Router({ mergeParams: true });
     const run = (sql: string, args: InValue[] = []) => client.execute({ sql, args });
     const staff = requireProjectRole('admin');
@@ -258,6 +259,19 @@ export function createRequestsRouter({ client }: { client: Client }): Router {
                 courierUsername: String(r['courier_username']),
                 recipientName: String(r['recipient_name']),
             })),
+            /* Whether the clock in ticket 6.8 is actually running.
+             *
+             * A dispatcher looking at a Hand out unclaimed work button has no
+             * way to tell whether it also happens on its own, and the two
+             * readings lead to opposite behaviour: one person presses it every
+             * ten minutes for no reason, the next assumes it is automatic and
+             * a STAT sits there. SWEEP_INTERVAL_SECONDS is unset in every
+             * environment today, so the honest answer on screen is "only when
+             * you press it". */
+            sweep: {
+                automatic: config?.sweepIntervalSeconds !== undefined,
+                everySeconds: config?.sweepIntervalSeconds ?? null,
+            },
         });
     }));
 
