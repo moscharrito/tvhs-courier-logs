@@ -21,7 +21,8 @@
     "reconcile": "tsx scripts/reconcile.mjs",
     "loadtest": "tsx scripts/load-test.mjs",
     "restore:check": "tsx scripts/restore-check.mjs",
-    "restore:drill": "tsx scripts/restore-drill.mjs"
+    "restore:drill": "tsx scripts/restore-drill.mjs",
+    "clear:rehearsal": "tsx scripts/clear-rehearsal.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

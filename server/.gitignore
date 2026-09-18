@@ -6,3 +6,15 @@ courier_logs.db-shm
 test/.tmp/
 # Throwaway databases for docs/day-rehearsal.md
 rehearsal/
+
+# Any copy of the local database, however it is named. The bare filename was
+# listed and every backup of it was not, which is how
+# courier_logs.db.before-migrate-20260914-234542 ended up committed in
+# bb7c54e: 888KB of local database, with two real drivers' email addresses
+# and their bcrypt hashes in it. A glob, so the next one cannot repeat it.
+courier_logs.db*
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
