@@ -40,6 +40,7 @@ import { useAuth } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
+import { Standing } from './Standing';
 
 /* Mirrors CHECK_KINDS in server/src/core/onboarding/clearance.ts, which is
    the source of truth. Duplicated rather than fetched because these five are
@@ -198,6 +199,12 @@ export function Applications() {
                     {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
                 </div>
             )}
+
+            {/* Above the queue, deliberately. A courier whose insurance
+                lapsed last month is already carrying medication today;
+                somebody in the queue is waiting. The one that is already
+                happening goes first. */}
+            <Standing projectCode={code} />
 
             <Section
                 id="uh.applications"

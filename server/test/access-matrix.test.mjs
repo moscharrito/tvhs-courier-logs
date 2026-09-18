@@ -200,6 +200,10 @@ const MATRIX = [
      * flow, including the approval that does create an account, is staff. */
     ['POST', '/api/driver-applications', EVERYONE, 'apply to drive: public, and creates nothing that can sign in'],
     ['GET', `${UH_PROJECT}/driver-applications`, UH_STAFF, 'the application queue'],
+    /* Named before '/:id' in this list for the same reason it is mounted
+       before it: the report is not an application and must not be reachable
+       as one. */
+    ['GET', `${UH_PROJECT}/driver-applications/standing`, UH_STAFF, 'who is about to lapse: names every courier and their paperwork'],
     ['GET', `${UH_PROJECT}/driver-applications/999999`, UH_STAFF, 'one application'],
     ['PUT', `${UH_PROJECT}/driver-applications/999999/checks/nope`, UH_STAFF, 'record an onboarding check'],
     ['POST', `${UH_PROJECT}/driver-applications/999999/approve`, UH_STAFF, 'approve: the only door to an account'],

@@ -86,6 +86,15 @@ function renderAs(role: string, routes: Record<string, unknown> = {}) {
         'GET /api/session': p.session,
         'GET /api/me/projects': p.projects,
         'GET /api/projects/uh/driver-applications?status=submitted': { applications: [row()] },
+        /* The standing report above the queue (ticket 8.4) is part of this
+           page now. Clear by default: with something wrong it raises its own
+           alert, which would then be the alert these tests find instead of
+           the one the approval refusal put there. What it does with a lapsed
+           courier is its own file's business. */
+        'GET /api/projects/uh/driver-applications/standing?withinDays=30': {
+            on: '2026-09-17', horizonDays: 30, lapsed: [], soon: [], neverOnboarded: [],
+            clearCount: 0, why: 'Every onboarding check is recorded and current.',
+        },
         'GET /api/projects/uh/driver-applications/41': detail(),
         ...routes,
     });

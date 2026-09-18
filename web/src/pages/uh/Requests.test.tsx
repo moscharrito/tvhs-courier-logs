@@ -18,6 +18,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../app/auth';
 import { App } from '../../app/App';
 import { mockFetch } from '../../test/setup';
+import type { SweepState } from './Requests';
 
 const session = { id: 3, username: 'u.admin', name: 'U Admin', role: 'staff', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
@@ -39,7 +40,7 @@ const board = {
     pool: [], lanes: [], activity: [], couriers: [], idleCouriers: [],
 };
 
-function renderBoard(routes: Record<string, unknown> = {}, sweep = { automatic: false, everySeconds: null }) {
+function renderBoard(routes: Record<string, unknown> = {}, sweep: SweepState = { automatic: false, everySeconds: null }) {
     const mocked = mockFetch({
         'GET /api/session': session,
         'GET /api/me/projects': projects,

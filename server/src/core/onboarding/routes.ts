@@ -6,6 +6,7 @@
  *   GET    /api/me/application                                  the applicant's own status
  *   PUT    /api/me/application/checks/:kind                     what the applicant can supply
  *   GET    /api/projects/:pid/driver-applications               admin, the queue
+ *   GET    /api/projects/:pid/driver-applications/standing      admin, who is about to lapse
  *   GET    /api/projects/:pid/driver-applications/:id           admin, one, with its checks
  *   PUT    /api/projects/:pid/driver-applications/:id/checks/:kind   admin, record one
  *   POST   /api/projects/:pid/driver-applications/:id/approve   admin, creates the account
@@ -54,6 +55,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../projects/middleware';
 import { CHECK_KINDS, CHECK_STATUSES, clearanceOf, type Check, type CheckKind } from './clearance';
+import { DEFAULT_HORIZON_DAYS, reportOn } from './standing';
 import { todayIn } from '../dates';
 import { createThrottle, LIMITS, addressKey } from '../auth/throttle';
 
@@ -377,6 +379,52 @@ export function createApplicationsRouter({ client }: { client: Client }): Router
             applications.push({ ...present(r), clearance: clearanceOf(checks, today) });
         }
         res.json({ applications });
+    }));
+
+    /* Before '/:id', deliberately: Express matches in order and 'standing'
+       would otherwise be read as an application id, answer 404, and look
+       like the report did not exist. */
+    router.get('/standing', staff, wrap(async (req, res) => {
+        const project = req.project!;
+        const q = req.query as Record<string, string | undefined>;
+        const asked = Number(q['withinDays']);
+        const horizonDays = Number.isInteger(asked) && asked > 0 && asked <= 365 ? asked : DEFAULT_HORIZON_DAYS;
+
+        /* Every courier who holds a membership, LEFT JOINed to an approved
+           application. The join direction is the whole point: starting from
+           applications would report only the people we have evidence about
+           and silently omit everybody seeded before ticket 6.1, which is the
+           TVHS drivers and all twelve simulation couriers. A report that
+           leaves out the people it knows nothing about is a report that says
+           everybody is fine. */
+        const rs = await run(
+            `SELECT u.username, u.name, a.id AS application_id
+               FROM memberships m
+               JOIN users u ON u.id = m.user_id
+               LEFT JOIN driver_applications a
+                      ON a.user_id = m.user_id AND a.project_id = m.project_id AND a.status = 'approved'
+              WHERE m.project_id = ? AND m.role = 'courier' AND u.status = 'active'
+              ORDER BY u.username`,
+            [project.id],
+        );
+
+        const couriers = [];
+        for (const r of rs.rows) {
+            const applicationId = r['application_id'] === null ? null : Number(r['application_id']);
+            couriers.push({
+                who: { username: String(r['username']), name: String(r['name']), applicationId },
+                checks: applicationId === null ? [] : await checksOf(applicationId),
+            });
+        }
+
+        const report = reportOn(couriers, todayIn(project.timezone), horizonDays);
+        /* Audited. This names couriers and what is wrong with their paperwork,
+           which is a read of a set of individuals' records rather than of the
+           day's work. */
+        await req.audit('onboarding.standing_read', 'project', String(project.id), {
+            horizonDays, lapsed: report.lapsed.length, neverOnboarded: report.neverOnboarded.length,
+        });
+        res.json(report);
     }));
 
     router.get('/:id', staff, wrap(async (req, res) => {
