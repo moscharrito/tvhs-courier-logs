@@ -11,12 +11,45 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ApiUrlError, DEV_FALLBACK, resolveApiUrl } from './apiUrl.cjs';
+import { ApiUrlError, DEV_FALLBACK, lanAddress, resolveApiUrl } from './apiUrl.cjs';
+
+const wifi = (address: string) => ({ address, family: 'IPv4' as const, internal: false });
+const loopback = { address: '127.0.0.1', family: 'IPv4' as const, internal: true };
 
 describe('development', () => {
-    it('falls back to localhost, because that is what it is for', () => {
-        expect(resolveApiUrl({ configured: undefined, profile: 'development' })).toBe(DEV_FALLBACK);
-        expect(resolveApiUrl({ configured: undefined, profile: undefined })).toBe(DEV_FALLBACK);
+    it('uses this machine’s LAN address, because 127.0.0.1 is the phone', () => {
+        /* The failure this prevents: a real device loads the bundle over the
+           network, then asks 127.0.0.1:3000 for the API, which is itself,
+           and hangs at sign-in with nothing on screen saying why. */
+        const found = resolveApiUrl({
+            configured: undefined,
+            profile: 'development',
+            interfaces: { 'Wi-Fi': [loopback, wifi('192.168.1.40')] },
+        });
+        expect(found).toBe('http://192.168.1.40:3000');
+    });
+
+    it('gives the same answer twice on a machine with two cards', () => {
+        /* Sorted rather than first-found: enumeration order is not stable,
+           and a base URL that changes between builds is a bug nobody can
+           reproduce. */
+        const shape = { Ethernet: [wifi('10.0.0.5')], 'Wi-Fi': [wifi('192.168.1.40')] };
+        expect(resolveApiUrl({ configured: undefined, profile: 'development', interfaces: shape }))
+            .toBe('http://10.0.0.5:3000');
+        expect(resolveApiUrl({ configured: undefined, profile: 'development', interfaces: { ...shape } }))
+            .toBe('http://10.0.0.5:3000');
+    });
+
+    it('falls back to localhost on a machine with no network at all', () => {
+        expect(resolveApiUrl({ configured: undefined, profile: 'development', interfaces: {} })).toBe(DEV_FALLBACK);
+        expect(resolveApiUrl({ configured: undefined, profile: undefined, interfaces: { lo: [loopback] } })).toBe(DEV_FALLBACK);
+    });
+
+    it('ignores loopback and IPv6', () => {
+        expect(lanAddress({ lo: [loopback] })).toBeNull();
+        expect(lanAddress({ 'Wi-Fi': [{ address: 'fe80::1', family: 'IPv6', internal: false }] })).toBeNull();
+        /* Node 18+ reports family as the number 4 rather than the string. */
+        expect(lanAddress({ 'Wi-Fi': [{ address: '10.1.2.3', family: 4, internal: false }] })).toBe('10.1.2.3');
     });
 
     it('lets a developer point at a machine on the LAN', () => {

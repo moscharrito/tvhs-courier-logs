@@ -50,7 +50,45 @@ class ApiUrlError extends Error {
 /* Port 3000, matching .claude/launch.json and server/src/index.ts. It said
    3100 until this ticket, which is a port nothing in this repository listens
    on, so the documented default was wrong in development too. */
-const DEV_FALLBACK = 'http://127.0.0.1:3000';
+const DEV_PORT = 3000;
+const DEV_FALLBACK = `http://127.0.0.1:${DEV_PORT}`;
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * WHY DEVELOPMENT LOOKS UP THIS MACHINE'S LAN ADDRESS.
+ *
+ * 127.0.0.1 is the phone, not the laptop. A real device on Expo Go loads the
+ * bundle over the network and then asks 127.0.0.1:3000 for the API, which is
+ * itself, and hangs at sign-in with nothing on screen explaining why.
+ *
+ * The workaround was to pass EXPO_PUBLIC_API_URL with the laptop's address
+ * by hand, and that address is a DHCP lease. It changed once mid-session
+ * here: the phone stopped connecting, the QR pointed at a subnet nobody was
+ * on any more, and the baked-in apiBaseUrl pointed at the old network, which
+ * is the failure that looks like a broken app rather than a moved laptop.
+ *
+ * So development works it out. An explicit EXPO_PUBLIC_API_URL still wins,
+ * because a developer pointing at a staging server means it. Release builds
+ * are untouched: they refuse, as they always did.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The first real IPv4 address of this machine, or null when there is none.
+ *
+ * Takes the interface map rather than reading it, so the choice between two
+ * addresses is testable without a second network card.
+ */
+function lanAddress(interfaces) {
+    /* Sorted, so a machine with Wi-Fi and Ethernet gives the same answer
+       twice rather than depending on enumeration order. */
+    for (const name of Object.keys(interfaces || {}).sort()) {
+        for (const address of interfaces[name] || []) {
+            /* Node 18+ reports family as the number 4; older as 'IPv4'. */
+            const four = address.family === 'IPv4' || address.family === 4;
+            if (four && !address.internal && address.address) return address.address;
+        }
+    }
+    return null;
+}
 
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2|\[::1\])(:\d+)?$/i;
 
@@ -61,12 +99,15 @@ const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2|\[::1\
  * points at localhost is the failure mode; a build that stops with a sentence
  * naming the variable is twenty seconds.
  */
-function resolveApiUrl({ configured, profile }) {
+function resolveApiUrl({ configured, profile, interfaces }) {
     const release = profile === 'production' || profile === 'preview';
     const url = (configured ?? '').trim();
 
     if (url === '') {
-        if (!release) return DEV_FALLBACK;
+        if (!release) {
+            const lan = lanAddress(interfaces === undefined ? require('node:os').networkInterfaces() : interfaces);
+            return lan === null ? DEV_FALLBACK : `http://${lan}:${DEV_PORT}`;
+        }
         throw new ApiUrlError(
             `EXPO_PUBLIC_API_URL is not set, and a ${profile} build cannot default to localhost: `
             + 'the app would reach for a server on the reviewer’s own phone and be rejected as broken. '
@@ -95,4 +136,4 @@ function resolveApiUrl({ configured, profile }) {
     return url.replace(/\/+$/, '');
 }
 
-module.exports = { ApiUrlError, DEV_FALLBACK, resolveApiUrl };
+module.exports = { ApiUrlError, DEV_FALLBACK, DEV_PORT, lanAddress, resolveApiUrl };
