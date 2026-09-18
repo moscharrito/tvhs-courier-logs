@@ -9,11 +9,31 @@
 import Constants from 'expo-constants';
 import { request, type RequestOptions } from './http';
 
-/** From app.json's `extra.apiBaseUrl`, so a build points at an environment
- *  rather than a constant somebody has to remember to change. */
+/** From `extra.apiBaseUrl`, which app.config.ts sets per build profile, so a
+ *  build points at an environment rather than at a constant somebody has to
+ *  remember to change.
+ *
+ *  IT THROWS RATHER THAN FALLING BACK, and that is the correction. This read
+ *  `?? 'http://127.0.0.1:3100'`, which quietly undid the whole of ticket
+ *  7.6: the build-time guard refuses to produce a release build pointing at
+ *  the phone itself, and then the runtime pointed at the phone itself anyway
+ *  the moment `extra` was missing for any reason. Two guards disagreeing,
+ *  and the silent one winning.
+ *
+ *  A missing base URL is a build that was assembled wrongly, not a condition
+ *  to paper over. Throwing here shows up on the first screen, in development,
+ *  to the person who can fix it. */
 export function baseUrl(): string {
     const extra = (Constants.expoConfig?.extra ?? {}) as { apiBaseUrl?: string };
-    return extra.apiBaseUrl ?? 'http://127.0.0.1:3100';
+    const url = (extra.apiBaseUrl ?? '').trim();
+    if (url === '') {
+        throw new Error(
+            'This build has no apiBaseUrl. app.config.ts sets it from EXPO_PUBLIC_API_URL, so either the '
+            + 'config did not load or the variable is unset for this profile. It is not defaulted to '
+            + 'localhost on purpose: see src/lib/apiUrl.cjs.',
+        );
+    }
+    return url;
 }
 
 export interface SessionUser {

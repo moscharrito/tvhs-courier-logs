@@ -2,10 +2,16 @@
  *
  * Every one of these is a wasted App Store review cycle if it is wrong, which
  * is why a constant has a test file.
+ *
+ * Imported from './apiUrl.cjs' by its real extension. The module is
+ * CommonJS because Expo's config loader cannot require TypeScript, which is
+ * the defect that stopped `expo start` working at all: see the header of
+ * apiUrl.cjs. These tests passed the whole time it was broken, because what
+ * was broken was the module SYSTEM and not the logic.
  */
 
 import { describe, it, expect } from 'vitest';
-import { ApiUrlError, DEV_FALLBACK, resolveApiUrl } from './apiUrl';
+import { ApiUrlError, DEV_FALLBACK, resolveApiUrl } from './apiUrl.cjs';
 
 describe('development', () => {
     it('falls back to localhost, because that is what it is for', () => {

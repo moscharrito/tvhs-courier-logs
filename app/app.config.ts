@@ -2,7 +2,7 @@
  *
  * app.json holds everything that does not change between builds. This file
  * holds the one thing that does, and refuses to produce a release build that
- * would be rejected: see src/lib/apiUrl.ts for why a submitted app pointing
+ * would be rejected: see src/lib/apiUrl.cjs for why a submitted app pointing
  * at 127.0.0.1 is a wasted review cycle rather than a bug somebody notices.
  *
  * It throws. That is the point. A build that stops with a sentence naming the
@@ -11,7 +11,10 @@
  */
 
 import type { ConfigContext, ExpoConfig } from 'expo/config';
-import { resolveApiUrl } from './src/lib/apiUrl';
+/* By its real extension, and it must stay that way. Expo transpiles THIS
+   file with sucrase and then lets plain Node require whatever it imports, so
+   an extensionless import of a .ts file throws at startup. */
+import { resolveApiUrl } from './src/lib/apiUrl.cjs';
 
 export default ({ config }: ConfigContext): ExpoConfig => {
     const apiBaseUrl = resolveApiUrl({

@@ -16,6 +16,23 @@
  * development build defaults to localhost, because that is what it is for.
  * ─────────────────────────────────────────────────────────────────────────
  *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS FILE IS .cjs AND NOT .ts, which looks like a step backwards.
+ *
+ * `app.config.ts` is the only caller, and Expo loads that file by
+ * transpiling IT ALONE with sucrase and then handing the result to Node's
+ * ordinary CommonJS require. Nothing registers a TypeScript loader for what
+ * the config file imports, so `import { resolveApiUrl } from
+ * './src/lib/apiUrl'` resolved under tsc, passed typecheck, and then failed
+ * at run time with "Cannot find module ./src/lib/apiUrl" the first time
+ * anybody ran `expo start`. Which was after it shipped, because ticket 7.6
+ * typechecked the app and never ran it.
+ *
+ * So the one guard whose whole job is to stop a broken build was itself the
+ * thing that broke every build. CommonJS, with a .d.cts beside it so callers
+ * still get types and the tests still typecheck.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
  * AND IT MUST BE HTTPS IN RELEASE. Session tokens and patient addresses cross
  * this connection. Both platforms block plain HTTP by default anyway (App
  * Transport Security, and Android's cleartext policy), so an http:// release
@@ -23,23 +40,19 @@
  * build time. Better to fail here.
  */
 
-export class ApiUrlError extends Error {
-    constructor(message: string) {
+class ApiUrlError extends Error {
+    constructor(message) {
         super(message);
         this.name = 'ApiUrlError';
     }
 }
 
-export const DEV_FALLBACK = 'http://127.0.0.1:3100';
+/* Port 3000, matching .claude/launch.json and server/src/index.ts. It said
+   3100 until this ticket, which is a port nothing in this repository listens
+   on, so the documented default was wrong in development too. */
+const DEV_FALLBACK = 'http://127.0.0.1:3000';
 
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2|\[::1\])(:\d+)?$/i;
-
-export interface ResolveInput {
-    /** EXPO_PUBLIC_API_URL, or whatever the build was given. */
-    configured: string | undefined;
-    /** The EAS profile, or 'development' when running locally. */
-    profile: string | undefined;
-}
 
 /**
  * The base URL for this build, or a refusal explaining what to set.
@@ -48,7 +61,7 @@ export interface ResolveInput {
  * points at localhost is the failure mode; a build that stops with a sentence
  * naming the variable is twenty seconds.
  */
-export function resolveApiUrl({ configured, profile }: ResolveInput): string {
+function resolveApiUrl({ configured, profile }) {
     const release = profile === 'production' || profile === 'preview';
     const url = (configured ?? '').trim();
 
@@ -81,3 +94,5 @@ export function resolveApiUrl({ configured, profile }: ResolveInput): string {
 
     return url.replace(/\/+$/, '');
 }
+
+module.exports = { ApiUrlError, DEV_FALLBACK, resolveApiUrl };
