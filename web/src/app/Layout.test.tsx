@@ -100,7 +100,13 @@ describe('the side rail', () => {
         renderAt('/projects/uh/board', {
             'GET /api/projects/uh/uh/board*': {
                 serviceDate: '2026-09-15',
-                stats: { orders: 0, unassigned: 0, assigned: 0, inTransit: 0, delivered: 0, failed: 0, dueSoon: 0, overdue: 0 },
+                /* `summary`, not `stats`, and `total`, not `orders`. This
+                   fixture had never matched the endpoint, so Board rendered
+                   against undefined and threw on every run of this file. The
+                   assertion below is about the rail and passed anyway, which
+                   is how an unhandled error sat in a green-looking suite:
+                   242 tests passing and `npm test -w web` exiting 1. */
+                summary: { total: 0, unassigned: 0, assigned: 0, inTransit: 0, delivered: 0, failed: 0, dueSoon: 0, overdue: 0 },
                 pool: [], lanes: [], activity: [], idleCouriers: [], sites: [],
             },
         });

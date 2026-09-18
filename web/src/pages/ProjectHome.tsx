@@ -64,6 +64,11 @@ export function ProjectHome() {
                 {canManage && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>
                 )}
+                {/* People, not deliveries, and the only thing on this row
+                    that somebody is waiting on us for. */}
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/applications`}>Driver applications</Link>
+                )}
                 {/* Staff see exactly what the client sees. A portal nobody on
                     our side ever looks at is a portal nobody can answer a
                     question about. */}

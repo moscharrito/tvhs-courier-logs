@@ -21,6 +21,7 @@ import { Discrepancies } from '../pages/uh/Discrepancies';
 import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
 import { OrderDetail } from '../pages/uh/OrderDetail';
+import { Applications } from '../pages/uh/Applications';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
     const { user } = useAuth();
@@ -47,6 +48,7 @@ export function App() {
                 <Route path="/projects/:code/reports" element={<Reports />} />
                 <Route path="/projects/:code/discrepancies" element={<Discrepancies />} />
                 <Route path="/projects/:code/invoices" element={<Invoices />} />
+                <Route path="/projects/:code/applications" element={<Applications />} />
                 <Route path="/projects/:code/orders" element={<Orders />} />
                 <Route path="/projects/:code/orders/:orderId/stop" element={<Stop />} />
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />

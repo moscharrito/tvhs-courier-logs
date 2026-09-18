@@ -218,6 +218,31 @@ choose-your-own-work is the fact pattern that raises it, and it is a question
 for an attorney. It changes what the app records, so it wants an answer before
 6.1 ships.
 
+## Phase 8: the dispatcher's side of the courier network (from 17 Sep)
+
+Phase 6 was written on the premise that **the web app is the first client of
+every endpoint and the phone is the second.** It never was. Phases 6 and 7
+shipped sixteen staff-facing endpoints, and the web has a screen for none of
+them: applications, onboarding checks, delivery requests, shifts and the live
+board are reachable only with curl. The phone became the only client of a
+system whose other half was never built, and the DoorDash model shipped as a
+server with no door.
+
+That is what this phase is. It adds no server behaviour.
+
+| # | Ticket | Est | Notes |
+|---|---|---|---|
+| 8.1 | The applications queue | 1.5 | **Done, and verified in a browser rather than only in jsdom.** `/projects/:code/applications`: the queue with a status filter, the five gates per applicant, record a check, approve, reject. **The screen's whole job is keeping two sentences apart.** An applicant types a certificate number into their phone (7.2) and a member of staff records having seen the certificate; the server keeps those in different columns and this is the first place they could have been collapsed into one. So a claim is always attributed and dated, never sits in the column a verification goes in, and **the Record form does not open prefilled with it**, because a box holding somebody's own claim turns verification into pressing Save. **Approve is enabled even when the gates are not green**, which looks wrong and is not: `clearance.ts` says no screen decides this, a disabled button is a screen deciding, and this page's copy of the clearance is stale the moment a colleague verifies something in another tab, so a button disabled from stale state locks out the person entitled to act. The server refuses in a sentence naming the missing gates and that sentence is what the operator reads. Rejecting says on the button that it disables the account, because it does. Walked end to end against a running server with an invented applicant: applied, signed in, submitted two claims, approval refused at nought of five, one check verified from the screen, approval granted at five of five, and the account went from seeing nothing to holding a courier membership. 7 web tests |
+| 8.2 | Delivery requests on the board | 1.5 | Not started. `POST /uh/requests/:id/approve` and `/deny` have no screen, so a courier asking for work from the phone is asking somebody who cannot answer. The sweep endpoint has none either |
+| 8.3 | Shifts and the live board | 1.5 | Not started. Nobody can see who is on shift, end a stuck one, or watch a van move. **Blocked in substance on `RETENTION_LOCATION_TRACE_DAYS`**: until it is set the server records no position, so the board would be built against an endpoint that answers 503 |
+| 8.4 | Onboarding expiry, before it bites | 0.5 | Not started. A licence expiring next month is invisible until the day clearance flips and a courier stops being able to work. `clearanceOf` already separates expired from missing for exactly this conversation; nothing reports on it yet |
+
+**Two environment decisions are now blocking screens rather than only
+policy.** `RETENTION_LOCATION_TRACE_DAYS` blocks 8.3 outright.
+`SWEEP_INTERVAL_SECONDS` leaves 8.2 half a feature: requests can be approved
+by hand but unclaimed work is only handed out when somebody calls the
+endpoint.
+
 ## Deferred past go-live
 
 Route optimization beyond nearest-neighbor, patient SMS notifications, inter-campus community hospital flows, per-project Turso databases, continuous GPS tracking, TVHS screens rewritten in React.
