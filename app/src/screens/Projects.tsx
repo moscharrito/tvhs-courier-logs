@@ -98,18 +98,18 @@ export function Projects({ token, onPick, onSignedOut, onEmpty }: Props) {
 }
 
 const styles = StyleSheet.create({
-    wrap: { flex: 1, backgroundColor: theme.bg },
+    wrap: { flex: 1, backgroundColor: 'transparent' },
     inner: { padding: 20, paddingTop: 60 },
-    centre: { flex: 1, backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center' },
+    centre: { flex: 1, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
     title: { fontSize: 24, fontWeight: '700', color: theme.ink, marginBottom: 18 },
     card: {
-        backgroundColor: theme.card, borderWidth: 1, borderColor: theme.line,
-        borderRadius: 12, padding: 18, marginBottom: 12,
+        backgroundColor: 'rgba(255,255,255,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.85)',
+        borderRadius: 22, padding: 18, marginBottom: 12,
     },
     cardTitle: { fontSize: 17, fontWeight: '600', color: theme.ink },
-    cardBody: { fontSize: 14, color: theme.muted, marginTop: 6, lineHeight: 20 },
-    error: { backgroundColor: theme.dangerSoft, borderRadius: 10, padding: 14, marginBottom: 12 },
-    errorText: { color: theme.danger, fontSize: 15 },
+    cardBody: { fontSize: 16, color: theme.muted, marginTop: 6, lineHeight: 20 },
+    error: { backgroundColor: theme.dangerSoft, borderRadius: 18, padding: 14, marginBottom: 12 },
+    errorText: { color: theme.danger, fontSize: 16 },
     signOut: { alignItems: 'center', paddingVertical: 16, marginTop: 8 },
-    signOutText: { color: theme.muted, fontSize: 15 },
+    signOutText: { color: theme.muted, fontSize: 16 },
 });

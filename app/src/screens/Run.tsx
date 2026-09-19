@@ -36,6 +36,8 @@ import { Stop } from './Stop';
 import { Collect } from './Collect';
 import { CardButton, Chip, Ground, Notice, Panel, Sheet } from '../ui/Glass';
 import { summarise } from '../lib/refusals';
+import { BackPill } from '../ui/Nav';
+import { BoxIcon, NavigateIcon, PinIcon } from '../ui/Icons';
 import { pendingLabel, type OutboxState } from '../lib/outbox';
 import { dismissRejections, flush, readQueue } from '../lib/queue';
 
@@ -162,9 +164,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
             them anyway: where they are up to, what is next, how long it has.
             ───────────────────────────────────────────────────────────── */}
         <View style={styles.context}>
-            <Pressable onPress={onBack} accessibilityRole="button" style={styles.backTap}>
-                <Text style={styles.back}>Contracts</Text>
-            </Pressable>
+            <BackPill label="Contracts" onPress={onBack} />
 
             <Text style={styles.title}>Today</Text>
             {data !== null && (
@@ -216,6 +216,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                         {refused.refusal.action === 'collect' && runId !== null && (
                             <CardButton
                                 title="Collect from a pharmacy"
+                                Icon={BoxIcon}
                                 detail="What these were waiting on"
                                 tone="primary"
                                 onPress={() => setCollecting(runId)}
@@ -237,6 +238,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 {runId !== null && (
                     <CardButton
                         title="Collect from a pharmacy"
+                        Icon={BoxIcon}
                         detail={toCollect > 0
                             ? toCollect + (toCollect === 1 ? ' order is' : ' orders are') + ' waiting to be picked up'
                             : 'Nothing is waiting to be picked up right now'}
@@ -249,12 +251,14 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                     <>
                         <CardButton
                             title="Open the stop"
+                            Icon={PinIcon}
                             detail={'Stop ' + next.sequence + ' for ' + next.recipientName}
                             tone={toCollect > 0 ? 'secondary' : 'primary'}
                             onPress={() => setWorking(next)}
                         />
                         <CardButton
                             title="Directions"
+                            Icon={NavigateIcon}
                             detail="Opens your own maps app with the address only"
                             tone="quiet"
                             onPress={() => openDirections(next)}

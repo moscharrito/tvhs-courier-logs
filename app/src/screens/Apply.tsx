@@ -152,21 +152,21 @@ function Field(props: {
 }
 
 const styles = StyleSheet.create({
-    scroll: { flex: 1, backgroundColor: theme.bg },
+    scroll: { flex: 1, backgroundColor: 'transparent' },
     wrap: { padding: 24, paddingTop: 60, paddingBottom: 48, flexGrow: 1, justifyContent: 'center' },
     title: { fontSize: 28, fontWeight: '700', color: theme.ink, marginBottom: 10 },
-    body: { fontSize: 15, color: theme.muted, lineHeight: 22, marginBottom: 18 },
-    label: { fontSize: 13, color: theme.muted, marginBottom: 6, marginTop: 14 },
+    body: { fontSize: 16, color: theme.muted, lineHeight: 22, marginBottom: 18 },
+    label: { fontSize: 15, color: theme.muted, marginBottom: 6, marginTop: 14 },
     input: {
-        backgroundColor: theme.card, borderWidth: 1, borderColor: theme.line, borderRadius: 10,
+        backgroundColor: 'rgba(255,255,255,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.85)', borderRadius: 18,
         paddingHorizontal: 14, paddingVertical: 14, fontSize: 17, color: theme.ink,
     },
-    hint: { fontSize: 13, color: theme.muted, marginTop: 8 },
-    button: { backgroundColor: theme.green, borderRadius: 10, paddingVertical: 16, alignItems: 'center', marginTop: 26 },
+    hint: { fontSize: 15, color: theme.muted, marginTop: 8 },
+    button: { backgroundColor: theme.green, borderRadius: 18, paddingVertical: 16, alignItems: 'center', marginTop: 26 },
     buttonOff: { opacity: 0.4 },
     buttonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
     link: { alignItems: 'center', paddingVertical: 18 },
-    linkText: { color: theme.green, fontSize: 15 },
-    error: { backgroundColor: theme.dangerSoft, borderRadius: 10, padding: 14, marginBottom: 6 },
-    errorText: { color: theme.danger, fontSize: 15, lineHeight: 21 },
+    linkText: { color: theme.green, fontSize: 16 },
+    error: { backgroundColor: 'rgba(185,28,28,0.1)', borderRadius: 18, padding: 14, marginBottom: 6 },
+    errorText: { color: theme.danger, fontSize: 16, lineHeight: 21 },
 });

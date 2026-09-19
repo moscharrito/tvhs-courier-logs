@@ -119,13 +119,13 @@ export function SignaturePad({ label, onChange }: Props) {
 
 const styles = StyleSheet.create({
     head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16 },
-    label: { fontSize: 13, color: theme.muted },
-    clear: { fontSize: 14, color: theme.green },
+    label: { fontSize: 15, color: theme.muted },
+    clear: { fontSize: 16, color: theme.green },
     /* Tall enough to sign in, on a phone held by somebody at a door. */
     pad: {
-        height: 170, marginTop: 6, borderRadius: 10, borderWidth: 1,
-        borderStyle: 'dashed', borderColor: theme.line, backgroundColor: theme.card,
+        height: 170, marginTop: 6, borderRadius: 18, borderWidth: 1,
+        borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.85)', backgroundColor: 'rgba(255,255,255,0.72)',
         alignItems: 'center', justifyContent: 'center',
     },
-    hint: { position: 'absolute', color: theme.muted, fontSize: 15 },
+    hint: { position: 'absolute', color: theme.muted, fontSize: 16 },
 });

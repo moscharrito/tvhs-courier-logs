@@ -5,12 +5,13 @@
  * here is at least TAP.minimum tall and nothing carries an unlabelled icon.
  */
 
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import {
     ActivityIndicator, Pressable, StyleSheet, Text, View,
     type StyleProp, type ViewStyle,
 } from 'react-native';
 import { GLASS, GROUND, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
+import type { IconProps } from './Icons';
 
 /* The gradient ground, without pulling in expo-linear-gradient for three
    bands. Three stacked Views cost nothing and cannot fail to install. */
@@ -71,7 +72,7 @@ export type ButtonTone = 'primary' | 'secondary' | 'danger' | 'quiet';
  * "Collect from the pharmacy" and "Take undelivered back" is helped more by
  * a line of explanation than by a tidier row of chips.
  */
-export function CardButton({ title, detail, onPress, tone = 'primary', disabled = false, busy = false, accessibilityHint }: {
+export function CardButton({ title, detail, onPress, tone = 'primary', disabled = false, busy = false, accessibilityHint, Icon }: {
     title: string;
     detail?: string;
     onPress: () => void;
@@ -79,6 +80,8 @@ export function CardButton({ title, detail, onPress, tone = 'primary', disabled 
     disabled?: boolean;
     busy?: boolean;
     accessibilityHint?: string;
+    /** Decorative. The title is the label; see the header of Icons.tsx. */
+    Icon?: ComponentType<IconProps>;
 }) {
     const off = disabled || busy;
     return (
@@ -97,6 +100,11 @@ export function CardButton({ title, detail, onPress, tone = 'primary', disabled 
                 off && styles.disabled,
             ]}
         >
+            {Icon !== undefined && (
+                <View style={styles.cardButtonIcon}>
+                    <Icon size={24} color={iconColour[tone]} strokeWidth={2} />
+                </View>
+            )}
             <View style={styles.cardButtonText}>
                 <Text style={[styles.cardButtonTitle, toneStyles[tone].title]}>{title}</Text>
                 {detail !== undefined && (
@@ -177,6 +185,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         gap: SPACE.md,
     },
+    cardButtonIcon: { width: 28, alignItems: 'center' },
     cardButtonText: { flex: 1 },
     cardButtonTitle: { fontSize: TYPE.body, fontWeight: '700' },
     cardButtonDetail: { fontSize: TYPE.meta, marginTop: 3, lineHeight: 20 },
@@ -222,6 +231,15 @@ const toneStyles: Record<ButtonTone, { box: ViewStyle; title: object; detail: ob
         title: { color: theme.ink },
         detail: { color: theme.muted },
     },
+};
+
+/* The icon takes the title's colour, so a tone change cannot leave a glyph
+   invisible against its own button. */
+const iconColour: Record<ButtonTone, string> = {
+    primary: '#ffffff',
+    secondary: theme.green,
+    danger: '#ffffff',
+    quiet: theme.ink,
 };
 
 const chipTones = {
