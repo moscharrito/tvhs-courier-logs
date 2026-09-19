@@ -33,6 +33,8 @@ import { theme } from '../theme';
 import { get, type MyRun, type Project, type Stop as StopRow } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { Stop } from './Stop';
+import { Collect } from './Collect';
+import { CardButton, Chip, Ground, Notice, Panel, Sheet } from '../ui/Glass';
 import { pendingLabel, type OutboxState } from '../lib/outbox';
 import { flush, readQueue } from '../lib/queue';
 
@@ -76,6 +78,8 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     const [data, setData] = useState<MyRun | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
+    /* Which run we are collecting for. Null when not collecting. */
+    const [collecting, setCollecting] = useState<number | null>(null);
     const [working, setWorking] = useState<StopRow | null>(null);
     const [outbox, setOutbox] = useState<OutboxState | null>(null);
 
@@ -106,6 +110,19 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         return <View style={styles.centre}><ActivityIndicator color={theme.green} /></View>;
     }
 
+    if (collecting !== null) {
+        return (
+            <Collect
+                token={token}
+                code={project.code}
+                runId={collecting}
+                onDone={() => { setCollecting(null); void load(); void readQueue().then(setOutbox); }}
+                onCancel={() => setCollecting(null)}
+                onSignedOut={onSignedOut}
+            />
+        );
+    }
+
     if (working !== null) {
         return (
             <Stop
@@ -123,132 +140,178 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     const next = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
     const zone = data?.timezone ?? project.timezone;
+    /* Anything still to be collected lives on a run, and a courier with two
+       runs in a day (a second wave) collects against the current one. */
+    const runId = data?.runs[0]?.id ?? null;
+    const toCollect = stops.filter((s) => s.status === 'assigned').length;
 
     return (
-        <ScrollView
-            style={styles.wrap}
-            contentContainerStyle={styles.inner}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void refresh(); }} />}
-        >
-            <Pressable onPress={onBack} accessibilityRole="button">
+        <Ground>
+        {/* ─────────────────────────────────────────────────────────────
+            THE UPPER REGION. In a rideshare app this is the map. Here it is
+            what is happening, because there is nothing to draw: no order in
+            this system has coordinates, and getting them for a delivery
+            address means sending a patient's address to a map provider,
+            which ticket 1.4 refused until a BAA covers it.
+
+            The region is full size so a map drops in rather than forcing a
+            redesign. What fills it until then is what a map would have told
+            them anyway: where they are up to, what is next, how long it has.
+            ───────────────────────────────────────────────────────────── */}
+        <View style={styles.context}>
+            <Pressable onPress={onBack} accessibilityRole="button" style={styles.backTap}>
                 <Text style={styles.back}>Contracts</Text>
             </Pressable>
+
             <Text style={styles.title}>Today</Text>
-            {data !== null && <Text style={styles.sub}>{data.serviceDate} · {done} of {stops.length} done</Text>}
-
-            {/* Above the run, not tucked under it. A courier who cannot
-                tell "sent" from "on this phone" will assume sent, which is
-                the failure the web shell put its sync banner above the fold
-                for. */}
-            {outbox !== null && outbox.queue.length > 0 && (
-                <View style={styles.pending} accessibilityLiveRegion="polite">
-                    <Text style={styles.pendingText}>{pendingLabel(outbox)}</Text>
-                </View>
-            )}
-            {outbox !== null && outbox.rejected.length > 0 && (
-                <View style={styles.error} accessibilityRole="alert">
-                    <Text style={styles.errorText}>
-                        {outbox.rejected.length === 1
-                            ? 'One thing was refused: '
-                            : `${outbox.rejected.length} things were refused: `}
-                        {outbox.rejected[outbox.rejected.length - 1]!.why}
-                    </Text>
-                </View>
-            )}
-
-            {error !== null && (
-                <View style={styles.error} accessibilityRole="alert">
-                    <Text style={styles.errorText}>{error}</Text>
-                </View>
-            )}
-
-            {data !== null && stops.length === 0 && (
-                <View style={styles.card}><Text style={styles.cardBody}>No stops assigned to you today.</Text></View>
+            {data !== null && (
+                <Text style={styles.sub}>{data.serviceDate} · {done} of {stops.length} done</Text>
             )}
 
             {next !== null && (
-                <View style={[styles.card, styles.nextCard]} accessibilityLabel="Next stop">
+                <Panel style={styles.nextPanel}>
                     <Text style={styles.nextLabel}>Next: stop {next.sequence}</Text>
                     <Text style={styles.nextName}>{next.recipientName}</Text>
                     <Text style={styles.nextAddress}>{next.address}</Text>
                     <Text style={styles.nextAddress}>{next.city} {next.zip}</Text>
-                    <Text style={styles.meta}>
-                        {next.serviceType} · due {clock(next.dueAt, zone)}
-                        {next.zone === null ? ' · out of area' : ` · zone ${next.zone}`}
-                    </Text>
-                    <Pressable
-                        style={styles.directions}
-                        onPress={() => openDirections(next)}
-                        accessibilityRole="button"
-                    >
-                        <Text style={styles.directionsText}>Directions</Text>
-                    </Pressable>
-                    <Pressable style={styles.open} onPress={() => setWorking(next)} accessibilityRole="button">
-                        <Text style={styles.openText}>Open the stop</Text>
-                    </Pressable>
-                </View>
+                    <View style={styles.chips}>
+                        <Chip label={next.serviceType.toUpperCase()} />
+                        <Chip label={'due ' + clock(next.dueAt, zone)} tone="warn" />
+                        <Chip label={next.zone === null ? 'out of area' : 'zone ' + next.zone} />
+                    </View>
+                </Panel>
             )}
 
-            {stops.length > 0 && (
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>All stops</Text>
-                    {stops.map((s) => (
-                        <Pressable
-                            key={s.orderId}
-                            style={[styles.stop, DONE.includes(s.status) ? styles.stopDone : null]}
-                            onPress={() => { if (!DONE.includes(s.status)) setWorking(s); }}
-                            disabled={DONE.includes(s.status)}
-                            accessibilityRole="button"
-                        >
-                            <Text style={styles.stopName}>{s.sequence}. {s.recipientName}</Text>
-                            <Text style={styles.meta}>{s.address}, {s.city} {s.zip}</Text>
-                            <Text style={styles.meta}>
-                                due {clock(s.dueAt, zone)} · {s.status}
-                                {s.zone === null ? ' · out of area' : ` · zone ${s.zone}`}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </View>
+            {data !== null && stops.length === 0 && (
+                <Panel style={styles.nextPanel}>
+                    <Text style={styles.nextAddress}>No stops assigned to you today.</Text>
+                </Panel>
             )}
+        </View>
 
-            <Text style={styles.footnote}>
-                Collecting from a pharmacy and handing undelivered packages back are still on the web app.
-            </Text>
-        </ScrollView>
+        {/* ─────────────────────────────────────────────────────────────
+            THE SHEET. Everything a courier can DO, under the thumb, in the
+            half of the screen a hand already covers.
+            ───────────────────────────────────────────────────────────── */}
+        <Sheet style={styles.sheet}>
+            <ScrollView
+                contentContainerStyle={styles.sheetInner}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void refresh(); }} />}
+            >
+                {/* Above the actions, not tucked under them. A courier who
+                    cannot tell "sent" from "on this phone" will assume sent. */}
+                {outbox !== null && outbox.queue.length > 0 && (
+                    <Notice text={pendingLabel(outbox)} tone="info" />
+                )}
+                {outbox !== null && outbox.rejected.length > 0 && (
+                    <Notice
+                        tone="bad"
+                        text={(outbox.rejected.length === 1
+                            ? 'One thing was refused: '
+                            : outbox.rejected.length + ' things were refused: ')
+                            + outbox.rejected[outbox.rejected.length - 1]!.why}
+                    />
+                )}
+                {error !== null && <Notice text={error} tone="bad" />}
+
+                {/* The gap found on the first day anybody held this app:
+                    collection was web-only, so a driver could not do a whole
+                    day on the phone. */}
+                {runId !== null && (
+                    <CardButton
+                        title="Collect from a pharmacy"
+                        detail={toCollect > 0
+                            ? toCollect + (toCollect === 1 ? ' order is' : ' orders are') + ' waiting to be picked up'
+                            : 'Nothing is waiting to be picked up right now'}
+                        tone={toCollect > 0 ? 'primary' : 'secondary'}
+                        onPress={() => setCollecting(runId)}
+                    />
+                )}
+
+                {next !== null && (
+                    <>
+                        <CardButton
+                            title="Open the stop"
+                            detail={'Stop ' + next.sequence + ' for ' + next.recipientName}
+                            tone={toCollect > 0 ? 'secondary' : 'primary'}
+                            onPress={() => setWorking(next)}
+                        />
+                        <CardButton
+                            title="Directions"
+                            detail="Opens your own maps app with the address only"
+                            tone="quiet"
+                            onPress={() => openDirections(next)}
+                        />
+                    </>
+                )}
+
+                {stops.length > 0 && (
+                    <View style={styles.allStops}>
+                        <Text style={styles.cardTitle}>All stops</Text>
+                        {stops.map((s) => (
+                            <Pressable
+                                key={s.orderId}
+                                style={[styles.stop, DONE.includes(s.status) ? styles.stopDone : null]}
+                                onPress={() => { if (!DONE.includes(s.status)) setWorking(s); }}
+                                disabled={DONE.includes(s.status)}
+                                accessibilityRole="button"
+                            >
+                                <Text style={styles.stopName}>{s.sequence}. {s.recipientName}</Text>
+                                <Text style={styles.meta}>{s.address}, {s.city} {s.zip}</Text>
+                                <Text style={styles.meta}>
+                                    due {clock(s.dueAt, zone)} · {s.status}
+                                    {s.zone === null ? ' · out of area' : ' · zone ' + s.zone}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+                )}
+
+                <Text style={styles.footnote}>
+                    Handing undelivered packages back is still on the web app.
+                </Text>
+            </ScrollView>
+        </Sheet>
+        </Ground>
     );
 }
 
 const styles = StyleSheet.create({
-    wrap: { flex: 1, backgroundColor: theme.bg },
-    inner: { padding: 16, paddingTop: 56, paddingBottom: 40 },
-    centre: { flex: 1, backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center' },
-    back: { color: theme.green, fontSize: 15, marginBottom: 10 },
-    title: { fontSize: 26, fontWeight: '700', color: theme.ink },
-    sub: { fontSize: 14, color: theme.muted, marginBottom: 16 },
-    card: {
-        backgroundColor: theme.card, borderWidth: 1, borderColor: theme.line,
-        borderRadius: 12, padding: 16, marginBottom: 12,
+    centre: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+    /* The upper region: the rideshare map slot, holding status until there
+       is something to draw. Roughly the top third, so the sheet below keeps
+       the actions inside thumb reach. */
+    context: { paddingHorizontal: 22, paddingTop: 56, paddingBottom: 16 },
+    backTap: { minHeight: 44, justifyContent: 'center' },
+    back: { color: theme.greenBright, fontSize: 16, fontWeight: '600' },
+    title: { fontSize: 32, fontWeight: '800', color: theme.ink, marginTop: 4 },
+    sub: { fontSize: 16, color: theme.muted, marginTop: 4 },
+
+    nextPanel: { marginTop: 16 },
+    nextLabel: { fontSize: 15, color: theme.muted, letterSpacing: 0.6 },
+    nextName: { fontSize: 24, fontWeight: '700', color: theme.ink, marginTop: 6 },
+    nextAddress: { fontSize: 17, color: theme.ink, lineHeight: 25 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+
+    /* The sheet. flex: 1 so it owns the rest of the screen and scrolls
+       within itself rather than pushing the status region off the top. */
+    sheet: { flex: 1 },
+    sheetInner: { paddingBottom: 30 },
+
+    allStops: { marginTop: 22 },
+    cardTitle: { fontSize: 20, fontWeight: '700', color: theme.ink, marginBottom: 10 },
+    meta: { fontSize: 15, color: theme.muted, marginTop: 4, lineHeight: 21 },
+    stop: {
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(17,24,39,0.08)',
+        paddingVertical: 14,
+        /* Above the platform minimum even in the densest list. */
+        minHeight: 48,
+        justifyContent: 'center',
     },
-    nextCard: { borderColor: theme.green, borderWidth: 2 },
-    nextLabel: { fontSize: 13, color: theme.muted, letterSpacing: 0.6 },
-    nextName: { fontSize: 22, fontWeight: '600', color: theme.ink, marginTop: 6 },
-    nextAddress: { fontSize: 17, color: theme.ink, lineHeight: 24 },
-    cardTitle: { fontSize: 16, fontWeight: '600', color: theme.ink, marginBottom: 10 },
-    cardBody: { fontSize: 15, color: theme.ink },
-    meta: { fontSize: 13, color: theme.muted, marginTop: 4 },
-    stop: { borderTopWidth: 1, borderTopColor: theme.line, paddingVertical: 12 },
-    stopDone: { opacity: 0.5 },
-    stopName: { fontSize: 16, color: theme.ink, fontWeight: '500' },
-    error: { backgroundColor: theme.dangerSoft, borderRadius: 10, padding: 14, marginBottom: 12 },
-    errorText: { color: theme.danger, fontSize: 15, lineHeight: 21 },
-    directions: {
-        marginTop: 14, borderWidth: 1, borderColor: theme.green, borderRadius: 10,
-        paddingVertical: 13, alignItems: 'center',
-    },
-    directionsText: { color: theme.green, fontSize: 16, fontWeight: '600' },
-    open: { marginTop: 10, backgroundColor: theme.green, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
-    openText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-    pending: { backgroundColor: theme.greenSoft, borderRadius: 10, padding: 14, marginBottom: 12 },
-    pendingText: { color: theme.green, fontSize: 14, lineHeight: 20 },
-    footnote: { fontSize: 13, color: theme.muted, lineHeight: 19, marginTop: 8, paddingHorizontal: 4 },
+    stopDone: { opacity: 0.45 },
+    stopName: { fontSize: 17, color: theme.ink, fontWeight: '600' },
+
+    footnote: { fontSize: 15, color: theme.muted, lineHeight: 21, marginTop: 18, paddingHorizontal: 2 },
 });
