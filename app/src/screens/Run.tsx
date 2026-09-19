@@ -35,8 +35,9 @@ import { ApiError, isUnauthorized } from '../lib/http';
 import { Stop } from './Stop';
 import { Collect } from './Collect';
 import { CardButton, Chip, Ground, Notice, Panel, Sheet } from '../ui/Glass';
+import { summarise } from '../lib/refusals';
 import { pendingLabel, type OutboxState } from '../lib/outbox';
-import { flush, readQueue } from '../lib/queue';
+import { dismissRejections, flush, readQueue } from '../lib/queue';
 
 interface Props {
     token: string;
@@ -144,6 +145,8 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
        runs in a day (a second wave) collects against the current one. */
     const runId = data?.runs[0]?.id ?? null;
     const toCollect = stops.filter((s) => s.status === 'assigned').length;
+    /* One problem rather than six identical alerts on a phone screen. */
+    const refused = summarise(outbox?.rejected ?? []);
 
     return (
         <Ground>
@@ -203,14 +206,28 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 {outbox !== null && outbox.queue.length > 0 && (
                     <Notice text={pendingLabel(outbox)} tone="info" />
                 )}
-                {outbox !== null && outbox.rejected.length > 0 && (
-                    <Notice
-                        tone="bad"
-                        text={(outbox.rejected.length === 1
-                            ? 'One thing was refused: '
-                            : outbox.rejected.length + ' things were refused: ')
-                            + outbox.rejected[outbox.rejected.length - 1]!.why}
-                    />
+                {/* Refusals, in words a driver can act on, and dismissible.
+                    Before this they were the server's own sentence about a
+                    state machine, repeated once per refusal, with no way to
+                    clear them: see lib/refusals.ts. */}
+                {refused !== null && (
+                    <View style={styles.refusal}>
+                        <Notice text={refused.headline + '. ' + refused.refusal.text} tone="bad" />
+                        {refused.refusal.action === 'collect' && runId !== null && (
+                            <CardButton
+                                title="Collect from a pharmacy"
+                                detail="What these were waiting on"
+                                tone="primary"
+                                onPress={() => setCollecting(runId)}
+                            />
+                        )}
+                        <CardButton
+                            title="I have read this"
+                            detail="Clears the message. Anything still waiting to send is kept."
+                            tone="quiet"
+                            onPress={() => { void dismissRejections().then(setOutbox); }}
+                        />
+                    </View>
                 )}
                 {error !== null && <Notice text={error} tone="bad" />}
 
@@ -313,5 +330,6 @@ const styles = StyleSheet.create({
     stopDone: { opacity: 0.45 },
     stopName: { fontSize: 17, color: theme.ink, fontWeight: '600' },
 
+    refusal: { marginBottom: 18 },
     footnote: { fontSize: 15, color: theme.muted, lineHeight: 21, marginTop: 18, paddingHorizontal: 2 },
 });

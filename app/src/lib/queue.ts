@@ -90,6 +90,21 @@ export async function flush(): Promise<OutboxState> {
     return out.state;
 }
 
+/**
+ * Forget the refusals, keep anything still waiting to send.
+ *
+ * A refusal a courier has read and acted on should not sit on the screen
+ * for the rest of the day, and before this there was no way to clear one:
+ * the banner was permanent. The queue itself is untouched, because
+ * dismissing a message must never be a way to drop an unsent delivery.
+ */
+export async function dismissRejections(): Promise<OutboxState> {
+    const state = await store.read();
+    const next: OutboxState = { queue: state.queue, rejected: [] };
+    await store.write(next);
+    return next;
+}
+
 /** Signing out empties it: see the header. */
 export async function clearQueue(): Promise<void> {
     try {

@@ -32,6 +32,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { theme } from './theme';
 import { clearToken, loadToken, saveToken } from './lib/session';
+import { clearQueue } from './lib/queue';
 import { get, signOut, type Project } from './lib/api';
 import { SignIn } from './screens/SignIn';
 import { Apply } from './screens/Apply';
@@ -105,6 +106,16 @@ export function App() {
            to a refusal they did not cause. */
         setChosen(null);
         void clearToken();
+        /* THE QUEUE GOES TOO, and this call is the bug the owner found: a
+           courier signing in after somebody else saw the previous account's
+           refusals on their own screen. clearQueue() was written in 7.5 and
+           documented as "signing out empties it", and nothing ever called
+           it. The web shell has stamped every entry with its owner since
+           2.7 for exactly this reason; the app copied the four queue rules
+           and not the fifth. It is also a PHI question rather than a tidiness
+           one: what sits in that queue is patient names and addresses, and it
+           must not outlive the session that created it. */
+        void clearQueue();
         /* Best effort, and after the local sign-out. The point of telling the
            server is to revoke the row so the token cannot be replayed; the
            point of not waiting is that a courier tapping Sign out with no
