@@ -23,13 +23,17 @@ import { applyToDrive } from '../lib/api';
 import { ApiError } from '../lib/http';
 
 interface Props {
+    /** The contract chosen on the first screen. */
+    projectCode: string;
     onDone: () => void;
     onCancel: () => void;
 }
 
-const PROJECT_CODE = 'uh';
+/* Was a hardcoded 'uh', which was wrong the moment Izy ran two contracts:
+   somebody applying to drive TVHS was filed against University Health. It
+   now comes from the contract chosen on the first screen. */
 
-export function Apply({ onDone, onCancel }: Props) {
+export function Apply({ projectCode, onDone, onCancel }: Props) {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [phone, setPhone] = useState('');
@@ -49,7 +53,7 @@ export function Apply({ onDone, onCancel }: Props) {
         setError(null);
         try {
             await applyToDrive({
-                projectCode: PROJECT_CODE,
+                projectCode,
                 name: name.trim(),
                 email: email.trim(),
                 phone: phone.trim(),

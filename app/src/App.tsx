@@ -13,6 +13,13 @@
  * person waiting on us, not an error. Showing them a blank screen would be
  * the app's way of saying nothing is happening.
  *
+ * THE CONTRACT IS CHOSEN BEFORE THE PASSWORD. Izy runs two, a driver knows
+ * which one they drive before they know their password, and the app used to
+ * hardcode `uh` at signup. The choice is a hint and grants nothing: the
+ * server's membership list still decides, and a driver who taps the wrong
+ * card signs in fine and is then told, by name, which contract is theirs.
+ * See lib/contracts.ts.
+ *
  * ONE PLACE DECIDES WHAT A DEAD CREDENTIAL MEANS. Every screen that touches
  * the API takes `onSignedOut` and calls it on a 401, and this is where that
  * lands: forget the token in memory, delete it from the Keychain, and show
@@ -25,12 +32,15 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { theme } from './theme';
 import { clearToken, loadToken, saveToken } from './lib/session';
-import { signOut, type Project } from './lib/api';
+import { get, signOut, type Project } from './lib/api';
 import { SignIn } from './screens/SignIn';
 import { Apply } from './screens/Apply';
 import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
+import { ChooseContract } from './screens/ChooseContract';
+import { WrongContract } from './screens/WrongContract';
+import { outcomeFor, type ChoiceOutcome, type Contract } from './lib/contracts';
 
 export function App() {
     /* undefined while the Keychain is being read, null when there is nothing
@@ -43,6 +53,33 @@ export function App() {
     /* Undefined until the project list comes back. Null once it has and there
        is nothing on it, which is what sends somebody to their application. */
     const [hasProjects, setHasProjects] = useState<boolean | undefined>(undefined);
+    /* Which contract they said they drive for, before signing in. A hint. */
+    const [chosen, setChosen] = useState<Contract | null>(null);
+    /* Set once the server has told us what they actually belong to and it
+       does not include what they chose. */
+    const [mismatch, setMismatch] = useState<ChoiceOutcome | null>(null);
+
+    /* Check the choice against the truth, once, as soon as we are signed in.
+       Deliberately after authentication: nothing before it knows anything. */
+    useEffect(() => {
+        if (token === null || token === undefined || chosen === null) return;
+        let live = true;
+        void get<Array<{ code: string; name: string }>>('/api/me/projects', token)
+            .then((mine: Array<{ code: string; name: string }>) => {
+                if (!live) return;
+                const outcome = outcomeFor(chosen.code, mine);
+                setMismatch(outcome.kind === 'ok' ? null : outcome);
+                /* Feeds the existing applicant path: no memberships at all
+                   still means "waiting on us", which Onboarding already says
+                   far better than a mismatch screen would. */
+                setHasProjects(mine.length > 0);
+            })
+            /* A failure here is not the place to sign anybody out: the
+               screens below make the same call and handle a dead credential
+               properly. Leaving `mismatch` null lets them through to it. */
+            .catch(() => undefined);
+        return () => { live = false; };
+    }, [token, chosen]);
 
     useEffect(() => {
         void loadToken().then((found) => setToken(found));
@@ -62,6 +99,11 @@ export function App() {
         setProject(null);
         setHasProjects(undefined);
         setApplying(false);
+        setMismatch(null);
+        /* The contract choice goes too. The next person to hold this phone
+           might drive the other one, and a remembered choice would send them
+           to a refusal they did not cause. */
+        setChosen(null);
         void clearToken();
         /* Best effort, and after the local sign-out. The point of telling the
            server is to revoke the row so the token cannot be replayed; the
@@ -82,10 +124,31 @@ export function App() {
     return (
         <View style={styles.root}>
             <StatusBar style="dark" />
-            {token === null ? (
+            {chosen === null ? (
+                /* First, before the password. */
+                <ChooseContract onChoose={setChosen} />
+            ) : token === null ? (
                 applying
-                    ? <Apply onDone={() => setApplying(false)} onCancel={() => setApplying(false)} />
-                    : <SignIn onSignedIn={onSignedIn} onApply={() => setApplying(true)} />
+                    ? <Apply
+                        projectCode={chosen.code}
+                        onDone={() => setApplying(false)}
+                        onCancel={() => setApplying(false)}
+                      />
+                    : <SignIn
+                        contractName={chosen.name}
+                        onBack={() => setChosen(null)}
+                        onSignedIn={onSignedIn}
+                        onApply={() => setApplying(true)}
+                      />
+            ) : mismatch !== null && mismatch.kind === 'wrongContract' ? (
+                <WrongContract
+                    outcome={mismatch}
+                    onSwitch={(code) => {
+                        const next = mismatch.belongsTo.find((m) => m.code === code);
+                        if (next) { setChosen({ code: next.code, name: next.name, detail: '' }); setMismatch(null); }
+                    }}
+                    onSignOut={onSignedOut}
+                />
             ) : hasProjects === false ? (
                 /* Signed in, on no contract. Not an error: it is what every
                    applicant looks like until somebody approves them. */
