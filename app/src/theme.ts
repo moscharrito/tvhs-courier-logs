@@ -40,28 +40,34 @@ export const theme = {
 /* The ground the glass sits on. Flat white gives nothing to be translucent
    against, so panels would look like plain cards with a weak border. */
 export const GROUND = {
-    top: '#eef4f0',
-    middle: '#f6f8f7',
-    bottom: '#e6efe9',
+    /* More separation between the bands, so there is something for the glass
+       to be translucent against. Three near-identical greys gave the panes
+       nothing to catch. */
+    top: '#e3ede7',
+    middle: '#f2f6f3',
+    bottom: '#d8e6dd',
 } as const;
 
 export const GLASS = {
-    /* Translucent rather than solid: the ground shows through and the panel
-       reads as a layer rather than a box. */
-    fill: 'rgba(255,255,255,0.72)',
+    /* Denser than the first pass, which read as washed-out white rather than
+       as glass. More opacity in the fill plus a harder top edge and a deeper
+       shadow is what makes a panel look like a pane sitting above something
+       instead of a pale rectangle painted on it. */
+    fill: 'rgba(255,255,255,0.58)',
     /* Deeper, for a sheet that has to sit above content and stay readable. */
-    fillStrong: 'rgba(255,255,255,0.88)',
+    fillStrong: 'rgba(255,255,255,0.8)',
     /* A tint for anything carrying the brand. */
     fillGreen: 'rgba(20,83,45,0.92)',
-    /* Light catching the top edge is most of what sells glass. */
-    border: 'rgba(255,255,255,0.85)',
+    /* Light catching the top edge is most of what sells glass, and a full
+       white edge against a denser fill is what gives it thickness. */
+    border: 'rgba(255,255,255,0.95)',
     borderSubtle: 'rgba(17,24,39,0.06)',
     /* Wide and soft, so the panel floats rather than being outlined. */
     shadow: {
         shadowColor: '#0b2318',
-        shadowOpacity: 0.1,
-        shadowRadius: 24,
-        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.16,
+        shadowRadius: 30,
+        shadowOffset: { width: 0, height: 12 },
         /* Android has no shadow radius control, so elevation approximates. */
         elevation: 6,
     },

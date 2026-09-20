@@ -36,7 +36,7 @@ import { Stop } from './Stop';
 import { Collect } from './Collect';
 import { CardButton, Chip, Ground, Notice, Panel, Sheet } from '../ui/Glass';
 import { summarise } from '../lib/refusals';
-import { BackPill } from '../ui/Nav';
+import { TopBar } from '../ui/Nav';
 import { BoxIcon, NavigateIcon, PinIcon } from '../ui/Icons';
 import { pendingLabel, type OutboxState } from '../lib/outbox';
 import { dismissRejections, flush, readQueue } from '../lib/queue';
@@ -164,7 +164,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
             them anyway: where they are up to, what is next, how long it has.
             ───────────────────────────────────────────────────────────── */}
         <View style={styles.context}>
-            <BackPill label="Contracts" onPress={onBack} />
+            <TopBar backLabel="Contracts" onBack={onBack} onSignOut={onSignedOut} />
 
             <Text style={styles.title}>Today</Text>
             {data !== null && (

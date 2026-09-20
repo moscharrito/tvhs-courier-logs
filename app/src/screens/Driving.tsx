@@ -20,17 +20,21 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ground } from '../ui/Glass';
 import { TabBar, type TabDef } from '../ui/Nav';
-import { AskedIcon, BoardIcon, RouteIcon } from '../ui/Icons';
+import { AskedIcon, BoardIcon, ProfileIcon, RouteIcon } from '../ui/Icons';
+import { Profile } from './Profile';
+import { readQueue } from '../lib/queue';
+import { useEffect } from 'react';
 import type { Project } from '../lib/api';
 import { Run } from './Run';
 import { Board } from './Board';
 import { Requests } from './Requests';
 
-type Tab = 'run' | 'board' | 'asked';
+type Tab = 'run' | 'board' | 'asked' | 'you';
 
 interface Props {
     token: string;
     project: Project;
+    username: string;
     onSignedOut: () => void;
     onBack: () => void;
 }
@@ -39,10 +43,21 @@ const TABS: ReadonlyArray<TabDef<Tab>> = [
     { key: 'run', label: 'Today', Icon: RouteIcon, hint: 'The stops assigned to you today' },
     { key: 'board', label: 'Work going', Icon: BoardIcon, hint: 'Deliveries you can ask for' },
     { key: 'asked', label: 'Asked', Icon: AskedIcon, hint: 'What you have asked for and the answers' },
+    /* Who is signed in and how to get out, which had no home anywhere in the
+       app: an approved courier never sees the onboarding screen again, so a
+       driver handed a shared phone could not tell whose account was on it. */
+    { key: 'you', label: 'You', Icon: ProfileIcon, hint: 'Your account, switching contract, and signing out' },
 ];
 
-export function Driving({ token, project, onSignedOut, onBack }: Props) {
+export function Driving({ token, project, username, onSignedOut, onBack }: Props) {
     const [tab, setTab] = useState<Tab>('run');
+    /* Only so the profile screen can warn before signing out discards them. */
+    const [queued, setQueued] = useState(0);
+
+    useEffect(() => {
+        if (tab !== 'you') return;
+        void readQueue().then((s) => setQueued(s.queue.length));
+    }, [tab]);
 
     return (
         <Ground>
@@ -55,6 +70,16 @@ export function Driving({ token, project, onSignedOut, onBack }: Props) {
                 )}
                 {tab === 'asked' && (
                     <Requests token={token} code={project.code} onSignedOut={onSignedOut} />
+                )}
+                {tab === 'you' && (
+                    <Profile
+                        username={username}
+                        project={project}
+                        queued={queued}
+                        onBack={() => setTab('run')}
+                        onSwitchContract={onBack}
+                        onSignOut={onSignedOut}
+                    />
                 )}
             </View>
 

@@ -13,7 +13,7 @@
 import type { ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
-import { BackIcon, type IconProps } from './Icons';
+import { BackIcon, SignOutIcon, type IconProps } from './Icons';
 
 export interface TabDef<K extends string> {
     key: K;
@@ -87,7 +87,61 @@ export function BackPill({ label, onPress }: { label: string; onPress: () => voi
     );
 }
 
+/**
+ * Sign out, from anywhere.
+ *
+ * Small and top-right because it is not the work; labelled all the same,
+ * because an unlabelled door glyph on a shared phone is the control nobody
+ * presses when they should and somebody presses when they should not.
+ */
+export function SignOutButton({ onPress }: { onPress: () => void }) {
+    return (
+        <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+            accessibilityHint="Ends this session on this phone"
+            style={({ pressed }) => [styles.signOut, pressed && styles.tabPressed]}
+        >
+            <SignOutIcon size={19} color={theme.danger} />
+            <Text style={styles.signOutText}>Sign out</Text>
+        </Pressable>
+    );
+}
+
+/** Back on the left, sign out on the right, on every secondary screen. */
+export function TopBar({ backLabel, onBack, onSignOut }: {
+    backLabel: string;
+    onBack: () => void;
+    onSignOut: () => void;
+}) {
+    return (
+        <View style={styles.topBar}>
+            <BackPill label={backLabel} onPress={onBack} />
+            <SignOutButton onPress={onSignOut} />
+        </View>
+    );
+}
+
 const styles = StyleSheet.create({
+    topBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: SPACE.sm,
+    },
+    signOut: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACE.xs,
+        minHeight: TAP.minimum,
+        paddingHorizontal: SPACE.md,
+        borderRadius: RADIUS.pill,
+        backgroundColor: 'rgba(185,28,28,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(185,28,28,0.22)',
+    },
+    signOutText: { color: theme.danger, fontSize: TYPE.meta, fontWeight: '700' },
     /* Floats clear of the edge so the glass has something to sit over. */
     tabWrap: {
         paddingHorizontal: SPACE.md,

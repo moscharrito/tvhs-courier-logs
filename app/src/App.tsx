@@ -59,12 +59,18 @@ export function App() {
     /* Set once the server has told us what they actually belong to and it
        does not include what they chose. */
     const [mismatch, setMismatch] = useState<ChoiceOutcome | null>(null);
+    /* Shown on the profile screen. Empty until the session call lands, which
+       is fine: that screen is several taps away from a cold start. */
+    const [who, setWho] = useState('');
 
     /* Check the choice against the truth, once, as soon as we are signed in.
        Deliberately after authentication: nothing before it knows anything. */
     useEffect(() => {
         if (token === null || token === undefined || chosen === null) return;
         let live = true;
+        void get<{ username: string }>('/api/session', token)
+            .then((me) => { if (live) setWho(me.username); })
+            .catch(() => undefined);
         void get<Array<{ code: string; name: string }>>('/api/me/projects', token)
             .then((mine: Array<{ code: string; name: string }>) => {
                 if (!live) return;
@@ -101,6 +107,7 @@ export function App() {
         setHasProjects(undefined);
         setApplying(false);
         setMismatch(null);
+        setWho('');
         /* The contract choice goes too. The next person to hold this phone
            might drive the other one, and a remembered choice would send them
            to a refusal they did not cause. */
@@ -175,8 +182,17 @@ export function App() {
                 <Driving
                     token={token}
                     project={project}
+                    username={who}
                     onSignedOut={onSignedOut}
-                    onBack={() => setProject(null)}
+                    /* Clears the CONTRACT, not just the project, and that is
+                       the fix for a button that did nothing. It used to call
+                       setProject(null) alone; Projects.tsx auto-picks when a
+                       courier belongs to exactly one contract, which every
+                       real driver does, so the picker mounted, re-picked the
+                       single option and put them straight back. The label
+                       says Contracts and there is a contract screen now, so
+                       that is where it goes. */
+                    onBack={() => { setProject(null); setChosen(null); setMismatch(null); }}
                 />
             )}
         </View>

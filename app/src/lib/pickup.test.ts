@@ -68,9 +68,21 @@ describe('whether the handover can be sent', () => {
     it('needs a count, a name and a signature', () => {
         expect(canCollect(ok, 'A Pharmacist', 12)).toBe(true);
         expect(canCollect(ok, '', 12), 'no printed name').toBe(false);
-        /* A name alone is not a signature. The contract asks for both. */
-        expect(canCollect(ok, 'A Pharmacist', 0), 'no strokes').toBe(false);
         expect(canCollect(checkCount(3, '', ''), 'A Pharmacist', 12), 'no count').toBe(false);
+    });
+
+    it('takes no signature when there is a reason, and refuses when there is not', () => {
+        /* Relaxed on the owner’s instruction: getting a pharmacist to
+           scrawl on a phone stops the round. What is refused is a handover
+           with neither a signature nor an explanation. */
+        expect(canCollect(ok, 'A Pharmacist', 0), 'nothing at all').toBe(false);
+        expect(canCollect(ok, 'A Pharmacist', 0, '   '), 'whitespace is not a reason').toBe(false);
+        expect(canCollect(ok, 'A Pharmacist', 0, 'Counter unattended.')).toBe(true);
+    });
+
+    it('still needs the printed name even when nobody signs', () => {
+        /* Somebody handed the packages over. The record says who. */
+        expect(canCollect(ok, '', 0, 'Counter unattended.')).toBe(false);
     });
 
     it('stays blocked while a mismatch is unexplained', () => {

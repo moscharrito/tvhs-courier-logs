@@ -28,11 +28,7 @@ export function ChooseContract({ onChoose }: { onChoose: (contract: Contract) =>
                 </View>
 
                 <Panel style={styles.panel}>
-                    <Text style={styles.title}>Which contract today?</Text>
-                    <Text style={styles.body}>
-                        Pick the service you drive for. You can change this later without signing out.
-                    </Text>
-
+                    <Text style={styles.title}>Select Contract</Text>
                     {CONTRACTS.map((c) => (
                         <CardButton
                             key={c.code}
@@ -45,10 +41,6 @@ export function ChooseContract({ onChoose }: { onChoose: (contract: Contract) =>
                     ))}
                 </Panel>
 
-                <Text style={styles.footnote}>
-                    Choosing here does not sign you in or give you access. If you pick the wrong one we will
-                    tell you which contract your account is on.
-                </Text>
             </ScrollView>
         </Ground>
     );
@@ -71,21 +63,12 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     panel: { borderRadius: RADIUS.card },
-    title: { fontSize: TYPE.title, fontWeight: '700', color: theme.ink, textAlign: 'center' },
-    body: {
-        fontSize: TYPE.label,
-        color: theme.muted,
+    title: {
+        fontSize: TYPE.title,
+        fontWeight: '700',
+        color: theme.ink,
         textAlign: 'center',
-        lineHeight: 24,
-        marginTop: SPACE.sm,
+        /* The explanation under this used to carry the gap. */
         marginBottom: SPACE.lg,
-    },
-    footnote: {
-        fontSize: TYPE.meta,
-        color: theme.muted,
-        textAlign: 'center',
-        lineHeight: 21,
-        marginTop: SPACE.lg,
-        paddingHorizontal: SPACE.sm,
     },
 });

@@ -43,6 +43,10 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const [note, setNote] = useState('');
     const [signedName, setSignedName] = useState('');
     const [strokes, setStrokes] = useState<Stroke[]>([]);
+    const [noSignatureReason, setNoSignatureReason] = useState('');
+    /* Opened by hand. Never the default: the signature is still what
+       the contract asks for, and this is the exception. */
+    const [cannotSign, setCannotSign] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -60,7 +64,8 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const check = site === null
         ? checkCount(0, '', '')
         : checkCount(site.packages, counted, note);
-    const ready = site !== null && canCollect(check, signedName, strokes.length);
+    const ready = site !== null
+        && canCollect(check, signedName, cannotSign ? 0 : strokes.length, noSignatureReason);
 
     const submit = async () => {
         if (site === null || !ready) return;
@@ -77,7 +82,8 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                 body: {
                     siteId: site.site.id,
                     signedName: signedName.trim(),
-                    strokes,
+                    strokes: cannotSign ? [] : strokes,
+                    noSignatureReason: cannotSign ? noSignatureReason.trim() : '',
                     countedPackages: check.kind === 'incomplete' ? 0 : check.counted,
                     note: note.trim(),
                     at: new Date().toISOString(),
@@ -205,15 +211,46 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             accessibilityLabel="Name of the person handing over"
                         />
 
-                        <Text style={styles.label}>Their signature</Text>
-                        <SignaturePad label="Signature of the person handing over" onChange={setStrokes} />
+                        {!cannotSign && (
+                            <>
+                                <Text style={styles.label}>Their signature</Text>
+                                <SignaturePad label="Signature of the person handing over" onChange={setStrokes} />
+                            </>
+                        )}
+
+                        {cannotSign && (
+                            <>
+                                <Text style={styles.label}>Why nobody signed</Text>
+                                <TextInput
+                                    style={[styles.input, styles.multiline]}
+                                    value={noSignatureReason}
+                                    onChangeText={setNoSignatureReason}
+                                    multiline
+                                    editable={!busy}
+                                    placeholder="This is what University Health sees instead of a signature."
+                                    placeholderTextColor={theme.muted}
+                                    accessibilityLabel="Why nobody signed"
+                                />
+                            </>
+                        )}
+
+                        <CardButton
+                            title={cannotSign ? 'They can sign after all' : 'They cannot sign'}
+                            detail={cannotSign
+                                ? 'Go back to the signature pad'
+                                : 'Records the collection without one, and asks why'}
+                            tone="quiet"
+                            onPress={() => { setCannotSign(!cannotSign); setNoSignatureReason(''); }}
+                        />
 
                         <View style={styles.actions}>
                             <CardButton
                                 title="Record the collection"
                                 detail={ready
                                     ? `${check.kind === 'incomplete' ? '' : check.counted} packages into the van`
-                                    : 'Count, name and signature are all needed'}
+                                    : cannotSign
+                                        ? 'Count, name and a reason nobody signed'
+                                        : 'Count, name and signature'}
                                 tone="primary"
                                 onPress={() => { void submit(); }}
                                 disabled={!ready}

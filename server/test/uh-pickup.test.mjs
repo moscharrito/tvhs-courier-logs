@@ -131,9 +131,21 @@ describe('collecting a batch', () => {
         expect(strokes[0][0]).toMatchObject({ x: 0.1, y: 0.5 });
     });
 
-    it('refuses a printed name with no signature behind it', async () => {
-        // Scope 1.2.8 asks for the printed name AND the signature. A name
-        // alone is a typed claim, not a proof of delivery.
+    it('refuses a printed name with neither a signature nor a reason', async () => {
+        // Scope 1.2.8 asks for the printed name AND the signature, and a name
+        // alone is a typed claim rather than a proof of collection.
+        //
+        // The rule relaxed on the owner's instruction after a courier found
+        // that getting a pharmacist to scrawl on a phone stops the round: a
+        // collection may now go through with no signature, and it costs a
+        // written reason. What is still refused is the case below, where
+        // there is neither.
+        //
+        // The alternative proposed was to generate a signature from the typed
+        // name. That would have the app draw a mark the person never made
+        // into an append-only custody record for controlled substances, which
+        // is worse than an absent one: a gap is visible, a manufactured
+        // signature is not.
         const order = await makeOrder();
         const run = await makeRun([order.id]);
         const ada = await courierAgent('ada.courier');
@@ -141,8 +153,66 @@ describe('collecting a batch', () => {
         const res = await ada.post(`${RUNS}/${run.id}/pickup`)
             .send({ siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 1 });
         expect(res.status).toBe(400);
-        expect(res.body.details.join(' ')).toMatch(/strokes/);
+        expect(res.body.code).toBe('pickup.noSignatureReason');
+        expect(res.body.error).toMatch(/Say why/);
         expect((await admin.get(`${ORDERS}/${order.id}`)).body.status).toBe('assigned');
+    });
+
+    it('takes a collection with no signature when there is a reason', async () => {
+        const order = await makeOrder();
+        const run = await makeRun([order.id]);
+        const ada = await courierAgent('ada.courier');
+
+        const res = await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId,
+            signedName: 'Pharmacy Tech',
+            countedPackages: 1,
+            noSignatureReason: 'Counter was closing and the tech would not sign on a phone.',
+        });
+        expect(res.status, res.text).toBe(201);
+        expect((await admin.get(`${ORDERS}/${order.id}`)).body.status).toBe('picked_up');
+    });
+
+    it('records no signature row at all when nobody signed', async () => {
+        // Rather than a signatures row holding an empty stroke list, which
+        // would read later as a signature that happened to be blank instead
+        // of a handover nobody signed for.
+        const order = await makeOrder();
+        const run = await makeRun([order.id]);
+        const ada = await courierAgent('ada.courier');
+
+        const before = await srv.core.client.execute("SELECT COUNT(*) AS n FROM signatures WHERE kind = 'pickup'");
+        await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId,
+            signedName: 'Pharmacy Tech',
+            countedPackages: 1,
+            noSignatureReason: 'Nobody available to sign.',
+        });
+        const after = await srv.core.client.execute("SELECT COUNT(*) AS n FROM signatures WHERE kind = 'pickup'");
+        expect(Number(after.rows[0].n)).toBe(Number(before.rows[0].n));
+    });
+
+    it('keeps the count note and the missing-signature reason apart', async () => {
+        // Both can be true of one handover: two were not ready AND the
+        // pharmacist would not sign. Neither may overwrite the other.
+        const order = await makeOrder();
+        const run = await makeRun([order.id]);
+        const ada = await courierAgent('ada.courier');
+
+        await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId,
+            signedName: 'Pharmacy Tech',
+            countedPackages: 0,
+            note: 'Nothing was ready.',
+            noSignatureReason: 'Counter unattended.',
+        });
+        const ev = await srv.core.client.execute(
+            "SELECT reason FROM custody_events WHERE order_id = ? AND type = 'picked_up'",
+            [order.id],
+        );
+        const reason = String(ev.rows[0]?.reason ?? '');
+        expect(reason).toMatch(/Nothing was ready/);
+        expect(reason).toMatch(/No signature: Counter unattended/);
     });
 
     it('refuses a signature with no name behind it', async () => {

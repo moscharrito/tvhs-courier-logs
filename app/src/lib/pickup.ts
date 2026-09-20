@@ -90,13 +90,38 @@ export function checkCount(expected: number, counted: string, note: string): Cou
     return { kind: 'explained', expected, counted: n, difference };
 }
 
-/** Whether the whole handover is ready: count settled, name typed, signed. */
-export function canCollect(check: CountCheck, signedName: string, strokeCount: number): boolean {
+/**
+ * Whether the whole handover can be sent.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE SIGNATURE IS NO LONGER UNCONDITIONAL, and what replaced it matters.
+ *
+ * It was: count, name, signature, all three. A courier at a counter found
+ * the obvious problem, which is that persuading a pharmacist to scrawl on a
+ * phone stops the round.
+ *
+ * The suggestion was to generate a signature from the typed name, so
+ * "Alison Baker" would draw "AB". That is the app producing a mark the
+ * person never made, in an append-only custody record for controlled
+ * substances. It is worse than having no signature: an absent signature is
+ * a gap anybody can see, and a manufactured one is a lie nobody can.
+ *
+ * So the shape ticket 2.5 already uses for deliveries. No signature is
+ * allowed and it costs a written reason. The printed name is still required
+ * either way: somebody handed the packages over and the record says who.
+ * ───────────────────────────────────────────────────────────────────────── */
+export function canCollect(
+    check: CountCheck,
+    signedName: string,
+    strokeCount: number,
+    noSignatureReason = '',
+): boolean {
     if (check.kind === 'incomplete' || check.kind === 'needsNote') return false;
+    /* Still required. A handover with nobody's name on it is anonymous. */
     if (signedName.trim().length === 0) return false;
-    /* A name alone is not a signature: the contract asks for both, and one
-       stray tap is not a signature either (the pad enforces that too). */
-    return strokeCount > 0;
+    if (strokeCount > 0) return true;
+    /* Nobody signed. That is allowed, and it costs a sentence. */
+    return noSignatureReason.trim().length > 0;
 }
 
 /** What goes on screen and into the outbox label, so both say the same thing. */

@@ -142,6 +142,37 @@ export function NavigateIcon({ size = 24, color = '#111827', strokeWidth = 1.8 }
     );
 }
 
+/** You: the account this phone is signed in to. */
+export function ProfileIcon({ size = 24, color = '#111827', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <Svg {...base(size)}>
+            <Circle cx={12} cy={8.2} r={3.8} stroke={color} strokeWidth={strokeWidth} />
+            <Path
+                d="M4.6 20c0-3.6 3.3-5.6 7.4-5.6s7.4 2 7.4 5.6"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+            />
+        </Svg>
+    );
+}
+
+/** Sign out: a door with an arrow leaving it. */
+export function SignOutIcon({ size = 24, color = '#111827', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <Svg {...base(size)}>
+            <Path
+                d="M14 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H14"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+            <Path d="M17 8.5 20.5 12 17 15.5M20 12H10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+    );
+}
+
 /** On or off shift. */
 export function ShiftIcon({ size = 24, color = '#111827', strokeWidth = 1.8 }: IconProps) {
     return (

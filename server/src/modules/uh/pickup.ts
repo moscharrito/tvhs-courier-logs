@@ -42,8 +42,26 @@ const Pickup = z.object({
     siteId: z.number().int().positive(),
     /** Printed name of the authorised sending personnel (Scope 1.2.8). */
     signedName: z.string().trim().min(1).max(160),
-    /** The signature itself. Required: a name alone is not a signature. */
-    strokes: Strokes,
+    /* THE SIGNATURE, OR A REASON THERE IS NOT ONE.
+     *
+     * It was unconditionally required, and a courier standing at a counter
+     * reported the obvious: getting a pharmacist to scrawl on a phone is
+     * awkward, and a screen that will not move without it is a screen that
+     * stops the round.
+     *
+     * The alternative proposed was to generate a signature from the typed
+     * name. That is the app drawing a mark the person never made, into an
+     * append-only custody record for controlled substances, and it is worse
+     * than no signature at all: an absent signature is a gap somebody can
+     * see, a manufactured one is a lie nobody can.
+     *
+     * So the same shape ticket 2.5 already uses for deliveries: no
+     * signature is allowed, and it costs a written reason. Scope 1.2.8 asks
+     * for a name and a signature; when one cannot be had, the record says
+     * so in words rather than pretending. */
+    strokes: Strokes.or(z.array(z.never()).length(0)).default([]),
+    /** Required when strokes are empty. Checked in the handler. */
+    noSignatureReason: z.string().trim().max(300).default(''),
     /** What the courier actually counted into the vehicle. */
     countedPackages: z.number().int().min(0).max(5000),
     /** Required when the count does not match, so a discrepancy has a reason. */
@@ -168,6 +186,15 @@ export function createPickupRouter({ client }: { client: Client }): Router {
             return;
         }
 
+        if (body.strokes.length === 0 && body.noSignatureReason === '') {
+            res.status(400).json({
+                error: 'Nobody signed for this. Say why before recording it: a collection with no signature and no '
+                    + 'reason is a gap in the custody chain that nobody can explain later.',
+                code: 'pickup.noSignatureReason',
+            });
+            return;
+        }
+
         const rows = await waiting(project.id, Number(run['id']), body.siteId);
         if (rows.length === 0) {
             res.status(409).json({
@@ -192,17 +219,32 @@ export function createPickupRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        const sigRs = await client.execute({
-            sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
-                  VALUES (?, 'pickup', ?, ?, ?, ?, ?, ?) RETURNING id`,
-            args: [
-                project.id, body.signedName, JSON.stringify(body.strokes), actorOf(req),
-                at.toISOString(), body.lat ?? null, body.lng ?? null,
-            ],
-        });
-        /* "local:" rather than an S3 key: ticket 1.8 brings the file service,
-           and a key shaped like this says plainly where the bytes are today. */
-        const signatureKey = `local:signature:${Number(sigRs.rows[0]!['id'])}`;
+        /* No row when nobody signed. A signatures record holding an empty
+           stroke list would read, to anybody querying later, as a signature
+           that happened to be blank rather than as a handover nobody signed
+           for. The reason travels on the custody event instead. */
+        let signatureKey = '';
+        if (body.strokes.length > 0) {
+            const sigRs = await client.execute({
+                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
+                      VALUES (?, 'pickup', ?, ?, ?, ?, ?, ?) RETURNING id`,
+                args: [
+                    project.id, body.signedName, JSON.stringify(body.strokes), actorOf(req),
+                    at.toISOString(), body.lat ?? null, body.lng ?? null,
+                ],
+            });
+            /* "local:" rather than an S3 key: ticket 1.8 brings the file
+               service, and a key shaped like this says plainly where the
+               bytes are today. */
+            signatureKey = `local:signature:${Number(sigRs.rows[0]!['id'])}`;
+        }
+
+        /* One reason line on the custody event, carrying whichever of the two
+           apply, labelled so a person reading it later knows which is which. */
+        const reasonForEvent = [
+            body.note ? body.note : '',
+            body.noSignatureReason ? `No signature: ${body.noSignatureReason}` : '',
+        ].filter(Boolean).join(' | ');
 
         const settings = resolveSettings(project.settings);
         const collected: number[] = [];
@@ -223,7 +265,11 @@ export function createPickupRouter({ client }: { client: Client }): Router {
                         signatureKey,
                         ...(body.lat !== undefined ? { lat: body.lat } : {}),
                         ...(body.lng !== undefined ? { lng: body.lng } : {}),
-                        ...(body.note ? { reason: body.note } : {}),
+                        /* The count note and the missing-signature reason are
+                           different facts and must not overwrite one another:
+                           "two were not ready" and "the pharmacist would not
+                           sign on a phone" can both be true of one handover. */
+                        ...(reasonForEvent ? { reason: reasonForEvent } : {}),
                     },
                 });
                 collected.push(Number(order.id));
