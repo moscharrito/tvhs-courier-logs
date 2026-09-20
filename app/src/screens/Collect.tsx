@@ -27,6 +27,9 @@ import { get } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { queueAndSend } from '../lib/queue';
 import { canCollect, checkCount, pickupLabel, type PickupBoard, type PickupSite } from '../lib/pickup';
+import { handwrittenInitials } from '../lib/handwriting';
+import { initialsDescription, initialsOf } from '../lib/initials';
+import { SignatureMark } from './SignatureMark';
 import type { Stroke } from '../lib/strokes';
 
 export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
@@ -47,6 +50,9 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     /* Opened by hand. Never the default: the signature is still what
        the contract asks for, and this is the exception. */
     const [cannotSign, setCannotSign] = useState(false);
+    /* Typed initials by default, because that is the fast path at a
+       counter. Drawing is one tap away, and the record says which. */
+    const [method, setMethod] = useState<'initials' | 'drawn'>('initials');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -64,8 +70,11 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const check = site === null
         ? checkCount(0, '', '')
         : checkCount(site.packages, counted, note);
-    const ready = site !== null
-        && canCollect(check, signedName, cannotSign ? 0 : strokes.length, noSignatureReason);
+    /* Derived from the name as it is typed, so the courier sees the mark
+       before they record it, with the person handing over stood there. */
+    const auto = method === 'initials' ? handwrittenInitials(signedName) : [];
+    const mark = cannotSign ? [] : (method === 'initials' ? auto : strokes);
+    const ready = site !== null && canCollect(check, signedName, mark.length, noSignatureReason);
 
     const submit = async () => {
         if (site === null || !ready) return;
@@ -82,7 +91,8 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                 body: {
                     siteId: site.site.id,
                     signedName: signedName.trim(),
-                    strokes: cannotSign ? [] : strokes,
+                    strokes: mark,
+                    captureMethod: method,
                     noSignatureReason: cannotSign ? noSignatureReason.trim() : '',
                     countedPackages: check.kind === 'incomplete' ? 0 : check.counted,
                     note: note.trim(),
@@ -211,11 +221,35 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             accessibilityLabel="Name of the person handing over"
                         />
 
-                        {!cannotSign && (
+                        {!cannotSign && method === 'initials' && (
+                            <>
+                                <Text style={styles.label}>Their signature</Text>
+                                {/* Drawn from the name as it is typed. The
+                                    courier can see exactly what is being
+                                    recorded, which matters because the person
+                                    it belongs to is standing in front of
+                                    them. */}
+                                <SignatureMark strokes={auto} />
+                                <Text style={styles.hint}>{initialsDescription(signedName)}</Text>
+                            </>
+                        )}
+
+                        {!cannotSign && method === 'drawn' && (
                             <>
                                 <Text style={styles.label}>Their signature</Text>
                                 <SignaturePad label="Signature of the person handing over" onChange={setStrokes} />
                             </>
+                        )}
+
+                        {!cannotSign && (
+                            <CardButton
+                                title={method === 'initials' ? 'Let them sign instead' : 'Use typed initials'}
+                                detail={method === 'initials'
+                                    ? 'Hand over the phone and let them write it'
+                                    : `Signs as ${initialsOf(signedName) || 'their initials'}, recorded as typed`}
+                                tone="quiet"
+                                onPress={() => { setMethod(method === 'initials' ? 'drawn' : 'initials'); setStrokes([]); }}
+                            />
                         )}
 
                         {cannotSign && (
@@ -250,7 +284,9 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                                     ? `${check.kind === 'incomplete' ? '' : check.counted} packages into the van`
                                     : cannotSign
                                         ? 'Count, name and a reason nobody signed'
-                                        : 'Count, name and signature'}
+                                        : method === 'initials'
+                                            ? 'Count and the name of the person handing over'
+                                            : 'Count, name and signature'}
                                 tone="primary"
                                 onPress={() => { void submit(); }}
                                 disabled={!ready}
@@ -291,5 +327,6 @@ const styles = StyleSheet.create({
         color: theme.ink,
     },
     multiline: { minHeight: 88, paddingTop: SPACE.md, textAlignVertical: 'top' },
+    hint: { fontSize: TYPE.meta, color: theme.muted, lineHeight: 21, marginTop: SPACE.xs },
     actions: { marginTop: SPACE.lg },
 });

@@ -679,6 +679,9 @@ export type ClientEvent = typeof clientEvents.$inferSelect;
 
 export const SIGNATURE_KINDS = ['pickup', 'delivery', 'return'] as const;
 
+export const SIGNATURE_CAPTURE_METHODS = ['drawn', 'initials', 'none'] as const;
+export type SignatureCaptureMethod = (typeof SIGNATURE_CAPTURE_METHODS)[number];
+
 export const signatures = sqliteTable(
     'signatures',
     {
@@ -688,8 +691,16 @@ export const signatures = sqliteTable(
         /** Printed name, as Scope 1.2.8 requires alongside the signature. */
         signedName: text('signed_name').notNull(),
         /** JSON: [[{x,y,t},...], ...] in a 0..1 coordinate space, so the
-         *  capture is independent of the phone's screen size. */
+         *  capture is independent of the phone's screen size. Empty when the
+         *  mark was typed initials or when nobody signed. */
         strokes: text('strokes').notNull().default('[]'),
+        /** How the mark was made: drawn, initials, or none (0035).
+         *
+         *  Three things that would otherwise look identical in this table.
+         *  Typed initials are a legitimate electronic signature; storing them
+         *  in the same shape as a drawn one is what would stop anybody
+         *  reading the record later telling which happened. */
+        captureMethod: text('capture_method', { enum: SIGNATURE_CAPTURE_METHODS }).notNull().default('drawn'),
         /** Who captured it, where and when. */
         capturedBy: text('captured_by').notNull().default(''),
         capturedAt: text('captured_at').notNull(),

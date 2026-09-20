@@ -62,6 +62,17 @@ const Pickup = z.object({
     strokes: Strokes.or(z.array(z.never()).length(0)).default([]),
     /** Required when strokes are empty. Checked in the handler. */
     noSignatureReason: z.string().trim().max(300).default(''),
+    /* HOW the mark was made (migration 0035).
+     *
+     * Typed initials are an ordinary electronic signature and there is
+     * nothing wrong with capturing them: the person handing over is stood
+     * there and the courier types their name. What would be wrong is
+     * storing them in the same shape as a drawn mark, because then nobody
+     * reading this row later can tell which happened, and "the pharmacist
+     * signed" would mean two different things in two different rows.
+     *
+     * So the row says which, and the proof of collection says it too. */
+    captureMethod: z.enum(['drawn', 'initials']).default('drawn'),
     /** What the courier actually counted into the vehicle. */
     countedPackages: z.number().int().min(0).max(5000),
     /** Required when the count does not match, so a discrepancy has a reason. */
@@ -226,11 +237,11 @@ export function createPickupRouter({ client }: { client: Client }): Router {
         let signatureKey = '';
         if (body.strokes.length > 0) {
             const sigRs = await client.execute({
-                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
-                      VALUES (?, 'pickup', ?, ?, ?, ?, ?, ?) RETURNING id`,
+                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_by, captured_at, lat, lng)
+                      VALUES (?, 'pickup', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
                 args: [
-                    project.id, body.signedName, JSON.stringify(body.strokes), actorOf(req),
-                    at.toISOString(), body.lat ?? null, body.lng ?? null,
+                    project.id, body.signedName, JSON.stringify(body.strokes), body.captureMethod,
+                    actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null,
                 ],
             });
             /* "local:" rather than an S3 key: ticket 1.8 brings the file

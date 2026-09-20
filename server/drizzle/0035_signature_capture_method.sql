@@ -1,0 +1,27 @@
+-- How a signature was captured, so three different things stop looking alike.
+--
+-- Collecting a batch used to demand a hand-drawn signature and nothing else.
+-- Two changes landed on the owner's instruction after a courier stood at a
+-- counter and found that persuading a pharmacist to scrawl on a phone stops
+-- the round: a collection may go through with no signature and a written
+-- reason, and a signature may be the handover person's typed initials, so
+-- "James Madison" records as JM.
+--
+-- Typed initials are a real way to sign electronically and there is nothing
+-- wrong with capturing them. What would be wrong is storing them in the same
+-- shape as a drawn mark, because then nobody reading the record later can
+-- tell which happened, and "the pharmacist signed" would mean two different
+-- things in two different rows.
+--
+-- So the record says which:
+--
+--   drawn      somebody moved their finger across the glass
+--   initials   the courier typed a name and the app derived the initials,
+--              with that person present and handing over
+--   none       nobody signed; the reason is on the custody event
+--
+-- Existing rows default to 'drawn', which is what every one of them is: this
+-- column arrives at the same moment the other two possibilities do.
+--
+-- Additive. Nothing is rebuilt.
+ALTER TABLE `signatures` ADD `capture_method` text DEFAULT 'drawn' NOT NULL;
