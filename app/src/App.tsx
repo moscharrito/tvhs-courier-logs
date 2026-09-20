@@ -40,6 +40,7 @@ import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
 import { ChooseContract } from './screens/ChooseContract';
+import { TvhsSignIn } from './screens/TvhsSignIn';
 import { WrongContract } from './screens/WrongContract';
 import { outcomeFor, type ChoiceOutcome, type Contract } from './lib/contracts';
 
@@ -145,6 +146,12 @@ export function App() {
             {chosen === null ? (
                 /* First, before the password. */
                 <ChooseContract onChoose={setChosen} />
+            ) : token === null && chosen.code === 'tvhs' ? (
+                /* TVHS is two vans, one driver each, a phone in the cab, and
+                   a PIN. It has worked that way for months. Sending a TVHS
+                   driver to the UH password box was sending them to a
+                   credential they have never had. */
+                <TvhsSignIn onSignedIn={onSignedIn} onBack={() => setChosen(null)} />
             ) : token === null ? (
                 applying
                     ? <Apply

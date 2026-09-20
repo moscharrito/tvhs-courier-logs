@@ -86,6 +86,33 @@ export async function signIn(username: string, password: string): Promise<Sessio
     });
 }
 
+/** The roster on the side of the vans. Unauthenticated, like the web
+ *  sign-in page: it carries no PIN and no password hash. */
+export interface DriverPick {
+    /** TVHS’s two vans. Null for a courier on a project without routes. */
+    route: string | null;
+    username: string;
+    name: string;
+    /** Whether a PIN is already set. Meaningless without a route. */
+    hasPin: boolean;
+}
+
+/**
+ * TVHS sign-in: a van and a PIN.
+ *
+ * The legacy path, and the one two drivers have used for months. It is
+ * accepted from any device, which server.js says in its own comment, so the
+ * PIN is the only thing between a stranger and the account.
+ */
+export async function signInWithPin(route: string, pin: string): Promise<SessionUser & { token: string }> {
+    return request<SessionUser & { token: string }>(fetch, baseUrl(), '/api/login/pin', {
+        method: 'POST',
+        json: { route, pin },
+        /* Same as the password path: a token rather than a cookie. */
+        asApp: true,
+    });
+}
+
 export const get = <T>(path: string, token: string | null, options: RequestOptions = {}): Promise<T> =>
     request<T>(fetch, baseUrl(), path, { ...options, token });
 
