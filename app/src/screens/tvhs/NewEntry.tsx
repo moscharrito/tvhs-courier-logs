@@ -6,24 +6,20 @@
  * with Clear Day and Save Log; Daily Totals; Add Extra Route Leg; and a
  * Weekly Summary. All of it is here, in that order.
  *
- * ─────────────────────────────────────────────────────────────────────────
- * THE ONE THING THAT COULD NOT BE COPIED IS THE TABLE.
- *
- * Seven columns (leg, start, end, sterile, soiled, totes, miles) do not fit
- * across a phone. Shrinking them to fit would produce exactly the thing the
- * owner asked to fix two days ago: boxes too small to read or hit.
- *
- * So each leg is a card carrying the same seven values in the same order,
- * with the computed Totes shown the same way the web shows it. Nothing is
- * added, nothing is dropped, and the numbers are the same numbers.
+ * The seven-column table is a real table, in LegTable.tsx: it scrolls
+ * sideways with ROUTE LEG frozen, rather than being flattened into cards.
+ * The first attempt at this screen turned it into cards and the owner asked
+ * for the table back, which was the right call: a driver reads down a
+ * column to check a day, and cards cannot be read down.
  * ───────────────────────────────────────────────────────────────────────── */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator, KeyboardAvoidingView, Platform, Pressable,
-    ScrollView, StyleSheet, Text, TextInput, View,
+    ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { CardButton, Ground, Notice, Panel } from '../../ui/Glass';
+import { LegTable } from './LegTable';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../../theme';
 import { get, post } from '../../lib/api';
 import { ApiError, isUnauthorized } from '../../lib/http';
@@ -154,7 +150,6 @@ export function NewEntry({ token, route, onSignedOut }: {
         void loadWeek(ymd(d), routes);
     };
 
-    const daily = totals(legs);
     const summary = useMemo(() => weekSummary(byDate), [byDate]);
 
     if (today === null || week === null) {
@@ -249,39 +244,10 @@ export function NewEntry({ token, route, onSignedOut }: {
                     </Text>
                 )}
 
-                {/* One card per leg: the table's seven columns, in order. */}
-                {legs.map((leg, i) => (
-                    <Panel key={i} style={styles.leg}>
-                        <Text style={styles.legTitle}>
-                            {i + 1}.  {leg.legFrom || '?'}  ▶  {leg.legTo || '?'}
-                        </Text>
-                        <View style={styles.row}>
-                            <Field label="Start time" value={leg.startTime} onChange={(v) => setLeg(i, { startTime: v })} placeholder="08:00" editable={!busy} />
-                            <Field label="End time" value={leg.endTime} onChange={(v) => setLeg(i, { endTime: v })} placeholder="09:20" editable={!busy} />
-                        </View>
-                        <View style={styles.row}>
-                            <Field label="Sterile" value={leg.sterile} onChange={(v) => setLeg(i, { sterile: v })} numeric editable={!busy} />
-                            <Field label="Soiled" value={leg.soiled} onChange={(v) => setLeg(i, { soiled: v })} numeric editable={!busy} />
-                            <View style={styles.field}>
-                                <Text style={styles.fieldLabel}>Total totes</Text>
-                                {/* Computed, like the web. Never typed. */}
-                                <View style={styles.computed}><Text style={styles.computedText}>{totesOf(leg)}</Text></View>
-                            </View>
-                            <Field label="Miles" value={leg.miles} onChange={(v) => setLeg(i, { miles: v })} numeric editable={!busy} />
-                        </View>
-                    </Panel>
-                ))}
-
-                {/* Daily Totals, the row under the table. */}
-                <Panel style={styles.totalsBar}>
-                    <Text style={styles.totalsTitle}>Daily Totals</Text>
-                    <View style={styles.totalsRow}>
-                        <Total label="Sterile" value={daily.sterile} />
-                        <Total label="Soiled" value={daily.soiled} />
-                        <Total label="Totes" value={daily.sterile + daily.soiled} />
-                        <Total label="Miles" value={daily.miles} />
-                    </View>
-                </Panel>
+                {/* The table, seven columns, panned sideways with ROUTE LEG
+                    frozen. Daily Totals is its last row, as on the web. */}
+                <LegTable legs={legs} onChange={setLeg} editable={!busy} />
+                <Text style={styles.panHint}>Swipe the table sideways for totes and miles.</Text>
 
                 <CardButton
                     title="Add Extra Route Leg"
@@ -310,27 +276,6 @@ export function NewEntry({ token, route, onSignedOut }: {
                 </Panel>
             </ScrollView>
         </KeyboardAvoidingView>
-    );
-}
-
-function Field({ label, value, onChange, placeholder, numeric = false, editable = true }: {
-    label: string; value: string; onChange: (v: string) => void;
-    placeholder?: string; numeric?: boolean; editable?: boolean;
-}) {
-    return (
-        <View style={styles.field}>
-            <Text style={styles.fieldLabel}>{label}</Text>
-            <TextInput
-                style={styles.input}
-                value={value}
-                onChangeText={onChange}
-                editable={editable}
-                keyboardType={numeric ? 'decimal-pad' : 'numbers-and-punctuation'}
-                placeholder={placeholder ?? ''}
-                placeholderTextColor={theme.muted}
-                accessibilityLabel={label}
-            />
-        </View>
     );
 }
 
@@ -397,8 +342,7 @@ const styles = StyleSheet.create({
     },
     computedText: { fontSize: TYPE.body, fontWeight: '700', color: theme.green },
 
-    totalsBar: { marginBottom: SPACE.sm, padding: SPACE.md },
-    totalsTitle: { fontSize: TYPE.label, fontWeight: '700', color: theme.ink, marginBottom: SPACE.sm },
+    panHint: { fontSize: TYPE.meta, color: theme.muted, marginTop: SPACE.xs, marginBottom: SPACE.md, textAlign: 'center' },
     totalsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: SPACE.sm },
     total: { flex: 1, alignItems: 'center' },
     totalValue: { fontSize: TYPE.heading, fontWeight: '800', color: theme.green },

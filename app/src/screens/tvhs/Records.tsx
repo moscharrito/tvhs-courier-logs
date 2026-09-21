@@ -4,12 +4,11 @@
  * period, pick a date, read the rows. My Logs adds the four summary cards
  * and an export; My Check-Ins is date, day and time.
  *
- * WHAT IS DELIBERATELY NOT COPIED is the Export Excel button. It is a
- * `window.location.href` to a server route that streams a workbook, which on
- * a phone means a download the app cannot put anywhere: file storage waits
- * on the AWS BAA in ticket 0.10, and a button that opens a browser tab and
- * loses the file is worse than no button. The web still has it, and it is
- * the right place for it.
+ * NO EXPORT BUTTON. It is an administrator's function on the web and the
+ * owner confirmed a driver does not need it on a phone, which is just as
+ * well: it is a `window.location.href` to a streamed workbook, and a phone
+ * has nowhere to put the file until storage lands with the AWS BAA in
+ * ticket 0.10.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -129,10 +128,6 @@ export function MyLogs({ token, today, onSignedOut }: {
                     </Text>
                 </Panel>
             ))}
-
-            <Text style={styles.footnote}>
-                Excel export is on the web app: a phone has nowhere to put the file yet.
-            </Text>
         </ScrollView>
     );
 }
