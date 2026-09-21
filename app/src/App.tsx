@@ -41,7 +41,7 @@ import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
 import { ChooseContract } from './screens/ChooseContract';
 import { TvhsSignIn } from './screens/TvhsSignIn';
-import { TvhsDay } from './screens/TvhsDay';
+import { TvhsShell } from './screens/tvhs/TvhsShell';
 import { WrongContract } from './screens/WrongContract';
 import { outcomeFor, type ChoiceOutcome, type Contract } from './lib/contracts';
 
@@ -185,7 +185,7 @@ export function App() {
             ) : chosen.code === 'tvhs' ? (
                 /* TVHS drivers get their sheet, not the UH run board. The
                    fleet overview on the web is a desk thing and stays there. */
-                <TvhsDay
+                <TvhsShell
                     token={token}
                     route={tvhs?.route ?? ''}
                     name={tvhs?.name ?? who}

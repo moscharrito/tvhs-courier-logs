@@ -7,7 +7,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    emptyLeg, legIsEmpty, legsForRoute, legsFromSaved, problemsIn, toPayload, totals,
+    emptyLeg, legIsEmpty, legsForRoute, legsFromSaved, parseYmd, problemsIn, toPayload,
+    totals, totesOf, weekLabel, weekOf, weekSummary, ymd,
     type Leg, type Routes,
 } from './tvhs';
 
@@ -133,5 +134,55 @@ describe('what is sent', () => {
     it('trims what was typed', () => {
         const payload = toPayload('2026-09-20', [filled({ startTime: ' 08:00 ', sterile: ' 4 ' })]);
         expect(payload.legs[0]).toMatchObject({ startTime: '08:00', sterile: '4' });
+    });
+});
+
+describe('the week, copied from the web rather than reasoned out', () => {
+    it('runs Monday to Friday', () => {
+        /* Aug 31 2026 is a Monday; the web shows "Aug 31, 2026 — Sep 4, 2026". */
+        const week = weekOf('2026-09-02');
+        expect(week).toHaveLength(5);
+        expect(week[0]).toMatchObject({ date: '2026-08-31', dayName: 'Monday', dayOfMonth: 31 });
+        expect(week[4]).toMatchObject({ date: '2026-09-04', dayName: 'Friday', dayOfMonth: 4 });
+        expect(weekLabel(week)).toBe('Aug 31, 2026 — Sep 4, 2026');
+    });
+
+    it('puts a Sunday in the week that is ending, not the one starting', () => {
+        /* Straight from app.js: day === 0 ? -6 : 1. Getting this wrong would
+           file a Sunday against the wrong week, and the two clients would
+           disagree about the same sheet. */
+        const week = weekOf('2026-09-06');
+        expect(week[0]!.date).toBe('2026-08-31');
+        expect(week[4]!.date).toBe('2026-09-04');
+    });
+
+    it('takes a Monday as the start of its own week', () => {
+        expect(weekOf('2026-08-31')[0]!.date).toBe('2026-08-31');
+    });
+
+    it('does not slip a day through a timezone', () => {
+        /* new Date('2026-09-02') is UTC midnight, which is the previous day
+           anywhere west of Greenwich. This runs in Texas. */
+        expect(ymd(parseYmd('2026-09-02'))).toBe('2026-09-02');
+        expect(weekOf('2026-01-01')[0]!.date).toBe('2025-12-29');
+    });
+});
+
+describe('the totes column and the weekly summary', () => {
+    it('computes totes as sterile plus soiled, like the web', () => {
+        expect(totesOf(filled({ sterile: '4', soiled: '2' }))).toBe(6);
+        expect(totesOf(filled({ sterile: '', soiled: '' }))).toBe(0);
+    });
+
+    it('adds up the week the way the summary cards do', () => {
+        const out = weekSummary({
+            '2026-08-31': [filled(), filled({ miles: '15', sterile: '1', soiled: '1' })],
+            '2026-09-01': [filled({ miles: '35', sterile: '0', soiled: '3' })],
+            '2026-09-02': [{ ...emptyLeg(), miles: '80' }],
+        });
+        expect(out.days, 'a day with only prefilled mileage is not a day logged').toBe(2);
+        expect(out.routes).toBe(3);
+        expect(out.miles).toBe(130);
+        expect(out.totes).toBe(6 + 2 + 3);
     });
 });

@@ -175,3 +175,102 @@ export function toPayload(date: string, legs: Leg[]): { date: string; legs: Arra
         })),
     };
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE WEEK, which is how the web app has always worked and how this one now
+ * does.
+ *
+ * A driver picks any date and the week auto-selects: Monday to Friday, five
+ * tabs, one sheet each, with a weekly summary under them. The first mobile
+ * version was a single day, which was my invention rather than a
+ * translation: it had no week, no day tabs, no totes column, no daily
+ * totals row and no weekly summary.
+ *
+ * The rule is copied from app.js rather than reasoned out, so the two agree
+ * about what week a Sunday belongs to:
+ *
+ *   const diff = d.getDate() - day + (day === 0 ? -6 : 1)
+ *
+ * A Sunday belongs to the week that is ENDING, not the one about to start.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/** A date as YYYY-MM-DD, without going through a timezone on the way. */
+export function ymd(d: Date): string {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** Parse YYYY-MM-DD as a local civil date, never as UTC midnight. */
+export function parseYmd(date: string): Date {
+    const [y, m, d] = date.split('-').map(Number);
+    return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
+}
+
+export interface WeekDay {
+    /** YYYY-MM-DD */
+    date: string;
+    /** Monday, Tuesday... */
+    dayName: string;
+    /** The number a tab shows: "Monday 31". */
+    dayOfMonth: number;
+}
+
+/** Monday to Friday of the week containing `date`. */
+export function weekOf(date: string): WeekDay[] {
+    const d = parseYmd(date);
+    const dow = d.getDay();
+    /* Straight from app.js. A Sunday belongs to the week that is ending. */
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - dow + (dow === 0 ? -6 : 1));
+    monday.setHours(0, 0, 0, 0);
+
+    const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    return names.map((dayName, i) => {
+        const day = new Date(monday);
+        day.setDate(monday.getDate() + i);
+        return { date: ymd(day), dayName, dayOfMonth: day.getDate() };
+    });
+}
+
+/** "Aug 31, 2026 — Sep 4, 2026", the same string the web shows. */
+export function weekLabel(week: WeekDay[]): string {
+    if (week.length === 0) return '';
+    const fmt = (date: string): string => parseYmd(date).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+    });
+    return `${fmt(week[0]!.date)} — ${fmt(week[week.length - 1]!.date)}`;
+}
+
+/** Sterile plus soiled, which is the column the web computes per leg. */
+export function totesOf(leg: Leg): number {
+    return (Number(leg.sterile.trim()) || 0) + (Number(leg.soiled.trim()) || 0);
+}
+
+export interface WeekSummary {
+    miles: number;
+    totes: number;
+    /** Legs with anything on them, across the week. */
+    routes: number;
+    /** Days that have at least one such leg. */
+    days: number;
+}
+
+/** The four numbers under the week, matching the web's Weekly Summary. */
+export function weekSummary(byDate: Record<string, Leg[]>): WeekSummary {
+    let miles = 0;
+    let totes = 0;
+    let routes = 0;
+    let days = 0;
+    for (const legs of Object.values(byDate)) {
+        const used = legs.filter((l) => !legIsEmpty(l));
+        if (used.length === 0) continue;
+        days += 1;
+        routes += used.length;
+        for (const l of used) {
+            miles += Number(l.miles.trim()) || 0;
+            totes += totesOf(l);
+        }
+    }
+    return { miles: Math.round(miles * 100) / 100, totes, routes, days };
+}
