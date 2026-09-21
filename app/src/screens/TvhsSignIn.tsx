@@ -36,7 +36,8 @@ import { get, signInWithPin, type DriverPick } from '../lib/api';
 import { ApiError } from '../lib/http';
 
 export function TvhsSignIn({ onSignedIn, onBack }: {
-    onSignedIn: (token: string) => void;
+    /** The driver comes back with the token: their route picks the legs. */
+    onSignedIn: (token: string, driver: { route: string; name: string }) => void;
     onBack: () => void;
 }) {
     const [drivers, setDrivers] = useState<DriverPick[] | null>(null);
@@ -66,7 +67,7 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
         setError(null);
         try {
             const out = await signInWithPin(driver.route, pin);
-            onSignedIn(out.token);
+            onSignedIn(out.token, { route: driver.route, name: driver.name });
         } catch (err) {
             /* The server's own sentence. It says "Incorrect PIN" and counts
                the attempt, and inventing a friendlier one here would hide

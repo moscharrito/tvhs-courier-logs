@@ -41,6 +41,7 @@ import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
 import { ChooseContract } from './screens/ChooseContract';
 import { TvhsSignIn } from './screens/TvhsSignIn';
+import { TvhsDay } from './screens/TvhsDay';
 import { WrongContract } from './screens/WrongContract';
 import { outcomeFor, type ChoiceOutcome, type Contract } from './lib/contracts';
 
@@ -63,6 +64,9 @@ export function App() {
     /* Shown on the profile screen. Empty until the session call lands, which
        is fine: that screen is several taps away from a cold start. */
     const [who, setWho] = useState('');
+    /* Which van the PIN signed in to. TVHS only: a route is what picks the
+       legs, and the UH side has none. */
+    const [tvhs, setTvhs] = useState<{ route: string; name: string } | null>(null);
 
     /* Check the choice against the truth, once, as soon as we are signed in.
        Deliberately after authentication: nothing before it knows anything. */
@@ -109,6 +113,7 @@ export function App() {
         setApplying(false);
         setMismatch(null);
         setWho('');
+        setTvhs(null);
         /* The contract choice goes too. The next person to hold this phone
            might drive the other one, and a remembered choice would send them
            to a refusal they did not cause. */
@@ -151,7 +156,10 @@ export function App() {
                    a PIN. It has worked that way for months. Sending a TVHS
                    driver to the UH password box was sending them to a
                    credential they have never had. */
-                <TvhsSignIn onSignedIn={onSignedIn} onBack={() => setChosen(null)} />
+                <TvhsSignIn
+                    onSignedIn={(t, driver) => { setTvhs(driver); onSignedIn(t); }}
+                    onBack={() => setChosen(null)}
+                />
             ) : token === null ? (
                 applying
                     ? <Apply
@@ -173,6 +181,16 @@ export function App() {
                         if (next) { setChosen({ code: next.code, name: next.name, detail: '' }); setMismatch(null); }
                     }}
                     onSignOut={onSignedOut}
+                />
+            ) : chosen.code === 'tvhs' ? (
+                /* TVHS drivers get their sheet, not the UH run board. The
+                   fleet overview on the web is a desk thing and stays there. */
+                <TvhsDay
+                    token={token}
+                    route={tvhs?.route ?? ''}
+                    name={tvhs?.name ?? who}
+                    onSignedOut={onSignedOut}
+                    onBack={() => { setChosen(null); setTvhs(null); }}
                 />
             ) : hasProjects === false ? (
                 /* Signed in, on no contract. Not an error: it is what every
