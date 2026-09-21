@@ -34,6 +34,10 @@ import { isUnauthorized } from '../lib/http';
 import { newId, type OutboxEntry } from '../lib/outbox';
 import { queueAndSend } from '../lib/queue';
 import { SignaturePad } from './SignaturePad';
+import { SignatureMark } from './SignatureMark';
+import { handwrittenInitials } from '../lib/handwriting';
+import { initialsDescription, initialsOf } from '../lib/initials';
+import { CardButton } from '../ui/Glass';
 import type { Stroke } from '../lib/strokes';
 
 /** Addendum 1's own list, in its own terms. */
@@ -70,7 +74,12 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
     const [strokes, setStrokes] = useState<Stroke[]>([]);
-    const [signed, setSigned] = useState(false);
+    /* The same three choices a collection has (migration 0035). A
+       doorstep needs them more, not less: the person receiving may have
+       their hands full, be elderly, or be behind a screen door. */
+    const [method, setMethod] = useState<'initials' | 'drawn'>('initials');
+    const [cannotSign, setCannotSign] = useState(false);
+    const [noSignatureReason, setNoSignatureReason] = useState('');
     const [reason, setReason] = useState(REASONS[0]!.code);
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
@@ -121,7 +130,13 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const deliver = async () => {
         await queue(
             `${base}/deliver`,
-            { signedName: signedName.trim(), strokes, note: note.trim() },
+            {
+                signedName: signedName.trim(),
+                strokes: mark,
+                captureMethod: method,
+                noSignatureReason: cannotSign ? noSignatureReason.trim() : '',
+                note: note.trim(),
+            },
             `Delivery for ${stop.recipientName}`,
         );
         onDone();
@@ -141,7 +156,14 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     };
 
     const arrived = stop.status === 'picked_up' || stop.status === 'assigned';
-    const canDeliver = signedName.trim().length > 1 && signed && !busy;
+    /* Derived as the name is typed, so the courier sees the mark before
+       recording it, with the person it belongs to stood in front of them. */
+    const auto = method === 'initials' ? handwrittenInitials(signedName) : [];
+    const mark = cannotSign ? [] : (method === 'initials' ? auto : strokes);
+    /* The name never stops being required: a delivery with nobody's name
+       against it is an anonymous handover of a prescription. */
+    const hasMark = cannotSign ? noSignatureReason.trim().length > 0 : mark.length > 0;
+    const canDeliver = signedName.trim().length > 1 && hasMark && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
     const knowsPackages = (detail?.packages.length ?? 0) > 0;
@@ -201,9 +223,54 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                         accessibilityLabel="Printed name of whoever took it"
                     />
 
-                    <SignaturePad
-                        label="Their signature"
-                        onChange={(next, ok) => { setStrokes(next); setSigned(ok); }}
+                    {!cannotSign && method === 'initials' && (
+                        <>
+                            <Text style={styles.label}>Their signature</Text>
+                            <SignatureMark strokes={auto} />
+                            <Text style={styles.hint}>{initialsDescription(signedName)}</Text>
+                        </>
+                    )}
+
+                    {!cannotSign && method === 'drawn' && (
+                        <SignaturePad
+                            label="Their signature"
+                            onChange={(next) => setStrokes(next)}
+                        />
+                    )}
+
+                    {cannotSign && (
+                        <>
+                            <Text style={styles.label}>Why nobody signed</Text>
+                            <TextInput
+                                style={styles.input}
+                                value={noSignatureReason}
+                                onChangeText={setNoSignatureReason}
+                                multiline
+                                editable={!busy}
+                                placeholder="This is what University Health sees instead of a signature."
+                                accessibilityLabel="Why nobody signed"
+                            />
+                        </>
+                    )}
+
+                    {!cannotSign && (
+                        <CardButton
+                            title={method === 'initials' ? 'Let them sign instead' : 'Use typed initials'}
+                            detail={method === 'initials'
+                                ? 'Hand over the phone and let them write it'
+                                : `Signs as ${initialsOf(signedName) || 'their initials'}, recorded as typed`}
+                            tone="quiet"
+                            onPress={() => { setMethod(method === 'initials' ? 'drawn' : 'initials'); setStrokes([]); }}
+                        />
+                    )}
+
+                    <CardButton
+                        title={cannotSign ? 'They can sign after all' : 'They cannot sign'}
+                        detail={cannotSign
+                            ? 'Go back to the signature'
+                            : 'Records the delivery without one, and asks why'}
+                        tone="quiet"
+                        onPress={() => { setCannotSign(!cannotSign); setNoSignatureReason(''); }}
                     />
 
                     <Text style={styles.label}>Anything worth noting</Text>
@@ -280,6 +347,7 @@ const styles = StyleSheet.create({
         borderRadius: 22, padding: 16, marginTop: 16,
     },
     cardTitle: { fontSize: 18, fontWeight: '600', color: theme.ink },
+    hint: { fontSize: 15, color: theme.muted, lineHeight: 21, marginTop: 6, marginBottom: 6 },
     label: { fontSize: 15, color: theme.muted, marginTop: 16, marginBottom: 6 },
     input: {
         backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.85)', borderRadius: 8,

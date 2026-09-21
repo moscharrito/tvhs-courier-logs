@@ -105,6 +105,78 @@ describe('arriving', () => {
 /* ------------------------------------------------------------ delivering */
 
 describe('delivering', () => {
+    /* The three ways a delivery can be signed for, which pickup gained first
+       and which a doorstep needs more, not less: the person receiving may
+       have their hands full, may be elderly, may be behind a screen door. */
+
+    it('records how the mark was made, so a drawn one is not a typed one', async () => {
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas', strokes: STROKES });
+        expect(res.status, res.text).toBe(201);
+
+        const row = await sql("SELECT capture_method FROM signatures WHERE kind = 'delivery' ORDER BY id DESC LIMIT 1");
+        expect(String(row.rows[0].capture_method)).toBe('drawn');
+    });
+
+    it('takes typed initials, and says they were typed', async () => {
+        /* A real electronic signature. What must never happen is it being
+           stored so nobody can tell it from a finger on glass, because then
+           "the patient signed" means two different things in two rows. */
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'James Madison', strokes: STROKES, captureMethod: 'initials' });
+        expect(res.status, res.text).toBe(201);
+
+        const row = await sql("SELECT capture_method, signed_name FROM signatures WHERE kind = 'delivery' ORDER BY id DESC LIMIT 1");
+        expect(String(row.rows[0].capture_method)).toBe('initials');
+        /* The full name is kept, not just the initials: the record says who
+           it was, and the mark is only how they marked it. */
+        expect(String(row.rows[0].signed_name)).toBe('James Madison');
+    });
+
+    it('refuses no signature with no reason', async () => {
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas' });
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('deliver.noSignatureReason');
+        /* Arriving stamps arrived_at without moving the status off
+           picked_up, so the property here is that it did NOT become
+           delivered rather than what it did become. */
+        expect((await detail(order.id)).body.status).not.toBe('delivered');
+    });
+
+    it('takes no signature when there is a reason', async () => {
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
+            signedName: 'Ines Vargas',
+            noSignatureReason: 'Hands full with a child; asked me to leave it on the table.',
+        });
+        expect(res.status, res.text).toBe(201);
+        expect((await detail(order.id)).body.status).toBe('delivered');
+    });
+
+    it('still requires a name even when nobody signs', async () => {
+        /* A delivery with nobody's name against it is an anonymous handover
+           of a prescription. That does not relax. */
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ noSignatureReason: 'Nobody would sign.' });
+        expect(res.status).toBe(400);
+        expect((await detail(order.id)).body.status).not.toBe('delivered');
+    });
+
     it('takes the receiver name and signature, and closes the order', async () => {
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');

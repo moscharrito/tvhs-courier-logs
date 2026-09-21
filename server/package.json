@@ -23,7 +23,8 @@
     "restore:check": "tsx scripts/restore-check.mjs",
     "restore:drill": "tsx scripts/restore-drill.mjs",
     "clear:rehearsal": "tsx scripts/clear-rehearsal.mjs",
-    "fix:tvhs-roster": "tsx scripts/fix-tvhs-roster.mjs"
+    "fix:tvhs-roster": "tsx scripts/fix-tvhs-roster.mjs",
+    "clear:work": "tsx scripts/clear-test-work.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

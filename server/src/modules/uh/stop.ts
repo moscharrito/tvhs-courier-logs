@@ -57,7 +57,25 @@ const Deliver = z.object({
     ...Where,
     /** Printed name of the receiving personnel (Scope 1.2.8). */
     signedName: z.string().trim().min(1).max(160),
-    strokes: Strokes,
+    /* THE SAME THREE CHOICES AS A COLLECTION, for the same reasons.
+     *
+     * Pickup gained these first, because a courier at a pharmacy counter
+     * found that persuading somebody to scrawl on a phone stops the round.
+     * A doorstep is worse, not better: the person receiving may have their
+     * hands full, may be elderly, may be behind a screen door.
+     *
+     * So: draw it, or type a name and let the app derive their initials, or
+     * record that nobody signed and say why. Which one happened is stored
+     * on the row (migration 0035) rather than left to be guessed from an
+     * empty stroke list, because "the patient signed" has to mean one thing.
+     *
+     * Note what is NOT relaxed: `signedName` is still required. A delivery
+     * with nobody's name against it is an anonymous handover of a
+     * prescription. */
+    strokes: Strokes.or(z.array(z.never()).length(0)).default([]),
+    captureMethod: z.enum(['drawn', 'initials']).default('drawn'),
+    /** Required when strokes are empty. Checked in the handler. */
+    noSignatureReason: z.string().trim().max(300).default(''),
     note: z.string().trim().max(300).default(''),
 });
 
@@ -247,14 +265,23 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         const at = whenOr400(body, res);
         if (!at) return;
 
+        if (body.strokes.length === 0 && body.noSignatureReason === '') {
+            res.status(400).json({
+                error: 'Nobody signed for this delivery. Say why before recording it: a proof of delivery with '
+                    + 'no signature and no reason is a gap nobody can explain later.',
+                code: 'deliver.noSignatureReason',
+            });
+            return;
+        }
+
         const projectId = req.project!.id;
         let inferredArrival = false;
         try {
             inferredArrival = await ensureArrived(req, order, at, body.lat, body.lng);
             const sig = await client.execute({
-                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
-                      VALUES (?, 'delivery', ?, ?, ?, ?, ?, ?) RETURNING id`,
-                args: [projectId, body.signedName, JSON.stringify(body.strokes), actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null],
+                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_by, captured_at, lat, lng)
+                      VALUES (?, 'delivery', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                args: [projectId, body.signedName, JSON.stringify(body.strokes), body.captureMethod, actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null],
             });
             await recordOrderEvent(client, {
                 projectId,

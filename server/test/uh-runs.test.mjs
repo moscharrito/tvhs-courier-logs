@@ -78,10 +78,19 @@ describe('creating a run', () => {
     it('lets a courier have a second run in the same day', async () => {
         // Lists arrive between noon and 2pm and after-hours work happens too,
         // so one run per courier per day is not enough.
-        const a = await makeRun({ label: 'Noon wave', serviceDate: '2026-09-20' });
-        const b = await makeRun({ label: 'After hours', serviceDate: '2026-09-20' });
+        //
+        // The date is derived rather than written down, and that is the fix
+        // for a time bomb rather than a style choice. It used to say
+        // 2026-09-20; on 2026-09-20 the test above it, which creates a run
+        // defaulting to today, started landing on the same date, and this
+        // one found three runs where it expected two. A test that passes
+        // until a particular morning reports a bug in code that never
+        // changed.
+        const day = `${new Date().getUTCFullYear() + 5}-04-17`;
+        const a = await makeRun({ label: 'Noon wave', serviceDate: day });
+        const b = await makeRun({ label: 'After hours', serviceDate: day });
         expect(b.id).not.toBe(a.id);
-        const list = await admin.get(`${RUNS}?serviceDate=2026-09-20&courierUsername=ada.courier`);
+        const list = await admin.get(`${RUNS}?serviceDate=${day}&courierUsername=ada.courier`);
         expect(list.body.map((r) => r.label).sort()).toEqual(['After hours', 'Noon wave']);
     });
 
