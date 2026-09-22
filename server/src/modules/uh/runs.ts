@@ -601,6 +601,97 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         res.json({ serviceDate, timezone: project.timezone, courierUsername: username, runs, dispatch, directions });
     }));
 
+    /* What this courier has already done, by day.
+     *
+     * DECLARED BEFORE '/:id', or Express reads "history" as a run id. Same
+     * reason '/mine' sits above it.
+     *
+     * A courier sees their own work and nobody else's: the username comes
+     * from the session, never from the query string, so there is no
+     * parameter to change. An administrator asking about a particular driver
+     * uses the reports screen, which is a different question with different
+     * access. Getting this wrong would turn a driver's history page into a
+     * way to read every patient every other driver delivered to.
+     *
+     * Delivered and failed only. Anything still open belongs on Today, and a
+     * history that quietly included live work would double-count the day.
+     */
+    router.get('/history', readers, wrap(async (req, res) => {
+        const project = req.project!;
+        const q = req.query as Record<string, string | undefined>;
+        const ymd = /^\d{4}-\d{2}-\d{2}$/;
+        const today = todayIn(project.timezone);
+        const to = q['to'] && ymd.test(q['to']) ? q['to'] : today;
+        /* Thirty days back by default: long enough to answer "did I deliver
+           that one", short enough not to hand a phone a year of addresses. */
+        const from = q['from'] && ymd.test(q['from'])
+            ? q['from']
+            : new Date(Date.parse(to + 'T00:00:00Z') - 29 * 86400000).toISOString().slice(0, 10);
+        const username = actorOf(req);
+
+        const rs = await client.execute({
+            sql: `SELECT o.id, o.service_date, o.service_type, o.status, o.recipient_name,
+                         o.address_line, o.city, o.zip, o.delivered_at, o.arrived_at, o.due_at,
+                         o.failure_reason, s.name AS site_name
+                    FROM orders o
+                    LEFT JOIN sites s ON s.id = o.site_id
+                   WHERE o.project_id = ? AND o.assigned_to_username = ?
+                     AND o.status IN ('delivered', 'failed')
+                     AND o.service_date BETWEEN ? AND ?
+                   ORDER BY o.service_date DESC, o.delivered_at DESC, o.id DESC`,
+            args: [project.id, username, from, to],
+        });
+
+        const byDate = new Map<string, Array<Record<string, unknown>>>();
+        for (const r of rs.rows) {
+            const date = String(r['service_date']);
+            const stop = {
+                orderId: Number(r['id']),
+                serviceType: String(r['service_type']),
+                status: String(r['status']),
+                recipientName: String(r['recipient_name'] ?? ''),
+                address: [r['address_line'], r['city'], r['zip']].filter(Boolean).join(', '),
+                siteName: r['site_name'] === null ? null : String(r['site_name']),
+                deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
+                /* On time is measured at arrival, not at handover, the same
+                   as evaluateSla: a courier at the door by the deadline was
+                   on time even if the conversation ran long. */
+                onTime: r['due_at'] === null || (r['arrived_at'] ?? r['delivered_at']) === null
+                    ? null
+                    : Date.parse(String(r['arrived_at'] ?? r['delivered_at'])) <= Date.parse(String(r['due_at'])),
+                failureReason: r['failure_reason'] === null ? null : String(r['failure_reason']),
+            };
+            const list = byDate.get(date);
+            if (list) list.push(stop); else byDate.set(date, [stop]);
+        }
+
+        const days = [...byDate.entries()].map(([date, stops]) => ({
+            date,
+            delivered: stops.filter((x) => x['status'] === 'delivered').length,
+            failed: stops.filter((x) => x['status'] === 'failed').length,
+            onTime: stops.filter((x) => x['onTime'] === true).length,
+            stops,
+        }));
+
+        const all = days.flatMap((d) => d.stops);
+        const measured = all.filter((x) => x['onTime'] !== null);
+        res.json({
+            from,
+            to,
+            timezone: project.timezone,
+            courierUsername: username,
+            days,
+            totals: {
+                delivered: all.filter((x) => x['status'] === 'delivered').length,
+                failed: all.filter((x) => x['status'] === 'failed').length,
+                daysWorked: days.length,
+                onTimeRate: measured.length === 0
+                    ? null
+                    : Math.round((measured.filter((x) => x['onTime'] === true).length / measured.length) * 100),
+            },
+        });
+    }));
+
     router.get('/:id', readers, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;

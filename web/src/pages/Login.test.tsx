@@ -57,7 +57,13 @@ describe('Login', () => {
         expect(calls).not.toContain('GET /api/drivers/list');
     });
 
-    it('tells a driver when the chosen project has no couriers yet', async () => {
+    it('sends a project with nobody to pick straight to a password box', async () => {
+        /* This used to render "Nobody is set up as a courier on this project
+           yet". UH returns an empty list ON PURPOSE now: its couriers work
+           from the phone app, and this page is for dispatch, administrators
+           and pharmacy staff. An empty picker with an apology was a worse
+           answer than the form they actually need. The roster is not merely
+           hidden, it is never sent: see the route filter in server.js. */
         mockFetch({
             'GET /api/session': { status: 401, body: { error: 'No session' } },
             'GET /api/login/projects': loginProjects,
@@ -65,7 +71,10 @@ describe('Login', () => {
         });
         renderApp();
         fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
-        expect(await screen.findByText(/Nobody is set up as a courier on this project yet/)).toBeInTheDocument();
+
+        expect(await screen.findByLabelText(/username/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+        expect(screen.queryByText(/who is driving/i)).not.toBeInTheDocument();
     });
 
     it('lists a courier who has no route, which is every UH courier', async () => {

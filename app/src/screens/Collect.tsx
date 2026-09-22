@@ -21,16 +21,13 @@ import {
     StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { CardButton, Chip, Ground, Notice, Sheet } from '../ui/Glass';
-import { SignaturePad } from './SignaturePad';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
 import { get } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { queueAndSend } from '../lib/queue';
 import { canCollect, checkCount, pickupLabel, type PickupBoard, type PickupSite } from '../lib/pickup';
 import { handwrittenInitials } from '../lib/handwriting';
-import { initialsDescription, initialsOf } from '../lib/initials';
 import { SignatureMark } from './SignatureMark';
-import type { Stroke } from '../lib/strokes';
 
 export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     token: string;
@@ -45,14 +42,21 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const [counted, setCounted] = useState('');
     const [note, setNote] = useState('');
     const [signedName, setSignedName] = useState('');
-    const [strokes, setStrokes] = useState<Stroke[]>([]);
-    const [noSignatureReason, setNoSignatureReason] = useState('');
-    /* Opened by hand. Never the default: the signature is still what
-       the contract asks for, and this is the exception. */
-    const [cannotSign, setCannotSign] = useState(false);
-    /* Typed initials by default, because that is the fast path at a
-       counter. Drawing is one tap away, and the record says which. */
-    const [method, setMethod] = useState<'initials' | 'drawn'>('initials');
+    /* ─────────────────────────────────────────────────────────────────
+     * TYPED INITIALS ARE THE ONLY WAY TO SIGN HERE, by request.
+     *
+     * There were two more, reached from a pair of links under the
+     * signature: hand the phone over and let them draw it, or record the
+     * collection with no signature and say why. Both are gone.
+     *
+     * What that costs, written down so nobody has to rediscover it: a
+     * recipient who wants to sign in their own hand cannot, and a
+     * collection where nobody will give a name cannot be recorded at all,
+     * because the name is what the initials are drawn from. The server
+     * still accepts `drawn` and `none` for capture_method, and the web
+     * client still offers them, so returning either path here is a UI
+     * change and not a migration.
+     * ───────────────────────────────────────────────────────────────── */
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -72,9 +76,8 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
         : checkCount(site.packages, counted, note);
     /* Derived from the name as it is typed, so the courier sees the mark
        before they record it, with the person handing over stood there. */
-    const auto = method === 'initials' ? handwrittenInitials(signedName) : [];
-    const mark = cannotSign ? [] : (method === 'initials' ? auto : strokes);
-    const ready = site !== null && canCollect(check, signedName, mark.length, noSignatureReason);
+    const auto = handwrittenInitials(signedName);
+    const ready = site !== null && canCollect(check, signedName, auto.length);
 
     const submit = async () => {
         if (site === null || !ready) return;
@@ -91,9 +94,9 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                 body: {
                     siteId: site.site.id,
                     signedName: signedName.trim(),
-                    strokes: mark,
-                    captureMethod: method,
-                    noSignatureReason: cannotSign ? noSignatureReason.trim() : '',
+                    strokes: auto,
+                    captureMethod: 'initials',
+                    noSignatureReason: '',
                     countedPackages: check.kind === 'incomplete' ? 0 : check.counted,
                     note: note.trim(),
                     at: new Date().toISOString(),
@@ -221,72 +224,19 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             accessibilityLabel="Name of the person handing over"
                         />
 
-                        {!cannotSign && method === 'initials' && (
-                            <>
-                                <Text style={styles.label}>Their signature</Text>
-                                {/* Drawn from the name as it is typed. The
-                                    courier can see exactly what is being
-                                    recorded, which matters because the person
-                                    it belongs to is standing in front of
-                                    them. */}
-                                <SignatureMark strokes={auto} />
-                                <Text style={styles.hint}>{initialsDescription(signedName)}</Text>
-                            </>
-                        )}
-
-                        {!cannotSign && method === 'drawn' && (
-                            <>
-                                <Text style={styles.label}>Their signature</Text>
-                                <SignaturePad label="Signature of the person handing over" onChange={setStrokes} />
-                            </>
-                        )}
-
-                        {!cannotSign && (
-                            <CardButton
-                                title={method === 'initials' ? 'Let them sign instead' : 'Use typed initials'}
-                                detail={method === 'initials'
-                                    ? 'Hand over the phone and let them write it'
-                                    : `Signs as ${initialsOf(signedName) || 'their initials'}, recorded as typed`}
-                                tone="quiet"
-                                onPress={() => { setMethod(method === 'initials' ? 'drawn' : 'initials'); setStrokes([]); }}
-                            />
-                        )}
-
-                        {cannotSign && (
-                            <>
-                                <Text style={styles.label}>Why nobody signed</Text>
-                                <TextInput
-                                    style={[styles.input, styles.multiline]}
-                                    value={noSignatureReason}
-                                    onChangeText={setNoSignatureReason}
-                                    multiline
-                                    editable={!busy}
-                                    placeholder="This is what University Health sees instead of a signature."
-                                    placeholderTextColor={theme.muted}
-                                    accessibilityLabel="Why nobody signed"
-                                />
-                            </>
-                        )}
-
-                        <CardButton
-                            title={cannotSign ? 'They can sign after all' : 'They cannot sign'}
-                            detail={cannotSign
-                                ? 'Go back to the signature pad'
-                                : 'Records the collection without one, and asks why'}
-                            tone="quiet"
-                            onPress={() => { setCannotSign(!cannotSign); setNoSignatureReason(''); }}
-                        />
+                        <Text style={styles.label}>Their signature</Text>
+                        {/* Drawn from the name as it is typed. The courier
+                            can see exactly what is being recorded, which
+                            matters because the person it belongs to is
+                            standing in front of them. */}
+                        <SignatureMark strokes={auto} />
 
                         <View style={styles.actions}>
                             <CardButton
                                 title="Record the collection"
                                 detail={ready
                                     ? `${check.kind === 'incomplete' ? '' : check.counted} packages into the van`
-                                    : cannotSign
-                                        ? 'Count, name and a reason nobody signed'
-                                        : method === 'initials'
-                                            ? 'Count and the name of the person handing over'
-                                            : 'Count, name and signature'}
+                                    : 'Count and the name of the person handing over'}
                                 tone="primary"
                                 onPress={() => { void submit(); }}
                                 disabled={!ready}
@@ -295,7 +245,7 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             <CardButton
                                 title="Choose another pharmacy"
                                 tone="quiet"
-                                onPress={() => { setSite(null); setStrokes([]); setSignedName(''); }}
+                                onPress={() => { setSite(null); setSignedName(''); }}
                             />
                         </View>
                     </ScrollView>

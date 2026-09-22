@@ -11,16 +11,41 @@ let currentWeekStart = null;
 let currentDayIndex = 0;
 let routeDefs = {};      // Loaded from server
 let weekLogCache = {};   // { "YYYY-MM-DD": [ {legIndex, startTime, endTime, sterile, soiled, miles}, ... ] }
-let appTimezone = 'America/Chicago';  // Auto-detected from the viewer's device
-let serverToday = null;               // Today's date (YYYY-MM-DD) in the viewer's timezone
+let appTimezone = 'America/Chicago';  // The contract's timezone, from the server
+let serverToday = null;               // Today (YYYY-MM-DD) as the SERVER reckons it
 
-// Detect the viewer's device timezone so all displayed times/dates follow it.
+/* THE CONTRACT'S CLOCK, NOT THE DEVICE'S.
+ *
+ * This used to read Intl.DateTimeFormat().resolvedOptions().timeZone and file
+ * against formatDate(new Date()), both taken from whatever phone or laptop
+ * happened to be open. Two things went wrong with that, and this route makes
+ * both of them likely rather than theoretical: the run is Murfreesboro to
+ * Chattanooga, which crosses from Central into Eastern, so the same driver
+ * gets two different answers depending on where they stop to fill the sheet.
+ * The check-in clock showed 8:14 AM EDT while the project it files into was
+ * at 7:14 AM CDT.
+ *
+ * The date is worse than the clock. A leg finished at 11:40 PM Central is
+ * already tomorrow in Eastern, so a device-local date files the last run of
+ * the day against a day the driver did not work.
+ *
+ * /api/config answers both, in the project's own timezone, and the mobile app
+ * has always used it. The device is the fallback for a failed call, not the
+ * source. */
 async function loadConfig() {
     try {
-        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (tz) appTimezone = tz;
-    } catch (e) { /* keep default */ }
-    serverToday = formatDate(new Date()); // device-local "today"
+        const cfg = await api('/api/config');
+        if (cfg && cfg.timezone) appTimezone = cfg.timezone;
+        if (cfg && cfg.today) serverToday = cfg.today;
+    } catch (e) { /* offline or refused: fall back below */ }
+    if (!serverToday) serverToday = formatDate(new Date());
+}
+
+/* Today as a Date positioned in the contract's timezone, for the week picker.
+   Built from serverToday so it cannot disagree with what the server filed. */
+function todayInAppZone() {
+    const [y, m, d] = String(serverToday).split('-').map(Number);
+    return new Date(y, m - 1, d);
 }
 
 // Format an ISO timestamp as a time in the viewer's timezone (e.g. "8:42 AM")
@@ -242,6 +267,11 @@ function resetDriverState() {
 
 // ---- Session Check on Load ----
 async function checkSession() {
+    /* The shell mounts this app by writing index.html into a host element
+       and calling this directly; DOMContentLoaded never fires for it. Doing
+       it here means a freshly injected page has working buttons before it
+       has drawn anything, rather than one mutation later. */
+    watchForInlineHandlers();
     try {
         currentUser = await api('/api/session');
         routeDefs = await api('/api/routes');
@@ -350,7 +380,7 @@ async function initDriver() {
     showDriverView('entry');
     initDriverCheckin();
 
-    flatpickr('#weekPicker', {
+    const picker = flatpickr('#weekPicker', {
         dateFormat: 'Y-m-d',
         maxDate: 'today',
         onChange: function(selectedDates) {
@@ -359,6 +389,16 @@ async function initDriver() {
             }
         }
     });
+
+    /* OPEN ON THIS WEEK. Until now New Entry loaded saying "No week selected"
+       with no day tabs and no table: the one thing on the screen a driver
+       could touch was the date box, and every shift began by opening a
+       calendar to say "today". The mobile app never did this, and neither
+       should the page it was copied from. Picking a date still works and
+       still overrides. */
+    const today = todayInAppZone();
+    picker.setDate(today, false);
+    await selectWeek(today);
 }
 
 // ---- Driver Check-In / Clock-In ----
@@ -1482,4 +1522,140 @@ function showToast(message, type = '') {
 }
 
 // ---- Init ----
-document.addEventListener('DOMContentLoaded', checkSession);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * INLINE HANDLERS, BOUND PROPERLY, BECAUSE THE CONTENT SECURITY POLICY
+ * REFUSES TO RUN THEM.
+ *
+ * This page is built on inline attributes: onclick="saveLog()",
+ * onsubmit="return handleLogin(event)", onchange="onCellChange(this)". There
+ * are about fifty-five of them across index.html and the markup this file
+ * generates. Ticket 4.2 added `script-src 'self'` with no 'unsafe-inline',
+ * and an inline event handler IS an inline script, so the browser has been
+ * discarding every one of them since. Nothing throws. Nothing is logged
+ * where anybody looks. Every button and every section in the TVHS portal
+ * simply did nothing, for drivers and administrators alike.
+ *
+ * WHAT WAS NOT DONE: adding 'unsafe-inline' to script-src. That is the one
+ * line that would fix this page and it would also remove the protection from
+ * the React shell next door, which handles patient names and addresses. The
+ * comment in core/http/security.ts is right; it just did not know this file
+ * was full of inline handlers.
+ *
+ * So the attributes are read, removed, and replaced with real listeners.
+ * The attribute values are parsed, NOT evaluated: eval and new Function are
+ * blocked by the same policy, and reaching for 'unsafe-eval' to work around
+ * 'unsafe-inline' would be the same mistake wearing a hat. Every handler in
+ * this app is one call with literal arguments, which parses in a dozen
+ * lines.
+ *
+ * A MutationObserver runs it again on whatever the app draws later: the leg
+ * table is rebuilt on every day switch and carries its own onchange and
+ * oninput attributes.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+const BOUND_EVENTS = ['click', 'change', 'input', 'submit'];
+const CALL = /^([A-Za-z_$][\w$]*)\s*\((.*)\)$/s;
+
+/* 'history' | 42 | this | event. Anything else and we leave the attribute
+   alone rather than guess: a handler that silently does the wrong thing is
+   worse than one that visibly does nothing. */
+function parseArg(raw, el, ev) {
+    const a = raw.trim();
+    if (a === 'this') return { ok: true, value: el };
+    if (a === 'event') return { ok: true, value: ev };
+    if (a === 'true') return { ok: true, value: true };
+    if (a === 'false') return { ok: true, value: false };
+    if (a === 'null') return { ok: true, value: null };
+    if (/^-?\d+(\.\d+)?$/.test(a)) return { ok: true, value: Number(a) };
+    const q = a[0];
+    if ((q === "'" || q === '"') && a.length >= 2 && a[a.length - 1] === q) {
+        const inner = a.slice(1, -1);
+        // No escapes and no quotes of the same kind inside: keeps this honest.
+        // A backslash, spelled by code point so the escaping survives
+        // every tool that edits this file.
+        if (!inner.includes(q) && !inner.includes(String.fromCharCode(92))) return { ok: true, value: inner };
+    }
+    return { ok: false };
+}
+
+function compileHandler(source) {
+    let body = source.trim();
+    if (body.endsWith(';')) body = body.slice(0, -1).trim();
+    if (body.startsWith('return ')) body = body.slice(7).trim();
+    const m = CALL.exec(body);
+    if (!m) return null;
+    const name = m[1];
+    const argSrc = m[2].trim();
+    /* One call, literal arguments, so splitting on commas is safe. A nested
+       call or a comma inside a string would break it, and the guard below
+       makes that case refuse rather than misfire. */
+    if (/[()]/.test(argSrc)) return null;
+    const parts = argSrc === '' ? [] : argSrc.split(',');
+    return function (ev) {
+        const fn = window[name];
+        if (typeof fn !== 'function') {
+            console.warn('[legacy] handler not found:', name);
+            return;
+        }
+        const args = [];
+        for (const part of parts) {
+            const parsed = parseArg(part, this, ev);
+            if (!parsed.ok) {
+                console.warn('[legacy] handler argument not understood:', name, part);
+                return;
+            }
+            args.push(parsed.value);
+        }
+        const result = fn.apply(this, args);
+        /* onsubmit="return f(event)" cancels the navigation by returning
+           false. Both forms here also call preventDefault themselves; this
+           is here so the contract does not depend on that. */
+        if (result === false && ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+    };
+}
+
+function bindInlineHandlers(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    for (const type of BOUND_EVENTS) {
+        const attr = 'on' + type;
+        const nodes = [];
+        if (scope.matches && scope.matches('[' + attr + ']')) nodes.push(scope);
+        nodes.push(...scope.querySelectorAll('[' + attr + ']'));
+        for (const el of nodes) {
+            const source = el.getAttribute(attr);
+            if (source === null) continue;
+            const handler = compileHandler(source);
+            if (!handler) {
+                console.warn('[legacy] could not bind', attr, '=', source);
+                continue;
+            }
+            /* The attribute goes, so this cannot double-bind on a re-scan
+               and so the dead inline version stops being a red herring for
+               the next person reading the DOM. */
+            el.removeAttribute(attr);
+            el.addEventListener(type, handler);
+        }
+    }
+}
+
+let inlineObserver = null;
+
+function watchForInlineHandlers() {
+    bindInlineHandlers(document);
+    if (inlineObserver) return;
+    inlineObserver = new MutationObserver((records) => {
+        for (const rec of records) {
+            for (const node of rec.addedNodes) {
+                if (node.nodeType === 1) bindInlineHandlers(node);
+            }
+        }
+    });
+    inlineObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+/* Before checkSession, so the sign-in form works on a cold load, and again
+   from LegacyTvhs when the shell re-injects this markup on a later visit. */
+document.addEventListener('DOMContentLoaded', () => { watchForInlineHandlers(); void checkSession(); });
+
+

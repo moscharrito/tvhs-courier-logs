@@ -20,7 +20,7 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ground } from '../ui/Glass';
 import { TabBar, type TabDef } from '../ui/Nav';
-import { AskedIcon, BoardIcon, ProfileIcon, RouteIcon } from '../ui/Icons';
+import { AskedIcon, BoardIcon, HistoryIcon, ProfileIcon, RouteIcon } from '../ui/Icons';
 import { Profile } from './Profile';
 import { readQueue } from '../lib/queue';
 import { useEffect } from 'react';
@@ -28,8 +28,9 @@ import type { Project } from '../lib/api';
 import { Run } from './Run';
 import { Board } from './Board';
 import { Requests } from './Requests';
+import { History } from './History';
 
-type Tab = 'run' | 'board' | 'asked' | 'you';
+type Tab = 'run' | 'board' | 'asked' | 'history' | 'you';
 
 interface Props {
     token: string;
@@ -41,8 +42,14 @@ interface Props {
 
 const TABS: ReadonlyArray<TabDef<Tab>> = [
     { key: 'run', label: 'Today', Icon: RouteIcon, hint: 'The stops assigned to you today' },
-    { key: 'board', label: 'Work going', Icon: BoardIcon, hint: 'Deliveries you can ask for' },
+    /* "Work" rather than "Work going". A fifth tab arrived with Delivery
+       History and five labels share a 390 point phone, which leaves about 75
+       points each; "Work going" at 14pt truncates to "Work goin...", and a
+       cut label reads worse than a short one. The hint below still says what
+       it is, and a screen reader reads the hint. */
+    { key: 'board', label: 'Work', Icon: BoardIcon, hint: 'Deliveries you can ask for' },
     { key: 'asked', label: 'Asked', Icon: AskedIcon, hint: 'What you have asked for and the answers' },
+    { key: 'history', label: 'History', Icon: HistoryIcon, hint: 'The deliveries you have already finished' },
     /* Who is signed in and how to get out, which had no home anywhere in the
        app: an approved courier never sees the onboarding screen again, so a
        driver handed a shared phone could not tell whose account was on it. */
@@ -70,6 +77,9 @@ export function Driving({ token, project, username, onSignedOut, onBack }: Props
                 )}
                 {tab === 'asked' && (
                     <Requests token={token} code={project.code} onSignedOut={onSignedOut} />
+                )}
+                {tab === 'history' && (
+                    <History token={token} code={project.code} onSignedOut={onSignedOut} />
                 )}
                 {tab === 'you' && (
                     <Profile

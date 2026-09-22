@@ -113,11 +113,35 @@ export async function signInWithPin(route: string, pin: string): Promise<Session
     });
 }
 
+/**
+ * Set a new route PIN with the account password, and sign in with it.
+ *
+ * The web has always offered this behind "Forgot PIN? Use password"; the app
+ * had no equivalent, so a driver who forgot the PIN on the cab phone had to
+ * find a laptop. TVHS runs on two phones and two drivers, which makes that a
+ * stuck shift rather than an inconvenience.
+ *
+ * Same endpoint and same arguments as the web's startPinReset path, so the
+ * two cannot drift apart.
+ */
+export async function setPinWithPassword(
+    route: string, password: string, pin: string,
+): Promise<SessionUser & { token: string }> {
+    return request<SessionUser & { token: string }>(fetch, baseUrl(), '/api/login/pin/setup', {
+        method: 'POST',
+        json: { route, password, pin },
+        asApp: true,
+    });
+}
+
 export const get = <T>(path: string, token: string | null, options: RequestOptions = {}): Promise<T> =>
     request<T>(fetch, baseUrl(), path, { ...options, token });
 
 export const post = <T>(path: string, token: string | null, json?: unknown): Promise<T> =>
     request<T>(fetch, baseUrl(), path, { method: 'POST', token, ...(json !== undefined ? { json } : {}) });
+
+export const del = <T>(path: string, token: string | null, json?: unknown): Promise<T> =>
+    request<T>(fetch, baseUrl(), path, { method: 'DELETE', token, ...(json !== undefined ? { json } : {}) });
 
 export const signOut = (token: string | null): Promise<unknown> => post('/api/logout', token);
 
@@ -245,3 +269,47 @@ export const myNotifications = (token: string, code: string): Promise<{ unread: 
 
 export const markRead = (token: string, code: string): Promise<unknown> =>
     post(`/api/projects/${code}/uh/notifications/read`, token, {});
+
+/* ----------------------------------------------- delivery history (9.1) */
+
+export interface HistoryStop {
+    orderId: number;
+    serviceType: string;
+    status: string;
+    recipientName: string;
+    address: string;
+    siteName: string | null;
+    deliveredAt: string | null;
+    /** Measured at arrival, not handover. Null when there was no deadline. */
+    onTime: boolean | null;
+    failureReason: string | null;
+}
+
+export interface HistoryDay {
+    date: string;
+    delivered: number;
+    failed: number;
+    onTime: number;
+    stops: HistoryStop[];
+}
+
+export interface DeliveryHistory {
+    from: string;
+    to: string;
+    timezone: string;
+    courierUsername: string;
+    days: HistoryDay[];
+    totals: {
+        delivered: number;
+        failed: number;
+        daysWorked: number;
+        onTimeRate: number | null;
+    };
+}
+
+/** This courier's own finished work. There is no username parameter, and
+ *  that is the point: the server takes it from the session. */
+export const deliveryHistory = (
+    token: string, code: string, from: string, to: string,
+): Promise<DeliveryHistory> =>
+    get<DeliveryHistory>(`/api/projects/${code}/uh/runs/history?from=${from}&to=${to}`, token);

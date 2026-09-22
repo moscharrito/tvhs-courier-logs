@@ -24,7 +24,10 @@
     "restore:drill": "tsx scripts/restore-drill.mjs",
     "clear:rehearsal": "tsx scripts/clear-rehearsal.mjs",
     "fix:tvhs-roster": "tsx scripts/fix-tvhs-roster.mjs",
-    "clear:work": "tsx scripts/clear-test-work.mjs"
+    "clear:work": "tsx scripts/clear-test-work.mjs",
+    "retire:sims": "tsx scripts/retire-sim-couriers.mjs",
+    "remove:accounts": "tsx scripts/remove-accounts.mjs",
+    "backup": "tsx scripts/backup-db.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

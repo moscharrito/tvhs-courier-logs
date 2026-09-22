@@ -21,7 +21,7 @@
  * by three numbers that have to be kept equal by hand.
  * ───────────────────────────────────────────────────────────────────────── */
 
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../../theme';
 import { totesOf, type Leg } from '../../lib/tvhs';
 
@@ -39,9 +39,19 @@ const COL = {
     miles: 92,
 } as const;
 
-export function LegTable({ legs, onChange, editable = true }: {
+export function LegTable({ legs, onChange, onOpen, onRemove, standardLegs, editable = true }: {
     legs: Leg[];
     onChange: (index: number, patch: Partial<Leg>) => void;
+    /** Opens one leg on its own, full width, in LegEditor. The table is for
+     *  reading a day; six of its seven columns are off the side of a phone,
+     *  which is a poor place to type. */
+    onOpen: (index: number) => void;
+    /** Removes an extra leg. Standard legs cannot be removed, so rows below
+     *  `standardLegs` never offer it. */
+    onRemove: (index: number) => void;
+    /** How many legs the route defines. Everything at or past this index is
+     *  an extra leg: it names itself, and it can be taken away again. */
+    standardLegs: number;
     editable?: boolean;
 }) {
     const sterile = legs.reduce((n, l) => n + (Number(l.sterile.trim()) || 0), 0);
@@ -55,14 +65,76 @@ export function LegTable({ legs, onChange, editable = true }: {
                 <View style={[styles.headCell, { height: HEADER_H, width: COL.leg }]}>
                     <Text style={styles.headText}>ROUTE LEG</Text>
                 </View>
-                {legs.map((leg, i) => (
+                {legs.map((leg, i) => (i >= standardLegs ? (
+                    /* An extra leg names itself. It used to render the same
+                       "? ▶ ?" text as a standard leg, which said a trip had
+                       no origin and gave nowhere to say otherwise. */
                     <View key={i} style={[styles.legCell, { height: ROW_H, width: COL.leg }]}>
-                        <Text style={styles.legNumber}>{i + 1}</Text>
-                        <Text style={styles.legPlaces} numberOfLines={2}>
-                            {leg.legFrom || '?'} ▶ {leg.legTo || '?'}
-                        </Text>
+                        <View style={styles.extraHead}>
+                            <Text style={styles.legNumber}>{i + 1}</Text>
+                            <Text style={styles.extraBadge}>EXTRA</Text>
+                            <Pressable
+                                onPress={() => onRemove(i)}
+                                disabled={!editable}
+                                hitSlop={10}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Remove extra leg ${i + 1}`}
+                            >
+                                <Text style={styles.removeMark}>×</Text>
+                            </Pressable>
+                        </View>
+                        <Pressable
+                            onPress={() => onOpen(i)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Open extra leg ${i + 1} to fill in`}
+                        >
+                            <Text style={styles.legOpen}>EDIT</Text>
+                        </Pressable>
+                        <View style={styles.extraInputs}>
+                            <TextInput
+                                style={styles.legInput}
+                                value={leg.legFrom}
+                                onChangeText={(v) => onChange(i, { legFrom: v })}
+                                editable={editable}
+                                maxLength={60}
+                                placeholder="From"
+                                placeholderTextColor={theme.muted}
+                                accessibilityLabel={`From, extra leg ${i + 1}`}
+                            />
+                            <Text style={styles.legArrow}>▶</Text>
+                            <TextInput
+                                style={styles.legInput}
+                                value={leg.legTo}
+                                onChangeText={(v) => onChange(i, { legTo: v })}
+                                editable={editable}
+                                maxLength={60}
+                                placeholder="To"
+                                placeholderTextColor={theme.muted}
+                                accessibilityLabel={`To, extra leg ${i + 1}`}
+                            />
+                        </View>
                     </View>
-                ))}
+                ) : (
+                    <Pressable
+                        key={i}
+                        style={({ pressed }) => [
+                            styles.legCell,
+                            { height: ROW_H, width: COL.leg },
+                            pressed && styles.legCellPressed,
+                        ]}
+                        onPress={() => onOpen(i)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Leg ${i + 1}, ${leg.legFrom} to ${leg.legTo}. Opens to fill in.`}
+                    >
+                        <View style={styles.legHead}>
+                            <Text style={styles.legNumber}>{i + 1}</Text>
+                            <Text style={styles.legOpen}>EDIT</Text>
+                        </View>
+                        <Text style={styles.legPlaces} numberOfLines={2}>
+                            {leg.legFrom} ▶ {leg.legTo}
+                        </Text>
+                    </Pressable>
+                )))}
                 <View style={[styles.totalCell, { height: ROW_H, width: COL.leg }]}>
                     <Text style={styles.totalLabel}>Daily Totals</Text>
                 </View>
@@ -229,6 +301,34 @@ const styles = StyleSheet.create({
         borderBottomColor: 'rgba(17,24,39,0.07)',
     },
     legNumber: { fontSize: TYPE.meta, fontWeight: '800', color: theme.greenBright },
+    legHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    /* Says the row opens. Without it the cell is a label that happens to be
+       tappable, which nobody discovers. */
+    legOpen: {
+        fontSize: 10, fontWeight: '800', color: theme.green, letterSpacing: 0.6,
+        backgroundColor: 'rgba(22,163,74,0.12)', borderRadius: RADIUS.pill,
+        paddingHorizontal: 7, paddingVertical: 2, overflow: 'hidden',
+    },
+    legCellPressed: { backgroundColor: 'rgba(22,163,74,0.08)' },
+
+    /* The extra leg. Two inputs sharing the width a label had, so the frozen
+       column keeps its width and the six scrolled columns stay in step. */
+    extraHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    extraBadge: {
+        fontSize: 10, fontWeight: '800', color: theme.green, letterSpacing: 0.5,
+        backgroundColor: 'rgba(22,163,74,0.14)', borderRadius: RADIUS.pill,
+        paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden',
+    },
+    removeMark: { marginLeft: 'auto', fontSize: 20, lineHeight: 22, color: theme.muted, fontWeight: '700' },
+    extraInputs: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 },
+    legInput: {
+        flex: 1, minWidth: 0,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderWidth: 1, borderColor: GLASS.borderSubtle, borderRadius: RADIUS.button,
+        paddingHorizontal: 4, paddingVertical: 3,
+        fontSize: 13, color: theme.ink,
+    },
+    legArrow: { fontSize: 10, color: theme.greenBright },
     legPlaces: { fontSize: 13, color: theme.ink, lineHeight: 17, marginTop: 1 },
 
     dataRow: { flexDirection: 'row' },

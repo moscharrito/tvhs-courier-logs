@@ -260,6 +260,16 @@ export async function purge(client: Client, options: PurgeOptions): Promise<Purg
         return { ok: true, category, removed: rs.rowsAffected, detail };
     }
 
+    /* No trigger guards this table and nothing references it, so the rows go
+       on their own. A track is not evidence of a delivery: the custody event
+       is, and that is a separate category with a separate period. */
+    if (category === 'location_traces') {
+        const rs = await client.execute({ sql: 'DELETE FROM shift_positions WHERE at < ?', args: [cutoff] });
+        detail['shift_positions'] = rs.rowsAffected;
+        await recordPurge(client, { category, startedBy, reason, now, removed: rs.rowsAffected, detail });
+        return { ok: true, category, removed: rs.rowsAffected, detail };
+    }
+
     if (category === 'signatures') {
         const rs = await client.execute({ sql: 'DELETE FROM signatures WHERE captured_at < ?', args: [cutoff] });
         detail['signatures'] = rs.rowsAffected;

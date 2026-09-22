@@ -70,8 +70,14 @@ export const emptyLeg = (): Leg => ({
 });
 
 /**
- * The day a driver starts with: their route's legs, with the from, the to
- * and the usual mileage filled in, and nothing else.
+ * The day a driver starts with: their route's legs, with the from and the to
+ * filled in and every number empty.
+ *
+ * NO MILEAGE PREFILL. The route definition carries a defaultMiles and this
+ * used to write it into the cell, which the web has never done: rowsForDate
+ * in public/app.js starts an unsaved leg at zero and waits. A number already
+ * in the box is a number that gets saved whether or not anybody drove it,
+ * and the driver is the only one who knows what the odometer said.
  */
 export function legsForRoute(routes: Routes, routeCode: string): Leg[] {
     const def = routes[routeCode];
@@ -80,43 +86,76 @@ export function legsForRoute(routes: Routes, routeCode: string): Leg[] {
         ...emptyLeg(),
         legFrom: l.from,
         legTo: l.to,
-        /* The usual mileage, which is right most days and editable every
-           day. Times and totes stay empty: those are what happened. */
-        miles: String(l.defaultMiles),
     }));
 }
 
-/** Rows already saved for this date, back into the shape the screen holds. */
-export function legsFromSaved(saved: SavedLeg[]): Leg[] {
-    return [...saved]
-        .sort((a, b) => a.leg_index - b.leg_index)
-        .map((r) => ({
-            legFrom: r.leg_from,
-            legTo: r.leg_to,
-            startTime: r.start_time,
-            endTime: r.end_time,
-            /* Zero comes back as "0" rather than "": the driver wrote zero
-               and the sheet should say so. */
-            sterile: String(r.sterile ?? 0),
-            soiled: String(r.soiled ?? 0),
-            miles: String(r.miles ?? 0),
-        }));
+const numberOrBlank = (n: number | null | undefined): string =>
+    (n === null || n === undefined || n === 0 ? '' : String(n));
+
+/**
+ * A day's sheet: every leg the route defines, carrying whatever was saved
+ * against it, followed by any extra legs that were added.
+ *
+ * THE ROUTE NAMES THE STANDARD LEGS. THE ROW NEVER DOES.
+ *
+ * This used to read `leg_from` and `leg_to` straight off the saved row, which
+ * broke the moment toPayload started doing what the web does and writing them
+ * empty for standard legs. The route definition is the name of a standard
+ * leg; the row is what happened on it. Saving a copy of the label into every
+ * row would freeze today's spelling of a place that can be renamed, which is
+ * why the web has never done it and why `rowsForDate` in public/app.js reads
+ * `route.legs[i]` for the name and the row only for the numbers.
+ *
+ * Reading it back the same way also means a day with two rows saved against a
+ * four-leg route shows four legs, two of them blank, rather than a truncated
+ * sheet a driver cannot finish.
+ */
+export function legsFromSaved(saved: SavedLeg[], routeLegs: RouteLeg[]): Leg[] {
+    const byIndex = new Map(saved.map((r) => [r.leg_index, r]));
+    const valuesOf = (r: SavedLeg | undefined): Omit<Leg, 'legFrom' | 'legTo'> => ({
+        startTime: r?.start_time ?? '',
+        endTime: r?.end_time ?? '',
+        /* Zero comes back EMPTY. toPayload sends every leg, including the
+           untouched ones, so the server holds a zero for every cell nobody
+           filled in; rendering those as "0" would put a number in all forty
+           boxes on a fresh day, which is the prefill this file removed
+           arriving by the back door. A driver who means zero and one who
+           typed nothing save the same row, so showing neither loses nothing. */
+        sterile: numberOrBlank(r?.sterile),
+        soiled: numberOrBlank(r?.soiled),
+        miles: numberOrBlank(r?.miles),
+    });
+
+    const rows: Leg[] = routeLegs.map((leg, i) => ({
+        legFrom: leg.from,
+        legTo: leg.to,
+        ...valuesOf(byIndex.get(i)),
+    }));
+
+    /* Anything filed past the end of the route is an extra leg, and an extra
+       leg is the one case where the row does carry its own name. */
+    for (const r of saved.filter((x) => x.leg_index >= routeLegs.length).sort((a, b) => a.leg_index - b.leg_index)) {
+        rows.push({ legFrom: r.leg_from, legTo: r.leg_to, ...valuesOf(r) });
+    }
+    return rows;
 }
 
 /** Whether a leg has anything on it worth sending. */
 export function legIsEmpty(leg: Leg): boolean {
+    /* Miles counts now. It used to be excluded because the route prefilled
+       it, so a leg with only mileage was a leg nobody drove. Nothing
+       prefills it any more, so a number in that box was typed by a person. */
     return leg.startTime.trim() === ''
         && leg.endTime.trim() === ''
         && leg.sterile.trim() === ''
         && leg.soiled.trim() === ''
-        /* Not miles: the route prefills it, so a leg with only mileage is a
-           leg nobody drove. */
-        ;
+        && leg.miles.trim() === '';
 }
 
 export type LegProblem =
     | { leg: number; field: 'time'; message: string }
-    | { leg: number; field: 'number'; message: string };
+    | { leg: number; field: 'number'; message: string }
+    | { leg: number; field: 'label'; message: string };
 
 const TIME = /^([01]?\d|2[0-3]):[0-5]\d$/;
 const NUMBER = /^\d{0,4}(\.\d{1,2})?$/;
@@ -128,9 +167,16 @@ const NUMBER = /^\d{0,4}(\.\d{1,2})?$/;
  * leaves two blank, and a screen that refuses to save until every row is
  * full is a screen that gets filled with zeroes.
  */
-export function problemsIn(legs: Leg[]): LegProblem[] {
+export function problemsIn(legs: Leg[], standardLegs = Number.MAX_SAFE_INTEGER): LegProblem[] {
     const out: LegProblem[] = [];
     legs.forEach((leg, i) => {
+        /* An extra leg needs somewhere it went, whether or not anything else
+           is filled in: the route definition cannot name it, so an unnamed
+           extra is a row that says a trip happened and not where. The web
+           refuses the save for the same reason. */
+        if (i >= standardLegs && (leg.legFrom.trim() === '' || leg.legTo.trim() === '')) {
+            out.push({ leg: i, field: 'label', message: `Enter From and To for extra leg ${i + 1}.` });
+        }
         if (legIsEmpty(leg)) return;
         for (const [value, what] of [[leg.startTime, 'Start'], [leg.endTime, 'Finish']] as const) {
             if (value.trim() !== '' && !TIME.test(value.trim())) {
@@ -160,13 +206,32 @@ export function totals(legs: Leg[]): { legs: number; sterile: number; soiled: nu
     };
 }
 
-/** The payload `POST /logs` wants. Empty legs are dropped rather than sent. */
-export function toPayload(date: string, legs: Leg[]): { date: string; legs: Array<Record<string, string>> } {
+/**
+ * The payload `POST /logs` wants.
+ *
+ * EVERY LEG IS SENT, IN POSITION, INCLUDING THE EMPTY ONES. This used to
+ * filter empties out, and that was a silent data bug rather than a tidy-up:
+ * the server takes leg_index from the ARRAY POSITION of what it is handed
+ * (server.js, `legs.map((leg, i) => ...)` with `i` as the index). A driver
+ * who ran legs 1 and 3 and left 2 blank sent two rows, which landed at
+ * indices 0 and 1, so leg 3's mileage came back on reload labelled as leg 2.
+ * The same handler then deletes `leg_index >= legs.length`, so leg 4 was
+ * deleted outright. The web has always sent every row; so does this now.
+ *
+ * `standardLegs` is how many legs the route defines. Anything at or past it
+ * is an extra leg and carries its own from and to, exactly as saveLog in
+ * public/app.js does it; a standard leg sends them empty because the route
+ * definition is what names those, and writing the label into the row would
+ * freeze today's copy of a name that can change.
+ */
+export function toPayload(
+    date: string, legs: Leg[], standardLegs: number,
+): { date: string; legs: Array<Record<string, string>> } {
     return {
         date,
-        legs: legs.filter((l) => !legIsEmpty(l)).map((l) => ({
-            legFrom: l.legFrom.trim(),
-            legTo: l.legTo.trim(),
+        legs: legs.map((l, i) => ({
+            legFrom: i >= standardLegs ? l.legFrom.trim() : '',
+            legTo: i >= standardLegs ? l.legTo.trim() : '',
             startTime: l.startTime.trim(),
             endTime: l.endTime.trim(),
             sterile: l.sterile.trim(),

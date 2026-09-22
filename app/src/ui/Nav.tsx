@@ -171,9 +171,12 @@ const styles = StyleSheet.create({
     tabOn: { backgroundColor: 'rgba(22,163,74,0.12)' },
     tabPressed: { opacity: 0.6 },
     /* 14 rather than the 15 floor the rest of the app keeps, and the only
-       deliberate exception to it. Three tabs share a phone width and one of
-       them is "Work going"; at 15 that truncates on a small handset, and a
-       truncated label is less readable than a slightly smaller whole one.
+       deliberate exception to it. FIVE tabs now share a phone width, about
+       75 points each on a 390 point handset; at 15 the longer labels truncate
+       on a small one, and a truncated label is less readable than a slightly
+       smaller whole one. If a sixth tab is ever added, shorten labels rather
+       than dropping this again: below 14 the bar stops being readable at
+       arm's length in a van.
        It sits under a 24px icon and carries 600/800 weight, so it is not
        doing the work alone. */
     tabText: { fontSize: 14, color: theme.muted, fontWeight: '600' },

@@ -26,19 +26,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+    ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { theme } from '../theme';
 import { get, type Stop as StopRow } from '../lib/api';
 import { isUnauthorized } from '../lib/http';
 import { newId, type OutboxEntry } from '../lib/outbox';
 import { queueAndSend } from '../lib/queue';
-import { SignaturePad } from './SignaturePad';
+import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/pod';
 import { SignatureMark } from './SignatureMark';
 import { handwrittenInitials } from '../lib/handwriting';
-import { initialsDescription, initialsOf } from '../lib/initials';
-import { CardButton } from '../ui/Glass';
-import type { Stroke } from '../lib/strokes';
 
 /** Addendum 1's own list, in its own terms. */
 const REASONS: Array<{ code: string; label: string }> = [
@@ -73,16 +70,33 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const [detail, setDetail] = useState<OrderDetail | null>(null);
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
-    const [strokes, setStrokes] = useState<Stroke[]>([]);
-    /* The same three choices a collection has (migration 0035). A
-       doorstep needs them more, not less: the person receiving may have
-       their hands full, be elderly, or be behind a screen door. */
-    const [method, setMethod] = useState<'initials' | 'drawn'>('initials');
-    const [cannotSign, setCannotSign] = useState(false);
-    const [noSignatureReason, setNoSignatureReason] = useState('');
+    /* ─────────────────────────────────────────────────────────────────
+     * TYPED INITIALS ARE THE ONLY WAY TO SIGN HERE, by request.
+     *
+     * Migration 0035 gave a doorstep the same three choices a collection
+     * has, on the reasoning that a doorstep needs them more rather than
+     * less: the person receiving may have their hands full, be elderly, or
+     * be behind a screen door. The two links that reached the other two
+     * are removed.
+     *
+     * The cost, stated plainly: a recipient who wants to sign in their own
+     * hand cannot, and a delivery nobody will give a name for cannot be
+     * recorded as delivered, because the name is what the initials are
+     * drawn from. The courier's remaining option there is to record it as
+     * a failed attempt with a reason, which is a truthful record of a
+     * doorstep where nothing was handed over, and the wrong record for one
+     * where something was. The server still accepts `drawn` and `none`, so
+     * putting either path back is a UI change, not a migration.
+     * ───────────────────────────────────────────────────────────────── */
     const [reason, setReason] = useState(REASONS[0]!.code);
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
+    /* Proof of delivery. Undefined until the server has been asked; the step
+       is not drawn at all while storage is off, so no camera is ever opened
+       for a photo that has nowhere lawful to go. See lib/pod.ts. */
+    const [podOn, setPodOn] = useState<boolean | undefined>(undefined);
+    const [photo, setPhoto] = useState<Captured | null>(null);
+    const [photoNote, setPhotoNote] = useState<string | null>(null);
     const [said, setSaid] = useState<string | null>(null);
 
     const base = `/api/projects/${code}/uh/orders/${stop.orderId}`;
@@ -99,6 +113,10 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     }, [base, token]);
 
     useEffect(() => { void loadDetail(); }, [loadDetail]);
+
+    useEffect(() => {
+        void podAvailable(token, code).then((c) => setPodOn(c.available));
+    }, [token, code]);
 
     /** Queue one event. The id is the idempotency key: see lib/outbox.ts. */
     const queue = async (path: string, body: Record<string, unknown>, label: string) => {
@@ -127,14 +145,37 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
 
     const arrive = () => queue(`${base}/arrive`, {}, `Arrival at ${stop.recipientName}`);
 
+    const takePhoto = async () => {
+        const shot = await capturePhoto();
+        if (shot.kind === 'cancelled') return;
+        if (shot.kind === 'refused') { setPhotoNote(shot.message); return; }
+        setPhoto(shot.photo);
+        setPhotoNote(null);
+    };
+
     const deliver = async () => {
+        /* THE PHOTO GOES FIRST, AND NEVER INTO THE OUTBOX. It is uploaded
+           straight to S3 now, before the delivery is recorded, so a failure
+           is something the courier finds out about while they are still
+           standing there. If it fails the delivery still goes: a delivery
+           with no photo is a delivery, and a photo held on a shared handset
+           waiting for signal is PHI nobody agreed to store there. */
+        if (photo !== null) {
+            setBusy(true);
+            const up = await uploadPhoto(token, code, stop.orderId, photo);
+            setBusy(false);
+            if (up.kind === 'failed') {
+                setPhotoNote(`${up.message} The delivery was recorded without it.`);
+                setPhoto(null);
+            }
+        }
         await queue(
             `${base}/deliver`,
             {
                 signedName: signedName.trim(),
-                strokes: mark,
-                captureMethod: method,
-                noSignatureReason: cannotSign ? noSignatureReason.trim() : '',
+                strokes: auto,
+                captureMethod: 'initials',
+                noSignatureReason: '',
                 note: note.trim(),
             },
             `Delivery for ${stop.recipientName}`,
@@ -158,12 +199,10 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const arrived = stop.status === 'picked_up' || stop.status === 'assigned';
     /* Derived as the name is typed, so the courier sees the mark before
        recording it, with the person it belongs to stood in front of them. */
-    const auto = method === 'initials' ? handwrittenInitials(signedName) : [];
-    const mark = cannotSign ? [] : (method === 'initials' ? auto : strokes);
+    const auto = handwrittenInitials(signedName);
     /* The name never stops being required: a delivery with nobody's name
        against it is an anonymous handover of a prescription. */
-    const hasMark = cannotSign ? noSignatureReason.trim().length > 0 : mark.length > 0;
-    const canDeliver = signedName.trim().length > 1 && hasMark && !busy;
+    const canDeliver = signedName.trim().length > 1 && auto.length > 0 && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
     const knowsPackages = (detail?.packages.length ?? 0) > 0;
@@ -223,55 +262,35 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                         accessibilityLabel="Printed name of whoever took it"
                     />
 
-                    {!cannotSign && method === 'initials' && (
+                    <Text style={styles.label}>Their signature</Text>
+                    <SignatureMark strokes={auto} />
+
+                    {/* Proof of delivery. Drawn only when the server says it
+                        has somewhere lawful to put it, and optional either
+                        way: a door nobody can photograph is still a
+                        delivery. */}
+                    {podOn === true && (
                         <>
-                            <Text style={styles.label}>Their signature</Text>
-                            <SignatureMark strokes={auto} />
-                            <Text style={styles.hint}>{initialsDescription(signedName)}</Text>
+                            <Text style={styles.label}>Photo of the doorstep</Text>
+                            <Pressable
+                                style={styles.photo}
+                                onPress={() => { void takePhoto(); }}
+                                disabled={busy}
+                                accessibilityRole="button"
+                                accessibilityLabel={photo === null ? 'Take a doorstep photo' : 'Retake the doorstep photo'}
+                            >
+                                {photo === null
+                                    ? <Text style={styles.photoText}>Take a photo  ·  optional</Text>
+                                    : <Image source={{ uri: photo.uri }} style={styles.photoShot} resizeMode="cover" />}
+                            </Pressable>
+                            {photo !== null && (
+                                <Pressable onPress={() => setPhoto(null)} style={styles.photoDrop}>
+                                    <Text style={styles.photoDropText}>Remove the photo</Text>
+                                </Pressable>
+                            )}
                         </>
                     )}
-
-                    {!cannotSign && method === 'drawn' && (
-                        <SignaturePad
-                            label="Their signature"
-                            onChange={(next) => setStrokes(next)}
-                        />
-                    )}
-
-                    {cannotSign && (
-                        <>
-                            <Text style={styles.label}>Why nobody signed</Text>
-                            <TextInput
-                                style={styles.input}
-                                value={noSignatureReason}
-                                onChangeText={setNoSignatureReason}
-                                multiline
-                                editable={!busy}
-                                placeholder="This is what University Health sees instead of a signature."
-                                accessibilityLabel="Why nobody signed"
-                            />
-                        </>
-                    )}
-
-                    {!cannotSign && (
-                        <CardButton
-                            title={method === 'initials' ? 'Let them sign instead' : 'Use typed initials'}
-                            detail={method === 'initials'
-                                ? 'Hand over the phone and let them write it'
-                                : `Signs as ${initialsOf(signedName) || 'their initials'}, recorded as typed`}
-                            tone="quiet"
-                            onPress={() => { setMethod(method === 'initials' ? 'drawn' : 'initials'); setStrokes([]); }}
-                        />
-                    )}
-
-                    <CardButton
-                        title={cannotSign ? 'They can sign after all' : 'They cannot sign'}
-                        detail={cannotSign
-                            ? 'Go back to the signature'
-                            : 'Records the delivery without one, and asks why'}
-                        tone="quiet"
-                        onPress={() => { setCannotSign(!cannotSign); setNoSignatureReason(''); }}
-                    />
+                    {photoNote !== null && <Text style={styles.photoNote}>{photoNote}</Text>}
 
                     <Text style={styles.label}>Anything worth noting</Text>
                     <TextInput style={styles.input} value={note} onChangeText={setNote} editable={!busy} />
@@ -337,6 +356,23 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
 }
 
 const styles = StyleSheet.create({
+    photo: {
+        minHeight: 96,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderStyle: 'dashed',
+        borderColor: 'rgba(22,163,74,0.4)',
+        backgroundColor: 'rgba(22,163,74,0.06)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        marginBottom: 8,
+    },
+    photoText: { fontSize: 16, fontWeight: '600', color: theme.green },
+    photoShot: { width: '100%', height: 170 },
+    photoDrop: { minHeight: 44, justifyContent: 'center' },
+    photoDropText: { fontSize: 15, fontWeight: '600', color: theme.danger },
+    photoNote: { fontSize: 15, color: theme.muted, lineHeight: 21, marginBottom: 8 },
     wrap: { flex: 1, backgroundColor: 'transparent' },
     inner: { padding: 16, paddingTop: 56, paddingBottom: 48 },
     back: { color: theme.green, fontSize: 16, marginBottom: 10 },

@@ -376,6 +376,16 @@ app.get('/api/drivers/list', async (req, res) => {
     // Scoped to one project when ?project= is given, so the sign-in page only
     // ever lists the couriers of the project being signed in to. Without it,
     // the legacy behaviour (every active TVHS driver) is kept for the old app.
+    //
+    // ONLY ROUTE-BASED PROJECTS ARE LISTED, and the filter is `u.route IS NOT
+    // NULL` rather than a hardcoded project code. This endpoint takes no
+    // session: anything it returns is readable by anyone who loads the sign-in
+    // page. For TVHS that is two named drivers who share a phone in the cab
+    // and pick themselves off a list to key a PIN, which is the whole point of
+    // the screen. For UH it was the entire courier roster, by full name,
+    // published to the open internet, and the couriers there sign in on the
+    // phone app with a password and never use this picker at all. So the list
+    // is empty for them and the sign-in page sends them to a password box.
     const code = req.query.project;
     const drivers = code
         ? await dbAll(`
@@ -384,6 +394,7 @@ app.get('/api/drivers/list', async (req, res) => {
             JOIN projects p ON p.id = m.project_id
             WHERE u.status = 'active' AND u.role <> 'admin'
               AND m.role = 'courier' AND p.code = ?
+              AND u.route IS NOT NULL
             ORDER BY u.name`, [String(code).toLowerCase()])
         : await dbAll("SELECT username, name, route, pin FROM users WHERE role = 'driver' AND status = 'active' AND route IS NOT NULL ORDER BY name");
     // hasPin means "a route PIN is already set", which is the only thing the

@@ -91,10 +91,26 @@ describe('sign-in scoping', () => {
             await admin.put('/api/users/ana.courier/memberships/uh').send({ role: 'courier', settings: {} });
         });
 
-        it('is listed, with a null route saying how she signs in', async () => {
+        /* ─────────────────────────────────────────────────────────────
+         * THIS BLOCK NOW ASSERTS THE OPPOSITE OF WHAT TICKET 5.5 DECIDED,
+         * deliberately, because the owner asked for it.
+         *
+         * 5.5 made this roster membership-based so a routeless UH courier
+         * would appear here and could sign in from the web with a password.
+         * The decision since is that UH couriers work from the phone app and
+         * this page is for the people who do not: dispatch, administrators
+         * and pharmacy staff. This endpoint takes no session, so everything
+         * it returns is readable by anyone who opens the sign-in page, and
+         * for UH that was the whole courier roster by full name.
+         *
+         * The filter is `u.route IS NOT NULL`, not a hardcoded project code:
+         * a picker exists to let two drivers sharing a phone in a cab say
+         * which of them is holding it, and that is what a route means here.
+         * ───────────────────────────────────────────────────────────── */
+        it('is not listed, because this roster is for route sign-in only', async () => {
             const res = await srv.agent().get('/api/drivers/list?project=uh');
             expect(res.status).toBe(200);
-            expect(res.body).toEqual([{ route: null, username: 'ana.courier', name: 'Ana Ruiz', hasPin: false }]);
+            expect(res.body).toEqual([]);
         });
 
         it('reports no route PIN even once she has enrolled a phone', async () => {
@@ -107,8 +123,11 @@ describe('sign-in scoping', () => {
             const enrol = await phone.post('/api/devices/enrol').send({ username: 'ana.courier', password: 'ana-pass-9911', pin: '4821', label: 'Her phone' });
             expect(enrol.status, enrol.text).toBe(201);
 
+            /* The concern this was written for is now answered by her not
+               being on the list at all: enrolling a phone cannot tell an
+               anonymous visitor anything if the visitor is told nothing. */
             const res = await srv.agent().get('/api/drivers/list?project=uh');
-            expect(res.body).toEqual([{ route: null, username: 'ana.courier', name: 'Ana Ruiz', hasPin: false }]);
+            expect(res.body).toEqual([]);
         });
 
         it('is not handed a tvhs membership on the next boot', async () => {
@@ -132,7 +151,7 @@ describe('sign-in scoping', () => {
             expect(legacy.body.map((d) => d.name)).not.toContain('Ana Ruiz');
         });
 
-        it('can sign in with the password, which is all the picker needs', async () => {
+        it('can still sign in with her password, from the app or the staff form', async () => {
             const res = await srv.agent().post('/api/login')
                 .send({ username: 'ana.courier', password: 'ana-pass-9911' });
             expect(res.status).toBe(200);
@@ -155,13 +174,26 @@ describe('sign-in scoping', () => {
                somebody gave them a membership is not a trade worth making. */
             await admin.put('/api/users/admin/memberships/uh').send({ role: 'courier', settings: {} });
             const res = await srv.agent().get('/api/drivers/list?project=uh');
-            expect(res.body.map((d) => d.username)).toEqual(['ana.courier']);
+            expect(res.body).toEqual([]);
         });
 
         it('disappears from the roster when the account is disabled', async () => {
-            await admin.patch('/api/users/ana.courier').send({ status: 'disabled' });
-            expect((await srv.agent().get('/api/drivers/list?project=uh')).body).toEqual([]);
-            await admin.patch('/api/users/ana.courier').send({ status: 'active' });
+            /* Asserted against TVHS, not UH. UH returns an empty list either
+               way now, so testing it there would pass without the status
+               filter existing at all. This is also the mechanism the
+               retire:sims script leans on to take fixture accounts off the
+               sign-in page, so it needs a test that can actually fail. */
+            const before = (await srv.agent().get('/api/drivers/list?project=tvhs')).body;
+            expect(before.length).toBeGreaterThan(0);
+            const victim = before[0].username;
+
+            await admin.patch(`/api/users/${victim}`).send({ status: 'disabled' });
+            const after = (await srv.agent().get('/api/drivers/list?project=tvhs')).body;
+            expect(after.map((d) => d.username)).not.toContain(victim);
+            expect(after).toHaveLength(before.length - 1);
+
+            await admin.patch(`/api/users/${victim}`).send({ status: 'active' });
+            expect((await srv.agent().get('/api/drivers/list?project=tvhs')).body).toHaveLength(before.length);
         });
     });
 });

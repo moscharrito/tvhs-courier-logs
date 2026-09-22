@@ -7,7 +7,7 @@
 
 import type { ComponentType, ReactNode } from 'react';
 import {
-    ActivityIndicator, Pressable, StyleSheet, Text, View,
+    ActivityIndicator, Modal, Pressable, StyleSheet, Text, View,
     type StyleProp, type ViewStyle,
 } from 'react-native';
 import { GLASS, GROUND, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
@@ -62,7 +62,7 @@ export function Sheet({ children, style }: { children: ReactNode; style?: StyleP
     );
 }
 
-export type ButtonTone = 'primary' | 'secondary' | 'danger' | 'quiet';
+export type ButtonTone = 'primary' | 'secondary' | 'danger' | 'quiet' | 'calm' | 'calmDanger';
 
 /**
  * A button that is a card.
@@ -72,7 +72,7 @@ export type ButtonTone = 'primary' | 'secondary' | 'danger' | 'quiet';
  * "Collect from the pharmacy" and "Take undelivered back" is helped more by
  * a line of explanation than by a tidier row of chips.
  */
-export function CardButton({ title, detail, onPress, tone = 'primary', disabled = false, busy = false, accessibilityHint, Icon }: {
+export function CardButton({ title, detail, onPress, tone = 'primary', disabled = false, busy = false, accessibilityHint, Icon, compact = false }: {
     title: string;
     detail?: string;
     onPress: () => void;
@@ -80,6 +80,10 @@ export function CardButton({ title, detail, onPress, tone = 'primary', disabled 
     disabled?: boolean;
     busy?: boolean;
     accessibilityHint?: string;
+    /** A routine action rather than the point of the screen. Shorter, and
+     *  still TAP.standard tall: compact is about visual weight, never about
+     *  being harder to hit with a thumb in a van. */
+    compact?: boolean;
     /** Decorative. The title is the label; see the header of Icons.tsx. */
     Icon?: ComponentType<IconProps>;
 }) {
@@ -93,6 +97,7 @@ export function CardButton({ title, detail, onPress, tone = 'primary', disabled 
             {...(accessibilityHint === undefined ? {} : { accessibilityHint })}
             style={({ pressed }) => [
                 styles.cardButton,
+                compact && styles.cardButtonCompact,
                 toneStyles[tone].box,
                 /* Pressed state is a lift rather than a colour change, so it
                    reads through sunglasses and in direct sun. */
@@ -106,12 +111,12 @@ export function CardButton({ title, detail, onPress, tone = 'primary', disabled 
                 </View>
             )}
             <View style={styles.cardButtonText}>
-                <Text style={[styles.cardButtonTitle, toneStyles[tone].title]}>{title}</Text>
+                <Text style={[styles.cardButtonTitle, compact && styles.cardButtonTitleCompact, toneStyles[tone].title]}>{title}</Text>
                 {detail !== undefined && (
                     <Text style={[styles.cardButtonDetail, toneStyles[tone].detail]}>{detail}</Text>
                 )}
             </View>
-            {busy && <ActivityIndicator color={tone === 'primary' || tone === 'danger' ? '#fff' : theme.green} />}
+            {busy && <ActivityIndicator color={iconColour[tone]} />}
         </Pressable>
     );
 }
@@ -185,6 +190,12 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         gap: SPACE.md,
     },
+    cardButtonCompact: {
+        minHeight: TAP.standard,
+        paddingHorizontal: SPACE.md,
+        paddingVertical: SPACE.sm,
+    },
+    cardButtonTitleCompact: { fontSize: TYPE.label },
     cardButtonIcon: { width: 28, alignItems: 'center' },
     cardButtonText: { flex: 1 },
     cardButtonTitle: { fontSize: TYPE.body, fontWeight: '700' },
@@ -226,6 +237,23 @@ const toneStyles: Record<ButtonTone, { box: ViewStyle; title: object; detail: ob
         title: { color: '#ffffff' },
         detail: { color: 'rgba(255,255,255,0.85)' },
     },
+    /* Saving a timesheet and clearing a day are routine, done several times
+       a shift. A solid green slab and a solid red slab shout about them, and
+       a screen where everything shouts says nothing. These read as buttons
+       without competing with the table above them, which is the thing the
+       driver is actually working in. Red survives on the outline of the
+       destructive one, because the difference still has to be obvious at a
+       glance in a moving van. */
+    calm: {
+        box: { backgroundColor: 'rgba(22,163,74,0.14)', borderColor: 'rgba(22,163,74,0.35)' },
+        title: { color: theme.green },
+        detail: { color: theme.muted },
+    },
+    calmDanger: {
+        box: { backgroundColor: 'rgba(185,28,28,0.08)', borderColor: 'rgba(185,28,28,0.32)' },
+        title: { color: theme.danger },
+        detail: { color: theme.muted },
+    },
     quiet: {
         box: { backgroundColor: 'rgba(255,255,255,0.4)', borderColor: GLASS.borderSubtle },
         title: { color: theme.ink },
@@ -240,6 +268,8 @@ const iconColour: Record<ButtonTone, string> = {
     secondary: theme.green,
     danger: '#ffffff',
     quiet: theme.ink,
+    calm: theme.green,
+    calmDanger: theme.danger,
 };
 
 const chipTones = {
@@ -254,3 +284,63 @@ const noticeTones = {
     warn: { box: { backgroundColor: 'rgba(217,119,6,0.12)', borderColor: 'rgba(217,119,6,0.32)' }, text: { color: '#92400e' } },
     bad: { box: { backgroundColor: 'rgba(185,28,28,0.1)', borderColor: 'rgba(185,28,28,0.32)' }, text: { color: theme.danger } },
 } as const;
+
+/**
+ * A yes or no, in front of the screen, for an action that is awkward to undo.
+ *
+ * Save Log overwrites the day on the server and Clear Day empties it, both on
+ * a single tap, both next to each other, and both easy to hit with a thumb
+ * while holding a phone in a van. The cost of asking is one extra tap on a
+ * deliberate action; the cost of not asking is a driver's whole day gone.
+ *
+ * The destructive answer is the one that has to be reached for: Cancel sits
+ * first and is what an accidental tap outside lands on, and the confirming
+ * button carries the verb rather than the word "OK", so what is about to
+ * happen is readable without the title.
+ */
+export function Confirm({ open, title, body, confirmLabel, tone = 'calm', onConfirm, onCancel, busy = false }: {
+    open: boolean;
+    title: string;
+    body?: string;
+    confirmLabel: string;
+    tone?: ButtonTone;
+    onConfirm: () => void;
+    onCancel: () => void;
+    busy?: boolean;
+}) {
+    return (
+        <Modal visible={open} transparent animationType="fade" onRequestClose={onCancel}>
+            <Pressable style={confirmStyles.scrim} onPress={busy ? undefined : onCancel}>
+                {/* Stops a tap inside the card counting as a tap outside it. */}
+                <Pressable style={confirmStyles.card} onPress={() => undefined}>
+                    <Text style={confirmStyles.title}>{title}</Text>
+                    {body !== undefined && <Text style={confirmStyles.body}>{body}</Text>}
+                    <View style={confirmStyles.actions}>
+                        <CardButton title="Cancel" tone="quiet" compact onPress={onCancel} disabled={busy} />
+                        <CardButton title={confirmLabel} tone={tone} compact onPress={onConfirm} busy={busy} />
+                    </View>
+                </Pressable>
+            </Pressable>
+        </Modal>
+    );
+}
+
+const confirmStyles = StyleSheet.create({
+    scrim: {
+        flex: 1,
+        backgroundColor: 'rgba(17,24,39,0.45)',
+        justifyContent: 'center',
+        paddingHorizontal: SPACE.lg,
+    },
+    card: {
+        backgroundColor: 'rgba(255,255,255,0.97)',
+        borderRadius: RADIUS.card,
+        borderWidth: 1,
+        borderColor: GLASS.border,
+        padding: SPACE.lg,
+        ...GLASS.shadow,
+    },
+    title: { fontSize: TYPE.heading, fontWeight: '800', color: theme.ink },
+    body: { fontSize: TYPE.label, color: theme.muted, lineHeight: 23, marginTop: SPACE.xs },
+    actions: { marginTop: SPACE.lg },
+});

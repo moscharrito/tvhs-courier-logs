@@ -182,3 +182,35 @@ export function ShiftIcon({ size = 24, color = '#111827', strokeWidth = 1.8 }: I
         </Svg>
     );
 }
+
+/* Delivery History: a clock with an arrow turning back on it, which is the
+   one shape people already read as "what happened before". */
+export function HistoryIcon({ size = 24, color = '#111827', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <Svg {...base(size)}>
+            <Path
+                d="M3.8 12a8.2 8.2 0 1 0 2.5-5.9"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                fill="none"
+            />
+            <Path
+                d="M3.4 4.2v3.6h3.6"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+            />
+            <Path
+                d="M12 7.6v4.8l3.1 1.9"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+            />
+        </Svg>
+    );
+}

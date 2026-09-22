@@ -18,10 +18,11 @@ import {
     ActivityIndicator, KeyboardAvoidingView, Platform, Pressable,
     ScrollView, StyleSheet, Text, View,
 } from 'react-native';
-import { CardButton, Ground, Notice, Panel } from '../../ui/Glass';
+import { CardButton, Confirm, Ground, Notice, Panel } from '../../ui/Glass';
 import { LegTable } from './LegTable';
+import { LegEditor } from './LegEditor';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../../theme';
-import { get, post } from '../../lib/api';
+import { del, get, post } from '../../lib/api';
 import { ApiError, isUnauthorized } from '../../lib/http';
 import {
     emptyLeg, legsForRoute, legsFromSaved, parseYmd, problemsIn, toPayload, totals,
@@ -47,6 +48,10 @@ export function NewEntry({ token, route, onSignedOut }: {
     const [active, setActive] = useState<string | null>(null);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
     const [busy, setBusy] = useState(false);
+    /* Which of the two one-tap, hard-to-undo actions is waiting on a yes. */
+    const [asking, setAsking] = useState<'save' | 'clear' | null>(null);
+    /** Which leg is open in the full-width editor, if any. */
+    const [editing, setEditing] = useState<number | null>(null);
 
     /* The running clock on the TODAY card. The web shows one and a driver
        uses it to fill in a start time, so it is not decoration. */
@@ -68,9 +73,10 @@ export function NewEntry({ token, route, onSignedOut }: {
         const grouped: Record<string, Leg[]> = {};
         for (const day of days) {
             const rows = saved.filter((r) => r.date === day.date);
-            /* What is filed wins over the route defaults, so reopening the
-               app mid-week does not wipe Monday. */
-            grouped[day.date] = rows.length > 0 ? legsFromSaved(rows) : legsForRoute(defs, route);
+            /* One path, saved or not. legsFromSaved starts from the route,
+               so an untouched day and a half-filled one both come back as a
+               full sheet with the legs named. */
+            grouped[day.date] = legsFromSaved(rows, defs[route]?.legs ?? []);
         }
         setByDate(grouped);
     }, [token, route]);
@@ -107,40 +113,64 @@ export function NewEntry({ token, route, onSignedOut }: {
         } finally { setBusy(false); }
     };
 
+    /* Legs the route defines. Anything past this on the sheet is an extra
+       leg: it names itself, it can be removed, and it is what decides the
+       leg_index the server files the row under. */
+    const standardLegs = routes[route]?.legs.length ?? 0;
     const legs = active === null ? [] : (byDate[active] ?? []);
     const setLegs = (next: Leg[]) => { if (active !== null) setByDate({ ...byDate, [active]: next }); };
     const setLeg = (i: number, patch: Partial<Leg>) =>
         setLegs(legs.map((l, n) => (n === i ? { ...l, ...patch } : l)));
 
+    /* What the yes actually writes, in the driver's own numbers. A dialog
+       that only says "are you sure" moves the tap without adding anything to
+       decide with. Saving overwrites the whole day on the server, so the
+       count of legs is the thing worth checking before it does. */
+    const dayTotals = totals(legs);
+    const saveSummary = dayTotals.legs === 0
+        ? 'Nothing is filled in on this day, so saving it will overwrite whatever is on the server with an empty day.'
+        : `${dayTotals.legs} ${dayTotals.legs === 1 ? 'leg' : 'legs'}, ${dayTotals.sterile + dayTotals.soiled} totes and `
+          + `${dayTotals.miles} miles. This replaces whatever is saved for this day.`;
+
     const saveLog = async () => {
         if (active === null) return;
-        const problems = problemsIn(legs);
+        const problems = problemsIn(legs, standardLegs);
         if (problems.length > 0) { setMsg({ kind: 'error', text: problems[0]!.message }); return; }
         setBusy(true);
         setMsg(null);
         try {
-            await post(`${TVHS}/logs`, token, toPayload(active, legs));
+            await post(`${TVHS}/logs`, token, toPayload(active, legs, standardLegs));
             const t = totals(legs);
             setMsg({ kind: 'ok', text: `Saved. ${t.legs} ${t.legs === 1 ? 'leg' : 'legs'}, ${t.miles} miles.` });
         } catch (err) {
             setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not save.' });
-        } finally { setBusy(false); }
+        } finally { setBusy(false); setAsking(null); }
     };
 
-    /* Clear Day empties the sheet back to the route defaults and saves, so
-       the cleared day is actually cleared on the server rather than only on
-       this phone. */
+    /* Clear Day DELETES the day, which is what the web has always done.
+     *
+     * This used to POST a sheet of empty legs instead, and the two are not
+     * the same thing. A POST writes a row per leg holding zeros, so the day
+     * still exists: it counts as a day worked in the weekly summary, it
+     * appears in the administrator's Driver Logs export, and a driver who
+     * cleared a day on the phone found it still there on the web. DELETE
+     * removes the rows, and `legsFromSaved` rebuilds the blank sheet from
+     * the route on the next read, exactly as the web's buildLogTable does.
+     *
+     * TVHS is live with two drivers filing against it, so mobile and web
+     * writing different things for the same button is not a cosmetic
+     * difference. See server.js `tvhs.delete('/logs')`. */
     const clearDay = async () => {
         if (active === null) return;
         const fresh = legsForRoute(routes, route);
         setLegs(fresh);
         setBusy(true);
         try {
-            await post(`${TVHS}/logs`, token, toPayload(active, fresh));
+            await del(`${TVHS}/logs`, token, { date: active });
             setMsg({ kind: 'ok', text: 'Day cleared.' });
         } catch (err) {
             setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not clear the day.' });
-        } finally { setBusy(false); }
+        } finally { setBusy(false); setAsking(null); }
     };
 
     const shiftWeek = (weeks: number) => {
@@ -246,7 +276,14 @@ export function NewEntry({ token, route, onSignedOut }: {
 
                 {/* The table, seven columns, panned sideways with ROUTE LEG
                     frozen. Daily Totals is its last row, as on the web. */}
-                <LegTable legs={legs} onChange={setLeg} editable={!busy} />
+                <LegTable
+                    legs={legs}
+                    onChange={setLeg}
+                    onOpen={(i) => setEditing(i)}
+                    onRemove={(i) => setLegs(legs.filter((_, n) => n !== i))}
+                    standardLegs={standardLegs}
+                    editable={!busy}
+                />
                 <Text style={styles.panHint}>Swipe the table sideways for totes and miles.</Text>
 
                 <CardButton
@@ -255,13 +292,61 @@ export function NewEntry({ token, route, onSignedOut }: {
                     tone="quiet"
                     onPress={() => setLegs([...legs, emptyLeg()])}
                 />
-                <CardButton title="Save Log" tone="primary" onPress={() => { void saveLog(); }} busy={busy} />
-                <CardButton
-                    title="Clear Day"
-                    detail="Empties this day back to your route and saves it"
-                    tone="danger"
-                    onPress={() => { void clearDay(); }}
+                <View style={styles.dayActions}>
+                    <View style={styles.dayAction}>
+                        <CardButton
+                            title="Save Log"
+                            tone="calm"
+                            compact
+                            onPress={() => setAsking('save')}
+                            busy={busy && asking === 'save'}
+                        />
+                    </View>
+                    <View style={styles.dayAction}>
+                        <CardButton
+                            title="Clear Day"
+                            tone="calmDanger"
+                            compact
+                            onPress={() => setAsking('clear')}
+                            busy={busy && asking === 'clear'}
+                        />
+                    </View>
+                </View>
+
+                <LegEditor
+                    open={editing !== null}
+                    index={editing ?? 0}
+                    isExtra={editing !== null && editing >= standardLegs}
+                    leg={editing === null ? null : (legs[editing] ?? null)}
+                    onCancel={() => setEditing(null)}
+                    onSave={(patch) => {
+                        if (editing !== null) setLeg(editing, patch);
+                        setEditing(null);
+                    }}
+                    {...(editing !== null && editing >= standardLegs
+                        ? { onRemove: () => { setLegs(legs.filter((_, n) => n !== editing)); setEditing(null); } }
+                        : {})}
+                />
+
+                <Confirm
+                    open={asking === 'save'}
+                    title="Save this day?"
+                    body={saveSummary}
+                    confirmLabel="Save the log"
+                    tone="calm"
                     busy={busy}
+                    onConfirm={() => { void saveLog(); }}
+                    onCancel={() => setAsking(null)}
+                />
+                <Confirm
+                    open={asking === 'clear'}
+                    title="Clear this day?"
+                    body="Every time, tote count and mileage on this day is emptied and the empty day is saved to the server. This cannot be undone."
+                    confirmLabel="Clear the day"
+                    tone="calmDanger"
+                    busy={busy}
+                    onConfirm={() => { void clearDay(); }}
+                    onCancel={() => setAsking(null)}
                 />
 
                 {/* Weekly Summary, the four cards at the bottom of the web. */}
@@ -342,6 +427,10 @@ const styles = StyleSheet.create({
     },
     computedText: { fontSize: TYPE.body, fontWeight: '700', color: theme.green },
 
+    /* Side by side, so the pair reads as "finish the day" rather than as two
+       separate announcements stacked down the screen. */
+    dayActions: { flexDirection: 'row', gap: SPACE.sm, marginTop: SPACE.xs },
+    dayAction: { flex: 1 },
     panHint: { fontSize: TYPE.meta, color: theme.muted, marginTop: SPACE.xs, marginBottom: SPACE.md, textAlign: 'center' },
     totalsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: SPACE.sm },
     total: { flex: 1, alignItems: 'center' },

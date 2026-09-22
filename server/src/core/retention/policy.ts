@@ -49,7 +49,18 @@ export interface RetentionRule {
  * marked undecided so that nothing acts on it. */
 const SEVEN_YEARS = 7 * 365;
 
-/** Read once, at load, from the environment. See `location_traces` below. */
+/* Read ON EVERY ACCESS, not once at load, and that is deliberate.
+ *
+ * index.ts calls dotenv.config() at line 21, which is AFTER its imports have
+ * already run. Those imports reach this file, so a value read at module load
+ * is read before .env exists and is always null in development. The result
+ * was the one state the comment on `location_traces` says cannot happen:
+ * config reporting "tracking ON, 7 days" while this table still said the
+ * period was undecided, so points were collected and never purged.
+ *
+ * Production never showed it, because Render puts the variable in the real
+ * environment before node starts. A bug that only appears where it is not
+ * being watched is the worst shape for this particular decision to have. */
 function traceDays(): number | null {
     const raw = process.env['RETENTION_LOCATION_TRACE_DAYS'];
     if (raw === undefined || raw.trim() === '') return null;
@@ -122,8 +133,8 @@ export const RETENTION: Record<RetentionCategory, RetentionRule> = {
          * real here and switches tracking on there. Without it, this is
          * undecided AND nothing is collected, so the two can never disagree
          * about whether a track exists and how long it lives. */
-        days: traceDays(),
-        decided: traceDays() !== null,
+        get days() { return traceDays(); },
+        get decided() { return traceDays() !== null; },
         holds: 'Minute-by-minute positions of a courier while they were on shift (ticket 6.6). '
             + 'No patient name, but joined to orders it says which homes were visited and when.',
         basis: 'UNDECIDED, AND THE MOST IMPORTANT UNDECIDED ONE HERE. Every other category in this '
@@ -141,6 +152,11 @@ export const RETENTION: Record<RetentionCategory, RetentionRule> = {
 /** The categories a sweep counts, in the order a person would read them. */
 export const SWEPT: RetentionCategory[] = [
     'delivery_records', 'proof_of_delivery_files', 'signatures', 'invoices', 'audit_events', 'client_events',
+    /* Swept whether or not a period has been set. While
+       RETENTION_LOCATION_TRACE_DAYS is unset the endpoint collects nothing,
+       so the count is zero and the sweep says so; once it is set, a declared
+       period that nothing enforced would be worse than no period at all. */
+    'location_traces',
 ];
 
 /**

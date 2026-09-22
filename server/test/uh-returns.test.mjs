@@ -389,10 +389,23 @@ describe('handing a load back', () => {
         await handBackEverything(ada);
         const order = await failedOrder({ siteId: pavilionId });
 
-        /* Shut the working day down to a one-hour morning window so that
-           "now" is after hours whenever this test runs, and point the
-           after-hours pharmacy at the Discharge Pharmacy. */
-        const closed = await admin.patch(SETTINGS).send({ businessHours: { start: '08:00', end: '09:00' } });
+        /* Shut the working day down to a one-hour window that CANNOT contain
+           the current time, and point the after-hours pharmacy at the
+           Discharge Pharmacy.
+           
+           This used to hardcode 08:00 to 09:00 with a comment saying "now" is
+           after hours whenever this test runs. That was true for twenty-three
+           hours a day. Between 08:00 and 09:00 in the project's timezone the
+           window contained the clock, the order routed to its own pharmacy
+           instead of the after-hours one, and the suite failed for an hour
+           and then healed itself. The window is picked from the clock now, in
+           the timezone the server reckons business hours in, and never wraps
+           past midnight. */
+        const nowHour = Number(new Date().toLocaleString('en-US', {
+            timeZone: 'America/Chicago', hour: '2-digit', hour12: false,
+        }));
+        const shut = nowHour < 12 ? { start: '13:00', end: '14:00' } : { start: '01:00', end: '02:00' };
+        const closed = await admin.patch(SETTINGS).send({ businessHours: shut });
         expect(closed.status, JSON.stringify(closed.body)).toBe(200);
         try {
             const group = (await ada.get(RETURNS)).body.destinations

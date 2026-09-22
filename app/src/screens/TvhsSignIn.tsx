@@ -32,7 +32,7 @@ import {
 import { CardButton, Ground, Notice, Panel } from '../ui/Glass';
 import { BackPill } from '../ui/Nav';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
-import { get, signInWithPin, type DriverPick } from '../lib/api';
+import { get, setPinWithPassword, signInWithPin, type DriverPick } from '../lib/api';
 import { ApiError } from '../lib/http';
 
 export function TvhsSignIn({ onSignedIn, onBack }: {
@@ -43,6 +43,12 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
     const [drivers, setDrivers] = useState<DriverPick[] | null>(null);
     const [driver, setDriver] = useState<DriverPick | null>(null);
     const [pin, setPin] = useState('');
+    /* Set a new PIN with the account password, which is what the web calls
+       "Forgot PIN? Use password". Off unless the driver asks for it: the PIN
+       is the everyday way in and a password box on the front screen invites
+       typing one into a phone held up at a window. */
+    const [resetting, setResetting] = useState(false);
+    const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -63,10 +69,13 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
 
     const submit = async () => {
         if (driver === null || driver.route === null || pin.length < 4) return;
+        if (resetting && password.trim() === '') return;
         setBusy(true);
         setError(null);
         try {
-            const out = await signInWithPin(driver.route, pin);
+            const out = resetting
+                ? await setPinWithPassword(driver.route, password, pin)
+                : await signInWithPin(driver.route, pin);
             onSignedIn(out.token, { route: driver.route, name: driver.name });
         } catch (err) {
             /* The server's own sentence. It says "Incorrect PIN" and counts
@@ -74,6 +83,7 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
                the throttle that is about to start refusing. */
             setError(err instanceof ApiError ? err.message : 'Could not sign in.');
             setPin('');
+            setPassword('');
         } finally {
             setBusy(false);
         }
@@ -135,7 +145,23 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
                     <Panel>
                         {error !== null && <Notice text={error} tone="bad" />}
 
-                        <Text style={styles.label}>PIN</Text>
+                        {resetting && (
+                            <>
+                                <Text style={styles.label}>Account password</Text>
+                                <TextInput
+                                    style={styles.password}
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    secureTextEntry
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    editable={!busy}
+                                    accessibilityLabel="Account password"
+                                />
+                            </>
+                        )}
+
+                        <Text style={styles.label}>{resetting ? 'New PIN' : 'PIN'}</Text>
                         <TextInput
                             style={styles.pin}
                             value={pin}
@@ -151,17 +177,29 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
                         />
 
                         <CardButton
-                            title="Sign in"
+                            title={resetting ? 'Set PIN and sign in' : 'Sign in'}
                             onPress={() => { void submit(); }}
-                            disabled={pin.length < 4}
+                            disabled={pin.length < 4 || (resetting && password.trim() === '')}
                             busy={busy}
                             tone="primary"
+                        />
+                        <CardButton
+                            title={resetting ? 'I remember my PIN' : 'Forgot PIN? Use your password'}
+                            {...(resetting ? {} : { detail: 'Sets a new PIN for this van' })}
+                            tone="quiet"
+                            compact
+                            onPress={() => {
+                                setResetting(!resetting);
+                                setPin('');
+                                setPassword('');
+                                setError(null);
+                            }}
                         />
                         <CardButton
                             title="Not me"
                             detail="Back to the driver list"
                             tone="quiet"
-                            onPress={() => { setDriver(null); setPin(''); setError(null); }}
+                            onPress={() => { setDriver(null); setPin(''); setPassword(''); setResetting(false); setError(null); }}
                         />
                     </Panel>
 
@@ -183,6 +221,18 @@ const fetchDrivers = (): Promise<DriverPick[]> =>
     get<DriverPick[]>('/api/drivers/list?project=tvhs', null);
 
 const styles = StyleSheet.create({
+    /* Not the big spaced-out PIN box: a password is typed, not tapped. */
+    password: {
+        minHeight: TAP.standard,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderWidth: 1,
+        borderColor: GLASS.borderSubtle,
+        borderRadius: RADIUS.button,
+        paddingHorizontal: SPACE.md,
+        fontSize: TYPE.body,
+        color: theme.ink,
+        marginBottom: SPACE.sm,
+    },
     fill: { flex: 1 },
     wrap: { flexGrow: 1, justifyContent: 'center', padding: SPACE.lg },
     brand: { alignItems: 'center', marginVertical: SPACE.xl },

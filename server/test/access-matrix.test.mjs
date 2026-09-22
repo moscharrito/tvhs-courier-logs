@@ -286,6 +286,11 @@ const MATRIX = [
     ['POST', `${UH}/runs`, UH_STAFF, ''],
     ['GET', `${UH}/runs`, UH_STAFF_AND_COURIER, ''],
     ['GET', `${UH}/runs/mine`, UH_STAFF_AND_COURIER, ''],
+    /* Delivery History. A courier reads their OWN finished work: the
+       username comes from the session and there is no parameter to
+       change, so this cannot become a way to read the patients another
+       driver delivered to. Staff may call it too, and get their own. */
+    ['GET', `${UH}/runs/history`, UH_STAFF_AND_COURIER, 'what I have already delivered'],
 
     /* --- shifts (ticket 6.3). A courier starts and ends their own; only
        dispatch ends somebody else's, which is the escape hatch for a driver

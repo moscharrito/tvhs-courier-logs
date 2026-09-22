@@ -29,5 +29,22 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         name: config.name ?? 'Izy Courier',
         slug: config.slug ?? 'izy-courier',
         extra: { ...config.extra, apiBaseUrl },
+        plugins: [
+            ...(config.plugins ?? []),
+            /* The camera, for a proof of delivery photo. iOS refuses to open
+               it without a usage string and the store refuses the build, so
+               this is not optional furniture.
+
+               photosPermission is FALSE on purpose: lib/pod.ts opens the
+               camera and never the library, because a picture chosen from
+               the roll is not proof that anybody stood at a door. Asking for
+               access to a courier's personal photos to deliver a parcel is a
+               permission we should not hold. */
+            ['expo-image-picker', {
+                cameraPermission: 'Izy Courier uses the camera to photograph a doorstep as proof that a delivery was made.',
+                photosPermission: false,
+                microphonePermission: false,
+            }],
+        ],
     };
 };

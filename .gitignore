@@ -9,3 +9,4 @@ dist/
 # generated on first run and must never be committed: launch.json is tracked,
 # which is exactly why the secret lives in its own file and not in there.
 .claude/ttyd-credential
+backups/

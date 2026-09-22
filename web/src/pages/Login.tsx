@@ -77,7 +77,18 @@ export function Login() {
         setDrivers(null);
         setError(null);
         setMode('pick');
-        api<DriverPick[]>(`/api/drivers/list?project=${encodeURIComponent(p.code)}`).then(setDrivers).catch(() => setDrivers([]));
+        /* A project with nobody to pick goes straight to a username and a
+           password. UH is that project: its couriers work from the phone app
+           and this page is for the people who do not, which is dispatch,
+           administrators and pharmacy staff. The server decides, by returning
+           an empty list for a project that does not sign in by route, so the
+           roster is not merely hidden here but never sent. */
+        api<DriverPick[]>(`/api/drivers/list?project=${encodeURIComponent(p.code)}`)
+            .then((list) => {
+                setDrivers(list);
+                if (list.length === 0) setMode('staff');
+            })
+            .catch(() => { setDrivers([]); setMode('staff'); });
     };
 
     const pick = (d: DriverPick) => {
@@ -192,11 +203,6 @@ export function Login() {
                                 <span><b>{d.name}</b><span>{pickHint(d)}</span></span>
                             </button>
                         ))}
-                        {drivers?.length === 0 && (
-                            <div className="izy-muted">
-                                Nobody is set up as a courier on this project yet. Ask dispatch to add you, or use staff sign in.
-                            </div>
-                        )}
                         {staffLink}
                     </div>
                 )}
