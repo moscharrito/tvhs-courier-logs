@@ -729,6 +729,39 @@ tvhs.get('/admin/drivers', requireAdmin, async (req, res) => {
 });
 
 // Admin: export Excel in original format
+/* The name an exported workbook arrives under.
+ *
+ *   Mohamed_TVHS_09-21.xlsx
+ *
+ * First name, the contract, and the LAST DATE IN THE DATA, which for a weekly
+ * export is the Friday. Not the end of the filter range: an admin who asks
+ * for the whole month gets a file named for the last day anybody actually
+ * drove, which is the day the invoice is submitted against. A range of
+ * 09-01_to_09-30 named a file after two dates that may both be empty.
+ *
+ * Month and day only. A driver filing every Friday accumulates a folder of
+ * these and the year is the same in all of them; what they need to tell
+ * apart at a glance is which week.
+ *
+ * The first name alone is deliberate, and it is what was asked for. Two
+ * drivers named Mohamed would collide, so if that ever happens this is the
+ * function to change, in one place, for both exports.
+ */
+function exportFilename(driverName, lastDate) {
+    const first = String(driverName || '').trim().split(/\s+/)[0] || '';
+    /* Anything a filesystem or a Content-Disposition header would argue
+       with. Accents are dropped rather than escaped: a header is latin-1. */
+    const safe = first.normalize('NFD').replace(/[^A-Za-z0-9]/g, '');
+    const mmdd = /^\d{4}-\d{2}-\d{2}$/.test(String(lastDate || '')) ? String(lastDate).slice(5) : '';
+    return [safe, 'TVHS', mmdd].filter(Boolean).join('_') + '.xlsx';
+}
+
+/** The latest date in a set of log rows. They arrive ordered by driver first,
+ *  so the last row is not the last day. */
+function lastLogDate(rows) {
+    return rows.reduce((max, r) => (String(r.date) > max ? String(r.date) : max), '');
+}
+
 tvhs.get('/admin/export', requireAdmin, async (req, res) => {
     const ExcelJS = require('exceljs');
     const { driver, route, startDate, endDate } = req.query;
@@ -955,7 +988,11 @@ tvhs.get('/admin/export', requireAdmin, async (req, res) => {
 
     // Send file
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    const fname = `TVHS_Courier_Logs_${startDate || 'all'}_to_${endDate || 'all'}.xlsx`;
+    /* One driver in the data gets their name on it. An export covering
+       several has no single first name to use, so it goes out as the
+       contract and the date. */
+    const names = [...new Set(logs.map((l) => l.driver_name))];
+    const fname = exportFilename(names.length === 1 ? names[0] : '', lastLogDate(logs));
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     await wb.xlsx.write(res);
     res.end();
@@ -1099,7 +1136,11 @@ tvhs.get('/logs/export', requireAuth, async (req, res) => {
     ws.getCell(`I${r}`).value = grandMiles;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    const fname = `${isNorth ? 'Driver_Log' : 'Driver_Invoice'}_${userInfo.name.replace(/\s/g, '_')}_${startDate}_to_${endDate}.xlsx`;
+    /* The same name the admin export produces. Two buttons that make the
+       same document under two different names is a question somebody has to
+       ask; the route no longer appears in it because the workbook says so
+       inside and a filename is for telling weeks apart. */
+    const fname = exportFilename(userInfo.name, lastLogDate(logs));
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     await wb.xlsx.write(res);
     res.end();

@@ -48,7 +48,12 @@ describe('admin Excel export', () => {
         const res = await admin.get('/api/projects/tvhs/tvhs/admin/export?startDate=2026-01-01&endDate=2026-01-31').buffer().parse(binaryParser);
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toMatch(/spreadsheetml/);
-        expect(res.headers['content-disposition']).toMatch(/TVHS_Courier_Logs_2026-01-01_to_2026-01-31\.xlsx/);
+        /* FirstName_TVHS_MM-DD, and the date is the LAST DAY IN THE DATA
+           rather than the end of the filter range. The range here is the
+           whole of January; the fixture's last log is the 6th, and that is
+           the day the invoice is submitted against. Two drivers in one
+           export have no single first name, so that slot is dropped. */
+        expect(res.headers['content-disposition']).toMatch(/filename="TVHS_01-06\.xlsx"/);
 
         const wb = await workbookFrom(res);
         expect(wb.worksheets.map(w => w.name).sort()).toEqual(['Bereket Nigusse', 'Mohamed Djemai']);
@@ -126,7 +131,10 @@ describe('driver self export', () => {
         const a = await srv.login('south');
         const res = await a.get('/api/projects/tvhs/tvhs/logs/export?startDate=2026-01-01&endDate=2026-01-31').buffer().parse(binaryParser);
         expect(res.status).toBe(200);
-        expect(res.headers['content-disposition']).toMatch(/Driver_Invoice_Mohamed_Djemai_2026-01-01_to_2026-01-31\.xlsx/);
+        /* The same convention the admin export uses, from the same helper.
+           Two buttons producing the same document under two different names
+           was a question somebody would have had to ask. */
+        expect(res.headers['content-disposition']).toMatch(/filename="Mohamed_TVHS_\d{2}-\d{2}\.xlsx"/);
         const wb = await workbookFrom(res);
         expect(wb.worksheets).toHaveLength(1);
         const ws = wb.worksheets[0];
