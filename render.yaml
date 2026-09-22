@@ -28,7 +28,24 @@ services:
     name: tvhs-courier-logs
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    # --include=dev IS LOAD-BEARING, do not tidy it away.
+    #
+    # Render sets NODE_ENV=production, which makes `npm ci` skip
+    # devDependencies. Everything that BUILDS this project is a
+    # devDependency: typescript, vite, vitest and the jest-dom types. Without
+    # them the deploy of 2026-09-21 failed twice over, and the errors pointed
+    # nowhere near the cause:
+    #
+    #   server  TS5108: Option 'moduleResolution=node10' has been removed
+    #   web     TS2688: Cannot find type definition file for 'vite/client'
+    #
+    # The first one is the confusing one. With typescript absent, `tsc`
+    # resolved to a newer compiler already on Render's image, and that one has
+    # dropped the legacy `moduleResolution: "Node"` this repo uses. Nothing in
+    # the repo had changed; the compiler had. The version in the lockfile,
+    # 5.9.3, accepts it, so installing dev dependencies fixes both errors at
+    # once and pins the compiler to the one the code was written against.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start -w server
     autoDeploy: true
     healthCheckPath: /health
