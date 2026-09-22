@@ -40,6 +40,19 @@ SELECT p.`id`, '2026-05-18', 'Izy BAFO (RFP-226-03-068-SVC)', 12.50, 14.50, 22.0
 FROM `projects` p WHERE p.`code` = 'uh'
   AND NOT EXISTS (SELECT 1 FROM `price_schedules` s WHERE s.`project_id` = p.`id` AND s.`effective_from` = '2026-05-18');
 --> statement-breakpoint
+-- ZIP-to-zone map, in batches of eight rather than one 72-term UNION.
+--
+-- This was a single derived table: `SELECT ... UNION ALL SELECT ...` 72 times
+-- over. SQLite on a developer's machine ran it without complaint; Turso
+-- refused it outright with "too many terms in compound SELECT", and the
+-- server would not boot because the migration it needed could not be applied.
+-- The limit is SQLITE_MAX_COMPOUND_SELECT, and the hosted build sets it lower
+-- than the local one, so this is a migration that passed every local test and
+-- could only ever fail in production.
+--
+-- Eight per statement leaves a wide margin under any plausible limit. The
+-- NOT EXISTS guard is repeated on each batch, so this stays idempotent and a
+-- half-applied run can be repeated safely.
 INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
 SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	SELECT '78201' AS `zip`, 1 AS `zone`, NULL AS `place`
@@ -50,7 +63,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78207' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78208' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78209' AS `zip`, 1 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78210' AS `zip`, 1 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78210' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78211' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78212' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78213' AS `zip`, 1 AS `zone`, NULL AS `place`
@@ -58,7 +77,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78216' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78217' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78218' AS `zip`, 1 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78219' AS `zip`, 1 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78219' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78225' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78226' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78227' AS `zip`, 1 AS `zone`, NULL AS `place`
@@ -66,7 +91,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78229' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78230' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78231' AS `zip`, 1 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78232' AS `zip`, 1 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78232' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78233' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78235' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78237' AS `zip`, 1 AS `zone`, NULL AS `place`
@@ -74,7 +105,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78239' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78240' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78242' AS `zip`, 1 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78244' AS `zip`, 1 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78244' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78247' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78248' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78249' AS `zip`, 1 AS `zone`, NULL AS `place`
@@ -82,7 +119,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78251' AS `zip`, 1 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78214' AS `zip`, 2 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78220' AS `zip`, 2 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78221' AS `zip`, 2 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78221' AS `zip`, 2 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78222' AS `zip`, 2 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78223' AS `zip`, 2 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78224' AS `zip`, 2 AS `zone`, NULL AS `place`
@@ -90,7 +133,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78252' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78253' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78254' AS `zip`, 3 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78255' AS `zip`, 3 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78255' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78256' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78257' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78258' AS `zip`, 3 AS `zone`, NULL AS `place`
@@ -98,7 +147,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78260' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78261' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78263' AS `zip`, 3 AS `zone`, NULL AS `place`
-	UNION ALL SELECT '78264' AS `zip`, 3 AS `zone`, NULL AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78264' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78266' AS `zip`, 3 AS `zone`, NULL AS `place`
 	UNION ALL SELECT '78002' AS `zip`, 4 AS `zone`, 'Atascosa' AS `place`
 	UNION ALL SELECT '78023' AS `zip`, 4 AS `zone`, 'Helotes' AS `place`
@@ -106,7 +161,13 @@ SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
 	UNION ALL SELECT '78073' AS `zip`, 4 AS `zone`, 'Von Ormy' AS `place`
 	UNION ALL SELECT '78101' AS `zip`, 4 AS `zone`, 'Adkins' AS `place`
 	UNION ALL SELECT '78108' AS `zip`, 4 AS `zone`, 'Cibolo' AS `place`
-	UNION ALL SELECT '78109' AS `zip`, 4 AS `zone`, 'Converse' AS `place`
+) v
+WHERE p.`code` = 'uh' AND NOT EXISTS (
+	SELECT 1 FROM `zone_zips` z WHERE z.`project_id` = p.`id` AND z.`zip` = v.`zip` AND z.`effective_from` = '2026-05-18');
+--> statement-breakpoint
+INSERT INTO `zone_zips` (`project_id`, `zip`, `zone`, `place`, `effective_from`)
+SELECT p.`id`, v.`zip`, v.`zone`, v.`place`, '2026-05-18' FROM `projects` p, (
+	SELECT '78109' AS `zip`, 4 AS `zone`, 'Converse' AS `place`
 	UNION ALL SELECT '78112' AS `zip`, 4 AS `zone`, 'Elmendorf' AS `place`
 	UNION ALL SELECT '78148' AS `zip`, 4 AS `zone`, 'Universal City' AS `place`
 	UNION ALL SELECT '78152' AS `zip`, 4 AS `zone`, 'St. Hedwig' AS `place`
