@@ -9,6 +9,13 @@ Nothing here is applied automatically. Apply it, then set the `S3_*` values in
 `server/.env`. Until then every file endpoint answers 503 and says so, rather
 than appearing to store something.
 
+**`create-pod-bucket.sh` in this directory does all of it**, in the order that
+matters, and stops to confirm before it touches anything. Fill in the four
+values at the top and run it. Read the rest of this document anyway: the script
+is the typing, and what follows is why each setting is what it is. The two
+things the script deliberately leaves undone are the retention period, which is
+a contract decision, and anything on Render.
+
 ## What the application assumes
 
 - **Every object is encrypted with SSE-KMS.** The encryption headers are part
