@@ -28,7 +28,28 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ...config,
         name: config.name ?? 'Izy Courier',
         slug: config.slug ?? 'izy-courier',
-        extra: { ...config.extra, apiBaseUrl },
+        extra: {
+            ...config.extra,
+            apiBaseUrl,
+            /* ─────────────────────────────────────────────────────────────
+             * TVHS TALKS TO A DIFFERENT SERVER FROM UH, ON PURPOSE.
+             *
+             * TVHS is live: two drivers file logs against it every day, and
+             * the phone has to reach the same database the web portal does or
+             * the two disagree. UH is still in test, so it stays on whatever
+             * `apiBaseUrl` resolved to, which in development is the laptop.
+             *
+             * One app, two servers, chosen by the contract on the first
+             * screen. That works because a session token belongs to the
+             * server that issued it: see lib/api.ts, which keeps the base
+             * that was in use when the driver signed in.
+             *
+             * Override with EXPO_PUBLIC_TVHS_API_URL to point TVHS somewhere
+             * else, a staging copy for instance. Unset means production,
+             * because that is where TVHS actually is.
+             * ───────────────────────────────────────────────────────────── */
+            tvhsApiBaseUrl: (process.env['EXPO_PUBLIC_TVHS_API_URL'] ?? 'https://logs.izyglobalservices.com').replace(/\/+$/, ''),
+        },
         plugins: [
             ...(config.plugins ?? []),
             /* The camera, for a proof of delivery photo. iOS refuses to open

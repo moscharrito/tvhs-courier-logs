@@ -18,13 +18,13 @@ import { RADIUS, SPACE, TYPE, theme } from '../theme';
 export function ChooseContract({ onChoose }: { onChoose: (contract: Contract) => void }) {
     return (
         <Ground>
-            <ScrollView contentContainerStyle={styles.wrap}>
-                {/* Centred, which is what was asked for and is also the only
-                    arrangement that works here: there is nothing else on the
-                    screen to align a left edge against. */}
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.wrap}>
                 <View style={styles.brand}>
                     <Text style={styles.wordmark}>TAG</Text>
-                    <Text style={styles.company}>Izy Global Services LLC</Text>
+                    {/* A short rule instead of a tagline. It gives the
+                        wordmark something to sit on without adding a
+                        sentence nobody reads twice. */}
+                    <View style={styles.rule} />
                 </View>
 
                 <Panel style={styles.panel}>
@@ -42,33 +42,90 @@ export function ChooseContract({ onChoose }: { onChoose: (contract: Contract) =>
                 </Panel>
 
             </ScrollView>
+
+            {/* OUTSIDE THE SCROLL VIEW, and that is the whole fix.
+                Inside it, the footer was part of what the scroll view was
+                centring, so "centre" meant the centre of the space above the
+                footer and the wordmark sat high by half the footer's height.
+                Ground's content layer is an absolute fill, so the scroll view
+                takes the room that is left and the footer sits under it.
+
+                The year comes from the clock rather than being typed, so it
+                cannot be the one thing on screen that is wrong next January. */}
+            <Text style={styles.copyright}>© {new Date().getFullYear()} Izy Global Services LLC</Text>
         </Ground>
     );
 }
 
+/* How far below true centre the group sits, in points.
+ *
+ * NOT A STRUCTURAL FIX, and the difference matters to whoever reads this
+ * next. The status bar allowance below genuinely centres the content in the
+ * area a person can see; this is on top of that, because arithmetic centre
+ * and optical centre are not the same place. A heavy card carries more visual
+ * weight than a wordmark and a hairline, so the eye reads a mathematically
+ * centred group as sitting high, and wants it lower.
+ *
+ * Doubled into paddingTop: padding shifts the centre of the remaining space
+ * by half of what is added, so 20 here moves the group down 20.
+ */
+const OPTICAL_DROP = 20;
+
 const styles = StyleSheet.create({
-    wrap: { flexGrow: 1, justifyContent: 'center', padding: SPACE.lg },
+    scroll: { flex: 1 },
+    /* paddingTop CLEARS THE STATUS BAR, and that is why the wordmark used to
+       read high.
+       
+       Ground's content layer is an absolute fill starting at y=0, so it sits
+       under the clock and the battery. Centring against the full height puts
+       content above the centre of the part a person can actually see. Every
+       other screen in the app already allows for this: 56 on Board, Profile,
+       Requests, Run and Stop, 60 on Apply and Onboarding. This screen had 22,
+       which made it the only one that did not.
+       
+       60 matches Apply.tsx, the other screen that centres its content. */
+    wrap: { flexGrow: 1, justifyContent: 'center', padding: SPACE.lg, paddingTop: 60 + OPTICAL_DROP * 2 },
+
     brand: { alignItems: 'center', marginBottom: SPACE.xl },
     wordmark: {
-        fontSize: 46,
+        fontSize: 54,
         fontWeight: '800',
         color: theme.green,
-        letterSpacing: 2,
+        /* TIGHT, NOT WIDE. This was +2, which is the letterspacing of a 1990s
+           corporate logotype; a wordmark of three capitals reads as one shape
+           when the letters are pulled together, and that is most of what
+           makes a mark look current. */
+        letterSpacing: -1.5,
         textAlign: 'center',
     },
-    company: {
-        fontSize: TYPE.label,
+    rule: {
+        width: 48,
+        height: 4,
+        borderRadius: RADIUS.pill,
+        backgroundColor: theme.greenBright,
+        marginTop: SPACE.md,
+    },
+    copyright: {
+        /* Clear of the home indicator on a phone with no hardware button. */
+        paddingBottom: SPACE.lg,
+        paddingTop: SPACE.sm,
+        fontSize: TYPE.meta,
         color: theme.muted,
-        marginTop: SPACE.xs,
         textAlign: 'center',
     },
     panel: { borderRadius: RADIUS.card },
+    /* A label over two cards, not the page's title: the wordmark above is
+       that. It sat at TYPE.title, 26 and near-black, competing with the mark
+       and shouting an instruction nobody needs shouted.
+       Small, spaced and muted, which is how a modern interface labels a
+       group rather than announcing one. Still 15pt, the app's floor. */
     title: {
-        fontSize: TYPE.title,
+        fontSize: TYPE.meta,
         fontWeight: '700',
-        color: theme.ink,
-        textAlign: 'center',
-        /* The explanation under this used to carry the gap. */
-        marginBottom: SPACE.lg,
+        color: theme.muted,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        marginBottom: SPACE.md,
+        marginLeft: 2,
     },
 });

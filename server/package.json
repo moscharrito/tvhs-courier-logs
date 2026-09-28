@@ -27,7 +27,8 @@
     "clear:work": "tsx scripts/clear-test-work.mjs",
     "retire:sims": "tsx scripts/retire-sim-couriers.mjs",
     "remove:accounts": "tsx scripts/remove-accounts.mjs",
-    "backup": "tsx scripts/backup-db.mjs"
+    "backup": "tsx scripts/backup-db.mjs",
+    "seed:uh-day": "node scripts/seed-uh-day.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

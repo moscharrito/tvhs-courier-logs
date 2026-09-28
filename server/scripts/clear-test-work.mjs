@@ -12,11 +12,28 @@
  * delivery requests, notifications and a shift, and forgetting any one of
  * them leaves a board that looks wrong in a way nobody can explain.
  *
- * IT REFUSES ANYTHING BUT A LOCAL FILE DATABASE. It has to drop the
- * append-only trigger on `custody_events` to remove their events, and a
+ * IT REFUSES TURSO UNLESS TOLD OTHERWISE, IN SO MANY WORDS. It has to drop
+ * the append-only trigger on `custody_events` to remove their events, and a
  * process killed between the drop and the recreate leaves an evidence table
- * unprotected. That is not a risk worth taking against Turso, where the real
- * TVHS months of logs live.
+ * unprotected. That is not a risk to take casually against the database where
+ * the real TVHS months of logs live.
+ *
+ * But UH is being tested against production on purpose, and those rows have
+ * to come out before UH goes live, so the guard needs a door rather than a
+ * wall:
+ *
+ *     ALLOW_TURSO_OUTSIDE_PRODUCTION=true  *       TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=...  *       npm run clear:work -w server -- --from 2026-09-21 --project uh --i-mean-production --apply
+ *
+ * THREE separate things are required and none of them can happen by accident:
+ * the connection details, the environment escape hatch the rest of the repo
+ * already uses, and `--i-mean-production` which exists only here and only for
+ * this. A dry run needs none of them: it reads, reports, and changes nothing,
+ * so the safe half stays one command.
+ *
+ * The project scope is what makes this survivable at all. Every statement is
+ * filtered by `project_id` and a date range, so clearing UH cannot reach a
+ * TVHS log even by mistake; and the script refuses outright to run against
+ * tvhs in production, because nothing about the TVHS project is test data.
  *
  * IT DOES NOT TOUCH `audit_events`, which is append-only by design (ticket
  * 0.8) and is the record that these things were done. Deleting the log of an
@@ -48,11 +65,27 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
     process.exit(1);
 }
 
+const meansProduction = process.argv.includes('--i-mean-production');
+
 const config = loadConfig();
 if (config.db.kind !== 'file') {
-    console.error('Refusing to run: this is not a local file database.');
-    console.error('It drops the append-only trigger on custody_events while it works.');
-    process.exit(1);
+    /* A dry run reads and reports. It never drops a trigger and never deletes
+       a row, so it needs no permission: being able to ask "what would this
+       remove" without arming anything is the whole point of a dry run. */
+    if (apply && !meansProduction) {
+        console.error('Refusing to run: this is not a local file database.');
+        console.error('It drops the append-only trigger on custody_events while it works.');
+        console.error('');
+        console.error('If you mean it, add --i-mean-production. Take a backup first:');
+        console.error('  npm run backup -w server');
+        process.exit(1);
+    }
+    if (apply && projectCode === 'tvhs') {
+        /* TVHS is live and none of it is test data. There is no argument that
+           unlocks this one. */
+        console.error('Refusing to clear tvhs work on a remote database. Nothing in TVHS is test data.');
+        process.exit(1);
+    }
 }
 
 const database = createDatabase(config);

@@ -7,6 +7,7 @@
  */
 
 import Constants from 'expo-constants';
+import { defaultServer, serverForContract, type ServerConfig } from './servers';
 import { request, type RequestOptions } from './http';
 
 /** From `extra.apiBaseUrl`, which app.config.ts sets per build profile, so a
@@ -23,17 +24,51 @@ import { request, type RequestOptions } from './http';
  *  A missing base URL is a build that was assembled wrongly, not a condition
  *  to paper over. Throwing here shows up on the first screen, in development,
  *  to the person who can fix it. */
+/* The decision itself lives in lib/servers.ts, which imports nothing from
+   expo so it can be tested. This file only reads the config and holds the
+   choice. */
+const extra = (): ServerConfig => (Constants.expoConfig?.extra ?? {}) as ServerConfig;
+
+/** The default server: UH, and everything before a contract is chosen. */
+export const defaultBaseUrl = (): string => defaultServer(extra());
+
+/** Which server a contract lives on. */
+export const baseUrlForContract = (code: string): string => serverForContract(extra(), code);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE ACTIVE SERVER, AND WHY IT IS A VARIABLE RATHER THAN A FUNCTION OF THE
+ * PATH.
+ *
+ * It is tempting to read the project out of the request path and pick the
+ * server from that. It does not work, because A SESSION TOKEN BELONGS TO THE
+ * SERVER THAT ISSUED IT. Signing in is `/api/login/pin`, which carries no
+ * project; so is `/api/session`, `/api/config` and `/api/logout`. Send a
+ * token minted by production to the laptop and it is simply not a session.
+ *
+ * So the server is chosen once, when the driver picks a contract, and every
+ * call in that session goes to it. Picking a contract is the only thing that
+ * changes it, and signing out puts it back.
+ * ───────────────────────────────────────────────────────────────────────── */
+let active: string | null = null;
+
+/** Point every later call at this contract's server. */
+export function useContractServer(code: string): string {
+    active = baseUrlForContract(code);
+    return active;
+}
+
+/** Restore the server a saved session was issued by (lib/session.ts). */
+export function useServer(url: string): void {
+    active = url.trim() === '' ? null : url.trim();
+}
+
+/** Back to the default, for a signed-out app with no contract chosen. */
+export function forgetServer(): void {
+    active = null;
+}
+
 export function baseUrl(): string {
-    const extra = (Constants.expoConfig?.extra ?? {}) as { apiBaseUrl?: string };
-    const url = (extra.apiBaseUrl ?? '').trim();
-    if (url === '') {
-        throw new Error(
-            'This build has no apiBaseUrl. app.config.ts sets it from EXPO_PUBLIC_API_URL, so either the '
-            + 'config did not load or the variable is unset for this profile. It is not defaulted to '
-            + 'localhost on purpose: see src/lib/apiUrl.cjs.',
-        );
-    }
-    return url;
+    return active ?? defaultBaseUrl();
 }
 
 export interface SessionUser {

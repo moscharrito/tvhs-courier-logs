@@ -344,6 +344,58 @@ Decide and write down:
 
 ---
 
+## Handing the app to a tester through Expo Go
+
+The public address is stable and belongs to the ngrok account, so testers keep
+one QR forever:
+
+    exp://applicant-drainpipe-declared.ngrok-free.dev
+
+**BOTH SIDES MUST BE SIGNED IN TO EXPO GO AS THE SAME ACCOUNT.** This is the
+rule, and it cost four rounds with a tester to establish because the error
+messages each point somewhere other than the cause. Every combination was
+tried:
+
+| Expo CLI here | Expo Go on the phone | Result                                |
+| ------------- | -------------------- | ------------------------------------- |
+| `moscharito`  | `smallgaji`          | "these accounts need to match"        |
+| signed out    | `moscharito`         | "not signed in to Expo CLI"           |
+| signed out    | signed out           | "need to be signed in to Expo Go and Expo CLI" |
+| `tag-courier` | `tag-courier`        | **works**                             |
+
+Signed out on both is not neutral, it is just another mismatch. There is no
+configuration in which testers use their own Expo accounts against this dev
+server, so a shared throwaway account is the only workable answer: currently
+`tag-courier`, which exists for nothing else.
+
+Two traps worth knowing:
+
+- The account name Expo assigns is often **not** what was typed at signup.
+  Check with `npx expo whoami` and hand testers that exact string.
+- `scopeKey` in the served manifest stays `@anonymous/...` because `app.json`
+  sets no `owner` and no EAS project id. That is NOT the thing being matched,
+  and reading it as though it were is what produced two of the wrong answers
+  above.
+
+The tester-facing instructions, with the QR drawn in and every error message
+listed against its fix, are published as an artifact; ask whoever set this up
+for the link.
+
+### Keeping it serving
+
+Two processes on the development machine, both self-restarting and both
+started at logon from `app/start-tunnel.cmd` and `app/start-metro.cmd`:
+
+    ngrok   holds the static domain and forwards it to port 8081
+    metro   bundles the app, told to advertise the tunnel hostname
+
+`app/check-serving.cmd` answers the only question that matters: it tests both
+processes, the tunnel, and **downloads the real bundle through the public
+domain**, because a tunnel answering `/status` proves very little.
+
+Sleep is off on mains power. If it is ever turned back on, testers lose the
+app whenever the machine idles, and the symptom looks like a dead tunnel.
+
 ## Known failure modes
 
 Written from what has actually gone wrong in development and in the load test,

@@ -10,3 +10,6 @@ dist/
 # which is exactly why the secret lives in its own file and not in there.
 .claude/ttyd-credential
 backups/
+
+# Points the app at a server. Local choice, not a shared one.
+app/.env

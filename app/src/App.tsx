@@ -31,15 +31,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { theme } from './theme';
-import { clearToken, loadToken, saveToken } from './lib/session';
+import { clearToken, loadBase, loadToken, saveToken } from './lib/session';
 import { clearQueue } from './lib/queue';
-import { get, signOut, type Project } from './lib/api';
+import { baseUrl, forgetServer, get, signOut, useContractServer, useServer, type Project } from './lib/api';
 import { SignIn } from './screens/SignIn';
 import { Apply } from './screens/Apply';
 import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
 import { ChooseContract } from './screens/ChooseContract';
+import { Splash } from './screens/Splash';
 import { TvhsSignIn } from './screens/TvhsSignIn';
 import { TvhsShell } from './screens/tvhs/TvhsShell';
 import { WrongContract } from './screens/WrongContract';
@@ -50,6 +51,14 @@ export function App() {
        in it. The distinction matters: rendering the sign-in screen for the
        half second before the token loads would flash a password box at
        somebody who is already signed in. */
+    /* The wordmark animation, once per launch.
+     *
+     * Not per sign-out and not per contract switch: a courier signs out at
+     * the end of every shift and switching contract is a back button, so
+     * replaying it there would put two seconds between a driver and their
+     * work several times a day. It sits above `token` deliberately, because
+     * the Keychain read below happens WHILE it plays rather than after. */
+    const [intro, setIntro] = useState(true);
     const [token, setToken] = useState<string | null | undefined>(undefined);
     const [project, setProject] = useState<Project | null>(null);
     const [applying, setApplying] = useState(false);
@@ -58,6 +67,15 @@ export function App() {
     const [hasProjects, setHasProjects] = useState<boolean | undefined>(undefined);
     /* Which contract they said they drive for, before signing in. A hint. */
     const [chosen, setChosen] = useState<Contract | null>(null);
+
+    /* CHOOSING A CONTRACT CHOOSES THE SERVER. TVHS is live on its own; UH is
+       still in test on the default one. Done here rather than inside each
+       screen so there is exactly one place where it happens, and so it
+       happens before the first request of the session. */
+    const chooseContract = useCallback((c: Contract | null) => {
+        setChosen(c);
+        if (c === null) forgetServer(); else useContractServer(c.code);
+    }, []);
     /* Set once the server has told us what they actually belong to and it
        does not include what they chose. */
     const [mismatch, setMismatch] = useState<ChoiceOutcome | null>(null);
@@ -94,7 +112,14 @@ export function App() {
     }, [token, chosen]);
 
     useEffect(() => {
-        void loadToken().then((found) => setToken(found));
+        /* The server first, then the token. A token is only a session on the
+           server that minted it, so restoring them the other way round would
+           fire the first request at the wrong one. */
+        void (async () => {
+            const base = await loadBase();
+            if (base !== null) useServer(base);
+            setToken(await loadToken());
+        })();
     }, []);
 
     const onSignedIn = useCallback((fresh: string) => {
@@ -102,7 +127,8 @@ export function App() {
         /* Saved after the state, not before. If the Keychain refuses, the
            session still works for as long as the app is open, which is a bad
            day rather than a courier who cannot sign in at all. */
-        void saveToken(fresh);
+        /* Saved with the server that issued it. */
+        void saveToken(fresh, baseUrl());
     }, []);
 
     const onSignedOut = useCallback(() => {
@@ -118,6 +144,9 @@ export function App() {
            might drive the other one, and a remembered choice would send them
            to a refusal they did not cause. */
         setChosen(null);
+        /* The server goes with the contract choice. The next person to hold
+           this phone may drive the other one. */
+        forgetServer();
         void clearToken();
         /* THE QUEUE GOES TOO, and this call is the bug the owner found: a
            courier signing in after somebody else saw the previous account's
@@ -136,6 +165,11 @@ export function App() {
         if (had) void signOut(had).catch(() => undefined);
     }, [token]);
 
+    /* Before the spinner, not instead of it. If the Keychain is slow the
+       spinner still gets its turn afterwards; if it is quick, which it
+       normally is, nobody ever sees one. */
+    if (intro) return <Splash onDone={() => setIntro(false)} />;
+
     if (token === undefined) {
         return (
             <View style={styles.centre}>
@@ -150,7 +184,7 @@ export function App() {
             <StatusBar style="dark" />
             {chosen === null ? (
                 /* First, before the password. */
-                <ChooseContract onChoose={setChosen} />
+                <ChooseContract onChoose={chooseContract} />
             ) : token === null && chosen.code === 'tvhs' ? (
                 /* TVHS is two vans, one driver each, a phone in the cab, and
                    a PIN. It has worked that way for months. Sending a TVHS
@@ -158,7 +192,7 @@ export function App() {
                    credential they have never had. */
                 <TvhsSignIn
                     onSignedIn={(t, driver) => { setTvhs(driver); onSignedIn(t); }}
-                    onBack={() => setChosen(null)}
+                    onBack={() => chooseContract(null)}
                 />
             ) : token === null ? (
                 applying
@@ -169,7 +203,7 @@ export function App() {
                       />
                     : <SignIn
                         contractName={chosen.name}
-                        onBack={() => setChosen(null)}
+                        onBack={() => chooseContract(null)}
                         onSignedIn={onSignedIn}
                         onApply={() => setApplying(true)}
                       />
@@ -178,7 +212,7 @@ export function App() {
                     outcome={mismatch}
                     onSwitch={(code) => {
                         const next = mismatch.belongsTo.find((m) => m.code === code);
-                        if (next) { setChosen({ code: next.code, name: next.name, detail: '' }); setMismatch(null); }
+                        if (next) { chooseContract({ code: next.code, name: next.name, detail: '' }); setMismatch(null); }
                     }}
                     onSignOut={onSignedOut}
                 />
@@ -190,7 +224,7 @@ export function App() {
                     route={tvhs?.route ?? ''}
                     name={tvhs?.name ?? who}
                     onSignedOut={onSignedOut}
-                    onBack={() => { setChosen(null); setTvhs(null); }}
+                    onBack={() => { chooseContract(null); setTvhs(null); }}
                 />
             ) : hasProjects === false ? (
                 /* Signed in, on no contract. Not an error: it is what every
@@ -217,7 +251,7 @@ export function App() {
                        single option and put them straight back. The label
                        says Contracts and there is a contract screen now, so
                        that is where it goes. */
-                    onBack={() => { setProject(null); setChosen(null); setMismatch(null); }}
+                    onBack={() => { setProject(null); chooseContract(null); setMismatch(null); }}
                 />
             )}
         </View>

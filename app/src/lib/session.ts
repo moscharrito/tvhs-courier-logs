@@ -16,6 +16,17 @@
 import * as SecureStore from 'expo-secure-store';
 
 const KEY = 'izy.session.token';
+/* WHICH SERVER THE TOKEN ABOVE CAME FROM.
+ *
+ * The app talks to two: TVHS is live on its own server, UH is still in test
+ * on another. A token is only a session on the server that issued it, so a
+ * saved token without its server is a token nobody can use: on a cold start
+ * the app would send a production credential to the laptop and get a 401 that
+ * looks like an expired session rather than a misdirected one.
+ *
+ * Not a secret, but it lives beside the token because it is useless apart
+ * from it, and the two must be forgotten together. */
+const BASE_KEY = 'izy.session.base';
 
 export async function loadToken(): Promise<string | null> {
     try {
@@ -25,8 +36,21 @@ export async function loadToken(): Promise<string | null> {
     }
 }
 
-export async function saveToken(token: string): Promise<boolean> {
+export async function loadBase(): Promise<string | null> {
     try {
+        return await SecureStore.getItemAsync(BASE_KEY);
+    } catch {
+        return null;
+    }
+}
+
+export async function saveToken(token: string, base?: string): Promise<boolean> {
+    try {
+        if (base !== undefined && base !== '') {
+            await SecureStore.setItemAsync(BASE_KEY, base, {
+                keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+            });
+        }
         await SecureStore.setItemAsync(KEY, token, {
             /* Not available until the device has been unlocked once after a
                reboot. A courier's phone is unlocked in their hand, and this
@@ -41,6 +65,9 @@ export async function saveToken(token: string): Promise<boolean> {
 
 export async function clearToken(): Promise<void> {
     try {
+        /* Both, always. A base left behind would point the next sign-in at
+           the previous driver's server. */
+        await SecureStore.deleteItemAsync(BASE_KEY);
         await SecureStore.deleteItemAsync(KEY);
     } catch {
         /* Nothing useful to do. The caller has already forgotten it in
