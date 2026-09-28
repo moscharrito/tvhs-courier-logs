@@ -34,6 +34,12 @@
           "motionUsagePermission": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2092230f-1dac-4165-a510-3561568bf4b8"
+      }
+    },
+    "owner": "tag-courier"
   }
 }
