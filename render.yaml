@@ -17,9 +17,23 @@
 # disk on web services, so TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are required
 # for data to survive restarts/deploys.
 #
-# Ticket 0.10 moves this service to the paid organization plan (BAA) and adds
-# a staging service. Until then this deploys nothing that holds real patient
-# data: the free plan has no BAA, and a free instance sleeps.
+# PLAN: STARTER, AND IT MUST NOT GO BACK TO FREE.
+#
+# Two separate reasons, and both of them are now load-bearing:
+#
+#   The BAA.   Render's business associate agreement is only available on a
+#              paid workspace. On free there is no agreement, so no patient
+#              data may reach this service at all.
+#   Sleeping.  A free instance sleeps when idle, and a sleeping instance runs
+#              no timers. SWEEP_INTERVAL_SECONDS below is what escalates
+#              unclaimed work to dispatch before its deadline and what drains
+#              queued notification email. Asleep, an unclaimed STAT at 3am is
+#              nobody's problem until somebody's request happens to wake the
+#              service, which is precisely the failure the sweep exists to
+#              prevent. We have told University Health that escalation is
+#              automatic; on free it would not be.
+#
+# A staging service is still outstanding (ticket 0.10).
 #
 # The deploy, rollback and restore procedures are in docs/runbook.md.
 
@@ -27,7 +41,7 @@ services:
   - type: web
     name: tvhs-courier-logs
     runtime: node
-    plan: free
+    plan: starter
     # --include=dev IS LOAD-BEARING, do not tidy it away.
     #
     # Render sets NODE_ENV=production, which makes `npm ci` skip
@@ -148,9 +162,18 @@ services:
       # - key: UH_PATIENT_GEOCODE_UNTIL
       #   sync: false
 
-      # --- Proof-of-delivery file storage (ticket 1.8, needs ticket 0.10) ---
+      # --- Proof-of-delivery file storage (ticket 1.8) ---
+      #
+      # The AWS BAA is signed; what is missing now is the bucket itself.
+      # docs/infra/create-pod-bucket.sh builds it in the order that matters
+      # and prints these six values once.
+      #
+      # ALL FIVE S3 VALUES GO IN WITH FILES_ENABLED, IN ONE SAVE. Enabling it
+      # alone is a boot failure by design (src/config.ts), and on this service
+      # that is production down with live TVHS drivers filing against it.
+      #
       # Doorstep photographs are PHI in a bucket, so this stays off until
-      # there is a bucket covered by a signed AWS BAA. With it off, the stop
+      # there is a bucket covered by that BAA. With it off, the stop
       # screen refuses a doorstep delivery rather than losing the photograph.
       - key: FILES_ENABLED
         value: "false"
