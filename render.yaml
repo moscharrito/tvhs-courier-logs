@@ -132,18 +132,41 @@ services:
       # as FILES_ENABLED without a bucket, because a server that came up with
       # mail switched on and no credentials would quietly stop notifying a
       # hospital and nobody would notice for a fortnight.
+      #
+      # WHAT IS DECLARED HERE AND WHAT IS NOT.
+      #
+      # Non-secret settings live in this file, where they can be diffed and
+      # explained. Only credentials are `sync: false`, which means Render
+      # keeps whatever is in the service's Environment tab and this file never
+      # overwrites it.
+      #
+      # That split matters because the blueprint WINS. A value declared here
+      # is re-applied on every sync, so flipping MAIL_ENABLED in the dashboard
+      # while this file said "false" would be quietly reverted, and a hospital
+      # would stop being notified with nothing looking wrong. Flipping it is
+      # therefore a commit, which is reviewable, and not a web form.
+      #
+      # ORDER: put the credentials in the dashboard FIRST, then flip the flag
+      # here. The reverse boots a server with mail enabled and nothing behind
+      # it, which is a boot failure by design.
       - key: MAIL_ENABLED
         value: "false"
-      # - key: MAIL_FROM
-      #   sync: false
-      # - key: MAIL_PORTAL_URL
-      #   sync: false
-      # - key: SES_REGION
-      #   sync: false
-      # - key: SES_ACCESS_KEY_ID
-      #   sync: false
-      # - key: SES_SECRET_ACCESS_KEY
-      #   sync: false
+      - key: MAIL_FROM
+        value: no-reply@mail.izyglobalservices.com
+      - key: MAIL_PORTAL_URL
+        value: https://logs.izyglobalservices.com
+      - key: SES_REGION
+        value: us-east-2
+      - key: SES_ACCESS_KEY_ID
+        sync: false
+      - key: SES_SECRET_ACCESS_KEY
+        sync: false
+      # The bounce topic. An ARN carries the account id, so it stays out of
+      # git with the credentials rather than sitting in a public-ish file.
+      # Absent means the webhook refuses every message, which is the safe
+      # default: with no expected topic its ownership check cannot be made.
+      - key: SES_SNS_TOPIC_ARN
+        sync: false
 
       # --- Address lookup, and the test-phase exemption ---
       #
@@ -175,15 +198,20 @@ services:
       # Doorstep photographs are PHI in a bucket, so this stays off until
       # there is a bucket covered by that BAA. With it off, the stop
       # screen refuses a doorstep delivery rather than losing the photograph.
+      # Same split as the mail block above: settings here, credentials in the
+      # dashboard. Flip FILES_ENABLED to "true" in a COMMIT once the bucket
+      # exists and the three secrets are set, never in the web form, or the
+      # next blueprint sync turns photographs back off.
       - key: FILES_ENABLED
         value: "false"
-      # - key: S3_BUCKET
-      #   sync: false
-      # - key: S3_REGION
-      #   sync: false
-      # - key: S3_ACCESS_KEY_ID
-      #   sync: false
-      # - key: S3_SECRET_ACCESS_KEY
-      #   sync: false
-      # - key: S3_KMS_KEY_ID
-      #   sync: false
+      - key: S3_BUCKET
+        value: izy-courier-pod-767bd8
+      - key: S3_REGION
+        value: us-east-2
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # An ARN, so it carries the account id. Out of git with the rest.
+      - key: S3_KMS_KEY_ID
+        sync: false
