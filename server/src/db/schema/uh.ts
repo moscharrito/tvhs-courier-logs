@@ -211,6 +211,13 @@ export const orders = sqliteTable(
 
         signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
 
+        /** The delivery this one is a second go at (drizzle/0036).
+         *
+         *  A reattempt is a NEW order, never a reopened one: the first
+         *  attempt keeps its outcome, its place in the completion rate and
+         *  its invoice line, and this says where the second one came from. */
+        reattemptOfOrderId: integer('reattempt_of_order_id'),
+
         /** When the request reached dispatch. Copied from the list. */
         receivedAt: text('received_at').notNull(),
         /** Computed by dueTimesFor from the project's clock rule. */

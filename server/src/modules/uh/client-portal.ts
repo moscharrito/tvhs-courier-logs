@@ -100,6 +100,8 @@ interface OrderRow {
     arrived_at: string | null; delivered_at: string | null; returned_at: string | null;
     received_by: string; no_signature_reason: string; failure_reason: string;
     assigned_to_username: string | null; service_date: string;
+    /** The delivery this one is a second go at, if it is one (drizzle/0036). */
+    reattempt_of_order_id: number | null;
 }
 
 /** One delivery, as the pharmacy that sent it should see it. */
@@ -209,6 +211,30 @@ export function createClientPortalRouter(
         return row
             ? { id: Number(row['id']), key: String(row['s3_key']), contentType: String(row['content_type']) }
             : null;
+    }
+
+    /**
+     * Which delivery this one follows, and which one followed it.
+     *
+     * Both directions because the question arrives from either end: a
+     * pharmacist looking at the failure wants to know whether anybody went
+     * back, and one looking at the second attempt wants to know why there is
+     * a second attempt. Ids only. The other attempt is in the same portal,
+     * scoped the same way, so nothing here widens what they can see.
+     */
+    async function reattemptLinks(projectId: number, id: number, order: OrderRow) {
+        const after = await client.execute({
+            sql: 'SELECT id, status FROM orders WHERE project_id = ? AND reattempt_of_order_id = ? ORDER BY id',
+            args: [projectId, id],
+        });
+        return {
+            /** The delivery this one is a second go at, if it is one. */
+            of: order.reattempt_of_order_id === null || order.reattempt_of_order_id === undefined
+                ? null
+                : Number(order.reattempt_of_order_id),
+            /** Attempts made after this one. More than one is a third go. */
+            attempts: after.rows.map((r) => ({ id: Number(r['id']), status: String(r['status']) })),
+        };
     }
 
     /** What to tell the client about the photograph, asked rather than assumed. */
@@ -408,6 +434,7 @@ export function createClientPortalRouter(
         });
         const names = await displayNames(project.id, [order.assigned_to_username, ...events.rows.map((e) => String(e['actor']))]);
         const photo = await photoFor(project.id, id);
+        const reattempt = await reattemptLinks(project.id, id, order);
 
         // Reading one delivery means reading patient data; record that it happened.
         await req.audit('client.read', 'order', String(id), { events: events.rows.length });
@@ -448,6 +475,11 @@ export function createClientPortalRouter(
                untrue about their own delivery is worse than one that says
                nothing, so it now asks. */
             photo,
+            /* "Procedures for reattempting delivery", which a pharmacy could
+               previously only answer by noticing a second order with a
+               similar reference and guessing. Both directions, because the
+               question is asked from whichever attempt somebody opened. */
+            reattempt,
         });
     }));
 

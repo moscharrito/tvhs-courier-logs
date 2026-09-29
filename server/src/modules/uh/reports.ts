@@ -418,7 +418,35 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             orders: Number(r['orders']),
         }));
 
-        return { from, to, grouping, facts, failureReasons, project };
+        /* "Reattempted, cancelled, or returned deliveries", the last line of
+         * the client's reporting list. Cancelled is already in the totals, so
+         * the two missing halves are counted here.
+         *
+         * REATTEMPTED COUNTS SECOND ATTEMPTS, not deliveries that have one.
+         * They are the same number until somebody goes back a third time, and
+         * a reader comparing this against a list of orders should find the
+         * rows, so the row is what is counted. */
+        const follow = await client.execute({
+            sql: `SELECT
+                    SUM(CASE WHEN o.reattempt_of_order_id IS NOT NULL THEN 1 ELSE 0 END) AS reattempts,
+                    SUM(CASE WHEN o.returned_at IS NOT NULL THEN 1 ELSE 0 END) AS returned,
+                    SUM(CASE WHEN o.status = 'failed' AND o.returned_at IS NULL THEN 1 ELSE 0 END) AS awaitingReturn
+                  FROM orders o JOIN sites s ON s.id = o.site_id
+                  WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${filter}`,
+            args,
+        });
+        const f = follow.rows[0];
+        const followUp = {
+            reattempts: Number(f?.['reattempts'] ?? 0),
+            returned: Number(f?.['returned'] ?? 0),
+            /* Failed and not yet handed back: medication that is unaccounted
+               for right now. The number somebody should look at before going
+               home, which is why it is on the report rather than only on the
+               returns screen. */
+            awaitingReturn: Number(f?.['awaitingReturn'] ?? 0),
+        };
+
+        return { from, to, grouping, facts, failureReasons, followUp, project };
     }
 
     function build(facts: OrderFact[], grouping: Grouping, now: Date) {
@@ -535,7 +563,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
     router.get('/sla', staff, wrap(async (req, res) => {
         const gathered = await gather(req, res);
         if (!gathered) return;
-        const { from, to, grouping, facts, failureReasons } = gathered;
+        const { from, to, grouping, facts, failureReasons, followUp } = gathered;
         const report = build(facts, grouping, new Date());
 
         // Counts only. A report is aggregate by nature, but say so explicitly.
@@ -552,6 +580,8 @@ export function createReportsRouter({ client }: { client: Client }): Router {
                contract asks for and this report could not previously answer:
                the totals said how many failed and never why. */
             failureReasons,
+            /* Reattempted, returned, and what is still in a van. */
+            followUp,
             definitions: DEFINITIONS,
         });
     }));
@@ -559,7 +589,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
     router.get('/sla.xlsx', staff, wrap(async (req, res) => {
         const gathered = await gather(req, res);
         if (!gathered) return;
-        const { from, to, grouping, facts, failureReasons, project } = gathered;
+        const { from, to, grouping, facts, failureReasons, followUp, project } = gathered;
         const report = build(facts, grouping, new Date());
 
         const wb = new ExcelJS.Workbook();
@@ -592,6 +622,9 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             ['Turnaround, in our hands (90th pct min)', report.turnaround.inOurHands.p90Minutes ?? 'n/a', 'The tail, which a median hides'],
             ['Turnaround, end to end (median min)', report.turnaround.endToEnd.medianMinutes ?? 'n/a', `Request to handover, over ${report.turnaround.endToEnd.count} delivered`],
             ['Turnaround, end to end (90th pct min)', report.turnaround.endToEnd.p90Minutes ?? 'n/a', 'The tail, which a median hides'],
+            ['Reattempted', followUp.reattempts, 'Second and later attempts created in this range'],
+            ['Returned to the pharmacy', followUp.returned, 'Undelivered medication handed back over a counter'],
+            ['Failed, not yet returned', followUp.awaitingReturn, 'Medication unaccounted for: still in a van'],
         ];
         for (const row of rows) {
             const added = summary.addRow(row);

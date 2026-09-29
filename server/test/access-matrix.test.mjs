@@ -275,6 +275,10 @@ const MATRIX = [
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_STAFF_AND_COURIER, ''],
     ['GET', `${UH}/orders/999999/directions`, UH_STAFF_AND_COURIER, ''],
     ['POST', `${UH}/orders/999999/events`, UH_STAFF_AND_COURIER, 'which event is then gated by role again'],
+    /* Sending somebody back to a door. Dispatch only: a courier does not
+       decide that a delivery is worth a second trip, and a pharmacy asking
+       for one is a phone call that a dispatcher then acts on. */
+    ['POST', `${UH}/orders/999999/reattempt`, UH_STAFF, ''],
 
     /* --- the door. */
     ['POST', `${UH}/orders/999999/arrive`, UH_STAFF_AND_COURIER, ''],

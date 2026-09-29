@@ -48,6 +48,7 @@ import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
 import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
 import { createOrdersRouter } from './modules/uh/orders';
+import { createReattemptRouter } from './modules/uh/reattempt';
 import { createStopRouter } from './modules/uh/stop';
 import { createRunsRouter } from './modules/uh/runs';
 import { createPickupRouter } from './modules/uh/pickup';
@@ -230,6 +231,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // Stop flow first: its /:id/arrive and friends must be matched before
     // the orders router's /:id, which would otherwise swallow them.
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, idempotent, createStopRouter({ client: database.client, storage: fileStorage }));
+    /* Before the general orders router, which owns /:id/events and would
+       otherwise answer /:id/reattempt with a 404 from its own 404 handler. */
+    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, idempotent, createReattemptRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client }));
     // Pickup first: its /:id/pickup must be matched before the runs
     // router's /:id, which would otherwise swallow it.

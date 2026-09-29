@@ -253,6 +253,13 @@
       "when": 1789998205935,
       "tag": "0035_signature_capture_method",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1789998206935,
+      "tag": "0036_reattempt",
+      "breakpoints": true
     }
   ]
 }
