@@ -31,6 +31,7 @@ import { createRetentionRouter } from './core/retention/routes';
 import { startRetentionSweep } from './core/retention/sweep';
 import { startScheduler, type Scheduler } from './core/scheduler';
 import { createMailer } from './core/notify/ses';
+import { createSesWebhookRouter } from './core/notify/suppressions';
 import { startOptimize } from './db/optimize';
 import { createGoogleProvider } from './core/geo/google';
 import { scopedTo, unavailableProvider, type GeoScope } from './core/geo/provider';
@@ -126,6 +127,15 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        mailer, so what the health endpoint says and what actually sends
        cannot drift apart. */
     const mailer = createMailer(config);
+
+    /* Bounces and complaints from SES. Public by necessity and verified in
+       code: see core/notify/sns.ts. Mounted beside health, before any
+       session middleware, because SNS carries no session. */
+    legacy.app.use(createSesWebhookRouter({
+        client: database.client,
+        logger,
+        topicArn: config.mail.snsTopicArn,
+    }));
 
     legacy.app.use(createHealthRouter({
         client: database.client,

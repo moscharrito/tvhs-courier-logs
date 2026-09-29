@@ -226,7 +226,7 @@ describe('turning notifications into email', () => {
         await closeOne('delivered');
         const off = { available: false, reason: 'not configured', async send() { throw new Error('should not be called'); } };
         const result = await dispatch(off);
-        expect(result).toEqual({ considered: 0, sent: 0, failed: 0, skipped: 0 });
+        expect(result).toEqual({ considered: 0, sent: 0, failed: 0, skipped: 0, suppressed: 0 });
     });
 
     it('does not retry an account with no email address forever', async () => {

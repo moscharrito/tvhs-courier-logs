@@ -30,6 +30,7 @@
 import type { Client } from '@libsql/client';
 import type { Logger } from '../http/logger';
 import type { Mailer } from './ses';
+import { normalizeAddress, suppressedAddresses } from './suppressions';
 
 /** The kinds that leave the company. Everything else is in-app only. */
 export const EMAILED_KINDS = ['delivery.completed', 'delivery.failed'] as const;
@@ -50,6 +51,8 @@ export interface DispatchResult {
     failed: number;
     /** Rows with nowhere to send to. Marked done so they are not retried forever. */
     skipped: number;
+    /** Addresses that hard bounced or complained. Also marked done. */
+    suppressed: number;
 }
 
 const SUBJECT: Record<string, string> = {
@@ -65,7 +68,7 @@ const SUBJECT: Record<string, string> = {
  */
 export async function dispatchPending(deps: DispatchDeps): Promise<DispatchResult> {
     const { client, mailer, logger, portalUrl } = deps;
-    const result: DispatchResult = { considered: 0, sent: 0, failed: 0, skipped: 0 };
+    const result: DispatchResult = { considered: 0, sent: 0, failed: 0, skipped: 0, suppressed: 0 };
     if (!mailer.available) return result;
 
     let rows;
@@ -88,10 +91,27 @@ export async function dispatchPending(deps: DispatchDeps): Promise<DispatchResul
 
     result.considered = rows.length;
 
+    /* Read once for the batch rather than per row. The list is a closed set of
+       named staff, so it is small, and a bounce that arrived mid-batch can
+       wait for the next tick. */
+    const suppressed = await suppressedAddresses(client);
+
     for (const row of rows) {
         const id = Number(row['id']);
-        const email = String(row['email'] ?? '').trim();
+        const email = normalizeAddress(String(row['email'] ?? ''));
         const kind = String(row['kind']);
+
+        /* Hard bounced, or marked us as spam. Sending again is how a sending
+           domain's reputation is destroyed, and the harm is not confined to
+           this address: it degrades delivery for every pharmacist on the
+           contract, including the ones waiting to hear a STAT arrived.
+           Marked done rather than retried, and the in-app notification is
+           still there for them. */
+        if (email !== '' && suppressed.has(email)) {
+            result.suppressed += 1;
+            await markSent(client, id, logger);
+            continue;
+        }
 
         /* An account with no email address is not an error worth retrying
            every two minutes forever. It is marked done and counted, and the

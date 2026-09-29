@@ -73,6 +73,8 @@ export interface Config {
         } | undefined;
         /** Where every notification tells the reader to go. https only. */
         portalUrl: string;
+        /** SNS topic for bounces and complaints. Undefined disables the webhook. */
+        snsTopicArn: string | undefined;
     };
     /** Server-side session lifetimes, in minutes. Staff = admin, ops manager,
      *  dispatcher, client viewer. Courier = drivers on the road all day. */
@@ -179,6 +181,11 @@ const EnvSchema = z.object({
     SES_REGION: optionalString,
     SES_ACCESS_KEY_ID: optionalString,
     SES_SECRET_ACCESS_KEY: optionalString,
+    /* The SNS topic SES publishes bounces and complaints to. Absent means
+     * the webhook refuses every message: with no expected topic the
+     * ownership check cannot be made, and a valid AWS signature alone
+     * proves only that SOMEBODY's topic sent it. */
+    SES_SNS_TOPIC_ARN: optionalString,
     SESSION_STAFF_IDLE_MINUTES: z.coerce.number().int().min(1).default(30),
     SESSION_STAFF_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
     SESSION_COURIER_IDLE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
@@ -369,6 +376,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             /* Trailing slash trimmed once here rather than at every call site
                that builds a link. */
             portalUrl: (e.MAIL_PORTAL_URL ?? '').replace(/\/+$/, ''),
+            snsTopicArn: e.SES_SNS_TOPIC_ARN,
         },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
         log: {

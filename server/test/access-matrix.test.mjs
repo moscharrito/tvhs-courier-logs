@@ -199,6 +199,14 @@ const MATRIX = [
      * nothing else: no user, no session, no membership. The rest of the
      * flow, including the approval that does create an account, is staff. */
     ['POST', '/api/driver-applications', EVERYONE, 'apply to drive: public, and creates nothing that can sign in'],
+    /* SES bounce and complaint notifications. Public by necessity: SNS posts
+       from the internet carrying no credential of ours, so there is no
+       session to check and no role to require.
+       THE GATE IS NOT HERE. Every message is refused unless Amazon's
+       signature verifies, the certificate came from an AWS SNS host over
+       https, and the topic is ours. See core/notify/sns.ts. Reaching this
+       route proves nothing; a stranger gets a 403 from the verifier. */
+    ['POST', '/api/webhooks/ses', EVERYONE, 'SNS carries no session: the gate is signature verification, not a role'],
     ['GET', `${UH_PROJECT}/driver-applications`, UH_STAFF, 'the application queue'],
     /* Named before '/:id' in this list for the same reason it is mounted
        before it: the report is not an application and must not be reachable
