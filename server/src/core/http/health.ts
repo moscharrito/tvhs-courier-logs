@@ -34,9 +34,11 @@ interface Deps {
     sweepIntervalSeconds?: number | undefined;
     /** Whether outbound email is configured. Not where it goes. */
     mailConfigured?: boolean | undefined;
+    /** Whether proof-of-delivery storage is usable. Not which bucket. */
+    filesConfigured?: boolean | undefined;
 }
 
-export function createHealthRouter({ client, version, sweepIntervalSeconds, mailConfigured }: Deps): Router {
+export function createHealthRouter({ client, version, sweepIntervalSeconds, mailConfigured, filesConfigured }: Deps): Router {
     const router = Router();
     const started = Date.now();
 
@@ -66,6 +68,10 @@ export function createHealthRouter({ client, version, sweepIntervalSeconds, mail
                    health check that mails a hospital every thirty seconds. */
                 mail: mailConfigured ? 'configured' : 'off',
             },
+            /* Off means a doorstep delivery is refused outright rather than
+               recorded without its photograph, so this is an operational
+               fact somebody needs, not a configuration detail. */
+            files: filesConfigured ? 'configured' : 'off',
         });
     });
 

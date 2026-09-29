@@ -33,6 +33,10 @@ describe('GET /health', () => {
         // Tests start without an interval, so it reports the honest answer.
         expect(res.body.scheduler.sweep).toBe('off');
         expect(res.body.scheduler.mail).toBe('off');
+        /* Off means a doorstep delivery is refused outright rather than
+           recorded without its photograph. The blueprint no longer records
+           whether this is on, so this endpoint is where it is answered. */
+        expect(res.body.files).toBe('off');
     });
 
     it('reports the interval when the sweep is switched on', async () => {
@@ -45,9 +49,11 @@ describe('GET /health', () => {
             version: '1.2.3',
             sweepIntervalSeconds: 120,
             mailConfigured: true,
+            filesConfigured: true,
         }));
         const res = await request(app).get('/health');
         expect(res.body.scheduler).toEqual({ sweep: 'every 120s', mail: 'configured' });
+        expect(res.body.files).toBe('configured');
     });
 
     it('never puts a hostname, a region or an address on a public endpoint', async () => {

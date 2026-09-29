@@ -127,6 +127,11 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        mailer, so what the health endpoint says and what actually sends
        cannot drift apart. */
     const mailer = createMailer(config);
+    /* Hoisted for the same reason as the mailer: /health reports whether
+       file storage is usable, and the blueprint no longer records it. One
+       instance, so what /health says and what the stop screen does cannot
+       disagree. */
+    const fileStorage = createFileStorage(config);
 
     /* Bounces and complaints from SES. Public by necessity and verified in
        code: see core/notify/sns.ts. Mounted beside health, before any
@@ -142,6 +147,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         version: VERSION,
         sweepIntervalSeconds: config.sweepIntervalSeconds,
         mailConfigured: mailer.available,
+        filesConfigured: fileStorage.available,
     }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
@@ -152,7 +158,6 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // UH Pharmacy Courier module below. Project scoping is enforced here
     // rather than in server.js, so a module has no dependency on the legacy app.
     const requireProject = createRequireProject(database.client);
-    const fileStorage = createFileStorage(config);
     /* Every route a courier's phone writes to goes through this. A phone that
        loses signal mid-request retries with the same id, and the retry is
        answered rather than applied a second time (ticket 2.7). Read-only

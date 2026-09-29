@@ -146,11 +146,21 @@ services:
       # would stop being notified with nothing looking wrong. Flipping it is
       # therefore a commit, which is reviewable, and not a web form.
       #
-      # ORDER: put the credentials in the dashboard FIRST, then flip the flag
-      # here. The reverse boots a server with mail enabled and nothing behind
-      # it, which is a boot failure by design.
+      # The enable flags are sync:false for exactly this reason: a flag
+      # declared here and credentials set there cannot be changed in one
+      # operation, and the intermediate state is a server that refuses to
+      # boot. Keeping both in the dashboard makes it one save.
+      # sync:false, NOT a value, so this and its credentials go in together in
+      # one save. Declaring it here would mean two operations: secrets first,
+      # flag second, because a server that boots with mail enabled and nothing
+      # behind it is a boot failure by design. Leaving it to the dashboard lets
+      # all six land in a single deploy.
+      #
+      # The blueprint therefore never states whether mail is on. `curl /health`
+      # does, which is better: it reports what the running process actually
+      # has, not what a file hoped for.
       - key: MAIL_ENABLED
-        value: "false"
+        sync: false
       - key: MAIL_FROM
         value: no-reply@mail.izyglobalservices.com
       - key: MAIL_PORTAL_URL
@@ -202,8 +212,11 @@ services:
       # dashboard. Flip FILES_ENABLED to "true" in a COMMIT once the bucket
       # exists and the three secrets are set, never in the web form, or the
       # next blueprint sync turns photographs back off.
+      # sync:false for the same reason as MAIL_ENABLED above: this and its
+      # three credentials go in together, in one save, one deploy. /health
+      # reports the running state.
       - key: FILES_ENABLED
-        value: "false"
+        sync: false
       - key: S3_BUCKET
         value: izy-courier-pod-767bd8
       - key: S3_REGION
