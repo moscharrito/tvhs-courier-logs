@@ -13,7 +13,7 @@ import ExcelJS from 'exceljs';
 import { startServer } from './helpers/server.mjs';
 import {
     bucketFor, dayType, addFact, ratesFor, sliceBy, emptyTotals,
-    DEFINITIONS, COMPLETION_TARGET, GROUPINGS,
+    DEFINITIONS, COMPLETION_TARGET, GROUPINGS, turnaroundsFor, percentile, REASON_LABELS,
 } from '../src/modules/uh/reports.ts';
 
 const REPORTS = '/api/projects/uh/uh/reports';
@@ -43,7 +43,8 @@ const NOW = new Date('2026-09-16T23:00:00.000Z');
 const fact = (over = {}) => ({
     serviceDate: '2026-09-14', serviceType: 'stat', siteId: 1, siteName: 'Discharge',
     zone: 1, status: 'delivered', dueAt: '2026-09-14T19:00:00.000Z',
-    arrivedAt: '2026-09-14T18:30:00.000Z', deliveredAt: '2026-09-14T18:35:00.000Z', ...over,
+    arrivedAt: '2026-09-14T18:30:00.000Z', deliveredAt: '2026-09-14T18:35:00.000Z',
+    receivedAt: '2026-09-14T17:00:00.000Z', pickedUpAt: '2026-09-14T17:35:00.000Z', ...over,
 });
 
 const fold = (facts) => facts.reduce((acc, f) => addFact(acc, f, NOW), emptyTotals());
@@ -171,6 +172,79 @@ describe('what goes into a rate', () => {
     });
 });
 
+describe('how long deliveries took', () => {
+    /* The contract asks for turnaround times by name and the report could not
+       answer: the totals said how many and never how long. */
+
+    const at = (hhmm) => `2026-09-14T${hhmm}:00.000Z`;
+    const took = (pickupMins, over = {}) => fact({
+        pickedUpAt: at('17:00'),
+        deliveredAt: new Date(Date.parse(at('17:00')) + pickupMins * 60000).toISOString(),
+        ...over,
+    });
+
+    it('reports the median rather than the mean, so one bad day does not move it', () => {
+        /* 10, 20, 30, 40, 600. The mean is 140 and describes nothing that
+           happened; the median is 30 and describes four of the five. */
+        const t = turnaroundsFor([took(10), took(20), took(30), took(40), took(600)]);
+        expect(t.inOurHands.count).toBe(5);
+        expect(t.inOurHands.medianMinutes).toBe(30);
+    });
+
+    it('shows the 90th percentile, because a median alone hides the tail', () => {
+        const t = turnaroundsFor([took(10), took(20), took(30), took(40), took(600)]);
+        expect(t.inOurHands.p90Minutes).toBe(600);
+    });
+
+    it('measures both what we control and what the pharmacy experienced', () => {
+        /* Picked up 35 minutes after the request, handed over 25 after that.
+           A courier who did 25 minutes should not be reported as 60. */
+        const t = turnaroundsFor([fact({
+            receivedAt: at('17:00'), pickedUpAt: at('17:35'), deliveredAt: at('18:00'),
+        })]);
+        expect(t.inOurHands.medianMinutes).toBe(25);
+        expect(t.endToEnd.medianMinutes).toBe(60);
+    });
+
+    it('leaves failed attempts out instead of counting them as instant', () => {
+        // There is no handover to measure to, and a zero would flatter it.
+        const t = turnaroundsFor([took(30), fact({ status: 'failed', deliveredAt: null })]);
+        expect(t.inOurHands.count).toBe(1);
+        expect(t.inOurHands.medianMinutes).toBe(30);
+    });
+
+    it('excludes a delivery that arrived before it left rather than reporting a negative', () => {
+        // A backdated event or a clock, not a delivery. The exclusion shows
+        // up in the count, so the figure is never quietly computed on fewer.
+        const t = turnaroundsFor([took(30), fact({ pickedUpAt: at('18:00'), deliveredAt: at('17:00') })]);
+        expect(t.inOurHands.count).toBe(1);
+    });
+
+    it('says n/a rather than zero when nothing can be measured', () => {
+        const t = turnaroundsFor([fact({ status: 'failed', deliveredAt: null })]);
+        expect(t.inOurHands).toEqual({ count: 0, medianMinutes: null, p90Minutes: null });
+    });
+
+    it('takes the nearest rank and never invents a value between two real ones', () => {
+        expect(percentile([10, 20, 30, 40], 50)).toBe(20);
+        expect(percentile([10, 20, 30, 40], 90)).toBe(40);
+        expect(percentile([5], 50)).toBe(5);
+        expect(percentile([], 50)).toBeNull();
+    });
+});
+
+describe('why deliveries failed', () => {
+    it('has a readable label for every code a courier can record', () => {
+        /* The codes come from DRY_RUN_REASONS. A report that prints
+           "recipient_not_located" at a hospital quality meeting is a report
+           somebody has to translate out loud. */
+        for (const code of ['incorrect_address', 'recipient_not_located', 'no_access', 'incomplete_shipment', 'refused', 'other']) {
+            expect(REASON_LABELS[code], code).toBeTruthy();
+            expect(REASON_LABELS[code]).not.toBe(code);
+        }
+    });
+});
+
 describe('the definitions', () => {
     it('name the contract target and the discrepancy in its formula', () => {
         const completion = DEFINITIONS.find((d) => d.measure === 'Completion rate');
@@ -292,7 +366,8 @@ describe('the workbook', () => {
         expect(res.headers['content-type']).toMatch(/spreadsheetml/);
         expect(res.headers['content-disposition']).toContain(`sla-${today}-to-${today}.xlsx`);
         expect(wb.worksheets.map((w) => w.name)).toEqual([
-            'Summary', 'By period', 'By service type', 'By pharmacy', 'By zone', 'By day type', 'Definitions',
+            'Summary', 'By period', 'By service type', 'By pharmacy', 'By zone', 'By day type',
+            'Failure reasons', 'Definitions',
         ]);
     });
 

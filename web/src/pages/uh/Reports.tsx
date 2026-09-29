@@ -31,8 +31,24 @@ interface Report {
     target: { completion: number; internalGoal: number };
     meetsContract: boolean | null;
     byPeriod: Slice[]; byServiceType: Slice[]; bySite: Slice[]; byZone: Slice[]; byDayType: Slice[];
+    /* Optional: a cached bundle can outlive the server that grew these, and a
+       report page that throws is worse than one missing a card. */
+    turnaround?: {
+        inOurHands: { count: number; medianMinutes: number | null; p90Minutes: number | null };
+        endToEnd: { count: number; medianMinutes: number | null; p90Minutes: number | null };
+    };
+    failureReasons?: Array<{ code: string; label: string; packages: number; orders: number }>;
     definitions: Array<{ measure: string; definition: string; note: string }>;
 }
+
+/** Minutes as something a person reads. 95 is an hour and thirty-five. */
+const minutes = (n: number | null) => {
+    if (n === null) return 'n/a';
+    if (n < 60) return `${n} min`;
+    const h = Math.floor(n / 60);
+    const m = n % 60;
+    return m === 0 ? `${h} h` : `${h} h ${m} min`;
+};
 
 const pct = (value: number | null) => (value === null ? 'n/a' : `${value.toFixed(1)}%`);
 
@@ -168,6 +184,73 @@ export function Reports() {
             {table('By pharmacy', 'Pharmacy', report.bySite)}
             {table('By zone', 'Zone', report.byZone)}
             {table('By day type', 'Day type', report.byDayType)}
+
+            {report.turnaround && (
+                <div className="izy-card">
+                    <h2>How long deliveries took</h2>
+                    {/* Median first, because it is the one that describes a
+                        normal day. The 90th percentile beside it because the
+                        tail is what a hospital is actually worried about, and
+                        a median on its own hides it. */}
+                    <table className="izy-table">
+                        <thead>
+                            <tr>
+                                <th>Span</th><th>Median</th><th>90th percentile</th><th>Deliveries measured</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>In our hands, pickup to handover</td>
+                                <td>{minutes(report.turnaround.inOurHands.medianMinutes)}</td>
+                                <td>{minutes(report.turnaround.inOurHands.p90Minutes)}</td>
+                                <td>{report.turnaround.inOurHands.count}</td>
+                            </tr>
+                            <tr>
+                                <td>End to end, request to handover</td>
+                                <td>{minutes(report.turnaround.endToEnd.medianMinutes)}</td>
+                                <td>{minutes(report.turnaround.endToEnd.p90Minutes)}</td>
+                                <td>{report.turnaround.endToEnd.count}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p className="izy-muted">
+                        Delivered orders only. A failed attempt has no handover to measure to,
+                        and counting one as nil would flatter the figure.
+                    </p>
+                </div>
+            )}
+
+            {report.failureReasons && (
+                <div className="izy-card">
+                    <h2>Why deliveries failed</h2>
+                    {report.failureReasons.length === 0 ? (
+                        /* Said out loud. A blank card reads as a page that did
+                           not load; this reads as a clean fortnight. */
+                        <p className="izy-muted">No failed deliveries in this range.</p>
+                    ) : (
+                        <>
+                            <table className="izy-table">
+                                <thead>
+                                    <tr><th>Reason</th><th>Packages</th><th>Deliveries affected</th></tr>
+                                </thead>
+                                <tbody>
+                                    {report.failureReasons.map((r) => (
+                                        <tr key={r.code}>
+                                            <td>{r.label}</td>
+                                            <td>{r.packages}</td>
+                                            <td>{r.orders}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            <p className="izy-muted">
+                                Counted per package, because three items at one door can fail for
+                                three reasons and a courier records each.
+                            </p>
+                        </>
+                    )}
+                </div>
+            )}
 
             <div className="izy-card">
                 <h2>What these numbers mean</h2>

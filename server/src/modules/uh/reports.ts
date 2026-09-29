@@ -93,6 +93,100 @@ export interface OrderFact {
     dueAt: string | null;
     arrivedAt: string | null;
     deliveredAt: string | null;
+    /** For turnaround. When the request reached us. */
+    receivedAt: string | null;
+    /** For turnaround. When the medication left the counter. */
+    pickedUpAt: string | null;
+}
+
+/**
+ * How long deliveries took, in minutes.
+ *
+ * MEDIAN, NOT MEAN, as the headline. One delivery that sat in a van over a
+ * public holiday moves a mean by half an hour and tells a reader nothing
+ * about a normal day. The 90th percentile is beside it because the tail is
+ * the part a hospital is actually worried about, and a median alone hides it.
+ *
+ * TWO SPANS, because they answer different questions and a single number
+ * would be quietly chosen on our own behalf:
+ *
+ *   inOurHands   pickup to handover. The part we control, and the fair
+ *                measure of courier performance.
+ *   endToEnd     request to handover. What the pharmacy actually experienced,
+ *                including the time before anybody collected it.
+ *
+ * Delivered orders only. A failed attempt has no handover to measure to, and
+ * folding one in as a zero or as its attempt time would flatter the figure.
+ */
+export interface Turnaround {
+    /** Delivered orders with both timestamps present. */
+    count: number;
+    medianMinutes: number | null;
+    p90Minutes: number | null;
+}
+
+export interface Turnarounds {
+    inOurHands: Turnaround;
+    endToEnd: Turnaround;
+}
+
+const EMPTY_TURNAROUND = (): Turnaround => ({ count: 0, medianMinutes: null, p90Minutes: null });
+
+/** Nearest-rank percentile on a sorted array. No interpolation: these are
+ *  minutes off a wall clock and an invented value between two real ones is
+ *  not more accurate, only harder to explain in a contract meeting. */
+export function percentile(sorted: number[], p: number): number | null {
+    if (sorted.length === 0) return null;
+    const rank = Math.ceil((p / 100) * sorted.length);
+    return sorted[Math.min(Math.max(rank, 1), sorted.length) - 1] ?? null;
+}
+
+const minutesBetween = (from: string | null, to: string | null): number | null => {
+    if (!from || !to) return null;
+    const a = Date.parse(from);
+    const b = Date.parse(to);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    const mins = Math.round((b - a) / 60000);
+    /* A negative span is a clock or a backdated event, not a delivery that
+       arrived before it left. Excluded rather than reported as zero, and the
+       exclusion shows up in `count`. */
+    return mins < 0 ? null : mins;
+};
+
+const spanOf = (facts: OrderFact[], pick: (f: OrderFact) => number | null): Turnaround => {
+    const values = facts
+        .filter((f) => f.status === 'delivered')
+        .map(pick)
+        .filter((n): n is number => n !== null)
+        .sort((a, b) => a - b);
+    if (values.length === 0) return EMPTY_TURNAROUND();
+    return {
+        count: values.length,
+        medianMinutes: percentile(values, 50),
+        p90Minutes: percentile(values, 90),
+    };
+};
+
+/**
+ * The controlled vocabulary, in words a quality team reads rather than the
+ * codes a database stores. Written here rather than in the client so the
+ * workbook, the portal and the emailed report all say the same thing about
+ * the same failure.
+ */
+export const REASON_LABELS: Record<string, string> = {
+    incorrect_address: 'Incorrect address',
+    recipient_not_located: 'Recipient not located',
+    no_access: 'No access to the building',
+    incomplete_shipment: 'Incomplete shipment',
+    refused: 'Refused by the recipient',
+    other: 'Other',
+};
+
+export function turnaroundsFor(facts: OrderFact[]): Turnarounds {
+    return {
+        inOurHands: spanOf(facts, (f) => minutesBetween(f.pickedUpAt, f.deliveredAt)),
+        endToEnd: spanOf(facts, (f) => minutesBetween(f.receivedAt, f.deliveredAt)),
+    };
 }
 
 export interface Totals {
@@ -193,6 +287,21 @@ export function sliceBy(
  */
 export const DEFINITIONS: Array<{ measure: string; definition: string; note: string }> = [
     {
+        measure: 'Turnaround, in our hands',
+        definition: 'Minutes from collection at the pharmacy counter to handover at the destination. Median and 90th percentile, over delivered orders that carry both timestamps.',
+        note: 'The part we control, and the fair measure of courier performance. Failed attempts are excluded: there is no handover to measure to, and counting one as a zero would flatter the figure. Median rather than mean because one delivery stranded over a holiday moves a mean and describes no normal day. The 90th percentile is shown because a median alone hides the tail.',
+    },
+    {
+        measure: 'Turnaround, end to end',
+        definition: 'Minutes from the request reaching us to handover at the destination. Median and 90th percentile, over delivered orders that carry both timestamps.',
+        note: 'What the pharmacy experienced, including time before anybody collected it. Reported beside the in-our-hands figure rather than instead of it, so neither side has to accept a single number chosen on the other\'s behalf.',
+    },
+    {
+        measure: 'Reasons for failure',
+        definition: 'Counted from the reason code recorded against each package on a failed delivery, from a fixed list: incorrect address, recipient not located, no access, incomplete shipment, refused, other.',
+        note: 'Packages, not deliveries, is the honest unit: three items at one door can fail for three different reasons, and a courier records each. The number of deliveries affected is shown beside it so "six failures" is readable as both. Packages with no code recorded are not counted.',
+    },
+    {
         measure: 'Completion rate',
         definition: 'Successful deliveries divided by attempted deliveries, as a percentage. An attempt is a delivery that reached an outcome: delivered or not delivered.',
         note: `Scope 1.2.5 requires ${COMPLETION_TARGET} per cent. It defines the rate as "attempts divided by successful deliveries", which is at or above 1 and cannot be a percentage; this report uses the other way up and also shows the literal ratio. Open item for clarification with University Health.`,
@@ -256,7 +365,8 @@ export function createReportsRouter({ client }: { client: Client }): Router {
 
         const rs = await client.execute({
             sql: `SELECT o.service_date, o.service_type, o.site_id, s.name AS site_name, o.zone,
-                         o.status, o.due_at, o.arrived_at, o.delivered_at
+                         o.status, o.due_at, o.arrived_at, o.delivered_at,
+                         o.received_at, o.pickup_at
                   FROM orders o JOIN sites s ON s.id = o.site_id
                   WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${filter}`,
             args,
@@ -271,8 +381,44 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             dueAt: r['due_at'] === null ? null : String(r['due_at']),
             arrivedAt: r['arrived_at'] === null ? null : String(r['arrived_at']),
             deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
+            receivedAt: r['received_at'] === null ? null : String(r['received_at']),
+            pickedUpAt: r['pickup_at'] === null ? null : String(r['pickup_at']),
         }));
-        return { from, to, grouping, facts, project };
+
+        /* WHY THE FAILURES ARE COUNTED FROM PACKAGES AND NOT FROM ORDERS.
+         *
+         * orders.failure_reason is a free-text summary, written by joining
+         * whatever codes were given and truncating at 300 characters. It is
+         * fine for a person reading one delivery and useless for a total,
+         * because "no_access, refused" is neither of those two things when
+         * you try to add it up.
+         *
+         * packages.failure_reason_code is the controlled vocabulary
+         * (DRY_RUN_REASONS), recorded per package, which is how a courier
+         * actually reports a failure: three items at one door can fail for
+         * three reasons. So the package count is the honest number and the
+         * order count is beside it, because "six failures" meaning six
+         * packages across four deliveries has to be readable as both. */
+        const fails = await client.execute({
+            sql: `SELECT p.failure_reason_code AS code,
+                         COUNT(*) AS packages,
+                         COUNT(DISTINCT o.id) AS orders
+                  FROM packages p JOIN orders o ON o.id = p.order_id
+                  JOIN sites s ON s.id = o.site_id
+                  WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${filter}
+                    AND o.status = 'failed' AND p.failure_reason_code <> ''
+                  GROUP BY p.failure_reason_code
+                  ORDER BY packages DESC, code`,
+            args,
+        });
+        const failureReasons = fails.rows.map((r) => ({
+            code: String(r['code']),
+            label: REASON_LABELS[String(r['code'])] ?? String(r['code']),
+            packages: Number(r['packages']),
+            orders: Number(r['orders']),
+        }));
+
+        return { from, to, grouping, facts, failureReasons, project };
     }
 
     function build(facts: OrderFact[], grouping: Grouping, now: Date) {
@@ -292,6 +438,11 @@ export function createReportsRouter({ client }: { client: Client }): Router {
                 ? { key: 'zzz', label: 'out of area' }
                 : { key: `zone-${f.zone}`, label: `zone ${f.zone}` }), now),
             byDayType: sliceBy(facts, (f) => ({ key: dayType(f.serviceDate), label: dayType(f.serviceDate) }), now),
+            /* Scope 1.2 and the client's own list both ask how long deliveries
+               take. Median and 90th percentile rather than a mean: see the
+               Turnaround type for why one number would be a choice made
+               quietly on our own behalf. */
+            turnaround: turnaroundsFor(facts),
         };
     }
 
@@ -384,7 +535,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
     router.get('/sla', staff, wrap(async (req, res) => {
         const gathered = await gather(req, res);
         if (!gathered) return;
-        const { from, to, grouping, facts } = gathered;
+        const { from, to, grouping, facts, failureReasons } = gathered;
         const report = build(facts, grouping, new Date());
 
         // Counts only. A report is aggregate by nature, but say so explicitly.
@@ -397,6 +548,10 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             timezone: req.project!.timezone,
             generatedAt: new Date().toISOString(),
             ...report,
+            /* "Reasons for failed or unsuccessful deliveries", which the
+               contract asks for and this report could not previously answer:
+               the totals said how many failed and never why. */
+            failureReasons,
             definitions: DEFINITIONS,
         });
     }));
@@ -404,7 +559,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
     router.get('/sla.xlsx', staff, wrap(async (req, res) => {
         const gathered = await gather(req, res);
         if (!gathered) return;
-        const { from, to, grouping, facts, project } = gathered;
+        const { from, to, grouping, facts, failureReasons, project } = gathered;
         const report = build(facts, grouping, new Date());
 
         const wb = new ExcelJS.Workbook();
@@ -433,6 +588,10 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             ['Dry run rate', rateCell(report.rates.dryRunRate), 'Not delivered / attempted'],
             ['Not measured', report.totals.notMeasured, 'Closed with no deadline or no arrival time'],
             ['Scope 1.2.5 as literally written', report.rates.literalScopeRatio ?? 'n/a', 'Attempts / successful deliveries. Not a percentage; see Definitions'],
+            ['Turnaround, in our hands (median min)', report.turnaround.inOurHands.medianMinutes ?? 'n/a', `Pickup to handover, over ${report.turnaround.inOurHands.count} delivered`],
+            ['Turnaround, in our hands (90th pct min)', report.turnaround.inOurHands.p90Minutes ?? 'n/a', 'The tail, which a median hides'],
+            ['Turnaround, end to end (median min)', report.turnaround.endToEnd.medianMinutes ?? 'n/a', `Request to handover, over ${report.turnaround.endToEnd.count} delivered`],
+            ['Turnaround, end to end (90th pct min)', report.turnaround.endToEnd.p90Minutes ?? 'n/a', 'The tail, which a median hides'],
         ];
         for (const row of rows) {
             const added = summary.addRow(row);
@@ -462,6 +621,24 @@ export function createReportsRouter({ client }: { client: Client }): Router {
         sliceSheet('By pharmacy', 'Pharmacy', report.bySite);
         sliceSheet('By zone', 'Zone', report.byZone);
         sliceSheet('By day type', 'Day type', report.byDayType);
+
+        /* Why deliveries failed, which the contract asks for by name and this
+         * workbook could not previously answer: every other sheet says how
+         * many failed and none of them says why. Packages rather than
+         * deliveries is the honest unit; see Definitions. */
+        const reasons = wb.addWorksheet('Failure reasons');
+        reasons.columns = [
+            { header: 'Reason', width: 30 }, { header: 'Packages', width: 12 },
+            { header: 'Deliveries affected', width: 20 }, { header: 'Code', width: 24 },
+        ];
+        reasons.getRow(1).font = { bold: true };
+        if (failureReasons.length === 0) {
+            /* Not an empty sheet. An empty sheet reads as a broken export;
+               this reads as a clean fortnight. */
+            reasons.addRow(['No failed deliveries in this range', 0, 0, '']);
+        } else {
+            for (const r of failureReasons) reasons.addRow([r.label, r.packages, r.orders, r.code]);
+        }
 
         /* Its own sheet, because this is the part a quality team reads first
          * when a number surprises them. */
