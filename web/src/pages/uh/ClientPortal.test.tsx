@@ -51,6 +51,7 @@ const detail = (over = {}) => ({
         { type: 'delivered', at: '2026-09-14T18:25:00.000Z', by: 'Ada', signedName: 'Ines Vargas', reason: '' },
     ],
     proofOfDelivery: { available: false, reason: '' },
+    photo: { available: false, reason: '' },
     ...over,
 });
 
@@ -144,6 +145,46 @@ describe('ClientPortal', () => {
         // A plain link, so the browser opens it and no copy of a patient's
         // proof of delivery is kept alive in the tab as a blob URL.
         expect(link).toHaveAttribute('target', '_blank');
+    });
+
+    it('shows the doorstep photograph, because the document cannot carry one', async () => {
+        /* The PDF writer draws vectors and embeds no images, so the only place
+           University Health can ever see the photograph is here. */
+        renderPortal(routes({
+            [`GET ${BASE}/orders/21`]: detail({ photo: { available: true, reason: '' } }),
+        }));
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
+
+        const img = await screen.findByRole('img', { name: /delivery location for Ines Vargas/i });
+        /* Our own endpoint, not a storage URL in the markup: it checks this
+           viewer may see this delivery, then redirects to a link that expires. */
+        expect(img).toHaveAttribute('src', '/api/projects/uh/uh/client/orders/21/photo');
+    });
+
+    it('says why the photograph is missing rather than showing a broken frame', async () => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders/21`]: detail({
+                photo: { available: false, reason: 'A photograph was taken at the door. File storage is not configured on this server, so it cannot be shown.' },
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
+
+        expect(await screen.findByText(/File storage is not configured/i)).toBeInTheDocument();
+        expect(screen.queryByRole('img', { name: /delivery location/i })).not.toBeInTheDocument();
+    });
+
+    it('does not throw when the server is older than the bundle and omits the photo', async () => {
+        /* A cached bundle can outlive the server that grew this field. A proof
+           of delivery panel that throws is worse than one with no photograph. */
+        const withoutPhoto = detail();
+        delete (withoutPhoto as Record<string, unknown>)['photo'];
+        renderPortal(routes({ [`GET ${BASE}/orders/21`]: withoutPhoto }));
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
+
+        expect(await screen.findByRole('link', { name: 'Open the proof of delivery' })).toBeInTheDocument();
     });
 
     it('tells an unscoped account what is wrong instead of showing an empty page', async () => {

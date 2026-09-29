@@ -32,6 +32,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
+import type { FileStorage } from '../../core/files/storage';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
@@ -135,11 +136,38 @@ function present(o: OrderRow, siteName: string, courierName: string) {
     };
 }
 
-export function createClientPortalRouter({ client }: { client: Client }): Router {
+export function createClientPortalRouter(
+    { client, storage }: { client: Client; storage: FileStorage },
+): Router {
     const router = Router({ mergeParams: true });
     /* Staff are allowed in so they can see exactly what the client sees. A
      * courier is not: they have no business reading a whole pharmacy's day. */
     const viewer = requireProjectRole('admin', 'pharmacy');
+
+    /**
+     * One delivery, if this viewer is entitled to it.
+     *
+     * NOT FOUND, NEVER FORBIDDEN, when it belongs to another pharmacy. A 403
+     * would confirm the delivery exists, and that is itself something this
+     * viewer is not entitled to know.
+     *
+     * Extracted when the photo route became the third place needing exactly
+     * this check. A scope test written out three times is a scope test that
+     * eventually differs in one of them.
+     */
+    async function orderInScope(req: Request, id: number) {
+        if (!Number.isInteger(id) || id <= 0) return null;
+        const { scope, sites } = await scopedSites(req);
+        const rs = await client.execute({
+            sql: `SELECT o.*, s.name AS site_name FROM orders o JOIN sites s ON s.id = o.site_id
+                  WHERE o.project_id = ? AND o.id = ?`,
+            args: [req.project!.id, id],
+        });
+        const order = rs.rows[0] as unknown as (OrderRow & { site_name: string }) | undefined;
+        if (!order) return null;
+        if (!scope.wholeProject && !sites.some((s) => s.id === Number(order.site_id))) return null;
+        return order;
+    }
 
     /** Sites the caller may see, with their names, ordered for display. */
     async function scopedSites(req: Request) {
@@ -158,6 +186,42 @@ export function createClientPortalRouter({ client }: { client: Client }): Router
             scope,
             sites: rs.rows.map((r) => ({ id: Number(r['id']), code: String(r['code']), name: String(r['name']) })),
         };
+    }
+
+    /**
+     * The doorstep photograph for one delivery, if there is one.
+     *
+     * `kind = 'doorstep'` and `status = 'stored'` together: a pending row is
+     * an upload that was started and never finished, and offering the client
+     * a link to it would produce a broken image and a support call.
+     *
+     * Newest wins. A courier who photographed twice did so because the first
+     * one was no good.
+     */
+    async function storedDoorstepPhoto(projectId: number, orderId: number) {
+        const rs = await client.execute({
+            sql: `SELECT id, s3_key, content_type FROM files
+                  WHERE project_id = ? AND order_id = ? AND kind = 'doorstep' AND status = 'stored'
+                  ORDER BY id DESC LIMIT 1`,
+            args: [projectId, orderId],
+        });
+        const row = rs.rows[0];
+        return row
+            ? { id: Number(row['id']), key: String(row['s3_key']), contentType: String(row['content_type']) }
+            : null;
+    }
+
+    /** What to tell the client about the photograph, asked rather than assumed. */
+    async function photoFor(projectId: number, orderId: number) {
+        const found = await storedDoorstepPhoto(projectId, orderId);
+        if (!found) return { available: false, reason: '' };
+        if (!storage.available) {
+            return {
+                available: false,
+                reason: 'A photograph was taken at the door. File storage is not configured on this server, so it cannot be shown.',
+            };
+        }
+        return { available: true, reason: '' };
     }
 
     /**
@@ -343,6 +407,7 @@ export function createClientPortalRouter({ client }: { client: Client }): Router
             args: [id],
         });
         const names = await displayNames(project.id, [order.assigned_to_username, ...events.rows.map((e) => String(e['actor']))]);
+        const photo = await photoFor(project.id, id);
 
         // Reading one delivery means reading patient data; record that it happened.
         await req.audit('client.read', 'order', String(id), { events: events.rows.length });
@@ -367,18 +432,68 @@ export function createClientPortalRouter({ client }: { client: Client }): Router
                 signedName: String(e['signed_name']),
                 reason: String(e['reason']),
             })),
-            /* The proof of delivery document itself is ticket 3.2. Saying so
-             * beats a button that does nothing. */
-            /* The document itself is at .../pod.pdf. The note is only for what
-               it cannot show: a doorstep photograph, until the file service in
-               ticket 0.10 exists. */
+            /* The document itself is at .../pod.pdf. The note beside it is only
+               for what the document cannot show: the PDF writer draws vectors
+               and cannot embed an image (core/pdf/writer.ts), so a doorstep
+               photograph is served from .../photo instead of printed. */
             proofOfDelivery: {
                 available: true,
-                reason: events.rows.some((e) => String(e['signed_name']) === 'Left at the door')
-                    ? 'A photograph was taken at the door. Photo storage is not yet configured, so it is not reproduced in the document.'
-                    : '',
+                reason: photo.available
+                    ? 'A photograph was taken at the door. The document cannot reproduce an image, so it is shown alongside.'
+                    : photo.reason,
             },
+            /* THIS USED TO BE A HARDCODED SENTENCE saying storage was not
+               configured, true when it was written and false the moment S3
+               was turned on. A portal that tells University Health something
+               untrue about their own delivery is worse than one that says
+               nothing, so it now asks. */
+            photo,
         });
+    }));
+
+    /* --------------------------------------------------- the doorstep photo */
+
+    /*
+     * Scope 1.2.8 asks for photographs in the proof of delivery, and until
+     * now University Health could not see one at all: the PDF writer cannot
+     * embed an image, and every route in core/files is gated on admin and
+     * courier. The photograph existed and its owner could not look at it.
+     *
+     * A REDIRECT, NOT A PROXY. The bytes go from S3 to the browser and never
+     * through this server, which is the same reason uploads are presigned: a
+     * photograph of a patient's front door that never touches the application
+     * cannot end up in a request log, a heap dump or a crash report.
+     *
+     * The signed URL lasts five minutes. Pasting one into an email is not a
+     * way to share a patient's address with somebody who should not have it,
+     * because by the time they open it, it is expired.
+     */
+    router.get('/orders/:id/photo', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const id = Number(req.params['id']);
+        const order = await orderInScope(req, id);
+        /* Not found rather than forbidden, for the same reason as the detail
+           route: a 403 confirms the delivery exists. */
+        if (!order) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        const found = await storedDoorstepPhoto(project.id, id);
+        if (!found) { res.status(404).json({ error: 'No photograph was taken for this delivery' }); return; }
+
+        if (!storage.available) {
+            res.status(503).json({
+                error: 'File storage is not configured on this server, so the photograph cannot be shown.',
+                code: 'files.unavailable',
+            });
+            return;
+        }
+
+        /* Looking at a photograph of a patient's home is reading patient data.
+           It is recorded with the file id, so "who looked at this, and when"
+           has an answer that does not depend on anybody's memory. */
+        await req.audit('client.photo', 'file', String(found.id), { orderId: id });
+
+        const signed = storage.presignDownload(found.key);
+        res.redirect(302, signed.url);
     }));
 
     /* ------------------------------------------------------ proof of delivery */
@@ -414,7 +529,10 @@ export function createClientPortalRouter({ client }: { client: Client }): Router
             orderId: id,
             timezone: project.timezone,
             courierName: (username) => names.get(username) ?? '',
-            photoAvailable: false,
+            /* Was hardcoded false, which was true before there was a file
+               service and became a lie the moment one was configured. The
+               document now says what is actually so. */
+            photoAvailable: storage.available,
         });
         if (!data) { res.status(404).json({ error: 'Delivery not found' }); return; }
 

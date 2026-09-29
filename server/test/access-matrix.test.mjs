@@ -350,6 +350,11 @@ const MATRIX = [
     ['GET', `${UH}/client/orders`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999/pod.pdf`, UH_CLIENT_VIEW, ''],
+    /* The doorstep photograph. Same viewers as the delivery it belongs to,
+       and deliberately NOT the core/files routes, which are admin and courier
+       only: a pharmacy may see the photograph of their own delivery and has
+       no business enumerating the day's files. */
+    ['GET', `${UH}/client/orders/999999/photo`, UH_CLIENT_VIEW, ''],
 
     /* --- the shadow week's log (ticket 5.2). A courier can report what they
        see at the door; reviewing and closing is a judgement about the

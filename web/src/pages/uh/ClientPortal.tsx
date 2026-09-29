@@ -258,6 +258,12 @@ interface DetailResponse extends ClientOrder {
     packages: Array<{ description: string; quantity: number; signatureRequired: boolean; outcome: string; failureReason: string; failureNote: string }>;
     timeline: Array<{ type: string; at: string; by: string; signedName: string; reason: string }>;
     proofOfDelivery: { available: boolean; reason: string };
+    /* The document cannot carry the photograph: the PDF writer draws vectors
+       and embeds no images. So it is shown here instead, beside the link.
+       Optional, because a browser holding a cached bundle can outlive the
+       server that grew this field, and a proof of delivery panel that throws
+       is worse than one with no photograph in it. */
+    photo?: { available: boolean; reason: string };
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -350,6 +356,33 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                     </div>
                     {detail.proofOfDelivery.reason && (
                         <p className="izy-muted">{detail.proofOfDelivery.reason}</p>
+                    )}
+                    {/* The doorstep photograph.
+                     *
+                     * The src is our own endpoint, which checks this viewer
+                     * may see this delivery and then redirects to a URL that
+                     * expires in five minutes. The bytes come from storage to
+                     * the browser and never through our server.
+                     *
+                     * No download button on purpose: this is a photograph of
+                     * a patient's home, and the proof of delivery document is
+                     * the thing meant to be kept. Anybody who needs the image
+                     * itself can still save it, and will have thought about
+                     * it first. */}
+                    {detail.photo?.available && (
+                        <figure className="izy-pod-photo">
+                            <img
+                                src={`/api/projects/${code}/uh/client/orders/${order.id}/photo`}
+                                alt={`The delivery location for ${order.recipientName}`}
+                                loading="lazy"
+                            />
+                            <figcaption className="izy-muted">
+                                Photographed at the door by the courier.
+                            </figcaption>
+                        </figure>
+                    )}
+                    {!detail.photo?.available && detail.photo?.reason && (
+                        <p className="izy-muted">{detail.photo.reason}</p>
                     )}
                 </>
             )}

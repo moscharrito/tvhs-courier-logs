@@ -253,6 +253,60 @@ describe('what reaches the client', () => {
 
 /* ------------------------------------------------------------------ shape */
 
+describe('the doorstep photograph', () => {
+    /* Until this route existed, University Health could not see a photograph
+       at all: the PDF writer embeds no images, and every core/files route is
+       admin and courier only. The photograph existed and its owner could not
+       look at it. */
+
+    it('says nothing about a photograph when none was taken', async () => {
+        const order = await delivered();
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/orders/${order.id}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body.photo).toEqual({ available: false, reason: '' });
+        /* And specifically NOT the old hardcoded sentence about storage,
+           which was printed for every doorstep delivery whether or not
+           storage was configured. */
+        expect(res.body.proofOfDelivery.reason).toBe('');
+    });
+
+    it('answers 404, not 403, for another pharmacy\'s delivery', async () => {
+        /* A 403 would confirm the delivery exists, which is itself something
+           this viewer is not entitled to know. Same rule as the detail route,
+           and worth its own test because it is a separate code path. */
+        const other = await delivered({ siteId: green.id });
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+
+        const res = await pharmacist.get(`${CLIENT}/orders/${other.id}/photo`);
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('Delivery not found');
+    });
+
+    it('answers 404 when the delivery is theirs and carries no photograph', async () => {
+        const order = await delivered();
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+
+        const res = await pharmacist.get(`${CLIENT}/orders/${order.id}/photo`);
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('No photograph was taken for this delivery');
+    });
+
+    it('answers 404 for a delivery that does not exist', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/orders/999999/photo`);
+        expect(res.status).toBe(404);
+    });
+
+    it('does not let a courier read a pharmacy\'s photograph route', async () => {
+        const order = await delivered();
+        const courier = await agentFor('ada.courier', 'courier-pass-1');
+        const res = await courier.get(`${CLIENT}/orders/${order.id}/photo`);
+        expect(res.status).toBe(403);
+    });
+});
+
 describe('the list and the summary', () => {
     it('summarises the day by status for the viewer scope only', async () => {
         const uh = await agentFor('uh.pharmacist', 'client-pass-1');

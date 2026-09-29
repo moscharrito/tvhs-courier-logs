@@ -447,10 +447,15 @@ export async function loadPodData(client: Client, opts: LoadOptions): Promise<Po
             /* Say what is missing and why. A doorstep delivery whose photo
                cannot be shown is a document with a hole in it, and a reader
                deserves to know that rather than wonder. */
+            /* This document cannot print the photograph: the writer draws
+               vectors and embeds no images (core/pdf/writer.ts). So it says
+               the photograph exists and where to look, which is the portal
+               beside the download button, rather than leaving a reader to
+               wonder whether one was ever taken. */
             note: hasPhoto
                 ? opts.photoAvailable
-                    ? 'A photograph of the delivery location is held with this record.'
-                    : 'A photograph was taken at the door. Photo storage is not yet configured, so it is not reproduced here.'
+                    ? 'A photograph of the delivery location is held with this record and is shown beside this document in the tracking portal.'
+                    : 'A photograph was taken at the door. File storage is not configured, so it cannot be shown.'
                 : '',
         },
     };
