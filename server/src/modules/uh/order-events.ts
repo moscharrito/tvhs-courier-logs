@@ -13,6 +13,7 @@
  */
 
 import type { Client, InValue } from '@libsql/client';
+import { notifyPharmacyOfOutcome } from './delivery-notices';
 import type { ProjectSettings } from '../../core/projects/settings';
 import {
     applyEvent, type Applied, type CustodyEventType, type EventInput, type OrderStatus,
@@ -36,6 +37,10 @@ export interface RecordOptions {
     actor: string;
     settings: ProjectSettings;
     event: EventInput;
+    /** The project's timezone, for the time in a notification a pharmacist
+     *  reads. Optional so existing callers and tests keep working; without it
+     *  the notice is written in UTC rather than not written at all. */
+    timezone?: string;
 }
 
 /** Insert one custody row. Never updates: the table forbids it. */
@@ -149,5 +154,55 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
         await insertCustodyEvent(client, common);
     }
 
+    /* Tell the pharmacy, after the custody record exists and never before it.
+     *
+     * Here rather than in the four routes that can close a delivery, because
+     * a fifth route added later would silently not notify anybody and nobody
+     * would notice until a hospital asked why they stopped getting emails.
+     *
+     * Only on a real transition: a courier tapping "delivered" twice is one
+     * delivery, and statusChanged is already false the second time. */
+    if (applied.statusChanged && (applied.toStatus === 'delivered' || applied.toStatus === 'failed')) {
+        await notifyOutcome(client, {
+            projectId,
+            orderId,
+            status: applied.toStatus,
+            at: event.at,
+            timezone: opts.timezone ?? 'UTC',
+        });
+    }
+
     return applied;
+}
+
+/** Look up the pharmacy's name and hand off. Never throws: see
+ *  modules/uh/delivery-notices.ts. */
+async function notifyOutcome(
+    client: Client,
+    n: { projectId: number; orderId: number; status: string; at: Date; timezone: string },
+): Promise<void> {
+    try {
+        /* The site is read back rather than taken off the row: OrderStateRow
+           carries only what the transition rules need, and widening it so one
+           notification can find a pharmacy would put a column on every caller
+           for the benefit of this one. */
+        const rs = await client.execute({
+            sql: `SELECT s.id AS site_id, s.name AS site_name FROM orders o
+                  JOIN sites s ON s.id = o.site_id
+                  WHERE o.project_id = ? AND o.id = ?`,
+            args: [n.projectId, n.orderId],
+        });
+        const row = rs.rows[0];
+        if (!row) return;
+        const at = new Intl.DateTimeFormat('en-US', {
+            timeZone: n.timezone, hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+        }).format(n.at);
+        await notifyPharmacyOfOutcome(client, {
+            projectId: n.projectId, orderId: n.orderId, siteId: Number(row['site_id']),
+            siteName: String(row['site_name']), status: n.status, at,
+        });
+    } catch {
+        /* A delivery that happened is not undone by a notice that was not
+           written. */
+    }
 }

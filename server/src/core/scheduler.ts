@@ -26,6 +26,8 @@
 import type { Client } from '@libsql/client';
 import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/requests';
+import { dispatchPending } from './notify/dispatch';
+import type { Mailer } from './notify/ses';
 import { todayIn } from './dates';
 
 export interface SchedulerOptions {
@@ -33,6 +35,11 @@ export interface SchedulerOptions {
     logger: Logger;
     /** Seconds between sweeps. Undefined means do not run at all. */
     intervalSeconds: number | undefined;
+    /** Optional. Absent means notifications are written and never emailed,
+     *  which is the state on any server with no SES credentials. */
+    mailer?: Mailer | undefined;
+    /** Where a notification tells the reader to go. Required for mail. */
+    portalUrl?: string | undefined;
 }
 
 export interface Scheduler {
@@ -42,7 +49,7 @@ export interface Scheduler {
     readonly running: boolean;
 }
 
-export function startScheduler({ client, logger, intervalSeconds }: SchedulerOptions): Scheduler {
+export function startScheduler({ client, logger, intervalSeconds, mailer, portalUrl }: SchedulerOptions): Scheduler {
     let timer: NodeJS.Timeout | null = null;
 
     async function runOnce(): Promise<void> {
@@ -74,6 +81,14 @@ export function startScheduler({ client, logger, intervalSeconds }: SchedulerOpt
                     onShift: outcome.couriers.length,
                 });
             }
+        }
+
+        /* Mail, after the sweep and outside the per-project loop: the queue is
+           keyed on the notification, not the project, and one batch across
+           everything is what keeps a backlog from opening a connection per
+           project per tick. Never throws; see core/notify/dispatch.ts. */
+        if (mailer && portalUrl) {
+            await dispatchPending({ client, mailer, logger, portalUrl });
         }
     }
 

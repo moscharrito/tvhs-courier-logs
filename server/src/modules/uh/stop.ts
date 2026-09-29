@@ -205,6 +205,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             order,
             actor: actorOf(req),
             settings: resolveSettings(req.project!.settings),
+                    timezone: req.project!.timezone,
             event: {
                 type: 'arrived', at,
                 ...(lat !== undefined ? { lat } : {}),
@@ -232,6 +233,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                 order,
                 actor: actorOf(req),
                 settings: resolveSettings(req.project!.settings),
+                    timezone: req.project!.timezone,
                 event: {
                     type: 'arrived', at,
                     ...(body.lat !== undefined ? { lat: body.lat } : {}),
@@ -288,6 +290,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                 order,
                 actor: actorOf(req),
                 settings: resolveSettings(req.project!.settings),
+                    timezone: req.project!.timezone,
                 event: {
                     type: 'delivered', at,
                     signedName: body.signedName,
@@ -372,6 +375,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                 order,
                 actor: actorOf(req),
                 settings: resolveSettings(req.project!.settings),
+                    timezone: req.project!.timezone,
                 event: {
                     type: 'delivered', at,
                     // Scope 1.2.8 wants a name; nobody signed, so the record
@@ -438,6 +442,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                 order,
                 actor: actorOf(req),
                 settings: resolveSettings(req.project!.settings),
+                    timezone: req.project!.timezone,
                 event: {
                     type: 'attempted', at,
                     // The order-level reason is a summary; the per-package

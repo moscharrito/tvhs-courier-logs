@@ -85,9 +85,9 @@ export async function startServer(env = {}) {
     // Silence the legacy boot console lines.
     const origLog = console.log;
     console.log = () => { };
-    let legacy, sessions, throttles;
+    let legacy, sessions, throttles, scheduler;
     try {
-        ({ legacy, sessions, throttles } = bootLegacy(config, database, logger));
+        ({ legacy, sessions, throttles, scheduler } = bootLegacy(config, database, logger));
         await legacy.ready;
     } finally {
         console.log = origLog;
@@ -135,6 +135,10 @@ export async function startServer(env = {}) {
             return a;
         },
         async stop() {
+            /* Before the sockets: the scheduler holds an interval, and a
+               suite that leaves one running keeps a process alive that
+               should have exited. */
+            try { scheduler?.stop(); } catch (e) { /* ignore */ }
             await new Promise((resolve) => httpServer.close(resolve));
             try { legacy.db.close(); } catch (e) { /* ignore */ }
             try { database.client.close(); } catch (e) { /* ignore */ }

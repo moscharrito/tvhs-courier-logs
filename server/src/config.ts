@@ -53,6 +53,19 @@ export interface Config {
             kmsKeyId: string | undefined;
         } | undefined;
     };
+    /** Outbound email, through SES. Bodies never carry patient data: see
+     *  core/notify/ses.ts, which refuses rather than trims. */
+    mail: {
+        enabled: boolean;
+        ses: {
+            region: string;
+            accessKeyId: string;
+            secretAccessKey: string;
+            from: string;
+        } | undefined;
+        /** Where every notification tells the reader to go. https only. */
+        portalUrl: string;
+    };
     /** Server-side session lifetimes, in minutes. Staff = admin, ops manager,
      *  dispatcher, client viewer. Courier = drivers on the road all day. */
     sessions: {
@@ -139,6 +152,16 @@ const EnvSchema = z.object({
     S3_ACCESS_KEY_ID: optionalString,
     S3_SECRET_ACCESS_KEY: optionalString,
     S3_KMS_KEY_ID: optionalString,
+    /* Email, through SES. Separate credentials from S3 on purpose: the file
+       user may write objects and the mail user may send mail, and neither
+       should be able to do the other's job with a leaked key. */
+    MAIL_ENABLED: boolish,
+    MAIL_FROM: optionalString,
+    /** Where a notification tells somebody to go. No path, no query. */
+    MAIL_PORTAL_URL: optionalString,
+    SES_REGION: optionalString,
+    SES_ACCESS_KEY_ID: optionalString,
+    SES_SECRET_ACCESS_KEY: optionalString,
     SESSION_STAFF_IDLE_MINUTES: z.coerce.number().int().min(1).default(30),
     SESSION_STAFF_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
     SESSION_COURIER_IDLE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
@@ -241,6 +264,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
     }
 
+    /* Same shape as the file store above, and refused the same way. A server
+       that boots with MAIL_ENABLED and no credentials would silently stop
+       notifying a hospital, which is the kind of failure nobody notices for a
+       fortnight. */
+    let ses: Config['mail']['ses'] = undefined;
+    if (e.MAIL_ENABLED) {
+        const missing = (['MAIL_FROM', 'MAIL_PORTAL_URL', 'SES_REGION', 'SES_ACCESS_KEY_ID', 'SES_SECRET_ACCESS_KEY'] as const)
+            .filter((k) => !e[k]);
+        if (missing.length) {
+            problems.push(`MAIL_ENABLED is on but missing: ${missing.join(', ')}`);
+        } else if (!/^https:\/\//i.test(e.MAIL_PORTAL_URL as string)) {
+            /* The one link in every notification. Plain http would send a
+               hospital to a page where their session cookie crosses the
+               network in clear. */
+            problems.push('MAIL_PORTAL_URL must be an https URL');
+        } else {
+            ses = {
+                region: e.SES_REGION as string,
+                accessKeyId: e.SES_ACCESS_KEY_ID as string,
+                secretAccessKey: e.SES_SECRET_ACCESS_KEY as string,
+                from: e.MAIL_FROM as string,
+            };
+        }
+    }
+
     if (problems.length) throw new ConfigError(problems);
 
     return {
@@ -259,6 +307,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         sweepIntervalSeconds: e.SWEEP_INTERVAL_SECONDS,
         db: { url: dbUrl, authToken: e.TURSO_AUTH_TOKEN, kind: dbKind },
         files: { enabled: e.FILES_ENABLED, s3 },
+        mail: {
+            enabled: e.MAIL_ENABLED,
+            ses,
+            /* Trailing slash trimmed once here rather than at every call site
+               that builds a link. */
+            portalUrl: (e.MAIL_PORTAL_URL ?? '').replace(/\/+$/, ''),
+        },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
         log: {
             level: e.LOG_LEVEL,

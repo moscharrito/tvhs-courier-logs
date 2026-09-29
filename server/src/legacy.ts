@@ -29,6 +29,8 @@ import { securityHeadersFor } from './core/http/security';
 import { createAuthThrottles, tooManyAttempts } from './core/auth/throttle';
 import { createRetentionRouter } from './core/retention/routes';
 import { startRetentionSweep } from './core/retention/sweep';
+import { startScheduler, type Scheduler } from './core/scheduler';
+import { createMailer } from './core/notify/ses';
 import { startOptimize } from './db/optimize';
 import { createGoogleProvider } from './core/geo/google';
 import { scopedTo, unavailableProvider } from './core/geo/provider';
@@ -83,6 +85,10 @@ export interface BootedLegacy {
     throttles: ReturnType<typeof createAuthThrottles>;
     audit: AuditLog;
     logger: Logger;
+    /** The unclaimed sweep and the mail queue. Exposed so a test can stop the
+     *  timer it started: an interval left running keeps a process that should
+     *  have exited alive. */
+    scheduler: Scheduler;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -135,6 +141,32 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
      * and never deletes without an approval that names an exact number. */
     legacy.app.use(createRetentionRouter({ client: database.client, storage: fileStorage }));
     startRetentionSweep(database.client, (err) => logger.error('retention sweep failed', errorFields(err)));
+
+    /* The unclaimed sweep and the mail queue.
+     *
+     * THIS CALL DID NOT EXIST. startScheduler was written, tested and never
+     * wired into a running server, so SWEEP_INTERVAL_SECONDS switched on
+     * nothing and the promise that an unclaimed STAT is never nobody's
+     * problem was held up entirely by somebody remembering to call the
+     * endpoint. A rule enforced by a person remembering is not enforced, and
+     * a scheduler with no caller is worse than none, because the environment
+     * variable and the tests both suggest it is running.
+     *
+     * Still off unless SWEEP_INTERVAL_SECONDS is set, which is deliberate:
+     * a timer that hands deliveries to couriers should be switched on in an
+     * environment somebody chose. But it is now a switch that does something. */
+    const mailer = createMailer(config);
+    const scheduler = startScheduler({
+        client: database.client,
+        logger,
+        intervalSeconds: config.sweepIntervalSeconds,
+        mailer,
+        portalUrl: config.mail.portalUrl,
+    });
+    logger.info('scheduler', {
+        sweep: config.sweepIntervalSeconds === undefined ? 'off' : `every ${config.sweepIntervalSeconds}s`,
+        mail: mailer.available ? 'on' : (mailer.reason ?? 'off'),
+    });
     /* Query planner statistics, refreshed at boot and daily (ticket 4.8).
      * Without them the pickup manifest walks every stop in the project. */
     startOptimize(database.client);
@@ -234,7 +266,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(apiNotFound);
     legacy.app.use(createErrorHandler({ logger, isProduction: config.isProduction }));
 
-    return { legacy, sessions: store, audit: log, logger, throttles };
+    /* `scheduler` goes out with the rest so a test can stop the timer it
+       started. Without it a suite that builds an app leaves an interval
+       behind, and the process that should have exited hangs. */
+    return { legacy, sessions: store, audit: log, logger, throttles, scheduler };
 }
 
 /* The built frontend shell (web/dist) is served at /. Any GET that is not an

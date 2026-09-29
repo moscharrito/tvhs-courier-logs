@@ -587,6 +587,15 @@ export const NOTIFICATION_KINDS = [
     'request.superseded',
     'work.assigned',
     'work.unclaimed',
+    /* Addressed to the pharmacy that sent the work, not to our own staff.
+     * Every kind above is about dispatch telling a courier something; these
+     * two are the first that leave the company, which is why they are also
+     * the first that can go out by email.
+     *
+     * The body carries an order number, a pharmacy, a time and a link, and
+     * never a patient. See core/notify/ses.ts. */
+    'delivery.completed',
+    'delivery.failed',
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
