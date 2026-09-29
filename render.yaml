@@ -89,6 +89,65 @@ services:
       - key: ADMIN_PASS
         sync: false
 
+      # --- The scheduler ---
+      #
+      # Switches on the unclaimed sweep, which hands work that nobody has
+      # claimed to dispatch 45 minutes before its deadline, and drains the
+      # notification queue. Without it both are written and neither runs: the
+      # promise that an unclaimed STAT is never nobody's problem holds only
+      # while somebody remembers to call the endpoint, and any email queued
+      # for a pharmacy simply accumulates in the table.
+      #
+      # 120 seconds. The sweep raises work 45 minutes ahead of a deadline, so
+      # the tick only has to be small against 45 minutes. Running twice is
+      # harmless by design and there is a test for it: the sweep works from
+      # the unassigned pool and claiming goes through a UNIQUE index, so two
+      # instances sweeping together is wasted work rather than a double
+      # assignment. That is why this is an in-process timer and not a cron
+      # service holding a lock.
+      - key: SWEEP_INTERVAL_SECONDS
+        value: "120"
+
+      # --- Notification email (docs/infra/email.md) ---
+      #
+      # Off until SES has a verified domain and has left the sandbox. The
+      # bodies carry an order number, a pharmacy, a time and a link, and never
+      # a patient: an email stops being ours the moment it is sent.
+      #
+      # MAIL_ENABLED with any of the rest missing is a BOOT FAILURE, the same
+      # as FILES_ENABLED without a bucket, because a server that came up with
+      # mail switched on and no credentials would quietly stop notifying a
+      # hospital and nobody would notice for a fortnight.
+      - key: MAIL_ENABLED
+        value: "false"
+      # - key: MAIL_FROM
+      #   sync: false
+      # - key: MAIL_PORTAL_URL
+      #   sync: false
+      # - key: SES_REGION
+      #   sync: false
+      # - key: SES_ACCESS_KEY_ID
+      #   sync: false
+      # - key: SES_SECRET_ACCESS_KEY
+      #   sync: false
+
+      # --- Address lookup, and the test-phase exemption ---
+      #
+      # The key geocodes PHARMACY addresses, which are business addresses.
+      # Sending a DELIVERY address is refused in code, because that is a
+      # patient's home and Google Maps Platform is excluded from Google's BAA.
+      #
+      # UH_PATIENT_GEOCODE_UNTIL lifts that refusal for a dated window, and is
+      # lawful only while every address in the database is invented. It is a
+      # date rather than a flag so it lapses on its own, it is capped at 90
+      # days, and the go-live readiness check reports it as a BLOCKER while it
+      # is live. It must not be renewed once a real University Health list is
+      # loaded. See docs/infra/accounts-and-baas.md.
+      # - key: GOOGLE_MAPS_API_KEY
+      #   sync: false
+      # - key: UH_PATIENT_GEOCODE_UNTIL
+      #   sync: false
+
       # --- Proof-of-delivery file storage (ticket 1.8, needs ticket 0.10) ---
       # Doorstep photographs are PHI in a bucket, so this stays off until
       # there is a bucket covered by a signed AWS BAA. With it off, the stop
