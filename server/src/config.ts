@@ -29,6 +29,14 @@ export interface Config {
         /** Draw a map of a patient's address inside the courier app.
          *  Deliberately NOT implied by the key: see modules/uh/directions.ts. */
         embedMaps: boolean;
+        /**
+         * The day the permission to geocode delivery addresses lapses, or
+         * undefined when there is none. Granted only while every address in
+         * the system is invented; see UH_PATIENT_GEOCODE_UNTIL.
+         */
+        patientGeocodeUntil: string | undefined;
+        /** Whether that permission is live right now. Computed at boot. */
+        patientGeocodeAllowed: boolean;
     };
     retention: {
         /** Days a courier's shift track is kept. Undefined means nobody has
@@ -124,6 +132,15 @@ const EnvSchema = z.object({
      * on, because turning it on makes us the sender of that address to a
      * vendor with no BAA. The reasoning is in modules/uh/directions.ts. */
     UH_MAPS_EMBED: boolish,
+    /* Permission to send a DELIVERY address to the geocoder, which is normally
+     * refused in code (core/geo/provider.ts).
+     *
+     * A DATE, NOT A FLAG, and that is the whole point. A boolean switched on
+     * for a test phase stays on: turning it off is on nobody's list and
+     * nothing breaks when nobody does. A date lapses by itself, so the
+     * exemption cannot outlive the invented data it was granted for, and the
+     * direction it fails in is the safe one. */
+    UH_PATIENT_GEOCODE_UNTIL: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     /* How many days a courier's minute-by-minute track is kept (ticket 6.6).
      * SETTING THIS IS THE DECISION. While it is unset the retention period
      * for location traces is undecided, and the tracking endpoint refuses
@@ -264,6 +281,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
     }
 
+    /* Permission to send delivery addresses to the geocoder, which lapses.
+     *
+     * Granted for a test phase in which every address in the system is
+     * invented, so nothing disclosed is protected health information. Three
+     * things keep it from quietly becoming permanent:
+     *
+     *   It is a DATE and it expires. Nobody has to remember to revoke it.
+     *   It is CAPPED at 90 days, so "until 2099" is not a way around that.
+     *   It is REFUSED in production-shaped deployments unless the date is
+     *   also in the future, so a stale value in an old environment file does
+     *   not silently re-grant it after a redeploy.
+     *
+     * When real University Health data arrives, this must not be renewed.
+     * The go-live check reports it as a blocker while it is live. */
+    const MAX_GRANT_DAYS = 90;
+    const patientGeocode = (() => {
+        const until = e.UH_PATIENT_GEOCODE_UNTIL;
+        if (!until) return { allowed: false };
+        const lapses = Date.parse(`${until}T23:59:59Z`);
+        if (!Number.isFinite(lapses)) {
+            problems.push('UH_PATIENT_GEOCODE_UNTIL is not a real date');
+            return { allowed: false };
+        }
+        const now = Date.now();
+        if (lapses < now) {
+            /* Not a problem: an expired grant is the system working. Said out
+               loud at boot so nobody spends an afternoon on "why did geocoding
+               stop". */
+            return { allowed: false, lapsed: true };
+        }
+        if (lapses - now > MAX_GRANT_DAYS * 86400000) {
+            problems.push(`UH_PATIENT_GEOCODE_UNTIL is more than ${MAX_GRANT_DAYS} days out. This permission exists for a test phase, not for a year.`);
+            return { allowed: false };
+        }
+        return { allowed: true };
+    })();
+
     /* Same shape as the file store above, and refused the same way. A server
        that boots with MAIL_ENABLED and no credentials would silently stop
        notifying a hospital, which is the kind of failure nobody notices for a
@@ -302,6 +356,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             googleApiKey: e.GOOGLE_MAPS_API_KEY,
             dailyCeiling: e.GEO_DAILY_CEILING ?? 2500,
             embedMaps: e.UH_MAPS_EMBED,
+            patientGeocodeUntil: e.UH_PATIENT_GEOCODE_UNTIL,
+            patientGeocodeAllowed: patientGeocode.allowed,
         },
         retention: { locationTraceDays: e.RETENTION_LOCATION_TRACE_DAYS },
         sweepIntervalSeconds: e.SWEEP_INTERVAL_SECONDS,

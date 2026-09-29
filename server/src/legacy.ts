@@ -33,7 +33,7 @@ import { startScheduler, type Scheduler } from './core/scheduler';
 import { createMailer } from './core/notify/ses';
 import { startOptimize } from './db/optimize';
 import { createGoogleProvider } from './core/geo/google';
-import { scopedTo, unavailableProvider } from './core/geo/provider';
+import { scopedTo, unavailableProvider, type GeoScope } from './core/geo/provider';
 import { createGeoLookup } from './core/geo/lookup';
 import { createGeocodeRouter } from './modules/uh/geocode';
 import { createDiscrepancyRouter } from './modules/uh/discrepancies';
@@ -176,10 +176,36 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     /* Address lookup (ticket 1.4). Wrapped in scopedTo so that the provider
      * can only ever be asked about site addresses: a patient's address is PHI
      * and Google Maps is not covered by a BAA. The refusal is code rather
-     * than a comment because a comment does not stop a loop. */
+     * than a comment because a comment does not stop a loop.
+     *
+     * DELIVERY ADDRESSES ARE ADDED ONLY BY A PERMISSION THAT EXPIRES.
+     * UH_PATIENT_GEOCODE_UNTIL grants it for a test phase in which every
+     * address in the system is invented, so nothing disclosed is PHI. It is a
+     * date, capped at ninety days, and when it lapses this list goes back to
+     * sites alone with no deploy and nobody remembering. See config.ts.
+     *
+     * If this is ever live while real University Health data is loaded, that
+     * is a disclosure to a processor with no agreement covering it. The
+     * go-live check reports it as a blocker for exactly that reason. */
+    const geoScopes: GeoScope[] = config.geo.patientGeocodeAllowed ? ['site', 'patient'] : ['site'];
     const geoProvider = config.geo.googleApiKey
-        ? scopedTo(createGoogleProvider({ apiKey: config.geo.googleApiKey }), ['site'])
+        ? scopedTo(createGoogleProvider({ apiKey: config.geo.googleApiKey }), geoScopes)
         : unavailableProvider('No address lookup is configured. Set GOOGLE_MAPS_API_KEY (ticket 1.4).');
+
+    if (config.geo.patientGeocodeAllowed) {
+        /* At warn, not info. This is a deliberate, temporary relaxation of the
+           control this system is most careful about, and it should be visible
+           in a log somebody skims. */
+        logger.warn('geo.patient_addresses_permitted', {
+            until: config.geo.patientGeocodeUntil,
+            why: 'Test phase: every address in this system is invented. Must not be renewed once real University Health data is loaded.',
+        });
+    } else if (config.geo.patientGeocodeUntil) {
+        logger.info('geo.patient_addresses_refused', {
+            lapsed: config.geo.patientGeocodeUntil,
+            note: 'The grant in UH_PATIENT_GEOCODE_UNTIL has expired. Delivery addresses are refused again, which is the intended end state.',
+        });
+    }
     const geoLookup = createGeoLookup({
         client: database.client,
         provider: geoProvider,
@@ -203,6 +229,8 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
             databaseKind: config.db.kind,
             filesEnabled: config.files.enabled,
             geocoderConfigured: config.geo.googleApiKey !== undefined,
+            patientGeocodeAllowed: config.geo.patientGeocodeAllowed,
+            patientGeocodeUntil: config.geo.patientGeocodeUntil,
             trustProxy: config.trustProxy,
             isProduction: config.isProduction,
         },

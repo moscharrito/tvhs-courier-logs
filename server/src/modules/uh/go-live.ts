@@ -33,6 +33,10 @@ interface Deps {
         databaseKind: 'turso' | 'file';
         filesEnabled: boolean;
         geocoderConfigured: boolean;
+        /** Whether the test-phase permission to geocode delivery addresses is
+         *  live. Blocks go-live on its own: see the check by that name. */
+        patientGeocodeAllowed: boolean;
+        patientGeocodeUntil: string | undefined;
         trustProxy: number;
         isProduction: boolean;
     };
@@ -78,6 +82,22 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations }: D
         );
         const everFiled = await count('SELECT COUNT(*) AS n FROM discrepancies WHERE project_id = ?', [projectId]);
 
+        /* The test-phase exemption, which must not survive into real data.
+         *
+         * While UH_PATIENT_GEOCODE_UNTIL is live, delivery addresses are sent
+         * to Google, which is lawful only because every address in the system
+         * is invented. Going live means real patient addresses arrive, and
+         * that combination is a disclosure to a processor with no agreement
+         * covering it. So it blocks, by name, at the top of the list. */
+        add({
+            id: 'geo.patientAddressesRefused',
+            what: 'Delivery addresses are not being sent to the geocoder',
+            pass: !deployment.patientGeocodeAllowed,
+            detail: deployment.patientGeocodeAllowed
+                ? `UH_PATIENT_GEOCODE_UNTIL is live${deployment.patientGeocodeUntil ? ` until ${deployment.patientGeocodeUntil}` : ''}. That was granted for a test phase in which every address is invented. Remove it before any real University Health address is loaded: Google Maps is not covered by a BAA.`
+                : 'Refused in code. Only site addresses reach the geocoder.',
+            blocking: true,
+        });
         add({
             id: 'discrepancies.critical',
             what: 'No critical discrepancy is still open',
