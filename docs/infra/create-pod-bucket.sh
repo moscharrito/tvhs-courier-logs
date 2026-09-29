@@ -30,7 +30,7 @@ set -euo pipefail
 
 # ─────────────────────────────── fill these in ───────────────────────────────
 
-BUCKET="CHANGE-ME-izy-pod"                        # globally unique across all of AWS
+BUCKET="izy-courier-pod-767bd8"                     # globally unique across all of AWS
 REGION="us-east-2"                                # a region the BAA covers
 APP_ORIGIN="https://logs.izyglobalservices.com"   # exactly the origin the app is served from
 IAM_USER="izy-courier-pod"
@@ -41,10 +41,9 @@ KMS_ALIAS="alias/izy-proof-of-delivery"
 say() { printf '\n== %s\n' "$*"; }
 ok() { printf '   ok  %s\n' "$*"; }
 
-if [ "$BUCKET" = "CHANGE-ME-izy-pod" ]; then
-    echo "Set BUCKET at the top of this script first." >&2
-    exit 1
-fi
+case "$BUCKET" in
+    CHANGE-ME*|"") echo "Set BUCKET at the top of this script first." >&2; exit 1 ;;
+esac
 command -v aws >/dev/null || { echo "AWS CLI v2 is not on PATH." >&2; exit 1; }
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
