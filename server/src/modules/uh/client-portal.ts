@@ -32,6 +32,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
+import { etaFor } from './eta';
 import type { FileStorage } from '../../core/files/storage';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -435,6 +436,13 @@ export function createClientPortalRouter(
         const names = await displayNames(project.id, [order.assigned_to_username, ...events.rows.map((e) => String(e['actor']))]);
         const photo = await photoFor(project.id, id);
         const reattempt = await reattemptLinks(project.id, id, order);
+        /* An estimate from the courier's queue, not from a routing service:
+           the destination is a patient's address and it is not sent anywhere.
+           See modules/uh/eta.ts. */
+        const eta = await etaFor(client, {
+            projectId: project.id, orderId: id, status: order.status,
+            arrivedAt: order.arrived_at, pickupAt: order.pickup_at,
+        });
 
         // Reading one delivery means reading patient data; record that it happened.
         await req.audit('client.read', 'order', String(id), { events: events.rows.length });
@@ -480,6 +488,12 @@ export function createClientPortalRouter(
                similar reference and guessing. Both directions, because the
                question is asked from whichever attempt somebody opened. */
             reattempt,
+            /* "Estimated delivery time", which the client asked for by name.
+               It is a position in a queue rather than a routed arrival, and
+               the note says so in words a pharmacist reads: the destination
+               is a patient's address and sending it to a routing service is
+               the thing core/geo/provider.ts exists to refuse. */
+            eta,
         });
     }));
 
