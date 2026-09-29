@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 import { requestId } from '../src/core/http/request.ts';
+import express from 'express';
+import request from 'supertest';
+import { createHealthRouter } from '../src/core/http/health.ts';
 
 let srv;
 beforeAll(async () => { srv = await startServer(); });
@@ -17,6 +20,43 @@ describe('GET /health', () => {
         expect(typeof res.body.uptimeSeconds).toBe('number');
         expect(res.body.version).toMatch(/^\d+\.\d+\.\d+/);
         expect(JSON.stringify(res.body)).not.toMatch(/secret|token|password|file:/i);
+    });
+
+    it('says whether the background timers are running', async () => {
+        /* "Is unclaimed work actually being escalated" could previously only
+           be answered by scrolling a host's log for one boot line, and an
+           environment variable that silently failed to arrive is exactly the
+           kind of fault that stays undetected for weeks. The thing it
+           switches off is a promise made to a hospital. */
+        const res = await srv.agent().get('/health');
+        expect(res.body.scheduler).toBeTruthy();
+        // Tests start without an interval, so it reports the honest answer.
+        expect(res.body.scheduler.sweep).toBe('off');
+        expect(res.body.scheduler.mail).toBe('off');
+    });
+
+    it('reports the interval when the sweep is switched on', async () => {
+        /* The router directly rather than a second booted server: the test
+           helper allows one per file, and the thing worth pinning here is the
+           mapping from configuration to the word somebody reads over curl. */
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client,
+            version: '1.2.3',
+            sweepIntervalSeconds: 120,
+            mailConfigured: true,
+        }));
+        const res = await request(app).get('/health');
+        expect(res.body.scheduler).toEqual({ sweep: 'every 120s', mail: 'configured' });
+    });
+
+    it('never puts a hostname, a region or an address on a public endpoint', async () => {
+        /* The rule for this endpoint is not "is it secret" but "would I be
+           content to see this in a pastebin". A service name plus a region is
+           a map for somebody. */
+        const res = await srv.agent().get('/health');
+        const body = JSON.stringify(res.body);
+        expect(body).not.toMatch(/amazonaws|\.com|@|us-[a-z]+-\d|bucket|AKIA/i);
     });
 
     it('answers 503 degraded when the database is unreachable', async () => {

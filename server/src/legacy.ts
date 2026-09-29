@@ -121,7 +121,18 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const legacy = require('../server.js') as LegacyServer;
 
-    legacy.app.use(createHealthRouter({ client: database.client, version: VERSION }));
+    /* Built here rather than beside the scheduler below, because /health
+       reports whether email is configured and is mounted first. One
+       mailer, so what the health endpoint says and what actually sends
+       cannot drift apart. */
+    const mailer = createMailer(config);
+
+    legacy.app.use(createHealthRouter({
+        client: database.client,
+        version: VERSION,
+        sweepIntervalSeconds: config.sweepIntervalSeconds,
+        mailConfigured: mailer.available,
+    }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createDevicesRouter({ client: database.client, config, throttles }));
@@ -156,7 +167,6 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
      * Still off unless SWEEP_INTERVAL_SECONDS is set, which is deliberate:
      * a timer that hands deliveries to couriers should be switched on in an
      * environment somebody chose. But it is now a switch that does something. */
-    const mailer = createMailer(config);
     const scheduler = startScheduler({
         client: database.client,
         logger,
