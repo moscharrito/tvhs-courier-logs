@@ -261,6 +261,28 @@ export function createClientPortalRouter(
         };
     }
 
+    /**
+     * The JPEG behind a stored key, or undefined.
+     *
+     * Through the same presigned GET a browser would use, rather than a second
+     * code path with its own credentials: whatever is true of one is true of
+     * the other, and there is one place where an expiry or a key policy can be
+     * wrong.
+     *
+     * Never throws. A proof of delivery missing its photograph is worth
+     * printing; a 500 in place of one is not.
+     */
+    async function fetchPhoto(key: string): Promise<Buffer | undefined> {
+        try {
+            const signed = storage.presignDownload(key);
+            const res = await fetch(signed.url);
+            if (!res.ok) return undefined;
+            return Buffer.from(await res.arrayBuffer());
+        } catch {
+            return undefined;
+        }
+    }
+
     /** What to tell the client about the photograph, asked rather than assumed. */
     async function photoFor(projectId: number, orderId: number) {
         const found = await storedDoorstepPhoto(projectId, orderId);
@@ -714,6 +736,19 @@ export function createClientPortalRouter(
                document now says what is actually so. */
             photoAvailable: storage.available,
         });
+        if (data) {
+            /* FETCHED HERE, NOT IN pod.ts. That module renders a document; it
+               does not reach for a bucket. Keeping the network on this side
+               means the renderer stays a pure function of its input, which is
+               why it can be tested without a bucket at all.
+               A photograph that will not come back is not an error: the page
+               says it could not be read and the rest of the document, which
+               is the part that proves the handover, still prints. */
+            const proof = await storedDoorstepPhoto(project.id, id);
+            if (proof && data.photo.available) data.photo.bytes = await fetchPhoto(proof.key);
+            const ident = await storedDoorstepPhoto(project.id, id, ID_KIND);
+            if (ident && storage.available) data.idPhoto = { bytes: await fetchPhoto(ident.key) };
+        }
         if (!data) { res.status(404).json({ error: 'Delivery not found' }); return; }
 
         await req.audit('client.pod', 'order', String(id), { status: data.status });

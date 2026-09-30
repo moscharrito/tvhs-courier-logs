@@ -11,6 +11,14 @@
  * Everything else on the page is supporting evidence: the chain of custody,
  * the packages, and whatever explains a delivery that did not happen.
  *
+ * THE PHOTOGRAPHS ARE IN IT. Scope 1.2.8 and University Health's own list of
+ * 29 September 2026 both name photographs as part of this document, and for a
+ * while they were only in the portal, because the writer drew vectors. PDF
+ * understands JPEG natively, so the bytes now go in as they came off the
+ * camera. Where the pharmacy stamped the form ID Required, the identification
+ * is on its own page: it is the most sensitive thing this system holds and it
+ * should not sit under a thumbnail somebody scrolls past.
+ *
  * THE SIGNATURES ARE DRAWN, NOT DESCRIBED. They were captured as strokes in a
  * 0..1 space (ticket 2.4), which means they can be drawn at any size without
  * blurring, and it means this document renders the actual movement of the pen
@@ -22,7 +30,10 @@
  */
 
 import type { Client } from '@libsql/client';
-import { buildPdf, Page, PAGE, textWidth, toLatin, wrap, type Point } from '../../core/pdf/writer';
+import {
+    buildPdf, jpegSize, Page, PAGE, textWidth, toLatin, wrap,
+    type EmbeddedImage, type Point,
+} from '../../core/pdf/writer';
 
 const MARGIN = 54;
 const CONTENT_WIDTH = PAGE.width - MARGIN * 2;
@@ -78,8 +89,12 @@ export interface PodData {
     events: PodEvent[];
     pickupSignature: PodSignature | null;
     deliverySignature: PodSignature | null;
-    /** A doorstep photo, when there is one and the file service can serve it. */
-    photo: { available: boolean; note: string };
+    /** A doorstep or courier-form photo, when there is one and the file
+     *  service can serve it. `bytes` is the JPEG itself, fetched by the
+     *  caller: this module renders, it does not reach for a bucket. */
+    photo: { available: boolean; note: string; bytes?: Buffer | undefined };
+    /** Identification, where the pharmacy stamped the form ID Required. */
+    idPhoto?: { bytes?: Buffer | undefined } | undefined;
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -321,12 +336,70 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
     );
     page.textRight(`Delivery ${data.orderId}`, PAGE.width - MARGIN, MARGIN + 10, { size: 8, grey: 0.45 });
 
-    return buildPdf([page], {
+    /* ── The photographs ─────────────────────────────────────────────────
+     *
+     * ON THEIR OWN PAGES, not squeezed under the custody chain. A doorstep
+     * photograph is evidence somebody will enlarge and argue about, and the
+     * first page is already full of the five things Scope 1.2.8 names.
+     *
+     * The box keeps the picture's own proportions. A doorstep squashed into a
+     * square is a photograph a reader will say looks wrong, and being right
+     * about the pixels does not help when somebody is deciding whether to
+     * believe the document.
+     *
+     * IDENTIFICATION GETS A PAGE OF ITS OWN, with a line saying what it is and
+     * why it was taken. It is a government identity document tied by name to a
+     * patient receiving a prescription, and it should not appear as a
+     * thumbnail beside a porch. */
+    const pages = [page];
+    const images: EmbeddedImage[] = [];
+
+    const photoPage = (bytes: Buffer, name: string, heading: string, note: string) => {
+        const sheet = new Page();
+        let top = PAGE.height - MARGIN;
+        sheet.text(heading, MARGIN, top, { font: 'Helvetica-Bold', size: 14 });
+        top -= 16;
+        sheet.text(`Delivery ${data.orderId}`, MARGIN, top, { size: 9, grey: 0.45 });
+        top -= 20;
+        sheet.text(note, MARGIN, top, { size: 9, grey: 0.35 });
+        top -= 16;
+
+        const size = jpegSize(bytes);
+        /* Unreadable is said out loud rather than left as an empty page. */
+        if (!size || size.width <= 0 || size.height <= 0) {
+            sheet.text('The photograph could not be read from storage.', MARGIN, top, { size: 10 });
+            pages.push(sheet);
+            return;
+        }
+        const maxW = PAGE.width - MARGIN * 2;
+        const maxH = top - MARGIN - 10;
+        const scale = Math.min(maxW / size.width, maxH / size.height);
+        const w = size.width * scale;
+        const h = size.height * scale;
+        sheet.image(name, MARGIN + (maxW - w) / 2, top - h, w, h);
+        images.push({ name, bytes });
+        pages.push(sheet);
+    };
+
+    if (data.photo.available && data.photo.bytes) {
+        photoPage(
+            data.photo.bytes, 'Ph0', 'Photograph taken at the delivery',
+            'Taken by the courier at the address, at the time of the handover recorded overleaf.',
+        );
+    }
+    if (data.idPhoto?.bytes) {
+        photoPage(
+            data.idPhoto.bytes, 'Ph1', 'Identification',
+            'This delivery was marked ID Required by the pharmacy. The recipient presented identification, photographed at the door.',
+        );
+    }
+
+    return buildPdf(pages, {
         title: `Proof of delivery ${data.orderId}`,
         // No patient name in the metadata: it shows in a reader's title bar and
         // in the file properties of anything this is forwarded to.
         subject: 'University Health Pharmacy Courier',
-    }, now);
+    }, now, images);
 }
 
 /* -------------------------------------------------------------- gathering */
@@ -454,7 +527,7 @@ export async function loadPodData(client: Client, opts: LoadOptions): Promise<Po
                wonder whether one was ever taken. */
             note: hasPhoto
                 ? opts.photoAvailable
-                    ? 'A photograph of the delivery location is held with this record and is shown beside this document in the tracking portal.'
+                    ? 'A photograph taken at the delivery is included with this document.'
                     : 'A photograph was taken at the door. File storage is not configured, so it cannot be shown.'
                 : '',
         },

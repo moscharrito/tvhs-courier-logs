@@ -132,6 +132,7 @@ export interface Point { x: number; y: number }
  */
 export class Page {
     private readonly ops: string[] = [];
+    private readonly names = new Set<string>();
 
     text(value: string, x: number, y: number, opts: { font?: FontName; size?: number; grey?: number } = {}): void {
         const { font = 'Helvetica', size = 10, grey = 0 } = opts;
@@ -194,9 +195,84 @@ export class Page {
         );
     }
 
+    /**
+     * Draw a JPEG that buildPdf will embed under this name.
+     *
+     * The transform is the whole trick: PDF draws an image into the unit
+     * square, so putting it at x, y at w by h is a matrix rather than any
+     * resampling of the picture. `q` and `Q` save and restore, so the matrix
+     * cannot leak into whatever is drawn after it.
+     */
+    image(name: string, x: number, y: number, width: number, height: number): void {
+        this.names.add(name);
+        this.ops.push(
+            'q',
+            `${round(width)} 0 0 ${round(height)} ${round(x)} ${round(y)} cm`,
+            `/${name} Do`,
+            'Q',
+        );
+    }
+
+    /** Which images this page referenced, so its Resources can name them. */
+    imageNames(): string[] {
+        return [...this.names];
+    }
+
     toContent(): string {
         return this.ops.join('\n');
     }
+}
+
+/**
+ * A photograph to embed.
+ *
+ * JPEG ONLY, AND THE BYTES GO IN UNTOUCHED. PDF understands JPEG natively
+ * through the DCTDecode filter, so the file is copied in as it came off the
+ * camera: no decoding, no re-encoding, no image library, and no second copy
+ * of a patient's doorstep passing through a transform on the way. It is also
+ * why this is a contained change rather than a dependency.
+ */
+export interface EmbeddedImage {
+    /** The name the page refers to, without the slash. */
+    name: string;
+    /** The JPEG exactly as stored. */
+    bytes: Buffer;
+}
+
+export interface JpegSize { width: number; height: number }
+
+/**
+ * The pixel size of a JPEG, read from its start-of-frame marker.
+ *
+ * Needed because PDF has to be told the dimensions, and because the drawn
+ * box has to keep the picture's proportions: a doorstep squashed into a
+ * square is a photograph somebody will say looks wrong.
+ *
+ * Returns null for anything it does not understand, and the caller then
+ * leaves the photograph out and says so, rather than embedding something a
+ * reader will refuse to open.
+ */
+export function jpegSize(bytes: Buffer): JpegSize | null {
+    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+    let i = 2;
+    while (i + 9 < bytes.length) {
+        if (bytes[i] !== 0xff) { i += 1; continue; }
+        const marker = bytes[i + 1]!;
+        /* Padding, and markers that carry no length. */
+        if (marker === 0xff) { i += 1; continue; }
+        if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+        const length = bytes.readUInt16BE(i + 2);
+        /* Every start-of-frame except the arithmetic-coded and hierarchical
+           ones, which nothing on a phone produces. */
+        const isFrame = (marker >= 0xc0 && marker <= 0xcf)
+            && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+        if (isFrame) {
+            return { height: bytes.readUInt16BE(i + 5), width: bytes.readUInt16BE(i + 7) };
+        }
+        if (length < 2) return null;
+        i += 2 + length;
+    }
+    return null;
 }
 
 export interface DocumentInfo {
@@ -212,7 +288,12 @@ export interface DocumentInfo {
  * cross-reference table points at them. That table is the part a reader
  * actually needs to be right; everything else is content.
  */
-export function buildPdf(pages: Page[], info: DocumentInfo, now: Date = new Date()): Buffer {
+export function buildPdf(
+    pages: Page[],
+    info: DocumentInfo,
+    now: Date = new Date(),
+    images: EmbeddedImage[] = [],
+): Buffer {
     if (pages.length === 0) throw new Error('A PDF needs at least one page');
 
     const objects: string[] = [];
@@ -228,13 +309,39 @@ export function buildPdf(pages: Page[], info: DocumentInfo, now: Date = new Date
     const infoId = 5;
     objects.push('', '', '', '', ''); // reserved, filled in below
 
+    /* Photographs first, so a page can point at one.
+     *
+     * The bytes are carried as a latin1 string because that is what every
+     * other object here is and what the whole file is written as, and latin1
+     * maps 0..255 straight through in both directions. A JPEG survives that
+     * exactly; utf8 would not, and the damage would only show up as a picture
+     * that will not open. */
+    const imageIds = new Map<string, number>();
+    for (const image of images) {
+        const size = jpegSize(image.bytes);
+        /* Unreadable means left out. See jpegSize: a photograph a reader
+           refuses to open is worse than a document saying there is one. */
+        if (!size) continue;
+        imageIds.set(image.name, add(
+            `<< /Type /XObject /Subtype /Image /Width ${size.width} /Height ${size.height} `
+            + '/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode '
+            + `/Length ${image.bytes.length} >>\nstream\n${image.bytes.toString('latin1')}\nendstream`,
+        ));
+    }
+
     const pageIds: number[] = [];
     for (const page of pages) {
         const content = page.toContent();
         const contentId = add(`<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`);
+        /* Only the images this page actually drew, and only those that were
+           embedded. A reader may assume a named resource exists, so naming
+           one that was dropped would break the file rather than the picture. */
+        const used = page.imageNames().filter((n) => imageIds.has(n));
+        const xobjects = used.length === 0 ? ''
+            : `/XObject << ${used.map((n) => `/${n} ${imageIds.get(n)} 0 R`).join(' ')} >> `;
         pageIds.push(add(
             `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE.width} ${PAGE.height}] `
-            + `/Resources << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >> >> `
+            + `/Resources << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >> ${xobjects}>> `
             + `/Contents ${contentId} 0 R >>`,
         ));
     }
