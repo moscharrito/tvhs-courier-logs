@@ -224,7 +224,12 @@ export const files = sqliteTable(
         unique('files_key_unique').on(t.s3Key),
         index('files_order_idx').on(t.orderId),
         index('files_project_status_idx').on(t.projectId, t.status),
-        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature')`),
+        /* Kept in step with FILE_KINDS above and with drizzle/0038, which
+           rebuilt the table to widen this. The migration is what the database
+           actually has; this is what a future generated migration would
+           compare against, and the two drifting apart is how somebody later
+           gets a diff that silently narrows a live constraint. */
+        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature','courier_form','patient_id')`),
         check('files_status_check', sql`${t.status} IN ('pending','stored')`),
     ],
 );

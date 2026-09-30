@@ -267,3 +267,52 @@ describe('the run manifest', () => {
         expect(stop.recipientPhone).toBe('');
     });
 });
+
+/* ------------------------------------------------ the upload route itself */
+
+describe('asking for an upload ticket', () => {
+    /* THE GAP THAT LET A REAL BUG THROUGH.
+     *
+     * Every other test in this file inserts file rows straight into the
+     * table to reach the delivery logic, so none of them ever came through
+     * the route that validates `kind`. That route kept a local copy of the
+     * four original kinds, which silently became the wrong list the moment
+     * drizzle/0038 added two more. The database accepted them and the courier
+     * app sent them; only this endpoint refused, and under the new rules a
+     * refused upload stops the delivery being recorded at all.
+     *
+     * A dry run against production found it on the first attempt. These
+     * assert the contract rather than the plumbing, so they hold whether or
+     * not file storage is configured on the machine running them. */
+
+    const ticketFor = (kind) => admin.post(`${UH}/files`).send({
+        kind, contentType: 'image/jpeg', bytes: 1024,
+    });
+
+    it('accepts every kind the schema and the app know about', async () => {
+        for (const kind of ['doorstep', 'pod', 'exception', 'signature', 'courier_form', 'patient_id']) {
+            const res = await ticketFor(kind);
+            const details = JSON.stringify(res.body?.details ?? []);
+            expect(details, `${kind} was rejected: ${details}`).not.toMatch(/kind/i);
+            /* 201 when storage is on, 503 when it is not. Either is fine;
+               a 400 about `kind` is the failure this test exists for. */
+            expect([201, 503]).toContain(res.status);
+        }
+    });
+
+    it('still refuses a kind nobody defined', async () => {
+        /* The route refuses an unconfigured file service BEFORE it validates
+           the body, which is the right order: there is no point telling
+           somebody their enum is wrong when nothing could have been stored
+           either way. So with storage off everything is 503 and this can
+           only be asserted where it is on. Said out loud rather than left as
+           a test that quietly proves nothing. */
+        const res = await ticketFor('passport_scan');
+        if (res.status === 503) {
+            expect(res.body.code ?? res.body.error).toBeTruthy();
+            return;
+        }
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(res.body.details)).toMatch(/kind/i);
+    });
+});

@@ -367,6 +367,10 @@ const MATRIX = [
        only: a pharmacy may see the photograph of their own delivery and has
        no business enumerating the day's files. */
     ['GET', `${UH}/client/orders/999999/photo`, UH_CLIENT_VIEW, ''],
+    /* Identification, where the pharmacy stamped the form. Its own row and
+       its own audit action: reading a government ID should be a deliberate
+       act, not a side effect of opening a delivery. */
+    ['GET', `${UH}/client/orders/999999/id-photo`, UH_CLIENT_VIEW, ''],
 
     /* --- the shadow week's log (ticket 5.2). A courier can report what they
        see at the door; reviewing and closing is a judgement about the

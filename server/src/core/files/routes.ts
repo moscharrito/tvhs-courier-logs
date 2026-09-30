@@ -25,8 +25,20 @@ import {
     buildKey, ALLOWED_CONTENT_TYPES, MAX_FILE_BYTES, FilesUnavailableError,
     READ_URL_SECONDS, type FileStorage,
 } from './storage';
+import { FILE_KINDS } from '../../db/schema/core';
 
-const FILE_KINDS = ['doorstep', 'pod', 'exception', 'signature'] as const;
+/* IMPORTED, NOT RESTATED.
+ *
+ * This was a local copy of the four original kinds, and it silently became
+ * the wrong list the moment drizzle/0038 added 'courier_form' and
+ * 'patient_id'. The database accepted them, the courier app sent them, and
+ * this route refused them with "Invalid enum value" — so a courier could
+ * photograph the signed form and never upload it, which under the new rules
+ * stops the delivery being recorded at all.
+ *
+ * Nothing caught it. The dispensing tests insert file rows directly to reach
+ * the delivery logic, so none of them came through here. A dry run against
+ * production did, on the first attempt. */
 
 const RequestUpload = z.object({
     kind: z.enum(FILE_KINDS),

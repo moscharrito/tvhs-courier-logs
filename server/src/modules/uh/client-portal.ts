@@ -139,6 +139,16 @@ function present(o: OrderRow, siteName: string, courierName: string) {
     };
 }
 
+/** What proves a handover, newest first. The signed paper form replaced the
+ *  drawn signature; a doorstep picture proves a drop where nobody answered. */
+const PROOF_KINDS = ['courier_form', 'doorstep'] as const;
+
+/** Identification, photographed where the pharmacy stamped the form. Kept
+ *  apart from the proof kinds and served by its own route, so that reading a
+ *  government ID is a distinct, separately audited act rather than something
+ *  that happens because somebody opened a delivery. */
+const ID_KIND = ['patient_id'] as const;
+
 export function createClientPortalRouter(
     { client, storage }: { client: Client; storage: FileStorage },
 ): Router {
@@ -201,12 +211,24 @@ export function createClientPortalRouter(
      * Newest wins. A courier who photographed twice did so because the first
      * one was no good.
      */
-    async function storedDoorstepPhoto(projectId: number, orderId: number) {
+    async function storedDoorstepPhoto(projectId: number, orderId: number, kinds: readonly string[] = PROOF_KINDS) {
+        /* THE SIGNED FORM COUNTS, NOT ONLY A DOORSTEP PICTURE.
+         *
+         * This looked for kind = 'doorstep' alone, which was right until
+         * University Health moved the signature onto their own paper form.
+         * After that a courier could photograph the form, the upload would
+         * succeed, and the pharmacy would be told no photograph existed. The
+         * proof of the handover would have been invisible to the only people
+         * who need it.
+         *
+         * Newest first across both kinds: a courier who photographed twice
+         * did so because the first was no good. */
+        const list = kinds.map(() => '?').join(',');
         const rs = await client.execute({
             sql: `SELECT id, s3_key, content_type FROM files
-                  WHERE project_id = ? AND order_id = ? AND kind = 'doorstep' AND status = 'stored'
+                  WHERE project_id = ? AND order_id = ? AND kind IN (${list}) AND status = 'stored'
                   ORDER BY id DESC LIMIT 1`,
-            args: [projectId, orderId],
+            args: [projectId, orderId, ...kinds],
         });
         const row = rs.rows[0];
         return row
@@ -537,6 +559,47 @@ export function createClientPortalRouter(
            It is recorded with the file id, so "who looked at this, and when"
            has an answer that does not depend on anybody's memory. */
         await req.audit('client.photo', 'file', String(found.id), { orderId: id });
+
+        const signed = storage.presignDownload(found.key);
+        res.redirect(302, signed.url);
+    }));
+
+    /* ------------------------------------------------ identification ----
+     *
+     * "If the courier form has ID Required stamped, courier is to ask for an
+     * ID/DL, take a picture of it and send back to pharmacy." (University
+     * Health, 29 September 2026.) This is the sending back.
+     *
+     * ITS OWN ROUTE, NOT A PARAMETER ON THE ONE ABOVE. A photograph of a
+     * government identity document tied by name to a patient receiving a
+     * prescription is the most sensitive object this system holds. Reading
+     * one should be a deliberate act with its own line in the audit trail,
+     * not something that happens because a pharmacist opened a delivery and
+     * the page fetched everything attached to it.
+     *
+     * Same scoping as everything else here: their own pharmacy only, not
+     * found rather than forbidden, and a URL that expires in five minutes. */
+    router.get('/orders/:id/id-photo', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const id = Number(req.params['id']);
+        const order = await orderInScope(req, id);
+        if (!order) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        const found = await storedDoorstepPhoto(project.id, id, ID_KIND);
+        if (!found) { res.status(404).json({ error: 'No identification was photographed for this delivery' }); return; }
+
+        if (!storage.available) {
+            res.status(503).json({
+                error: 'File storage is not configured on this server, so the photograph cannot be shown.',
+                code: 'files.unavailable',
+            });
+            return;
+        }
+
+        /* Its own audit action, separate from client.photo, so "who looked at
+           a patient's driving licence" is answerable on its own rather than
+           by filtering a general photograph log. */
+        await req.audit('client.id_photo', 'file', String(found.id), { orderId: id });
 
         const signed = storage.presignDownload(found.key);
         res.redirect(302, signed.url);
