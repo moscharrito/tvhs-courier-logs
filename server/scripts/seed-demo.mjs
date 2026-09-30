@@ -156,6 +156,32 @@ say(`Sites    ${sites.length}: ${sites.map((s) => s.code).join(', ')}`);
 
 const UH = '/api/projects/uh/uh';
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * REFUSE TO SEED A DAY THAT IS ALREADY SEEDED.
+ *
+ * Run twice on 30 September 2026 and it wrote every delivery again: twenty
+ * orders on today, thirteen distinct references, DEMO-2026-09-30-106 existing
+ * as both id 134 and id 246. The portal showed each row twice and the
+ * completion rate fell below the target it had been tuned to clear.
+ *
+ * Nothing stopped it, because the dedupe key on orders is an index and not a
+ * constraint: a second identical order is a thing the import is allowed to
+ * create. That is right for real work and wrong for a seeding script, which
+ * is why the check lives here rather than in the schema.
+ * ───────────────────────────────────────────────────────────────────────── */
+const already = await call(`${UH}/orders?serviceDate=${today}`);
+const seeded = (already.body?.orders ?? []).filter((o) => String(o.externalRef ?? '').startsWith('DEMO-'));
+if (seeded.length > 0 && !has('again')) {
+    console.error(`Refusing to seed: ${today} already has ${seeded.length} DEMO deliveries.`);
+    console.error('Running twice writes every row again and halves the completion rate.');
+    console.error('');
+    console.error('Clear the range first, with the Turso values from the Render dashboard:');
+    console.error(`  npm run clear:work -w server -- --from ${dayBack(days, 'America/Chicago')} --to ${today} --project uh --i-mean-production --apply`);
+    console.error('');
+    console.error('Or pass --again if you genuinely want a second copy.');
+    process.exit(1);
+}
+
 /* ------------------------------------------------------ the demo courier */
 
 const courier = 'demo.courier';
@@ -176,13 +202,21 @@ say(`Courier  ${courier}`);
  * their own, and then sees only their own numbers: same portal, narrower
  * scope, nothing to configure differently. */
 
-const client = 'uh.karthik';
+const client = 'uhpharmacy.staff';
 const clientPass = process.env['DEMO_CLIENT_PASS'] ?? `Uh-portal-${Date.now().toString().slice(-6)}!`;
 const foundClient = await call(`/api/users/${client}`);
 if (foundClient.status !== 200) {
-    await call('/api/users', { method: 'POST', body: JSON.stringify({ username: client, name: 'Karthik Munnam', email: 'karthik@example.invalid', password: clientPass, role: 'staff' }) });
+    await call('/api/users', { method: 'POST', /* A ROLE, NOT A PERSON. The portal shows this name back to whoever is
+       signed in, and putting one individual's name on a shared demo account
+       means the screen says "Karthik Munnam" to whichever colleague he passes
+       the laptop to. It is also the account a pharmacist at a counter will
+       eventually hold, and they are not him. */
+    body: JSON.stringify({ username: client, name: 'UH-Pharmacy Staff', email: 'uh.pharmacy@example.invalid', password: clientPass, role: 'staff' }) });
 } else {
     await call(`/api/users/${client}/password`, { method: 'POST', body: JSON.stringify({ password: clientPass }) });
+    /* Re-run on an account made by an earlier version of this script, which
+       named an individual. */
+    await call(`/api/users/${client}`, { method: 'PATCH', body: JSON.stringify({ name: 'UH-Pharmacy Staff' }) });
 }
 await call(`/api/users/${client}/memberships/uh`, {
     method: 'PUT',
