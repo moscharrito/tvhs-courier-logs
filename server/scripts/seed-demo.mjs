@@ -1,246 +1,535 @@
-/* Demo data for walking through the app by hand.
+/* Three weeks of a contract that looks like a contract, for the Webex.
  *
- *   npm run seed:demo -w server
+ *   npm run seed:demo-uh -w server                                localhost
  *
- * Creates one courier, Mohammed, and a day of work for him in the UH project:
- * stops at two pharmacies in several states, so every screen has something on
- * it. Run it as often as you like; it adds a fresh run each time and never
- * deletes anything.
+ *   SEED_ADMIN_USER=admin SEED_ADMIN_PASS=... \
+ *     npm run seed:demo-uh -w server -- \
+ *       --base https://logs.izyglobalservices.com --i-mean-production --apply
  *
- * EVERY NAME AND ADDRESS HERE IS INVENTED. No patient data, real or redacted,
- * belongs in a seed script that lives in a repository.
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY BACKDATED AND WHY THIS MUCH.
  *
- * It refuses to touch a Turso database. Demo patients in a production table
- * would be indistinguishable from real ones a week later, and somebody would
- * eventually invoice them.
+ * University Health are shown the pharmacy portal and nothing else, so every
+ * figure on Karthik Munnam's list has to have something real behind it in
+ * that portal. A single day of rehearsal data gives a report with one bar, a
+ * completion rate of either 100 or 50 per cent, and turnaround times of zero
+ * because everything happened in the same second. None of that reads as a
+ * running service.
+ *
+ * So this writes three weeks: several pharmacies, both service levels, a
+ * completion rate a little above the 95 per cent expectation rather than a
+ * suspicious hundred, failures with different reasons, a return, a reattempt
+ * that succeeded, and turnaround spread across a realistic range.
+ *
+ * IT IS INVENTED, AND DELIBERATELY OBVIOUSLY SO. Every recipient is "Test
+ * Patient <letter>" at a numbered Rehearsal Way, because no University Health
+ * data enters any environment until the BAAs are filed and a person reading
+ * the board should never have to wonder which rows are real. That matters
+ * most here, where the rows sit in the same database as the live TVHS logs.
+ *
+ * IT DRIVES THE HTTP API. Creating an order resolves a pharmacy, computes an
+ * SLA deadline from the project settings, resolves a ZIP to a zone and writes
+ * the first custody event. Rows inserted directly look right in a list and
+ * are wrong in every screen that asks a question about them, which is exactly
+ * the screen being demonstrated.
+ *
+ * EVERY ROW IS MARKED DEMO-<date>-<n>, so clear:work removes the lot.
  */
 
-import path from 'node:path';
-import dotenv from 'dotenv';
-import { loadConfig } from '../src/config.ts';
-import { createDatabase } from '../src/db/client.ts';
-import { runMigrations } from '../src/db/migrate.ts';
-import bcrypt from 'bcryptjs';
-import { todayIn } from '../src/core/dates.ts';
-import { dueForNewOrder } from '../src/modules/uh/lifecycle.ts';
-import { resolveSettings } from '../src/core/projects/settings.ts';
-import { recordOrderEvent } from '../src/modules/uh/order-events.ts';
-
-const COURIER = {
-    username: 'mohammed',
-    name: 'Mohammed',
-    password: 'demo-pass-2026',
-    pin: '4417',
+const args = process.argv.slice(2);
+const has = (f) => args.includes(`--${f}`);
+const arg = (name, fallback = '') => {
+    const i = args.indexOf(`--${name}`);
+    return i === -1 ? fallback : (args[i + 1] ?? fallback);
 };
 
-/* Addresses are real San Antonio streets in the contract's ZIP zones, so the
- * zone and pricing logic has something honest to chew on. The people are not. */
-const STOPS = [
-    { site: 'discharge', recipientName: 'Ines Vargas', addressLine: '1122 Rigsby Ave', zip: '78210', description: 'Oral solids', quantity: 2, signatureRequired: false, serviceType: 'stat', state: 'delivered' },
-    { site: 'discharge', recipientName: 'Marcus Ibarra', addressLine: '4304 Blanco Rd', zip: '78212', description: 'Controlled substance', quantity: 1, signatureRequired: true, serviceType: 'stat', state: 'arrived' },
-    { site: 'discharge', recipientName: 'Priya Raman', addressLine: '210 Gembler Rd', zip: '78219', description: 'Refrigerated', quantity: 1, signatureRequired: false, serviceType: 'adhoc', state: 'failed' },
-    { site: 'discharge', recipientName: 'Dolores Fuentes', addressLine: '8535 Tom Slick', zip: '78229', description: 'Oral solids', quantity: 3, signatureRequired: false, serviceType: 'stat', state: 'picked_up' },
-    { site: 'green', recipientName: 'Arthur Nwosu', addressLine: '1919 Pat Booker Rd', zip: '78148', description: 'Infusion supplies', quantity: 1, signatureRequired: true, serviceType: 'stat', state: 'assigned' },
-    { site: 'green', recipientName: 'Lucia Herrera', addressLine: '502 Bandera Rd', zip: '78228', description: 'Oral solids', quantity: 2, signatureRequired: false, serviceType: 'adhoc', state: 'assigned' },
-    { site: 'green', recipientName: 'Teresa Lam', addressLine: '7402 John Smith Dr', zip: '78229', description: 'Cold pack', quantity: 1, signatureRequired: false, serviceType: 'stat', state: 'pool' },
-    { site: 'discharge', recipientName: 'Owen Castillo', addressLine: '3903 Fredericksburg Rd', zip: '78201', description: 'Oral solids', quantity: 1, signatureRequired: false, serviceType: 'stat', state: 'pool' },
-];
+const base = arg('base', 'http://127.0.0.1:3000').replace(/\/+$/, '');
+const apply = has('apply');
+const days = Math.max(1, Math.min(60, Number(arg('days', '21'))));
+const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(base);
 
-const SIGNATURE = [[
-    { x: 0.08, y: 0.62, t: 0 }, { x: 0.22, y: 0.28, t: 40 }, { x: 0.35, y: 0.70, t: 80 },
-    { x: 0.48, y: 0.24, t: 120 }, { x: 0.61, y: 0.66, t: 160 }, { x: 0.78, y: 0.34, t: 200 },
-]];
-
-// The same .env the server reads, so this seeds the database you develop against.
-dotenv.config({ path: path.resolve(import.meta.dirname, '..', '.env') });
-const config = loadConfig();
-if (config.db.kind !== 'file') {
-    console.error('Refusing to seed demo data into a Turso database. This is for a local file database only.');
+if (!isLocal && !has('i-mean-production')) {
+    console.error(`Refusing to touch ${base} without --i-mean-production.`);
+    console.error('These rows land in the live database alongside the TVHS logs.');
+    process.exit(1);
+}
+if (!isLocal && !/^https:/i.test(base)) {
+    console.error('Refusing to send credentials over plain HTTP to a remote host.');
     process.exit(1);
 }
 
-const database = createDatabase(config);
-const client = database.client;
-await runMigrations(database);
-
-const one = async (sql, args = []) => (await client.execute({ sql, args })).rows[0] ?? null;
-const run = (sql, args = []) => client.execute({ sql, args });
-
-const project = await one("SELECT * FROM projects WHERE code = 'uh'");
-if (!project) {
-    console.error('The uh project is not seeded. Run the migrations first.');
+const adminUser = process.env['SEED_ADMIN_USER'] ?? 'admin';
+const adminPass = process.env['SEED_ADMIN_PASS'] ?? '';
+if (!isLocal && adminPass === '') {
+    console.error('Set SEED_ADMIN_PASS. It is read from the environment and never printed.');
     process.exit(1);
 }
-const projectId = Number(project.id);
-const settings = resolveSettings(JSON.parse(String(project.settings ?? '{}')));
-const timezone = String(project.timezone);
-const serviceDate = todayIn(timezone);
 
-/* --------------------------------------------------------------- the user */
+/* ------------------------------------------------------------- plumbing */
 
-let user = await one('SELECT * FROM users WHERE username = ?', [COURIER.username]);
-if (!user) {
-    await run(
-        `INSERT INTO users (username, password, pin, name, role, status) VALUES (?, ?, ?, ?, 'driver', 'active')`,
-        [COURIER.username, bcrypt.hashSync(COURIER.password, 10), bcrypt.hashSync(COURIER.pin, 10), COURIER.name],
-    );
-    user = await one('SELECT * FROM users WHERE username = ?', [COURIER.username]);
-    console.log(`Created courier ${COURIER.username} / ${COURIER.password} (PIN ${COURIER.pin})`);
-} else {
-    // Reset the password every run: this account exists to be signed into.
-    await run('UPDATE users SET password = ?, pin = ?, status = ?, name = ? WHERE id = ?', [
-        bcrypt.hashSync(COURIER.password, 10), bcrypt.hashSync(COURIER.pin, 10), 'active', COURIER.name, user.id,
-    ]);
-    console.log(`Reset courier ${COURIER.username} / ${COURIER.password} (PIN ${COURIER.pin})`);
-}
+let cookie = '';
+const jar = {};
+const as = (who) => { cookie = jar[who] ?? ''; };
+const remember = (who) => { jar[who] = cookie; };
 
-const membership = await one('SELECT * FROM memberships WHERE user_id = ? AND project_id = ?', [user.id, projectId]);
-if (!membership) {
-    await run(
-        `INSERT INTO memberships (user_id, project_id, role, settings, created_at) VALUES (?, ?, 'courier', '{}', ?)`,
-        [user.id, projectId, new Date().toISOString()],
-    );
-}
-
-/* -------------------------------------------------------------- the orders */
-
-const siteIdByCode = new Map();
-for (const row of (await client.execute({ sql: 'SELECT id, code FROM sites WHERE project_id = ?', args: [projectId] })).rows) {
-    siteIdByCode.set(String(row.code), Number(row.id));
-}
-
-const zoneFor = async (zip) => {
-    const row = await one(
-        `SELECT zone FROM zone_zips WHERE project_id = ? AND zip = ? AND effective_from <= ? ORDER BY effective_from DESC LIMIT 1`,
-        [projectId, zip, serviceDate],
-    );
-    return row ? Number(row.zone) : null;
-};
-
-const stamp = new Date();
-const madeIds = [];
-for (const [index, stop] of STOPS.entries()) {
-    const siteId = siteIdByCode.get(stop.site) ?? [...siteIdByCode.values()][0];
-    const receivedAt = new Date(stamp.getTime() - (STOPS.length - index) * 6 * 60000);
-    const due = dueForNewOrder(stop.serviceType, receivedAt, settings);
-    const orderRow = await one(
-        `INSERT INTO orders (project_id, site_id, service_date, external_ref, service_type,
-                             recipient_name, address_line, city, state, zip, zone, delivery_notes,
-                             signature_required, received_at, due_at, status, dedupe_key, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'San Antonio', 'TX', ?, ?, '', ?, ?, ?, 'ready', ?, ?) RETURNING *`,
-        [
-            projectId, siteId, serviceDate, `DEMO-${Date.now().toString().slice(-6)}-${index + 1}`, stop.serviceType,
-            stop.recipientName, stop.addressLine, stop.zip, await zoneFor(stop.zip),
-            stop.signatureRequired ? 1 : 0, receivedAt.toISOString(),
-            due.dueAt ? due.dueAt.toISOString() : null,
-            `demo-${Date.now()}-${index}`, new Date().toISOString(),
-        ],
-    );
-    await run(
-        `INSERT INTO packages (project_id, order_id, description, quantity, signature_required, outcome)
-         VALUES (?, ?, ?, ?, ?, 'pending')`,
-        [projectId, Number(orderRow.id), stop.description, stop.quantity, stop.signatureRequired ? 1 : 0],
-    );
-    madeIds.push({ id: Number(orderRow.id), row: orderRow, stop });
-}
-
-/* ----------------------------------------------------------------- the run */
-
-const assigned = madeIds.filter((o) => o.stop.state !== 'pool');
-const runRow = await one(
-    `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_at)
-     VALUES (?, ?, ?, ?, 'planned', ?) RETURNING *`,
-    [projectId, COURIER.username, serviceDate, 'Demo run', new Date().toISOString()],
-);
-const runId = Number(runRow.id);
-
-let sequence = 0;
-for (const order of assigned) {
-    sequence += 1;
-    await run(
-        `INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES (?, ?, ?, ?)`,
-        [projectId, runId, order.id, sequence],
-    );
-}
-
-/* Drive each order to the state the list asks for, through the same transition
- * table the app uses. Nothing here writes a status directly, so the demo data
- * cannot be in a state the application could not have produced itself. */
-const fresh = async (id) => one('SELECT * FROM orders WHERE id = ?', [id]);
-const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60000);
-
-const signatureKey = async (kind, signedName, when) => {
-    const row = await one(
-        `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
-         VALUES (?, ?, ?, ?, ?, ?, 29.4241, -98.4936) RETURNING id`,
-        [projectId, kind, signedName, JSON.stringify(SIGNATURE), COURIER.username, when.toISOString()],
-    );
-    return `local:signature:${Number(row.id)}`;
-};
-
-for (const order of assigned) {
-    const { state } = order.stop;
-    await recordOrderEvent(client, {
-        projectId, order: await fresh(order.id), actor: 'dispatch', settings,
-        event: { type: 'assigned', at: at(90), courierUsername: COURIER.username },
-    });
-    if (state === 'assigned') continue;
-
-    await recordOrderEvent(client, {
-        projectId, order: await fresh(order.id), actor: COURIER.username, settings,
-        event: {
-            type: 'picked_up', at: at(70), signedName: 'Pharmacy Tech',
-            signatureKey: await signatureKey('pickup', 'Pharmacy Tech', at(70)),
-            lat: 29.5085, lng: -98.5768,
+async function call(path, options = {}) {
+    const res = await fetch(base + path, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(cookie ? { Cookie: cookie } : {}),
+            ...(options.headers ?? {}),
         },
     });
-    if (state === 'picked_up') continue;
-
-    await recordOrderEvent(client, {
-        projectId, order: await fresh(order.id), actor: COURIER.username, settings,
-        event: { type: 'arrived', at: at(20), lat: 29.4241, lng: -98.4936 },
-    });
-    if (state === 'arrived') continue;
-
-    if (state === 'delivered') {
-        await recordOrderEvent(client, {
-            projectId, order: await fresh(order.id), actor: COURIER.username, settings,
-            event: {
-                type: 'delivered', at: at(15), signedName: order.stop.recipientName,
-                signatureKey: await signatureKey('delivery', order.stop.recipientName, at(15)),
-                lat: 29.4241, lng: -98.4936,
-            },
-        });
-    }
-
-    if (state === 'failed') {
-        const pkg = await one('SELECT id FROM packages WHERE order_id = ?', [order.id]);
-        await run('UPDATE packages SET failure_reason_code = ?, failure_note = ? WHERE id = ?', [
-            'no_access', 'Gate code did not work and the office was closed', Number(pkg.id),
-        ]);
-        await recordOrderEvent(client, {
-            projectId, order: await fresh(order.id), actor: COURIER.username, settings,
-            event: {
-                type: 'attempted', at: at(10), reason: 'no_access',
-                packageIds: [Number(pkg.id)], lat: 29.4241, lng: -98.4936,
-            },
-        });
-    }
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    const text = await res.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+    return { status: res.status, body };
 }
 
-const counts = {};
-for (const row of (await client.execute({
-    sql: 'SELECT status, COUNT(*) AS n FROM orders WHERE project_id = ? AND service_date = ? GROUP BY status',
-    args: [projectId, serviceDate],
-})).rows) counts[String(row.status)] = Number(row.n);
+const say = (s) => console.log(s);
+const pad = (n) => String(n).padStart(2, '0');
 
-console.log('');
-console.log(`Demo data for ${serviceDate} (${timezone})`);
-console.log(`  run ${runId} for ${COURIER.name}, ${assigned.length} stops, ${STOPS.length - assigned.length} left in the pool`);
-console.log(`  today's orders by status: ${JSON.stringify(counts)}`);
-console.log('');
-console.log('Sign in as the courier:');
-console.log(`  username ${COURIER.username}   password ${COURIER.password}   PIN ${COURIER.pin}`);
-console.log('  courier screens: /projects/uh/my-run, /projects/uh/returns');
-console.log('  dispatch board (staff account): /projects/uh/board');
-console.log('');
+/** A date N days before today, as YYYY-MM-DD in the project's zone. */
+function dayBack(n, timezone) {
+    const d = new Date(Date.now() - n * 86400000);
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+}
+
+/** An ISO instant on a given service date, at a given local hour and minute.
+ *  Close enough for rehearsal data; the project is on Central and the offset
+ *  moves by an hour twice a year, which shifts a timestamp and nothing else. */
+const at = (date, hour, minute) => `${date}T${pad(hour + 5)}:${pad(minute)}:00.000Z`;
+
+/* Invented people. Not plausible San Antonio residents, on purpose. */
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+const REASONS = ['no_access', 'recipient_not_located', 'incorrect_address', 'refused'];
+
+/* A signature is strokes in a 0..1 space (ticket 2.4). Three short marks is
+   enough for the document to render something that reads as a hand rather
+   than a straight line. */
+const SCRAWL = [
+    [{ x: 0.10, y: 0.60 }, { x: 0.22, y: 0.30 }, { x: 0.34, y: 0.62 }],
+    [{ x: 0.38, y: 0.55 }, { x: 0.52, y: 0.28 }, { x: 0.60, y: 0.58 }],
+    [{ x: 0.64, y: 0.45 }, { x: 0.86, y: 0.42 }],
+];
+
+say('');
+say(`Server   ${base}`);
+say(`Mode     ${apply ? 'APPLY' : 'preview. Pass --apply to create anything.'}`);
+say(`Span     ${days} days of history, plus today`);
+
+const health = await call('/health');
+if (health.status !== 200) { console.error(`No /health: ${health.status}`); process.exit(1); }
+const filesOn = health.body?.files === 'configured';
+say(`Health   files ${health.body?.files}, mail ${health.body?.scheduler?.mail}`);
+
+if (!apply) {
+    say('');
+    say('Nothing was created. This would have:');
+    say(`  ${days} days of completed deliveries across several pharmacies, both`);
+    say('  service levels, a completion rate a little above 95 per cent, failures');
+    say('  with varied reasons, a return and a successful reattempt');
+    say('  today: a live day including a doorstep drop, an ID Required delivery,');
+    say(`  and one still in progress${filesOn ? ', all with real photographs' : ' (no photographs: storage is off)'}`);
+    say('  a pharmacy account for University Health scoped to every pharmacy');
+    say('');
+    say('Re-run with --apply.');
+} else {
+
+const login = await call('/api/login', { method: 'POST', body: JSON.stringify({ username: adminUser, password: adminPass }) });
+if (login.status !== 200) { console.error(`Could not sign in as ${adminUser}: ${login.status}`); process.exit(1); }
+remember('admin');
+
+const cfg = await call('/api/config');
+const timezone = 'America/Chicago';
+const today = cfg.body?.today ?? dayBack(0, timezone);
+
+const sitesRes = await call('/api/projects/uh/uh/sites');
+const sites = (Array.isArray(sitesRes.body) ? sitesRes.body : []).filter((s) => s.id);
+if (sites.length === 0) { console.error('This server has no UH pharmacies.'); process.exit(1); }
+say(`Sites    ${sites.length}: ${sites.map((s) => s.code).join(', ')}`);
+
+const UH = '/api/projects/uh/uh';
+
+/* ------------------------------------------------------ the demo courier */
+
+const courier = 'demo.courier';
+const courierPass = process.env['DEMO_COURIER_PASS'] ?? `Demo-courier-${Date.now().toString().slice(-6)}!`;
+const found = await call(`/api/users/${courier}`);
+if (found.status !== 200) {
+    await call('/api/users', { method: 'POST', body: JSON.stringify({ username: courier, name: 'Marcus Whitfield', password: courierPass, role: 'driver' }) });
+} else {
+    await call(`/api/users/${courier}/password`, { method: 'POST', body: JSON.stringify({ password: courierPass }) });
+}
+await call(`/api/users/${courier}/memberships/uh`, { method: 'PUT', body: JSON.stringify({ role: 'courier', settings: {} }) });
+say(`Courier  ${courier}`);
+
+/* --------------------------------------- the University Health account --
+ *
+ * Scoped to EVERY pharmacy, because Karthik manages the contract rather than
+ * one counter. A pharmacist at a single site gets a membership naming only
+ * their own, and then sees only their own numbers: same portal, narrower
+ * scope, nothing to configure differently. */
+
+const client = 'uh.karthik';
+const clientPass = process.env['DEMO_CLIENT_PASS'] ?? `Uh-portal-${Date.now().toString().slice(-6)}!`;
+const foundClient = await call(`/api/users/${client}`);
+if (foundClient.status !== 200) {
+    await call('/api/users', { method: 'POST', body: JSON.stringify({ username: client, name: 'Karthik Munnam', email: 'karthik@example.invalid', password: clientPass, role: 'staff' }) });
+} else {
+    await call(`/api/users/${client}/password`, { method: 'POST', body: JSON.stringify({ password: clientPass }) });
+}
+await call(`/api/users/${client}/memberships/uh`, {
+    method: 'PUT',
+    body: JSON.stringify({ role: 'pharmacy', settings: { siteIds: sites.map((s) => s.id) } }),
+});
+say(`Client   ${client}, scoped to all ${sites.length} pharmacies`);
+
+/* --------------------------------------------------------------- photos */
+
+const JPEG = Buffer.from(
+    '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a'
+    + 'HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA'
+    + 'AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==', 'base64');
+
+async function photograph(orderId, kind) {
+    if (!filesOn) return undefined;
+    const ticket = await call(`${UH}/files`, { method: 'POST', body: JSON.stringify({ kind, contentType: 'image/jpeg', bytes: JPEG.length, orderId }) });
+    if (ticket.status !== 201) return undefined;
+    const put = await fetch(ticket.body.upload.url, { method: ticket.body.upload.method, headers: ticket.body.upload.headers, body: JPEG });
+    if (!put.ok) return undefined;
+    await call(`${UH}/files/${ticket.body.id}/stored`, { method: 'POST', body: JSON.stringify({ bytes: JPEG.length }) });
+    return ticket.body.id;
+}
+
+/* ----------------------------------------------------------- one delivery */
+
+let seq = 0;
+async function order(date, opts = {}) {
+    seq += 1;
+    const letter = LETTERS[seq % LETTERS.length];
+    const site = opts.site ?? sites[seq % sites.length];
+    const res = await call(`${UH}/orders`, {
+        method: 'POST',
+        body: JSON.stringify({
+            siteId: site.id,
+            serviceType: opts.serviceType ?? (seq % 4 === 0 ? 'stat' : 'adhoc'),
+            recipientName: `Test Patient ${letter}${seq}`,
+            addressLine: `${100 + seq} Rehearsal Way`,
+            city: 'San Antonio', state: 'TX', zip: opts.zip ?? '78229',
+            recipientPhone: `210555${pad(seq % 100)}${pad((seq * 7) % 100)}`,
+            description: opts.description ?? 'Oral solids',
+            quantity: 1 + (seq % 3),
+            externalRef: `DEMO-${date}-${seq}`,
+            idRequired: opts.idRequired ?? false,
+            ...(date !== today ? { serviceDate: date } : {}),
+            ...(opts.requestedAt ? { requestedAt: opts.requestedAt } : {}),
+        }),
+    });
+    /* The pharmacy is carried explicitly rather than read back off the
+       response: the returns endpoint groups by counter, and depending on a
+       field the presenter may or may not include is how a batch silently goes
+       to the wrong place. */
+    return res.status === 201 ? { ...res.body, siteId: site.id } : null;
+}
+
+async function runFor(date, ids) {
+    if (ids.length === 0) return;
+    await call(`${UH}/runs`, { method: 'POST', body: JSON.stringify({ courierUsername: courier, label: `Round ${date}`, orderIds: ids }) });
+}
+
+const event = (id, type, body) => call(`${UH}/orders/${id}/events`, { method: 'POST', body: JSON.stringify({ type, ...body }) });
+
+/* ------------------------------------------------------------- the past */
+
+let created = 0;
+/* Counts every delivery written so far, so "one in twenty-four" means that
+   across the span rather than within each day. */
+let ordinal = 0;
+let deliveredCount = 0;
+let failedCount = 0;
+let returnedCount = 0;
+
+for (let back = days; back >= 1; back -= 1) {
+    const date = dayBack(back, timezone);
+    /* Four to six a day, so the by-day table has shape rather than a flat
+       line. Deterministic from the day index: a demo that looks different
+       every time it is seeded is hard to talk about. */
+    const count = 4 + (back % 3);
+    const ids = [];
+    const made = [];
+    const failedIds = [];
+    for (let i = 0; i < count; i += 1) {
+        /* THE LATE ONES ARE STATs, DELIBERATELY.
+         *
+         * The first pass delayed a delivery by 150 minutes and the report
+         * still read 100 per cent on time, because the delayed ones landed on
+         * ad-hoc orders whose deadline is four hours. Nothing was late
+         * because nothing could be. A STAT is due in two, so the same delay
+         * misses it by half an hour, which is what a bad morning looks like
+         * rather than a catastrophe. */
+        const o = await order(date, {
+            requestedAt: at(date, 8, 10 + i * 5),
+            ...((ordinal + i) % 20 === 0 ? { serviceType: 'stat' } : {}),
+        });
+        if (o) { ids.push(o.id); made.push(o); created += 1; }
+    }
+    await runFor(date, ids);
+
+    for (const [i, o] of made.entries()) {
+        /* ── TIMINGS, CHOSEN SO THE NUMBERS ARE HONEST AND GOOD ──────────
+         *
+         * The first pass produced 91 per cent completion and 93 per cent on
+         * time, against an expectation of 95. A demo whose own report shows
+         * the vendor missing the target is worse than no demo, and inventing
+         * a hundred per cent would be worse still: nobody believes it, and
+         * the first real month would look like a collapse.
+         *
+         * So: about one delivery in thirty fails and one in twenty runs late,
+         * which lands around 96 per cent completion and 95 on time. A service
+         * that works and occasionally does not.
+         *
+         * A STAT is due two hours after the request and an ad-hoc four, so
+         * an ordinary round at 09:15 is comfortably inside both. The late
+         * ones are late by two and a half hours, which is a real bad morning
+         * rather than a rounding error. */
+        const n = ordinal + i;
+        const late = n % 20 === 0;
+        const fails = n % 30 === 0;
+
+        /* Twenty to fifty-five minutes from the counter to the door, spread
+           by the order rather than flat: the first pass produced a median of
+           21 minutes across three weeks, which is not a courier round, it is
+           a spreadsheet. */
+        const pickup = at(date, 9, i * 3);
+        const arriveMin = 20 + i * 7 + (n % 5) * 6 + (late ? 150 : 0);
+        const arrive = at(date, 9 + Math.floor(arriveMin / 60), arriveMin % 60);
+        const closeMin = arriveMin + 4;
+        const close = at(date, 9 + Math.floor(closeMin / 60), closeMin % 60);
+
+        await event(o.id, 'picked_up', { signedName: 'Pharmacy Tech', at: pickup });
+        await event(o.id, 'arrived', { at: arrive });
+
+        if (fails) {
+            const detail = await call(`${UH}/orders/${o.id}`);
+            const packages = detail.body?.packages ?? [];
+            await call(`${UH}/orders/${o.id}/attempt`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    at: close,
+                    packages: packages.map((p) => ({
+                        packageId: p.id,
+                        reasonCode: REASONS[(back + i) % REASONS.length],
+                        note: 'Rehearsal data.',
+                    })),
+                }),
+            });
+            failedCount += 1;
+            /* AND TAKEN BACK TO THE PHARMACY THE SAME EVENING.
+             *
+             * The first pass left every failure sitting in the van: the report
+             * read "0 returned, 5 not yet returned", which says we are holding
+             * five lots of somebody's medication. Undelivered stock goes back
+             * over a counter the same day, and University Health asked about
+             * exactly this, so the demo has to show it happening rather than
+             * not happening. One is deliberately left outstanding, because a
+             * courier still on the road at five o'clock is the honest state
+             * and the screen exists to surface it. */
+            failedIds.push({ id: o.id, siteId: o.siteId });
+        } else {
+            await call(`${UH}/orders/${o.id}/deliver`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    at: close,
+                    signedName: `Test Recipient ${LETTERS[(back + i) % LETTERS.length]}`,
+                    identifiersChecked: ['name', 'address', 'phone'],
+                    noSignatureReason: 'Rehearsal data: signed on the paper form.',
+                }),
+            });
+            deliveredCount += 1;
+        }
+    }
+    /* Handed back at the end of the round, grouped by the pharmacy they
+       came from, which is what returns.ts expects: a batch over one counter
+       rather than a row at a time. */
+    const byPharmacy = new Map();
+    for (const f of failedIds) {
+        if (!byPharmacy.has(f.siteId)) byPharmacy.set(f.siteId, []);
+        byPharmacy.get(f.siteId).push(f.id);
+    }
+    for (const [siteId, orderIds] of byPharmacy) {
+        /* ?courier=, because returns are keyed on whose van the stock is in
+           rather than on a run, and an administrator recording one has to say
+           whose load it is. The first pass omitted it and every call came back
+           400 while the script sailed on, which is why the status is checked
+           below: a seeding script that ignores its own failures produces a
+           demo with a hole in it that nobody notices until the meeting. */
+        const back = await call(`${UH}/returns?courier=${encodeURIComponent(courier)}`, {
+            method: 'POST',
+            body: JSON.stringify({
+                siteId, orderIds,
+                signedName: 'Pharmacy Tech',
+                strokes: SCRAWL,
+                countedPackages: orderIds.length,
+                note: 'Returned at the end of the round.',
+                at: at(date, 17, 30),
+            }),
+        });
+        if (back.status !== 201 && back.status !== 200) {
+            say(`    return refused on ${date}: ${back.status} ${JSON.stringify(back.body).slice(0, 110)}`);
+        } else {
+            returnedCount += orderIds.length;
+        }
+    }
+
+    ordinal += made.length;
+    if (back % 5 === 0) say(`  ${date}  ${made.length} deliveries`);
+}
+
+/* ------------------------------------------------------------- today ---
+ *
+ * The day Karthik will actually click into, so it carries the things his
+ * email named that a bare history does not show: a photographed handover, a
+ * doorstep drop, an identification check, a failure that was reattempted and
+ * then succeeded, and one still out so the board is not suspiciously tidy. */
+
+say('');
+say(`  ${today}  today`);
+
+const live = [];
+for (let i = 0; i < 6; i += 1) {
+    const o = await order(today, {
+        idRequired: i === 3,
+        serviceType: i === 0 ? 'stat' : 'adhoc',
+        requestedAt: at(today, 7, 30 + i * 4),
+    });
+    if (o) { live.push(o); created += 1; }
+}
+await runFor(today, live.map((o) => o.id));
+
+for (const [i, o] of live.entries()) {
+    await event(o.id, 'picked_up', { signedName: 'Pharmacy Tech', at: at(today, 8, i * 6) });
+    if (i === 5) continue;                       // still out, on its way
+    await event(o.id, 'arrived', { at: at(today, 8, 30 + i * 8) });
+}
+
+/* 0: handed over, photographed, three identifiers checked */
+const form0 = await photograph(live[0].id, 'courier_form');
+await call(`${UH}/orders/${live[0].id}/deliver`, {
+    method: 'POST',
+    body: JSON.stringify({
+        at: at(today, 8, 35),
+        signedName: 'Test Recipient Alpha',
+        identifiersChecked: ['name', 'address', 'phone'],
+        ...(form0 ? { courierFormFileId: form0 } : { noSignatureReason: 'Rehearsal: storage off.' }),
+    }),
+});
+deliveredCount += 1;
+
+/* 1: left at the door with a photograph */
+const shot1 = await photograph(live[1].id, 'doorstep');
+if (shot1) {
+    await call(`${UH}/orders/${live[1].id}/doorstep`, {
+        method: 'POST',
+        body: JSON.stringify({ at: at(today, 8, 48), fileId: shot1, noSignatureReason: 'Nobody answered; left in the porch as agreed.' }),
+    });
+} else {
+    await call(`${UH}/orders/${live[1].id}/deliver`, {
+        method: 'POST',
+        body: JSON.stringify({ at: at(today, 8, 48), signedName: 'Test Recipient Bravo', noSignatureReason: 'Rehearsal: storage off.' }),
+    });
+}
+deliveredCount += 1;
+
+/* 2: failed, returned to the pharmacy, then reattempted and delivered */
+const detail2 = await call(`${UH}/orders/${live[2].id}`);
+await call(`${UH}/orders/${live[2].id}/attempt`, {
+    method: 'POST',
+    body: JSON.stringify({
+        at: at(today, 9, 5),
+        packages: (detail2.body?.packages ?? []).map((p) => ({ packageId: p.id, reasonCode: 'no_access', note: 'Building door locked; no answer on the intercom.' })),
+    }),
+});
+failedCount += 1;
+const retry = await call(`${UH}/orders/${live[2].id}/reattempt`, {
+    method: 'POST', body: JSON.stringify({ reason: 'Ward asked for a second run the same afternoon.' }),
+});
+if (retry.status === 201) {
+    created += 1;
+    await runFor(today, [retry.body.id]);
+    await event(retry.body.id, 'picked_up', { signedName: 'Pharmacy Tech', at: at(today, 13, 10) });
+    await event(retry.body.id, 'arrived', { at: at(today, 13, 40) });
+    const form2 = await photograph(retry.body.id, 'courier_form');
+    await call(`${UH}/orders/${retry.body.id}/deliver`, {
+        method: 'POST',
+        body: JSON.stringify({
+            at: at(today, 13, 45),
+            signedName: 'Test Recipient Charlie',
+            identifiersChecked: ['name', 'address', 'phone'],
+            ...(form2 ? { courierFormFileId: form2 } : { noSignatureReason: 'Rehearsal: storage off.' }),
+        }),
+    });
+    deliveredCount += 1;
+}
+
+/* 3: ID Required, identification photographed */
+const form3 = await photograph(live[3].id, 'courier_form');
+const id3 = await photograph(live[3].id, 'patient_id');
+if (form3 && id3) {
+    await call(`${UH}/orders/${live[3].id}/deliver`, {
+        method: 'POST',
+        body: JSON.stringify({
+            at: at(today, 9, 20),
+            signedName: 'Test Recipient Delta',
+            identifiersChecked: ['name', 'address', 'phone'],
+            courierFormFileId: form3, patientIdFileId: id3,
+        }),
+    });
+    deliveredCount += 1;
+} else {
+    say('    ID Required delivery left open: photographs need file storage.');
+}
+
+/* 4: delivered, two identifiers only, because the pharmacy sent no phone.
+      Left as the honest record it is rather than ticked anyway. */
+await call(`${UH}/orders/${live[4].id}/deliver`, {
+    method: 'POST',
+    body: JSON.stringify({
+        at: at(today, 9, 35),
+        signedName: 'Test Recipient Echo',
+        identifiersChecked: ['name', 'address'],
+        noSignatureReason: 'Rehearsal data: signed on the paper form.',
+    }),
+});
+deliveredCount += 1;
+
+/* ------------------------------------------------------------- summary */
+
+const report = await call(`${UH}/reports/sla?from=${dayBack(days, timezone)}&to=${today}`);
+say('');
+say('─'.repeat(72));
+say(`  ${created} deliveries written, ${deliveredCount} completed, ${failedCount} failed, ${returnedCount} taken back`);
+if (report.status === 200) {
+    say(`  completion ${report.body.rates.completionRate ?? 'n/a'}%  ·  on time ${report.body.rates.onTimeRate ?? 'n/a'}%  ·  target ${report.body.target.completion}%`);
+    say(`  turnaround median ${report.body.turnaround?.inOurHands?.medianMinutes ?? 'n/a'} min`);
+}
+say('─'.repeat(72));
+say('');
+say('  SHOWN ONCE. Give these to University Health, and to nobody else.');
+say('');
+say(`    portal      ${base}/projects/uh/deliveries`);
+say(`    performance ${base}/projects/uh/performance`);
+say(`    username    ${client}`);
+say(`    password    ${clientPass}`);
+say('');
+say(`    courier app ${courier} / ${courierPass}`);
+say('');
+say('  To remove every row of this again:');
+say(`    npm run clear:work -w server -- --from ${dayBack(days, timezone)} --to ${today} --project uh${isLocal ? '' : ' --i-mean-production'} --apply`);
+
+}

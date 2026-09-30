@@ -29,7 +29,8 @@
     "remove:accounts": "tsx scripts/remove-accounts.mjs",
     "backup": "tsx scripts/backup-db.mjs",
     "seed:uh-day": "node scripts/seed-uh-day.mjs",
-    "dry-run": "node scripts/dry-run.mjs"
+    "dry-run": "node scripts/dry-run.mjs",
+    "seed:demo-uh": "node scripts/seed-demo.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
