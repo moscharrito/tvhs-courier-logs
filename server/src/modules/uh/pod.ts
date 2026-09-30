@@ -415,6 +415,10 @@ interface LoadOptions {
     /** Client viewers see a courier's first name; staff see the full record. */
     courierName: (username: string) => string;
     photoAvailable: boolean;
+    /** Whether a proof photograph is stored for this delivery. The caller has
+     *  already asked the files table in order to fetch the bytes; without it
+     *  this module guesses from the text of an event. */
+    hasPhoto?: boolean | undefined;
 }
 
 /**
@@ -474,7 +478,22 @@ export async function loadPodData(client: Client, opts: LoadOptions): Promise<Po
         };
     };
 
-    const hasPhoto = events.rows.some((e) => String(e['type']) === 'delivered' && String(e['signed_name']) === 'Left at the door');
+/* WHETHER A PHOTOGRAPH EXISTS IS A QUESTION ABOUT THE FILES TABLE, NOT ABOUT
+ * THE WORDING OF AN EVENT.
+ *
+ * This read `signed_name === 'Left at the door'`, which was true when the only
+ * photograph in the system was a doorstep drop. University Health then moved
+ * the signature onto their own paper form, so an ordinary handover carries a
+ * photograph too and this saw none of them: delivery 137 printed its
+ * identification and not the signed form, and 134 printed nothing at all,
+ * while both pictures sat in the bucket and both loaded in the portal.
+ *
+ * The caller knows, because it has already looked the file up in order to
+ * fetch the bytes. So it tells us, and a string comparison against a sentence
+ * a courier could change stops deciding what is in a legal document. */
+const hasPhoto = opts.hasPhoto ?? events.rows.some(
+    (e) => String(e['type']) === 'delivered' && String(e['signed_name']) === 'Left at the door',
+);
 
     return {
         orderId: Number(o['id']),

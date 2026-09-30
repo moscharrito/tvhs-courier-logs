@@ -726,10 +726,17 @@ export function createClientPortalRouter(
             args: [project.id],
         });
         const names = await displayNames(project.id, couriers.rows.map((r) => String(r['username'])));
+        /* Looked up before the document is built, because whether a
+           photograph exists decides what the document says as well as what it
+           carries. */
+        const proof = await storedDoorstepPhoto(project.id, id);
+        const ident = await storedDoorstepPhoto(project.id, id, ID_KIND);
+
         const data = await loadPodData(client, {
             projectId: project.id,
             orderId: id,
             timezone: project.timezone,
+            hasPhoto: proof !== null,
             courierName: (username) => names.get(username) ?? '',
             /* Was hardcoded false, which was true before there was a file
                service and became a lie the moment one was configured. The
@@ -744,9 +751,7 @@ export function createClientPortalRouter(
                A photograph that will not come back is not an error: the page
                says it could not be read and the rest of the document, which
                is the part that proves the handover, still prints. */
-            const proof = await storedDoorstepPhoto(project.id, id);
             if (proof && data.photo.available) data.photo.bytes = await fetchPhoto(proof.key);
-            const ident = await storedDoorstepPhoto(project.id, id, ID_KIND);
             if (ident && storage.available) data.idPhoto = { bytes: await fetchPhoto(ident.key) };
         }
         if (!data) { res.status(404).json({ error: 'Delivery not found' }); return; }
