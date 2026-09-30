@@ -68,6 +68,42 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
 const meansProduction = process.argv.includes('--i-mean-production');
 
 const config = loadConfig();
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * --i-mean-production MEANS NOTHING WITHOUT A PRODUCTION DATABASE TO MEAN IT
+ * ABOUT, AND SAYING SO IS THE POINT.
+ *
+ * This script talks to a database directly rather than through the API, and
+ * it takes its target from TURSO_DATABASE_URL. Those live on Render, so a
+ * shell that does not have them gets the local file no matter what is typed
+ * on the command line.
+ *
+ * On 30 September 2026 the owner ran this with --i-mean-production against
+ * logs.izyglobalservices.com in mind. It cleaned the laptop, printed "Done",
+ * and the production rows it was meant to remove were still there. Nothing
+ * was damaged and that was luck: the same gap in the other direction is a
+ * shell that happens to hold Turso credentials while somebody believes they
+ * are tidying a local database.
+ *
+ * So the flag now has to agree with the target. Asking for production and
+ * getting a file is refused, loudly, with the reason and the fix.
+ * ───────────────────────────────────────────────────────────────────────── */
+if (meansProduction && config.db.kind === 'file') {
+    console.error('Refusing to run: you asked for production and this is a local file.');
+    console.error('');
+    console.error(`  target  ${config.db.url}`);
+    console.error('');
+    console.error('This script reads TURSO_DATABASE_URL, which lives on Render and not here,');
+    console.error('so without it every command lands on the laptop. Nothing was changed.');
+    console.error('');
+    console.error('To clear the live database, take the values from the Render dashboard:');
+    console.error('  ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=...');
+    console.error('  npm run clear:work -w server -- --from YYYY-MM-DD --project uh --i-mean-production --apply');
+    console.error('');
+    console.error('To clear this laptop, drop the flag: it is only for a remote database.');
+    process.exit(1);
+}
+
 if (config.db.kind !== 'file') {
     /* A dry run reads and reports. It never drops a trigger and never deletes
        a row, so it needs no permission: being able to ask "what would this
@@ -100,7 +136,7 @@ if (!project) {
 }
 const pid = Number(project.id);
 
-console.log(`Database: ${config.db.url}`);
+console.log(`Database: ${config.db.url}   (${config.db.kind === 'file' ? 'THIS LAPTOP' : 'REMOTE'})`);
 console.log(`Project:  ${projectCode}`);
 console.log(`Dates:    ${from} to ${to}`);
 console.log(apply ? 'Mode:     APPLY\n' : 'Mode:     dry run. Pass --apply to make the change.\n');
