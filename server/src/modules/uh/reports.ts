@@ -298,6 +298,83 @@ export function sliceBy(
  * team argues with, and an argument about a definition is cheap while an
  * argument about a number nobody can reproduce is not.
  */
+/* ─────────────────────────── one day, for the morning email ───────────────
+ *
+ * The scheduler sends yesterday's figures to University Health each morning
+ * (modules/uh/daily-report.ts). It needs the same numbers the SLA endpoint
+ * produces, for exactly one service date and with no filters.
+ *
+ * Here rather than there because this file owns what a rate means, and a
+ * second implementation of "completion rate" living in an email sender is
+ * how two parts of a system start disagreeing about a contract figure.
+ *
+ * The column list is deliberately identical to the one `gather` uses. If a
+ * field is added to OrderFact it has to be added in both, which is the cost
+ * of not refactoring a working endpoint to serve a new caller.
+ */
+export async function dailyFigures(
+    client: Client, projectId: number, serviceDate: string, now = new Date(),
+) {
+    const rs = await client.execute({
+        sql: `SELECT o.service_date, o.service_type, o.site_id, s.name AS site_name, o.zone,
+                     o.status, o.due_at, o.arrived_at, o.delivered_at,
+                     o.received_at, o.pickup_at
+              FROM orders o JOIN sites s ON s.id = o.site_id
+              WHERE o.project_id = ? AND o.service_date = ?`,
+        args: [projectId, serviceDate],
+    });
+    const facts: OrderFact[] = rs.rows.map((r) => ({
+        serviceDate: String(r['service_date']),
+        serviceType: String(r['service_type']),
+        siteId: Number(r['site_id']),
+        siteName: String(r['site_name']),
+        zone: r['zone'] === null ? null : Number(r['zone']),
+        status: String(r['status']),
+        dueAt: r['due_at'] === null ? null : String(r['due_at']),
+        arrivedAt: r['arrived_at'] === null ? null : String(r['arrived_at']),
+        deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
+        receivedAt: r['received_at'] === null ? null : String(r['received_at']),
+        pickedUpAt: r['pickup_at'] === null ? null : String(r['pickup_at']),
+    }));
+
+    const totals = facts.reduce((acc, f) => addFact(acc, f, now), emptyTotals());
+
+    const fails = await client.execute({
+        sql: `SELECT p.failure_reason_code AS code, COUNT(*) AS packages
+              FROM packages p JOIN orders o ON o.id = p.order_id
+              WHERE o.project_id = ? AND o.service_date = ?
+                AND o.status = 'failed' AND p.failure_reason_code <> ''
+              GROUP BY p.failure_reason_code ORDER BY packages DESC, code`,
+        args: [projectId, serviceDate],
+    });
+
+    const follow = await client.execute({
+        sql: `SELECT
+                SUM(CASE WHEN o.reattempt_of_order_id IS NOT NULL THEN 1 ELSE 0 END) AS reattempts,
+                SUM(CASE WHEN o.returned_at IS NOT NULL THEN 1 ELSE 0 END) AS returned,
+                SUM(CASE WHEN o.status = 'failed' AND o.returned_at IS NULL THEN 1 ELSE 0 END) AS awaitingReturn
+              FROM orders o WHERE o.project_id = ? AND o.service_date = ?`,
+        args: [projectId, serviceDate],
+    });
+    const f = follow.rows[0];
+
+    return {
+        totals,
+        rates: ratesFor(totals),
+        turnaround: turnaroundsFor(facts),
+        followUp: {
+            reattempts: Number(f?.['reattempts'] ?? 0),
+            returned: Number(f?.['returned'] ?? 0),
+            awaitingReturn: Number(f?.['awaitingReturn'] ?? 0),
+        },
+        failureReasons: fails.rows.map((r) => ({
+            label: REASON_LABELS[String(r['code'])] ?? String(r['code']),
+            packages: Number(r['packages']),
+        })),
+        target: COMPLETION_TARGET,
+    };
+}
+
 export const DEFINITIONS: Array<{ measure: string; definition: string; note: string }> = [
     {
         measure: 'Turnaround, in our hands',

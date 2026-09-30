@@ -99,6 +99,25 @@ export interface ReturnSettings {
     afterHoursSiteCode: string;
 }
 
+/**
+ * Who receives the daily performance report, and whether it goes at all.
+ *
+ * University Health, 29 September 2026: "Request to provide everyday
+ * initially for the previous 24 hours data, then less frequent." So the
+ * cadence is expected to change, and it is a setting rather than a constant.
+ *
+ * EMPTY RECIPIENTS MEANS NOTHING IS SENT, which is the right default: a
+ * system that starts emailing a hospital the moment it is deployed, to
+ * addresses nobody chose, is worse than one that waits to be told.
+ */
+export interface ReportingSettings {
+    /** Addresses the daily report goes to. Empty disables the send. */
+    dailyRecipients: string[];
+    /** Days of the week it goes out, 0 = Sunday. Daily to begin with; this
+     *  is the knob for "then less frequent". */
+    days: number[];
+}
+
 export interface ProjectSettings {
     sla: SlaSettings;
     businessHours: BusinessHoursSettings;
@@ -106,6 +125,7 @@ export interface ProjectSettings {
     pricing: PricingSection;
     dispatch: DispatchSettings;
     returns: ReturnSettings;
+    reporting: ReportingSettings;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -138,6 +158,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
        The courier app hides the button until someone sets this. */
     dispatch: { phone: '', name: 'Dispatch' },
     returns: { afterHoursSiteCode: 'discharge' },
+    /* No recipients, so nothing is sent until somebody names one. */
+    reporting: { dailyRecipients: [], days: [0, 1, 2, 3, 4, 5, 6] },
 };
 
 const hhmm = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, 24-hour');
@@ -186,6 +208,13 @@ export const SettingsPatch = z.object({
         afterHoursSiteCode: z.string().trim().min(1).max(40)
             .regex(/^[a-z0-9_-]+$/, 'lower-case letters, digits, hyphen and underscore only').optional(),
     }).strict().optional(),
+    reporting: z.object({
+        /* A short list of named people, not a mailing list. Capped because a
+           daily report to forty addresses is a distribution problem somebody
+           should solve with their own mail server rather than with ours. */
+        dailyRecipients: z.array(z.string().trim().email()).max(20).optional(),
+        days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+    }).strict().optional(),
 }).strict().refine((o) => Object.keys(o).length > 0, { message: 'nothing to update' });
 
 export type SettingsPatchInput = z.infer<typeof SettingsPatch>;
@@ -231,6 +260,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),
         dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
         returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),
+        reporting: section(stored['reporting'], DEFAULT_PROJECT_SETTINGS.reporting),
     };
 }
 

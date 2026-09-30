@@ -28,9 +28,12 @@ import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/requests';
 import { dispatchPending } from './notify/dispatch';
 import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
+import { sendDailyReport } from '../modules/uh/daily-report';
+import { dailyFigures } from '../modules/uh/reports';
+import { resolveSettings } from './projects/settings';
 import type { Texter } from './notify/twilio';
 import type { Mailer } from './notify/ses';
-import { todayIn } from './dates';
+import { dateIn, todayIn } from './dates';
 
 export interface SchedulerOptions {
     client: Client;
@@ -98,6 +101,33 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                            see how many there are. */
                         noPhone: notices.noPhone,
                     });
+                }
+            }
+
+            /* Yesterday's performance, emailed to the client.
+             *
+             * In the same morning window as the patient texts, and yesterday
+             * rather than today because "the previous 24 hours" means a day
+             * that has finished: a report on a day still being worked shows
+             * deliveries still open and a completion rate that improves after
+             * it was sent.
+             *
+             * Sent once, held by the unique index on report_sends rather than
+             * by this tick checking first. Never throws. */
+            if (mailer?.available && portalUrl && inMorningWindow(new Date(), timezone)) {
+                /* dateIn, not todayIn: the day BEFORE today, in the project's own
+                   zone. A UTC subtraction would name the wrong day either side
+                   of midnight in Chicago. */
+                const yesterday = dateIn(new Date(Date.now() - 86400000), timezone);
+                const report = await sendDailyReport({
+                    client, mailer, logger, portalUrl,
+                    projectId, projectCode: String(p['code']),
+                    settings: resolveSettings(settings),
+                    timezone, serviceDate: yesterday,
+                    figuresFor: (date) => dailyFigures(client, projectId, date),
+                });
+                if (report.outcome === 'failed') {
+                    logger.warn('report.daily.not_sent', { project: String(p['code']), serviceDate: yesterday });
                 }
             }
 
