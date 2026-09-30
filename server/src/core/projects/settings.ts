@@ -17,6 +17,9 @@
  */
 
 import { z } from 'zod';
+import {
+    validateTemplate, STAGES, STAGE_NAMES, type Stage,
+} from '../notify/sms-template';
 
 export type ClockStart = 'receipt' | 'pickup';
 export type ServiceType = 'scheduled' | 'stat' | 'adhoc';
@@ -118,6 +121,50 @@ export interface ReportingSettings {
     days: number[];
 }
 
+/**
+ * The morning text to a patient, and the wording of it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THE WORDING IS A SETTING AND NOT A CONSTANT.
+ *
+ * University Health asked to edit it. That is reasonable: it is their
+ * patients receiving it, and the sentence that reads well to a pharmacy is
+ * not always the one that reads well to the person holding the phone.
+ *
+ * IT IS STILL NOT FREE TEXT. The template is validated on the way in, against
+ * the same minimum-necessary rule the code constant was checked against at
+ * import. An editable field that could carry a medication name would undo the
+ * whole reason this message is nearly empty, so the validator refuses:
+ *
+ *   - anything the forbidden-word check rejects, rendered, not as source
+ *   - placeholders that are not on the list, which would send literally
+ *   - characters outside GSM-7, which silently halve what fits in a segment
+ *   - a template with no opt-out sentence in it
+ *
+ * The rendered body is stored on each queued row, so editing this changes
+ * what is sent next, never what somebody was already told.
+ */
+export interface PatientSmsStage {
+    /** Off means no row is ever written, so nothing can be sent by accident. */
+    enabled: boolean;
+    template: string;
+}
+
+export interface PatientSmsSettings {
+    /** One per point in the delivery. See core/notify/sms-template STAGES for
+     *  what each is and why all but the first start switched off. */
+    stages: Record<Stage, PatientSmsStage>;
+    /** Start of the window quoted to the patient, project-local. */
+    windowStart: string;
+    /** End of it. */
+    windowEnd: string;
+    /** How long before arrival the driver rings. Quoted in the message, so
+     *  it is a promise and belongs next to the wording that makes it. */
+    callMinutes: number;
+    /** What the message calls us. Never the pharmacy: see the module header. */
+    company: string;
+}
+
 export interface ProjectSettings {
     sla: SlaSettings;
     businessHours: BusinessHoursSettings;
@@ -126,6 +173,7 @@ export interface ProjectSettings {
     dispatch: DispatchSettings;
     returns: ReturnSettings;
     reporting: ReportingSettings;
+    patientSms: PatientSmsSettings;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -160,6 +208,20 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     returns: { afterHoursSiteCode: 'discharge' },
     /* No recipients, so nothing is sent until somebody names one. */
     reporting: { dailyRecipients: [], days: [0, 1, 2, 3, 4, 5, 6] },
+    /* The window is the contracted routine delivery day rather than a promise
+       invented here; the check-in call is what the courier already does and
+       the message now says so, because "we will call first" is the part
+       patients act on. */
+    patientSms: {
+        stages: Object.fromEntries(STAGE_NAMES.map((name) => [name, {
+            enabled: STAGES[name].enabledByDefault,
+            template: STAGES[name].template,
+        }])) as Record<Stage, PatientSmsStage>,
+        windowStart: '09:00',
+        windowEnd: '17:00',
+        callMinutes: 20,
+        company: 'Izy Global Services',
+    },
 };
 
 const hhmm = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, 24-hour');
@@ -215,6 +277,35 @@ export const SettingsPatch = z.object({
         dailyRecipients: z.array(z.string().trim().email()).max(20).optional(),
         days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
     }).strict().optional(),
+    patientSms: z.object({
+        /* Validated by the same rules the message would be sent under, so a
+           wording that could never go out is refused while somebody is
+           editing it rather than discovered by a silent send failure at 8am.
+           The error carries the reason straight through to the form, and the
+           stage name goes with it so the validator can refuse a placeholder
+           that is real but meaningless here. */
+        stages: z.object(Object.fromEntries(STAGE_NAMES.map((name) => [name, z.object({
+            enabled: z.boolean().optional(),
+            template: z.string().trim().min(1).max(600)
+                .superRefine((t, ctx) => {
+                    try {
+                        validateTemplate(t, undefined, name);
+                    } catch (err) {
+                        ctx.addIssue({ code: z.ZodIssueCode.custom, message: (err as Error).message });
+                    }
+                }).optional(),
+        }).strict().optional()])) as unknown as Record<Stage, z.ZodTypeAny>).strict().optional(),
+        windowStart: hhmm.optional(),
+        windowEnd: hhmm.optional(),
+        /* Long enough to be useful, short enough to still be true when the
+           driver is held up at the previous stop. */
+        callMinutes: z.number().int().min(5).max(120).optional(),
+        company: z.string().trim().min(1).max(60).optional(),
+    }).strict()
+        .refine((o) => !(o.windowStart && o.windowEnd) || o.windowStart < o.windowEnd, {
+            message: 'the window has to end after it starts',
+        })
+        .optional(),
 }).strict().refine((o) => Object.keys(o).length > 0, { message: 'nothing to update' });
 
 export type SettingsPatchInput = z.infer<typeof SettingsPatch>;
@@ -250,6 +341,35 @@ function section<T extends object>(raw: unknown, defaults: T): T {
     return out as T;
 }
 
+/**
+ * Resolve the texting section, which is one level deeper than the rest.
+ *
+ * `section` copies a stored object straight through when the default is also
+ * an object, which is right for every flat section and wrong here: a blob
+ * that mentions only the morning notice would replace the whole stage map and
+ * the other five stages would vanish rather than fall back to their defaults.
+ * A stage that was never configured has to resolve to its default, off.
+ */
+function patientSmsSection(raw: unknown): PatientSmsSettings {
+    const defaults = DEFAULT_PROJECT_SETTINGS.patientSms;
+    const flat = section(raw, {
+        windowStart: defaults.windowStart,
+        windowEnd: defaults.windowEnd,
+        callMinutes: defaults.callMinutes,
+        company: defaults.company,
+    });
+
+    const source = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+    const storedStages = (source['stages'] && typeof source['stages'] === 'object' && !Array.isArray(source['stages'])
+        ? source['stages'] : {}) as Record<string, unknown>;
+
+    const stages = Object.fromEntries(STAGE_NAMES.map((name) => [
+        name, section(storedStages[name], defaults.stages[name]),
+    ])) as Record<Stage, PatientSmsStage>;
+
+    return { ...flat, stages };
+}
+
 /** Fill a stored settings blob out to the full shape, using contract defaults. */
 export function resolveSettings(raw: Record<string, unknown> | null | undefined): ProjectSettings {
     const stored = raw ?? {};
@@ -261,18 +381,51 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
         returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),
         reporting: section(stored['reporting'], DEFAULT_PROJECT_SETTINGS.reporting),
+        patientSms: patientSmsSection(stored['patientSms']),
     };
 }
+
+/* THE SECTIONS TO MERGE ARE DERIVED, NOT LISTED.
+ *
+ * This was a hand-written list, and `reporting` was missing from it. The
+ * schema accepted a patch naming it, the endpoint answered 200, the audit row
+ * recorded a change, and nothing was written: setting the daily report
+ * recipients looked like it worked and silently did not.
+ *
+ * Reading the keys off the defaults means a section cannot be added to the
+ * settings shape and forgotten here, which is the only way this bug happens. */
+const SECTIONS = Object.keys(DEFAULT_PROJECT_SETTINGS) as Array<keyof ProjectSettings>;
 
 /** Apply a validated patch on top of a stored blob, one section at a time. */
 export function mergeSettings(stored: Record<string, unknown>, patch: SettingsPatchInput): Record<string, unknown> {
     const next: Record<string, unknown> = { ...stored };
-    for (const name of ['sla', 'businessHours', 'listRelease', 'pricing', 'dispatch', 'returns'] as const) {
+    for (const name of SECTIONS) {
         const incoming = patch[name];
         if (!incoming) continue;
         const current = (next[name] && typeof next[name] === 'object' && !Array.isArray(next[name])
             ? next[name] : {}) as Record<string, unknown>;
         next[name] = { ...current, ...incoming };
+
+        /* THE STAGE MAP MERGES A LEVEL DEEPER.
+         *
+         * Every other section is flat, so a spread is the whole story. This
+         * one holds six stages, and a spread of { stages: { delivered: ... } }
+         * over the stored map replaces it: turning on the delivered message
+         * would silently switch the morning notice back to its default and
+         * throw away any wording anybody had edited. */
+        if (name === 'patientSms') {
+            const patch = incoming as { stages?: Record<string, Record<string, unknown>> };
+            if (patch.stages) {
+                const before = (current['stages'] && typeof current['stages'] === 'object'
+                    ? current['stages'] : {}) as Record<string, Record<string, unknown>>;
+                const stages: Record<string, unknown> = { ...before };
+                for (const [stage, values] of Object.entries(patch.stages)) {
+                    if (!values) continue;
+                    stages[stage] = { ...(before[stage] ?? {}), ...values };
+                }
+                next[name] = { ...(next[name] as Record<string, unknown>), stages };
+            }
+        }
     }
     return next;
 }

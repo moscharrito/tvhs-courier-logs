@@ -37,16 +37,92 @@
 import type { Client } from '@libsql/client';
 import type { Logger } from '../../core/http/logger';
 import { assertMinimal, toE164, type Texter } from '../../core/notify/twilio';
+import { renderTemplate, windowText, type Stage } from '../../core/notify/sms-template';
+import { DEFAULT_PROJECT_SETTINGS, type ProjectSettings } from '../../core/projects/settings';
 
-/** The whole message. Read it as a stranger would, on a lock screen. */
-export const DELIVERY_TODAY =
-    'Izy Global Services has a delivery scheduled for you today. '
-    + 'Our courier will call before arriving. Reply STOP to stop these messages.';
+/** The whole message. Read it as a stranger would, on a lock screen.
+ *
+ *  THE WORDING IS A SETTING NOW (`patientSms.morningTemplate`), because
+ *  University Health asked to edit it and it is their patients reading it.
+ *  This is what a project that has never been configured sends, and it is
+ *  what the settings default to, so the two cannot drift apart. */
+export const DELIVERY_TODAY = noticeFor(DEFAULT_PROJECT_SETTINGS, 'delivery_today');
 
 /* A sanity check that runs at import rather than at send: if somebody edits
-   the sentence above into something that names a pharmacy, the server refuses
-   to start instead of texting it to eight hundred people. */
+   the default wording into something that names a pharmacy, the server
+   refuses to start instead of texting it to eight hundred people. An edited
+   template is checked by the same rule when it is saved. */
 assertMinimal(DELIVERY_TODAY);
+
+/**
+ * The message this project sends at one stage, with its own wording.
+ *
+ * Rendered per queue run rather than per row: every order in a morning gets
+ * the same sentence, and rendering it once means a settings change midway
+ * through a sweep cannot produce two different promises on the same day.
+ *
+ * `at` is only needed by stages whose wording can mention a time.
+ */
+export function noticeFor(settings: ProjectSettings, stage: Stage, at?: { when: Date; timezone: string }): string {
+    const s = settings.patientSms;
+    const body = renderTemplate(s.stages[stage].template, {
+        company: s.company,
+        window: windowText(s.windowStart, s.windowEnd),
+        callMinutes: String(s.callMinutes),
+        time: at ? clockIn(at.when, at.timezone) : '',
+    });
+    /* Checked again here, not only on save. A row stored before this
+       validation existed, or edited around the endpoint, must still not go
+       out; the sender treats a throw as "the text is wrong" and stops. */
+    assertMinimal(body);
+    return body;
+}
+
+/** A time as a patient would read it, in the project's own zone. */
+function clockIn(when: Date, timezone: string): string {
+    return new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(when);
+}
+
+/**
+ * Write the text for one custody event, if that stage is switched on.
+ *
+ * Never throws, for the same reason nothing else on this path does: a
+ * delivery that happened is not undone by a text that was not queued.
+ *
+ * Called from recordOrderEvent, which is the single place every status change
+ * passes through. Hooking the routes instead would mean a seventh route added
+ * later silently tells nobody, which is exactly how the pharmacy notification
+ * nearly went wrong.
+ */
+export async function queueStageNotice(
+    client: Client,
+    opts: { projectId: number; orderId: number; stage: Stage; settings: ProjectSettings; timezone: string; now: Date },
+): Promise<boolean> {
+    const stage = opts.settings.patientSms.stages[opts.stage];
+    if (!stage?.enabled) return false;
+    try {
+        const rs = await client.execute({
+            sql: 'SELECT recipient_phone FROM orders WHERE project_id = ? AND id = ?',
+            args: [opts.projectId, opts.orderId],
+        });
+        const phone = String(rs.rows[0]?.['recipient_phone'] ?? '').trim();
+        if (phone === '') return false;
+
+        const body = noticeFor(opts.settings, opts.stage, { when: opts.now, timezone: opts.timezone });
+        await client.execute({
+            sql: `INSERT INTO patient_messages (project_id, order_id, phone, kind, body, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?)`,
+            args: [opts.projectId, opts.orderId, phone, opts.stage, body, opts.now.toISOString()],
+        });
+        return true;
+    } catch {
+        /* The unique index on (order_id, kind), or anything else. A second
+           "delivered" for the same order is one delivery. */
+        return false;
+    }
+}
 
 /** Local hours during which a morning notice is a morning notice. */
 export const MORNING_FROM = 7;
@@ -75,9 +151,15 @@ export interface QueueResult {
  */
 export async function queueMorningNotices(
     client: Client,
-    opts: { projectId: number; serviceDate: string; now: Date },
+    opts: { projectId: number; serviceDate: string; now: Date; settings?: ProjectSettings },
 ): Promise<QueueResult> {
     const result: QueueResult = { queued: 0, noPhone: 0 };
+    /* The body is stored on the row, so a wording change affects what is sent
+       next and never what somebody has already been told. */
+    const body = opts.settings ? noticeFor(opts.settings, 'delivery_today') : DELIVERY_TODAY;
+    /* Off means no row is written at all, so nothing can be sent by accident
+       later by a sweep that does not re-read the setting. */
+    if (opts.settings && !opts.settings.patientSms.stages.delivery_today.enabled) return result;
     try {
         const rs = await client.execute({
             sql: `SELECT o.id, o.recipient_phone FROM orders o
@@ -94,7 +176,7 @@ export async function queueMorningNotices(
                     sql: `INSERT INTO patient_messages
                             (project_id, order_id, phone, kind, body, created_at)
                           VALUES (?, ?, ?, 'delivery_today', ?, ?)`,
-                    args: [opts.projectId, Number(row['id']), phone, DELIVERY_TODAY, opts.now.toISOString()],
+                    args: [opts.projectId, Number(row['id']), phone, body, opts.now.toISOString()],
                 });
                 result.queued += 1;
             } catch {

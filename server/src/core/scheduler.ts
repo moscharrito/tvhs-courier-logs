@@ -90,6 +90,10 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
             if (texter?.available && inMorningWindow(new Date(), timezone)) {
                 const notices = await queueMorningNotices(client, {
                     projectId, serviceDate: todayIn(timezone), now: new Date(),
+                    /* The project's own wording and delivery window, rather
+                       than the built-in default: this is the text the client
+                       edited and the one they expect their patients to get. */
+                    settings: resolveSettings(settings),
                 });
                 if (notices.queued > 0 || notices.noPhone > 0) {
                     logger.info('sms.queued', {

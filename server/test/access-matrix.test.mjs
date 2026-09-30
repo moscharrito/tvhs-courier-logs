@@ -246,6 +246,11 @@ const MATRIX = [
        viewer has no business knowing what our internal goal is. */
     ['GET', '/api/projects/uh/settings', UH_STAFF_AND_COURIER, 'the courier app reads business hours'],
     ['PATCH', '/api/projects/uh/settings', UH_MANAGE, ''],
+    /* Renders a candidate patient text without storing it. Management only:
+       it reflects back whatever wording is posted, and the people who may
+       read the message patients get are the people who may set it. */
+    ['GET', '/api/projects/uh/settings/patient-sms', UH_MANAGE, ''],
+    ['POST', '/api/projects/uh/settings/patient-sms/preview', UH_MANAGE, ''],
 
     /* --- pharmacies. Addresses and contacts of University Health sites. */
     ['GET', `${UH}/sites`, UH_STAFF_AND_COURIER, 'a courier needs the pickup address'],

@@ -21,6 +21,9 @@ import {
     SettingsPatch, DEFAULT_PROJECT_SETTINGS, resolveSettings, mergeSettings,
     changedPaths, settingValue, dueTimesFor, type ServiceType,
 } from './settings';
+import {
+    validateTemplate, windowText, segmentsFor, STAGES, STAGE_NAMES, type Stage,
+} from '../notify/sms-template';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -78,6 +81,118 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
         const role = req.membership?.role;
         const { timezone, settings } = await storedFor(req.project!.id);
         res.json(present(timezone, settings, role === 'admin'));
+    }));
+
+    /**
+     * What the patient text would actually say.
+     *
+     *   POST /api/projects/:pid/settings/patient-sms/preview
+     *
+     * A template is a sentence with holes in it, and nobody can reliably read
+     * one and know what arrives on a phone: the window and the call time come
+     * from other fields, and the length decides whether it is one text or
+     * three. So this renders a candidate without storing it.
+     *
+     * Deliberately not a GET with query parameters. The wording is edited in a
+     * textarea and would have to be URL-encoded into a query string, where it
+     * would also land in the access log of anything in front of this.
+     *
+     * Refusals come back as 200 with `ok: false`, not 400. Somebody typing in
+     * a box has not made a bad request; they are mid-sentence, and a preview
+     * pane should say what is wrong rather than look broken.
+     */
+    router.post('/patient-sms/preview', manage, wrap(async (req, res) => {
+        const { settings: stored } = await storedFor(req.project!.id);
+        const current = resolveSettings(stored).patientSms;
+        const body = (req.body ?? {}) as Record<string, unknown>;
+
+        const stage = STAGE_NAMES.includes(body['stage'] as Stage) ? body['stage'] as Stage : 'delivery_today';
+        const template = typeof body['template'] === 'string' ? body['template'] : current.stages[stage].template;
+        const start = typeof body['windowStart'] === 'string' ? body['windowStart'] : current.windowStart;
+        const end = typeof body['windowEnd'] === 'string' ? body['windowEnd'] : current.windowEnd;
+        const minutes = typeof body['callMinutes'] === 'number' ? body['callMinutes'] : current.callMinutes;
+        const company = typeof body['company'] === 'string' ? body['company'] : current.company;
+
+        const vars = {
+            company,
+            window: windowText(start, end),
+            callMinutes: String(minutes),
+            /* A fixed sample rather than the clock, so a preview taken twice
+               reads the same and a screenshot of it stays true. */
+            time: '2:15 PM',
+        };
+        try {
+            const text = validateTemplate(template, vars, stage);
+            const { encoding, segments, units } = segmentsFor(text);
+            res.json({
+                ok: true,
+                text,
+                encoding,
+                segments,
+                characters: units,
+                /* Said plainly, because the cost of a campaign is per segment
+                   and a sentence that tips over 160 characters doubles it. */
+                note: segments === 1
+                    ? 'One text message.'
+                    : `${segments} text messages, so each person costs ${segments} times as much.`,
+                stage,
+                placeholders: STAGES[stage].placeholders,
+            });
+        } catch (err) {
+            res.json({
+                ok: false, error: (err as Error).message, stage, placeholders: STAGES[stage].placeholders,
+            });
+        }
+    }));
+
+    /**
+     * Every stage there is, what it is for, and what it currently says.
+     *
+     *   GET /api/projects/:pid/settings/patient-sms
+     *
+     * So a settings screen can list them without hard-coding six names that
+     * would then have to be kept in step with the server's six.
+     */
+    router.get('/patient-sms', manage, wrap(async (req, res) => {
+        const { settings: stored } = await storedFor(req.project!.id);
+        const current = resolveSettings(stored).patientSms;
+        res.json({
+            windowStart: current.windowStart,
+            windowEnd: current.windowEnd,
+            callMinutes: current.callMinutes,
+            company: current.company,
+            stages: STAGE_NAMES.map((name) => {
+                const spec = STAGES[name];
+                const saved = current.stages[name];
+                let text = '';
+                let error: string | null = null;
+                try {
+                    text = validateTemplate(saved.template, {
+                        company: current.company,
+                        window: windowText(current.windowStart, current.windowEnd),
+                        callMinutes: String(current.callMinutes),
+                        time: '2:15 PM',
+                    }, name);
+                } catch (err) {
+                    /* Stored wording that would now be refused. Shown rather
+                       than hidden: it is the screen's job to say so, and a
+                       stage whose text cannot render is one that will fail at
+                       send time instead. */
+                    error = (err as Error).message;
+                }
+                return {
+                    stage: name,
+                    label: spec.label,
+                    when: spec.when,
+                    placeholders: spec.placeholders,
+                    enabled: saved.enabled,
+                    template: saved.template,
+                    preview: text,
+                    segments: text ? segmentsFor(text).segments : 0,
+                    error,
+                };
+            }),
+        });
     }));
 
     router.patch('/', manage, wrap(async (req, res) => {

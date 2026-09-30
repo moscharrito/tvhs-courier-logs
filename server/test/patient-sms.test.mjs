@@ -72,9 +72,14 @@ const fakeTexter = (outcome = () => ({ kind: 'sent', providerId: 'SM123' })) => 
 
 describe('what a patient is told', () => {
     it('names a courier and nothing else', () => {
+        /* University Health asked for the delivery window and the check-in
+           call to be in it, and for the wording to be editable. This is the
+           rendered default; sms-template.test.mjs covers what an edit may
+           and may not turn it into. */
         expect(DELIVERY_TODAY).toBe(
-            'Izy Global Services has a delivery scheduled for you today. '
-            + 'Our courier will call before arriving. Reply STOP to stop these messages.',
+            'Izy Global Services has a delivery scheduled for you today between 9:00 AM and 5:00 PM. '
+            + 'Our driver will call you about 20 minutes before arriving. '
+            + 'Reply STOP to stop these messages.',
         );
     });
 

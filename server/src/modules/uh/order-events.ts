@@ -14,6 +14,8 @@
 
 import type { Client, InValue } from '@libsql/client';
 import { notifyPharmacyOfOutcome } from './delivery-notices';
+import { queueStageNotice } from './patient-sms';
+import { EVENT_STAGES, type Stage } from '../../core/notify/sms-template';
 import type { ProjectSettings } from '../../core/projects/settings';
 import {
     applyEvent, type Applied, type CustodyEventType, type EventInput, type OrderStatus,
@@ -169,6 +171,27 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
             status: applied.toStatus,
             at: event.at,
             timezone: opts.timezone ?? 'UTC',
+        });
+    }
+
+    /* And tell the patient, if this is a stage they have been switched on for.
+     *
+     * Same place and the same reasoning as the pharmacy notice above: every
+     * status change in the system passes through here, so a stage cannot be
+     * added later and quietly notify nobody.
+     *
+     * NOT gated on statusChanged. `arrived` does not move the status and is
+     * still the moment somebody wants to be told; the unique index on
+     * (order_id, kind) is what stops a courier tapping twice sending twice,
+     * which is a guarantee rather than a hope about the caller. */
+    if ((EVENT_STAGES as readonly string[]).includes(event.type)) {
+        await queueStageNotice(client, {
+            projectId,
+            orderId,
+            stage: event.type as Stage,
+            settings,
+            timezone: opts.timezone ?? 'UTC',
+            now: event.at,
         });
     }
 
