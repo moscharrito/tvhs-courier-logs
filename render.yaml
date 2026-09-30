@@ -178,6 +178,22 @@ services:
       - key: SES_SNS_TOPIC_ARN
         sync: false
 
+      # --- Texting patients (docs/infra/email.md covers the shape) ---
+      #
+      # Same split as everything else: the flag travels with its credentials
+      # so both land in one save, and /health reports the running state.
+      #
+      # The message names no pharmacy, medication or prescription. It is read
+      # on a lock screen by whoever is holding the phone.
+      - key: SMS_ENABLED
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
+
       # --- Address lookup, and the test-phase exemption ---
       #
       # The key geocodes PHARMACY addresses, which are business addresses.

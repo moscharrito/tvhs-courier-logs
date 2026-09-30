@@ -27,6 +27,8 @@ import type { Client } from '@libsql/client';
 import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/requests';
 import { dispatchPending } from './notify/dispatch';
+import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
+import type { Texter } from './notify/twilio';
 import type { Mailer } from './notify/ses';
 import { todayIn } from './dates';
 
@@ -38,6 +40,10 @@ export interface SchedulerOptions {
     /** Optional. Absent means notifications are written and never emailed,
      *  which is the state on any server with no SES credentials. */
     mailer?: Mailer | undefined;
+    /** Texts patients that a delivery is coming. Absent means the morning
+     *  notice is neither queued nor sent, which is the state on any server
+     *  with no Twilio credentials. */
+    texter?: Texter | undefined;
     /** Where a notification tells the reader to go. Required for mail. */
     portalUrl?: string | undefined;
 }
@@ -49,7 +55,7 @@ export interface Scheduler {
     readonly running: boolean;
 }
 
-export function startScheduler({ client, logger, intervalSeconds, mailer, portalUrl }: SchedulerOptions): Scheduler {
+export function startScheduler({ client, logger, intervalSeconds, mailer, portalUrl, texter }: SchedulerOptions): Scheduler {
     let timer: NodeJS.Timeout | null = null;
 
     async function runOnce(): Promise<void> {
@@ -70,6 +76,31 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                 now: new Date(),
             });
 
+            /* The morning notice to patients.
+             *
+             * Inside the per-project loop because "today" and "morning" are
+             * both questions about the project's own timezone, and the next
+             * contract will have a different one. Queued here and sent below:
+             * see modules/uh/patient-sms.ts for why writing and sending are
+             * separate, and why the unique index rather than this tick is what
+             * stops a two-minute sweep texting somebody all morning. */
+            if (texter?.available && inMorningWindow(new Date(), timezone)) {
+                const notices = await queueMorningNotices(client, {
+                    projectId, serviceDate: todayIn(timezone), now: new Date(),
+                });
+                if (notices.queued > 0 || notices.noPhone > 0) {
+                    logger.info('sms.queued', {
+                        project: String(p['code']),
+                        queued: notices.queued,
+                        /* The pharmacy's data quality, surfaced rather than
+                           swallowed: an order with no phone is one patient who
+                           will not be told, and somebody should be able to
+                           see how many there are. */
+                        noPhone: notices.noPhone,
+                    });
+                }
+            }
+
             /* Logged only when it did something. A line every minute saying
                "nothing to do" is a line nobody reads, and the two that matter
                here are drowned by it. */
@@ -89,6 +120,12 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
            project per tick. Never throws; see core/notify/dispatch.ts. */
         if (mailer && portalUrl) {
             await dispatchPending({ client, mailer, logger, portalUrl });
+        }
+
+        /* Outside the project loop, like the mail queue and for the same
+           reason: the queue is keyed on the message, not the project. */
+        if (texter) {
+            await sendQueued(client, texter, logger);
         }
     }
 

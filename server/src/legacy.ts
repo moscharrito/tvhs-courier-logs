@@ -31,6 +31,7 @@ import { createRetentionRouter } from './core/retention/routes';
 import { startRetentionSweep } from './core/retention/sweep';
 import { startScheduler, type Scheduler } from './core/scheduler';
 import { createMailer } from './core/notify/ses';
+import { createTexter } from './core/notify/twilio';
 import { createSesWebhookRouter } from './core/notify/suppressions';
 import { startOptimize } from './db/optimize';
 import { createGoogleProvider } from './core/geo/google';
@@ -127,6 +128,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        mailer, so what the health endpoint says and what actually sends
        cannot drift apart. */
     const mailer = createMailer(config);
+    const texter = createTexter(config);
     /* Hoisted for the same reason as the mailer: /health reports whether
        file storage is usable, and the blueprint no longer records it. One
        instance, so what /health says and what the stop screen does cannot
@@ -187,11 +189,13 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         logger,
         intervalSeconds: config.sweepIntervalSeconds,
         mailer,
+        texter,
         portalUrl: config.mail.portalUrl,
     });
     logger.info('scheduler', {
         sweep: config.sweepIntervalSeconds === undefined ? 'off' : `every ${config.sweepIntervalSeconds}s`,
         mail: mailer.available ? 'on' : (mailer.reason ?? 'off'),
+        sms: texter.available ? 'on' : (texter.reason ?? 'off'),
     });
     /* Query planner statistics, refreshed at boot and daily (ticket 4.8).
      * Without them the pickup manifest walks every stop in the project. */

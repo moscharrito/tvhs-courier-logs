@@ -76,6 +76,18 @@ export interface Config {
         /** SNS topic for bounces and complaints. Undefined disables the webhook. */
         snsTopicArn: string | undefined;
     };
+    /** Texting patients. The only channel that reaches somebody who is not a
+     *  user of this system, which is why it has its own table and its own
+     *  refusal to carry anything identifying. */
+    sms: {
+        enabled: boolean;
+        twilio: {
+            accountSid: string;
+            authToken: string;
+            /** The sending number, in E.164. */
+            from: string;
+        } | undefined;
+    };
     /** Server-side session lifetimes, in minutes. Staff = admin, ops manager,
      *  dispatcher, client viewer. Courier = drivers on the road all day. */
     sessions: {
@@ -186,6 +198,12 @@ const EnvSchema = z.object({
      * ownership check cannot be made, and a valid AWS signature alone
      * proves only that SOMEBODY's topic sent it. */
     SES_SNS_TOPIC_ARN: optionalString,
+    /* Texting patients, through Twilio, under their BAA. The message names no
+     * pharmacy, medication or prescription: see modules/uh/patient-sms.ts. */
+    SMS_ENABLED: boolish,
+    TWILIO_ACCOUNT_SID: optionalString,
+    TWILIO_AUTH_TOKEN: optionalString,
+    TWILIO_FROM: optionalString,
     SESSION_STAFF_IDLE_MINUTES: z.coerce.number().int().min(1).default(30),
     SESSION_STAFF_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
     SESSION_COURIER_IDLE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
@@ -325,6 +343,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         return { allowed: true };
     })();
 
+    /* Same shape as the mail block, and refused the same way: a server that
+       booted with texting on and no credentials would quietly stop telling
+       patients a courier was coming, and nobody would notice for a fortnight. */
+    let twilio: Config['sms']['twilio'] = undefined;
+    if (e.SMS_ENABLED) {
+        const missing = (['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM'] as const).filter((k) => !e[k]);
+        if (missing.length) {
+            problems.push(`SMS_ENABLED is on but missing: ${missing.join(', ')}`);
+        } else if (!/^\+[1-9]\d{7,14}$/.test(e.TWILIO_FROM as string)) {
+            /* E.164 or Twilio refuses every send, which would look like an
+               outage rather than a typo in one setting. */
+            problems.push('TWILIO_FROM must be in E.164 form, for example +12105550100');
+        } else {
+            twilio = {
+                accountSid: e.TWILIO_ACCOUNT_SID as string,
+                authToken: e.TWILIO_AUTH_TOKEN as string,
+                from: e.TWILIO_FROM as string,
+            };
+        }
+    }
+
     /* Same shape as the file store above, and refused the same way. A server
        that boots with MAIL_ENABLED and no credentials would silently stop
        notifying a hospital, which is the kind of failure nobody notices for a
@@ -378,6 +417,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             portalUrl: (e.MAIL_PORTAL_URL ?? '').replace(/\/+$/, ''),
             snsTopicArn: e.SES_SNS_TOPIC_ARN,
         },
+        sms: { enabled: e.SMS_ENABLED, twilio },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
         log: {
             level: e.LOG_LEVEL,
