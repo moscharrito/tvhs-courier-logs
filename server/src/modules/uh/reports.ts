@@ -35,8 +35,21 @@ import { evaluateSla, type OrderStatus } from './lifecycle';
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
 
-/** Contract floor and the internal goal, both from the dispatch strategy. */
-export const COMPLETION_TARGET = 85;
+/**
+ * The completion rate we are held to.
+ *
+ * RAISED FROM 85 TO 95 at University Health's request, 29 September 2026:
+ * "Update Delivery Completion Success Rate to >95% as an expectation (from
+ * 85% minimum)". Scope 1.2.5 as written says 85, so until the contract is
+ * amended these two numbers disagree and this one is the stricter, which is
+ * the safe direction to be wrong in.
+ *
+ * The internal goal and the contract floor are now the same figure, which is
+ * worth noticing rather than tidying away: there is no headroom left between
+ * "what we promised" and "what we aim for". A month at 94 per cent is now a
+ * contract miss rather than a near miss, and the reporting says so.
+ */
+export const COMPLETION_TARGET = 95;
 export const INTERNAL_GOAL = 95;
 
 /** A year at a time is the most anybody reads in one go. */
@@ -304,7 +317,7 @@ export const DEFINITIONS: Array<{ measure: string; definition: string; note: str
     {
         measure: 'Completion rate',
         definition: 'Successful deliveries divided by attempted deliveries, as a percentage. An attempt is a delivery that reached an outcome: delivered or not delivered.',
-        note: `Scope 1.2.5 requires ${COMPLETION_TARGET} per cent. It defines the rate as "attempts divided by successful deliveries", which is at or above 1 and cannot be a percentage; this report uses the other way up and also shows the literal ratio. Open item for clarification with University Health.`,
+        note: `University Health asked on 29 September 2026 for ${COMPLETION_TARGET} per cent, up from the 85 per cent minimum in Scope 1.2.5. This report holds us to the higher figure; the two disagree until the contract is amended. Separately, 1.2.5 defines the rate as "attempts divided by successful deliveries", which is at or above 1 and cannot be a percentage; this report uses it the other way up and shows the literal ratio alongside. Both remain open items for clarification.`,
     },
     {
         measure: 'On-time rate',
