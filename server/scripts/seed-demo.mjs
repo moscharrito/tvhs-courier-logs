@@ -139,6 +139,8 @@ if (!apply) {
     say('  a pharmacy account for University Health scoped to every pharmacy');
     say('');
     say('Re-run with --apply.');
+    say('');
+    say('  --accounts-only fixes the logins and writes no deliveries at all.');
 } else {
 
 const login = await call('/api/login', { method: 'POST', body: JSON.stringify({ username: adminUser, password: adminPass }) });
@@ -182,7 +184,7 @@ const already = await call(`${UH}/orders?serviceDate=${today}&limit=500`);
  * a different file. Accepting both shapes costs one line. */
 const list = Array.isArray(already.body) ? already.body : (already.body?.orders ?? []);
 const seeded = list.filter((o) => String(o.externalRef ?? o.reference ?? '').startsWith('DEMO-'));
-if (seeded.length > 0 && !has('again')) {
+if (seeded.length > 0 && !has('again') && !has('accounts-only')) {
     console.error(`Refusing to seed: ${today} already has ${seeded.length} DEMO deliveries.`);
     console.error('Running twice writes every row again and halves the completion rate.');
     console.error('');
@@ -234,6 +236,36 @@ await call(`/api/users/${client}/memberships/uh`, {
     body: JSON.stringify({ role: 'pharmacy', settings: { siteIds: sites.map((s) => s.id) } }),
 });
 say(`Client   ${client}, scoped to all ${sites.length} pharmacies`);
+
+/* ------------------------------------------------- accounts only -------
+ *
+ * The demo data may already be in place and only the logins wrong, which is
+ * where this started: an account named after one person, on a portal that
+ * shows that name back to whoever is holding the laptop. Re-seeding to rename
+ * an account would write another three weeks of deliveries, so it stops here.
+ *
+ * The old account keeps working and is renamed rather than deleted. Somebody
+ * may be signed in on it, and a demo that logs its audience out is worse than
+ * one with a stale username in it. Disabling it is a deliberate act and is
+ * printed below rather than done. */
+if (has('accounts-only')) {
+    const OLD = 'uh.karthik';
+    const old = await call(`/api/users/${OLD}`);
+    if (old.status === 200) {
+        await call(`/api/users/${OLD}`, { method: 'PATCH', body: JSON.stringify({ name: 'UH-Pharmacy Staff' }) });
+        say(`  ${OLD} renamed to UH-Pharmacy Staff and left signed in.`);
+        say(`  To retire it once nobody is using it:`);
+        say(`    PATCH /api/users/${OLD}  {"status":"disabled"}`);
+    }
+    say('');
+    say('  SHOWN ONCE.');
+    say(`    portal      ${base}/projects/uh/deliveries`);
+    say(`    performance ${base}/projects/uh/performance`);
+    say(`    username    ${client}`);
+    say(`    password    ${clientPass}`);
+    say('');
+    say('  No deliveries were written.');
+} else {
 
 /* --------------------------------------------------------------- photos */
 
@@ -576,5 +608,7 @@ say(`    courier app ${courier} / ${courierPass}`);
 say('');
 say('  To remove every row of this again:');
 say(`    npm run clear:work -w server -- --from ${dayBack(days, timezone)} --to ${today} --project uh${isLocal ? '' : ' --i-mean-production'} --apply`);
+
+}
 
 }
