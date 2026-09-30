@@ -190,7 +190,17 @@ export type Device = typeof devices.$inferSelect;
  * minutes.
  */
 
-export const FILE_KINDS = ['doorstep', 'pod', 'exception', 'signature'] as const;
+export const FILE_KINDS = [
+    'doorstep', 'pod', 'exception', 'signature',
+    /* University Health signs their own paper form and we photograph it
+     * (drizzle/0038). This replaces the drawn signature at their request. */
+    'courier_form',
+    /* A photograph of an identity document, taken only where the form is
+     * stamped ID Required. The most sensitive object this system stores: a
+     * government ID tied by name to a patient receiving a prescription. It
+     * never leaves the bucket except through the audited portal. */
+    'patient_id',
+] as const;
 export const FILE_STATUSES = ['pending', 'stored'] as const;
 
 export const files = sqliteTable(

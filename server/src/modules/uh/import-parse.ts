@@ -33,7 +33,7 @@ export type Severity = 'error' | 'warning';
 export const IMPORT_FIELDS = [
     'externalRef', 'recipientName', 'recipientPhone', 'addressLine', 'addressLine2',
     'city', 'state', 'zip', 'serviceType', 'quantity', 'description',
-    'deliveryNotes', 'signatureRequired',
+    'deliveryNotes', 'signatureRequired', 'idRequired',
 ] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 
@@ -67,6 +67,8 @@ export interface ParsedRow {
     description: string;
     deliveryNotes: string;
     signatureRequired: boolean;
+    /** The form is stamped ID Required. */
+    idRequired: boolean;
     /** sha256 of the identifying fields; see the header comment. */
     dedupeKey: string;
 }
@@ -243,6 +245,12 @@ const SYNONYMS: Record<ImportField, string[]> = {
     description: ['description', 'packagedescription', 'item', 'itemdescription', 'contents', 'medication', 'med', 'drug'],
     deliveryNotes: ['notes', 'note', 'comments', 'comment', 'instructions', 'deliveryinstructions', 'specialinstructions', 'remarks'],
     signatureRequired: ['signaturerequired', 'signature', 'sigrequired', 'requiressignature', 'sig'],
+    /* Nine spellings, for the same reason every other header has them: eight
+     * pharmacies export from different systems and none of them agree on a
+     * column name. Getting this wrong means a stamped order arrives looking
+     * ordinary and a courier hands medication to somebody who never showed
+     * identification. */
+    idRequired: ['idrequired', 'id', 'idreq', 'photoid', 'requiresid', 'idverification', 'idcheck', 'identification', 'idneeded'],
 };
 
 /**
@@ -365,6 +373,7 @@ export function applyMapping(
         description: raw('description'),
         deliveryNotes: raw('deliveryNotes'),
         signatureRequired: normalizeBoolean(raw('signatureRequired'), true),
+        idRequired: normalizeBoolean(raw('idRequired'), false),
     };
     return { row: { ...base, dedupeKey: dedupeKeyFor(base) }, serviceTypeRecognised: service.recognised };
 }

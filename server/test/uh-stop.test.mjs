@@ -139,14 +139,18 @@ describe('delivering', () => {
         expect(String(row.rows[0].signed_name)).toBe('James Madison');
     });
 
-    it('refuses no signature with no reason', async () => {
+    it('refuses a handover with nothing proving it', async () => {
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
         await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
             .send({ signedName: 'Ines Vargas' });
         expect(res.status).toBe(400);
-        expect(res.body.code).toBe('deliver.noSignatureReason');
+        /* Renamed from deliver.noSignatureReason when University Health moved
+           the signature onto their own paper form: a photographed form now
+           satisfies this too, so the refusal is about proof in general rather
+           than about a signature specifically. */
+        expect(res.body.code).toBe('deliver.noProof');
         /* Arriving stamps arrived_at without moving the status off
            picked_up, so the property here is that it did NOT become
            delivered rather than what it did become. */

@@ -211,6 +211,18 @@ export const orders = sqliteTable(
 
         signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
 
+        /** The pharmacy's form is stamped ID Required, so a photograph of
+         *  the recipient's identification is needed before this can be
+         *  recorded as delivered (drizzle/0038). */
+        idRequired: integer('id_required', { mode: 'boolean' }).notNull().default(false),
+        /** When the courier confirmed the three identifiers at the door. */
+        identityCheckedAt: text('identity_checked_at'),
+        identityCheckedBy: text('identity_checked_by').notNull().default(''),
+        /** Which of the three could actually be confirmed, comma separated.
+         *  A phone the pharmacy never sent cannot be verified, and recording
+         *  "all three" when one was blank is a lie a form forced on somebody. */
+        identityCheckedFields: text('identity_checked_fields').notNull().default(''),
+
         /** The delivery this one is a second go at (drizzle/0036).
          *
          *  A reattempt is a NEW order, never a reopened one: the first

@@ -77,6 +77,30 @@ const Deliver = z.object({
     /** Required when strokes are empty. Checked in the handler. */
     noSignatureReason: z.string().trim().max(300).default(''),
     note: z.string().trim().max(300).default(''),
+
+    /* ───────────────────────── University Health, 29 September 2026 ───────
+     *
+     * THE SIGNATURE MOVED ONTO PAPER. Their couriers sign the pharmacy's own
+     * form and we photograph it, so `courierFormFileId` is what proves the
+     * handover now and the strokes above are optional history. That is a
+     * downgrade in evidence quality and the owner made it knowingly with the
+     * client's request in front of him: a photograph of a form is a
+     * photograph, where the strokes were the movement of the pen. What it
+     * buys is that the pharmacy's own document is the record.
+     *
+     * The printed name is untouched. Scope 1.2.8 wants the name of the
+     * receiving personnel and a photograph does not reliably yield one. */
+    courierFormFileId: z.number().int().positive().optional(),
+
+    /** Photograph of identification. Required only where the order is
+     *  stamped ID Required; the handler, not this schema, knows which. */
+    patientIdFileId: z.number().int().positive().optional(),
+
+    /* The three identifiers, confirmed at the door: patient name, address,
+     * phone. Sent as the subset the courier could actually confirm, because
+     * a phone the pharmacy never sent cannot be checked and recording "all
+     * three" when one was blank is a lie a form forced on somebody. */
+    identifiersChecked: z.array(z.enum(['name', 'address', 'phone'])).default([]),
 });
 
 const Doorstep = z.object({
@@ -118,6 +142,9 @@ interface OrderRow extends OrderStateRow {
     status: string;
     assigned_to_username: string | null;
     signature_required: number;
+    /** The pharmacy stamped the form ID Required (drizzle/0038), so this
+     *  delivery cannot be recorded without a photograph of identification. */
+    id_required: number;
 }
 
 export function createStopRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
@@ -267,16 +294,62 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         const at = whenOr400(body, res);
         if (!at) return;
 
-        if (body.strokes.length === 0 && body.noSignatureReason === '') {
+        const projectId = req.project!.id;
+
+        /* ── The paper form, which is now the proof ──────────────────────
+         *
+         * Either a photograph of the signed form, or strokes, or a stated
+         * reason for neither. Refusing all three is the same rule this route
+         * has always had: a proof of delivery with nothing on it and no
+         * explanation is a gap nobody can account for a year later. What
+         * changed is that a photographed form now satisfies it, because
+         * University Health signs their own document. */
+        if (body.courierFormFileId === undefined && body.strokes.length === 0 && body.noSignatureReason === '') {
             res.status(400).json({
-                error: 'Nobody signed for this delivery. Say why before recording it: a proof of delivery with '
-                    + 'no signature and no reason is a gap nobody can explain later.',
-                code: 'deliver.noSignatureReason',
+                error: 'Nothing proves this handover. Photograph the signed courier form, capture a signature, '
+                    + 'or say why neither was possible.',
+                code: 'deliver.noProof',
             });
             return;
         }
 
-        const projectId = req.project!.id;
+        /* ── ID Required ────────────────────────────────────────────────
+         *
+         * Refused rather than recorded-and-flagged. The pharmacy stamped the
+         * form because this medication may only go to a person who proved
+         * who they are, and a delivery recorded without that photograph is a
+         * record asserting something nobody checked. */
+        if (order.id_required && body.patientIdFileId === undefined) {
+            res.status(400).json({
+                error: 'This delivery is marked ID Required. Photograph the recipient\'s identification before recording it.',
+                code: 'deliver.idRequired',
+            });
+            return;
+        }
+
+        /* Every file named has to exist, belong to this project and this
+           order, and have finished uploading. Without this a courier could
+           pass any integer and the row would claim a photograph that is not
+           there. */
+        for (const [field, fileId, kind] of [
+            ['courierFormFileId', body.courierFormFileId, 'courier_form'],
+            ['patientIdFileId', body.patientIdFileId, 'patient_id'],
+        ] as const) {
+            if (fileId === undefined) continue;
+            const found = await client.execute({
+                sql: `SELECT id FROM files WHERE project_id = ? AND id = ? AND kind = ? AND status = 'stored'
+                        AND (order_id IS NULL OR order_id = ?)`,
+                args: [projectId, fileId, kind, Number(order.id)],
+            });
+            if (found.rows.length === 0) {
+                res.status(400).json({
+                    error: `That ${kind === 'courier_form' ? 'courier form' : 'identification'} photograph has not finished uploading.`,
+                    code: 'deliver.fileNotStored',
+                    details: [`${field}: ${fileId}`],
+                });
+                return;
+            }
+        }
         let inferredArrival = false;
         try {
             inferredArrival = await ensureArrived(req, order, at, body.lat, body.lng);
@@ -305,7 +378,46 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             throw err;
         }
 
-        await req.audit('stop.delivered', 'order', String(order.id), { inferredArrival, hasGps: body.lat !== undefined });
+        /* Bind the photographs to the order, so the portal and the retention
+           sweep can find them. Done after the custody event, never before: a
+           file pointing at a delivery that was then refused is a file nobody
+           can explain. */
+        for (const fileId of [body.courierFormFileId, body.patientIdFileId]) {
+            if (fileId === undefined) continue;
+            await client.execute({
+                sql: 'UPDATE files SET order_id = ? WHERE project_id = ? AND id = ?',
+                args: [Number(order.id), projectId, fileId],
+            });
+        }
+
+        /* What the courier confirmed at the door, and when.
+         *
+         * Stored as the subset actually checked rather than a boolean,
+         * because "verified" meaning two of three is the kind of thing that
+         * matters exactly once, in a dispute, years later. An empty list is
+         * recorded as an empty list; it is not the same as not asking. */
+        if (body.identifiersChecked.length > 0) {
+            await client.execute({
+                sql: `UPDATE orders SET identity_checked_at = ?, identity_checked_by = ?, identity_checked_fields = ?
+                      WHERE project_id = ? AND id = ?`,
+                args: [
+                    at.toISOString(), actorOf(req),
+                    [...new Set(body.identifiersChecked)].sort().join(','),
+                    projectId, Number(order.id),
+                ],
+            });
+        }
+
+        await req.audit('stop.delivered', 'order', String(order.id), {
+            inferredArrival,
+            hasGps: body.lat !== undefined,
+            /* Counts and flags, never the identifiers themselves: the audit
+               trail records that a check happened, not a patient's phone. */
+            identifiersChecked: body.identifiersChecked.length,
+            courierForm: body.courierFormFileId !== undefined,
+            patientId: body.patientIdFileId !== undefined,
+            idRequired: Boolean(order.id_required),
+        });
         res.status(201).json({
             ...(await reload(projectId, Number(order.id))),
             inferredArrival,

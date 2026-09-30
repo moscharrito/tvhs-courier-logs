@@ -55,6 +55,12 @@ const CreateOrder = z.object({
     description: z.string().trim().max(300).default(''),
     quantity: z.number().int().min(1).max(500).default(1),
     signatureRequired: z.boolean().default(true),
+    /* The pharmacy's form is stamped ID Required, so the courier must
+     * photograph the recipient's identification before this can be recorded
+     * as delivered (University Health, 29 September 2026). Defaults false:
+     * most deliveries are not stamped, and defaulting the other way would
+     * block every ordinary handover on a photograph nobody asked for. */
+    idRequired: z.boolean().default(false),
     externalRef: z.string().trim().max(80).default(''),
     /** When the request actually came in. The SLA clock starts here. */
     requestedAt: z.string().datetime({ offset: true }).optional(),
@@ -106,6 +112,8 @@ interface OrderRow {
     city: string; state: string; zip: string; delivery_notes: string;
     lat: number | null; lng: number | null; geocode_status: string;
     zone: number | null; out_of_area_miles: number | null; signature_required: number;
+    /** The pharmacy stamped the form ID Required (drizzle/0038). */
+    id_required: number;
     received_at: string; due_at: string | null; pickup_due_at: string | null;
     pickup_at: string | null; arrived_at: string | null; delivered_at: string | null;
     assigned_to_username: string | null; assigned_at: string | null;
@@ -134,6 +142,7 @@ const present = (o: OrderRow) => ({
     outOfAreaMiles: o.out_of_area_miles === null ? null : Number(o.out_of_area_miles),
     geocodeStatus: o.geocode_status,
     signatureRequired: Boolean(o.signature_required),
+    idRequired: Boolean(o.id_required),
     status: o.status,
     receivedAt: o.received_at,
     dueAt: o.due_at,
@@ -226,13 +235,13 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
             sql: `INSERT INTO orders
                     (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                      recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                     delivery_notes, zone, signature_required, received_at, due_at, dedupe_key, status)
-                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
+                     delivery_notes, zone, signature_required, id_required, received_at, due_at, dedupe_key, status)
+                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
             args: [
                 project.id, Number(site['id']), body.externalRef, body.serviceType, serviceDate,
                 body.recipientName, normalizePhone(body.recipientPhone), body.addressLine, body.addressLine2,
                 body.city, body.state.toUpperCase(), zip, body.deliveryNotes,
-                zone as InValue, body.signatureRequired ? 1 : 0, receivedAt.toISOString(),
+                zone as InValue, body.signatureRequired ? 1 : 0, body.idRequired ? 1 : 0, receivedAt.toISOString(),
                 due.dueAt ? due.dueAt.toISOString() : null, dedupeKey,
             ],
         });
