@@ -169,8 +169,19 @@ const UH = '/api/projects/uh/uh';
  * create. That is right for real work and wrong for a seeding script, which
  * is why the check lives here rather than in the schema.
  * ───────────────────────────────────────────────────────────────────────── */
-const already = await call(`${UH}/orders?serviceDate=${today}`);
-const seeded = (already.body?.orders ?? []).filter((o) => String(o.externalRef ?? '').startsWith('DEMO-'));
+const already = await call(`${UH}/orders?serviceDate=${today}&limit=500`);
+/* THE SHAPE, CHECKED RATHER THAN ASSUMED.
+ *
+ * This guard was written reading `body.orders`, because that is what the
+ * client portal returns. The administrator's list returns a bare array. So
+ * the filter ran over undefined, found nothing, and the guard never fired:
+ * the owner seeded a third time and production went to 252 deliveries for a
+ * three week window that should hold 112.
+ *
+ * Exactly the mistake the dry run caught in the file kinds a day earlier, in
+ * a different file. Accepting both shapes costs one line. */
+const list = Array.isArray(already.body) ? already.body : (already.body?.orders ?? []);
+const seeded = list.filter((o) => String(o.externalRef ?? o.reference ?? '').startsWith('DEMO-'));
 if (seeded.length > 0 && !has('again')) {
     console.error(`Refusing to seed: ${today} already has ${seeded.length} DEMO deliveries.`);
     console.error('Running twice writes every row again and halves the completion rate.');
