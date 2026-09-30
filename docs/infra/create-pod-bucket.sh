@@ -156,8 +156,33 @@ KEY_POLICY=$(cat <<JSON
 }
 JSON
 )
-aws kms put-key-policy --region "$REGION" --key-id "$KEY_ARN" \
-    --policy-name default --policy "$KEY_POLICY"
+# RETRIED, BECAUSE IAM IS EVENTUALLY CONSISTENT.
+#
+# The user was created seconds ago in step 2 and this policy names its ARN.
+# IAM propagates that ARN on its own schedule, and until it has, KMS rejects
+# the policy with:
+#
+#   MalformedPolicyDocumentException: Policy contains a statement with one
+#   or more invalid principals
+#
+# which reads like a typo in the ARN and is not one. There is no API to ask
+# whether propagation has finished, so the only correct answer is to try
+# again. It usually succeeds on the second attempt.
+applied=no
+for attempt in $(seq 1 12); do
+    if aws kms put-key-policy --region "$REGION" --key-id "$KEY_ARN"             --policy-name default --policy "$KEY_POLICY" 2>/dev/null; then
+        applied=yes
+        break
+    fi
+    printf '   waiting for IAM to propagate the new user (%s of 12)' "$attempt"
+    sleep 5
+done
+printf '                                                            '
+if [ "$applied" != "yes" ]; then
+    echo "Could not apply the key policy after a minute of retrying." >&2
+    echo "Re-run this script; everything before this point is idempotent." >&2
+    exit 1
+fi
 ok "applied"
 
 # ─────────────────────────────── 4. the bucket ───────────────────────────────
