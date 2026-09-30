@@ -375,6 +375,133 @@ export async function dailyFigures(
     };
 }
 
+/* ───────────────── the report University Health reads themselves ─────────
+ *
+ * Karthik Munnam's list of 29 September 2026, in his order:
+ *
+ *   Total number of deliveries
+ *   Completed and on-time deliveries
+ *   Delayed and failed deliveries
+ *   Reasons for failed or unsuccessful deliveries
+ *   Delivery turnaround times
+ *   Deliveries by location, service level, and date range
+ *   Reattempted, cancelled, or returned deliveries
+ *
+ * Every one of those is a figure this module already computes for the
+ * administrator's screen. What was missing was a way to ask for them scoped
+ * to the pharmacies one viewer may see, so the client can read their own
+ * performance without an account that shows them the whole contract.
+ *
+ * SCOPED BY SITE, NOT BY TRUST. `siteIds` narrows the SQL; it is not a filter
+ * applied to a full result afterwards. A viewer scoped to one counter cannot
+ * see another counter's failures even by asking for them, and a viewer scoped
+ * to all of them sees the contract, which is what a contract manager needs.
+ *
+ * NO MONEY, deliberately, and Karthik did not ask for any. What a delivery
+ * cost belongs on an invoice somebody has checked rather than in a screen
+ * where a figure could be quoted back at us as a bill.
+ */
+export interface ScopedReportInput {
+    projectId: number;
+    from: string;
+    to: string;
+    grouping: Grouping;
+    /** Null means every pharmacy in the project. */
+    siteIds: number[] | null;
+    now?: Date;
+}
+
+export async function scopedReport(client: Client, input: ScopedReportInput) {
+    const now = input.now ?? new Date();
+    const { projectId, from, to, grouping, siteIds } = input;
+
+    /* An empty list is not "no filter". A viewer with no pharmacies named
+       sees nothing, which is the same rule the tracking screens follow: a
+       mistake in a settings form must not hand one pharmacy the other eight. */
+    if (siteIds !== null && siteIds.length === 0) {
+        const empty = emptyTotals();
+        return {
+            from, to, grouping,
+            totals: empty, rates: ratesFor(empty),
+            turnaround: turnaroundsFor([]),
+            byPeriod: [], byServiceType: [], bySite: [],
+            failureReasons: [],
+            followUp: { reattempts: 0, returned: 0, awaitingReturn: 0 },
+            target: COMPLETION_TARGET,
+            definitions: DEFINITIONS,
+        };
+    }
+
+    const scope = siteIds === null ? '' : ` AND o.site_id IN (${siteIds.map(() => '?').join(',')})`;
+    const args: InValue[] = siteIds === null ? [projectId, from, to] : [projectId, from, to, ...siteIds];
+
+    const rs = await client.execute({
+        sql: `SELECT o.service_date, o.service_type, o.site_id, s.name AS site_name, o.zone,
+                     o.status, o.due_at, o.arrived_at, o.delivered_at,
+                     o.received_at, o.pickup_at
+              FROM orders o JOIN sites s ON s.id = o.site_id
+              WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${scope}`,
+        args,
+    });
+    const facts: OrderFact[] = rs.rows.map((r) => ({
+        serviceDate: String(r['service_date']),
+        serviceType: String(r['service_type']),
+        siteId: Number(r['site_id']),
+        siteName: String(r['site_name']),
+        zone: r['zone'] === null ? null : Number(r['zone']),
+        status: String(r['status']),
+        dueAt: r['due_at'] === null ? null : String(r['due_at']),
+        arrivedAt: r['arrived_at'] === null ? null : String(r['arrived_at']),
+        deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
+        receivedAt: r['received_at'] === null ? null : String(r['received_at']),
+        pickedUpAt: r['pickup_at'] === null ? null : String(r['pickup_at']),
+    }));
+
+    const totals = facts.reduce((acc, f) => addFact(acc, f, now), emptyTotals());
+
+    const fails = await client.execute({
+        sql: `SELECT p.failure_reason_code AS code, COUNT(*) AS packages, COUNT(DISTINCT o.id) AS orders
+              FROM packages p JOIN orders o ON o.id = p.order_id
+              WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${scope}
+                AND o.status = 'failed' AND p.failure_reason_code <> ''
+              GROUP BY p.failure_reason_code ORDER BY packages DESC, code`,
+        args,
+    });
+
+    const follow = await client.execute({
+        sql: `SELECT
+                SUM(CASE WHEN o.reattempt_of_order_id IS NOT NULL THEN 1 ELSE 0 END) AS reattempts,
+                SUM(CASE WHEN o.returned_at IS NOT NULL THEN 1 ELSE 0 END) AS returned,
+                SUM(CASE WHEN o.status = 'failed' AND o.returned_at IS NULL THEN 1 ELSE 0 END) AS awaitingReturn
+              FROM orders o WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${scope}`,
+        args,
+    });
+    const f = follow.rows[0];
+
+    return {
+        from, to, grouping,
+        totals,
+        rates: ratesFor(totals),
+        turnaround: turnaroundsFor(facts),
+        byPeriod: sliceBy(facts, (x) => bucketFor(x.serviceDate, grouping), now),
+        byServiceType: sliceBy(facts, (x) => ({ key: x.serviceType, label: x.serviceType }), now),
+        bySite: sliceBy(facts, (x) => ({ key: String(x.siteId).padStart(6, '0'), label: x.siteName }), now),
+        failureReasons: fails.rows.map((r) => ({
+            code: String(r['code']),
+            label: REASON_LABELS[String(r['code'])] ?? String(r['code']),
+            packages: Number(r['packages']),
+            orders: Number(r['orders']),
+        })),
+        followUp: {
+            reattempts: Number(f?.['reattempts'] ?? 0),
+            returned: Number(f?.['returned'] ?? 0),
+            awaitingReturn: Number(f?.['awaitingReturn'] ?? 0),
+        },
+        target: COMPLETION_TARGET,
+        definitions: DEFINITIONS,
+    };
+}
+
 export const DEFINITIONS: Array<{ measure: string; definition: string; note: string }> = [
     {
         measure: 'Turnaround, in our hands',

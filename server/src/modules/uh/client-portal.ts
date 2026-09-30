@@ -33,6 +33,7 @@ import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor } from './eta';
+import { scopedReport, GROUPINGS, type Grouping } from './reports';
 import type { FileStorage } from '../../core/files/storage';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -419,6 +420,76 @@ export function createClientPortalRouter(
             pharmacies: sites,
             orders: rows.map((r) => present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '')),
             truncated: rows.length === MAX_ROWS,
+            notes: scopeNote(sites, scope),
+        });
+    }));
+
+    /* ---------------------------------------------------------- reports ----
+     *
+     * Karthik Munnam's list of 29 September 2026, which the client could
+     * previously only receive as a workbook somebody emailed them:
+     *
+     *   Total number of deliveries
+     *   Completed and on-time deliveries
+     *   Delayed and failed deliveries
+     *   Reasons for failed or unsuccessful deliveries
+     *   Delivery turnaround times
+     *   Deliveries by location, service level, and date range
+     *   Reattempted, cancelled, or returned deliveries
+     *   Report frequency, customization options
+     *
+     * The last one is why this is a range and a grouping rather than a fixed
+     * daily page: "customization" in his terms is choosing the window and how
+     * it is broken up, and a client who can ask for last quarter by month
+     * does not need us to run anything for them.
+     *
+     * SCOPED IN THE SQL, NOT AFTERWARDS. A pharmacist at one counter gets
+     * their own numbers; a contract manager scoped to every pharmacy gets the
+     * contract. Neither can ask for the other's by changing a parameter,
+     * because the scope comes from their membership and never from the query.
+     *
+     * NO MONEY, and he did not ask for any. What a delivery cost belongs on
+     * an invoice somebody has checked rather than in a screen where a figure
+     * could be quoted back at us as a bill.
+     */
+    router.get('/reports', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const { scope, sites } = await scopedSites(req);
+        const q = req.query as Record<string, string | undefined>;
+
+        const isDate = (v: string | undefined): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+        const to = isDate(q['to']) ? q['to'] : todayIn(project.timezone);
+        const from = isDate(q['from']) ? q['from'] : to;
+        if (to < from) {
+            res.status(400).json({ error: 'Invalid request', details: ['to: is before from'] });
+            return;
+        }
+        /* A year is the most anybody reads in one go, and the same ceiling the
+           administrator's report uses. */
+        const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
+        if (days > 400) {
+            res.status(400).json({ error: `That is ${days} days. Ask for 400 or fewer.`, code: 'reports.rangeTooLong' });
+            return;
+        }
+        const grouping: Grouping = GROUPINGS.includes(q['groupBy'] as Grouping) ? (q['groupBy'] as Grouping) : 'day';
+
+        const report = await scopedReport(client, {
+            projectId: project.id,
+            from, to, grouping,
+            siteIds: scope.wholeProject ? null : sites.map((s) => s.id),
+        });
+
+        /* Counts only. A report is aggregate by nature, but say so explicitly
+           rather than leaving a reader of the trail to assume it. */
+        await req.audit('client.reports', 'report', `${from}..${to}`, {
+            orders: report.totals.orders, grouping, sites: scope.wholeProject ? 0 : sites.length,
+        });
+
+        res.json({
+            ...report,
+            timezone: project.timezone,
+            generatedAt: new Date().toISOString(),
+            pharmacies: sites.map((s) => s.name),
             notes: scopeNote(sites, scope),
         });
     }));

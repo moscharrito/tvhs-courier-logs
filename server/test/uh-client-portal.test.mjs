@@ -417,3 +417,83 @@ describe('what each role may read across the whole module', () => {
         expect((await uh.get(`${CLIENT}/summary`)).status).toBe(200);
     });
 });
+
+/* ------------------------------------------------ what the client reports */
+
+describe('the reporting Karthik asked for', () => {
+    /* His list, in his order. Each of these was already computed for the
+       administrator's screen; what was missing was the client being able to
+       read their own, scoped to the counters they are entitled to see. */
+
+    it('answers every figure on his list', async () => {
+        await delivered();
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/reports?from=${today}&to=${today}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body.totals.orders).toBeGreaterThan(0);          // total deliveries
+        expect(res.body.totals).toHaveProperty('delivered');         // completed
+        expect(res.body.totals).toHaveProperty('onTimeMet');         // on time
+        expect(res.body.totals).toHaveProperty('onTimeMissed');      // delayed
+        expect(res.body.totals).toHaveProperty('notDelivered');      // failed
+        expect(res.body).toHaveProperty('failureReasons');           // why they failed
+        expect(res.body.turnaround).toHaveProperty('inOurHands');    // turnaround
+        expect(res.body).toHaveProperty('bySite');                   // by location
+        expect(res.body).toHaveProperty('byServiceType');            // by service level
+        expect(res.body).toHaveProperty('byPeriod');                 // by date range
+        expect(res.body.followUp).toHaveProperty('reattempts');      // reattempted
+        expect(res.body.totals).toHaveProperty('cancelled');         // cancelled
+        expect(res.body.followUp).toHaveProperty('returned');        // returned
+    });
+
+    it('carries the definition behind every rate', async () => {
+        /* The standing rule here: a figure whose basis is a click away is a
+           figure somebody quotes without the basis. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/reports?from=${today}&to=${today}`);
+        expect(Array.isArray(res.body.definitions)).toBe(true);
+        expect(res.body.definitions.length).toBeGreaterThan(3);
+    });
+
+    it('lets them choose the window and how it is broken up', async () => {
+        /* "Report frequency, customization options" in his words. A client
+           who can ask for last quarter by month needs nobody to run it. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/reports?from=2026-01-01&to=${today}&groupBy=month`);
+        expect(res.status).toBe(200);
+        expect(res.body.grouping).toBe('month');
+    });
+
+    it('shows one pharmacy only their own numbers', async () => {
+        /* Scoped in the SQL, not filtered afterwards. A pharmacist at one
+           counter cannot see another counter's failures even by asking. */
+        await delivered({ siteId: green.id });
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/reports?from=${today}&to=${today}`);
+
+        const names = res.body.bySite.map((s) => s.label);
+        expect(names.every((n) => !/green/i.test(n)), `saw another pharmacy: ${names.join(', ')}`).toBe(true);
+    });
+
+    it('shows an unscoped account nothing rather than everything', async () => {
+        /* The failure that matters: a mistake in a settings form must not
+           hand somebody the whole contract. */
+        const newStarter = await agentFor('uh.newstarter', 'client-pass-2');
+        const res = await newStarter.get(`${CLIENT}/reports?from=${today}&to=${today}`);
+        expect(res.status).toBe(200);
+        expect(res.body.totals.orders).toBe(0);
+        expect(res.body.notes.join(' ')).toMatch(/no pharmacies/i);
+    });
+
+    it('refuses a range longer than a year', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/reports?from=2020-01-01&to=${today}`);
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('reports.rangeTooLong');
+    });
+
+    it('is not something a courier may read', async () => {
+        const courier = await agentFor('ada.courier', 'courier-pass-1');
+        expect((await courier.get(`${CLIENT}/reports`)).status).toBe(403);
+    });
+});

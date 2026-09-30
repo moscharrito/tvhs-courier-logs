@@ -358,6 +358,9 @@ const MATRIX = [
 
     /* --- what the pharmacy sees. The only endpoints a client viewer may
        reach, and each one narrows to the sites that viewer is scoped to. */
+    /* Karthik Munnam's reporting list, read by the client themselves and
+       scoped to the pharmacies their membership names. */
+    ['GET', `${UH}/client/reports`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/summary`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],

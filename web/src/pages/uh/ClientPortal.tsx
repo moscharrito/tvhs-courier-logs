@@ -131,6 +131,14 @@ export function ClientPortal() {
                 {' · '}{summary.timezone}
             </p>
 
+            {/* Karthik Munnam's reporting list, one click away rather than a
+                workbook somebody has to email them. */}
+            <p>
+                <Link className="izy-btn secondary" to={`/projects/${code}/performance`}>
+                    Performance and reports
+                </Link>
+            </p>
+
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}
             {summary.notes.map((n) => (
                 <div key={n} className="izy-alert warn" role="status">{n}</div>

@@ -17,6 +17,7 @@ import { Pickup } from '../pages/uh/Pickup';
 import { Stop } from '../pages/uh/Stop';
 import { Returns } from '../pages/uh/Returns';
 import { ClientPortal } from '../pages/uh/ClientPortal';
+import { ClientReports } from '../pages/uh/ClientReports';
 import { Discrepancies } from '../pages/uh/Discrepancies';
 import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
@@ -45,6 +46,9 @@ export function App() {
                 <Route path="/projects/:code/runs/:runId/pickup" element={<Pickup />} />
                 <Route path="/projects/:code/returns" element={<Returns />} />
                 <Route path="/projects/:code/deliveries" element={<ClientPortal />} />
+                {/* The reporting Karthik Munnam asked for, read by the client
+                    themselves and scoped to the pharmacies they may see. */}
+                <Route path="/projects/:code/performance" element={<ClientReports />} />
                 <Route path="/projects/:code/reports" element={<Reports />} />
                 <Route path="/projects/:code/discrepancies" element={<Discrepancies />} />
                 <Route path="/projects/:code/invoices" element={<Invoices />} />
