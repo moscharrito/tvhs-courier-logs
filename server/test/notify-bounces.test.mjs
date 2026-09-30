@@ -65,7 +65,9 @@ const bouncePayload = (address, type = 'Permanent', subType = 'General') => ({
 
 const appWith = (over = {}) => {
     const app = express();
-    app.use(express.json());
+    /* As legacy.ts mounts it for this path: any content type, because SNS
+       does not send application/json. */
+    app.use(express.json({ type: () => true }));
     app.use(createSesWebhookRouter({
         client, logger: quietLogger, topicArn: TOPIC,
         fetchCert: async () => certPem,
@@ -77,6 +79,32 @@ const appWith = (over = {}) => {
 
 const rows = async (sql, args = []) => (await client.execute({ sql, args })).rows;
 const clearSuppressions = () => client.execute('DELETE FROM mail_suppressions');
+
+/* ------------------------------------------- the content type SNS sends */
+
+describe('the body SNS actually posts', () => {
+    it('is parsed even though Amazon sends it as text/plain', async () => {
+        /* THE BUG THIS EXISTS FOR. Amazon posts bounce notifications with
+           Content-Type "text/plain; charset=UTF-8". express.json() with
+           default options parses application/json and nothing else, so
+           req.body arrived empty, the handler answered 400 "Not an SNS
+           message", and a real subscription sat at "pending confirmation"
+           forever.
+           Every other test in this file passed throughout, because supertest
+           sends JSON. This one sends what Amazon sends. */
+        await clearSuppressions();
+        const msg = notification(bouncePayload('textplain@example.invalid'));
+
+        const res = await request(appWith())
+            .post('/api/webhooks/ses')
+            .set('Content-Type', 'text/plain; charset=UTF-8')
+            .set('x-amz-sns-message-type', 'Notification')
+            .send(JSON.stringify(msg));
+
+        expect(res.status).toBe(200);
+        expect(res.body.suppressed).toBe(1);
+    });
+});
 
 /* ---------------------------------------------------- refusing a stranger */
 
@@ -93,7 +121,12 @@ describe('what it refuses to believe', () => {
 
         const res = await request(appWith()).post('/api/webhooks/ses').send(msg);
         expect(res.status).toBe(403);
-        expect(await rows('SELECT address FROM mail_suppressions')).toHaveLength(0);
+        /* The named victim specifically, rather than "the table is empty":
+           other cases in this file legitimately leave rows behind, and an
+           assertion about the whole table would break on their ordering
+           rather than on the thing being tested. */
+        const victim = await rows('SELECT address FROM mail_suppressions WHERE address = ?', ['victim@example.invalid']);
+        expect(victim).toHaveLength(0);
     });
 
     it('rejects a certificate served from anywhere but AWS', async () => {

@@ -138,6 +138,23 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     /* Bounces and complaints from SES. Public by necessity and verified in
        code: see core/notify/sns.ts. Mounted beside health, before any
        session middleware, because SNS carries no session. */
+    /* SNS POSTS AS text/plain, AND express.json() SKIPS IT.
+     *
+     * Amazon sends bounce notifications with Content-Type
+     * "text/plain; charset=UTF-8" and the message type in an x-amz-sns-*
+     * header. server.js installs express.json() with default options, which
+     * parses application/json and nothing else, so req.body arrived empty,
+     * the handler answered 400 "Not an SNS message", and the subscription
+     * could never confirm. Every test passed, because supertest sends JSON.
+     *
+     * Found by subscribing a real topic and watching it sit at "pending
+     * confirmation".
+     *
+     * Scoped to this one path rather than widening the global parser: making
+     * every route accept JSON under any content type is a much larger change
+     * than this needs, and body-parser leaves the stream alone when the type
+     * does not match, so a second parser here still reads it. */
+    legacy.app.use('/api/webhooks/ses', express.json({ type: () => true, limit: '256kb' }));
     legacy.app.use(createSesWebhookRouter({
         client: database.client,
         logger,
