@@ -96,6 +96,12 @@ export interface Stop {
     address: string;
     city: string;
     zip: string;
+    /** The third identifier. Empty where the pharmacy's list carried none,
+     *  which is a different fact from "not checked" and is shown as such. */
+    recipientPhone: string;
+    /** The form is stamped ID Required: this delivery cannot be recorded
+     *  without a photograph of the recipient's identification. */
+    idRequired: boolean;
     zone: number | null;
     status: string;
     dueAt: string | null;

@@ -220,3 +220,50 @@ describe('the three identifiers', () => {
         expect(details).not.toContain('Rehearsal Way');
     });
 });
+
+/* ----------------------------------------------- what the courier is given */
+
+describe('the run manifest', () => {
+    it('carries the phone number, or the third identifier cannot be checked', async () => {
+        /* University Health asks the courier to verify name, address AND
+           phone at the door. The first two were always on the manifest.
+           Without the third, a courier asked to check it would have to
+           either skip it or invent it. */
+        const { order } = await atTheDoor();
+        const ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+
+        const mine = await ada.get(`${UH}/runs/mine`);
+        expect(mine.status).toBe(200);
+        const stop = mine.body.runs.flatMap((r) => r.stops).find((s) => s.orderId === order.id);
+
+        expect(stop, 'the order should be on this courier run').toBeTruthy();
+        /* Canonical digits, as normalizePhone stores them. The app formats it
+           for display: a courier reading "2105550100" aloud to somebody in a
+           doorway is worse than one reading "(210) 555-0100". */
+        expect(stop.recipientPhone).toBe('2105550100');
+        expect(stop.idRequired).toBe(false);
+    });
+
+    it('tells the courier before they knock that identification is needed', async () => {
+        const { order } = await atTheDoor({ idRequired: true });
+        const ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+
+        const mine = await ada.get(`${UH}/runs/mine`);
+        const stop = mine.body.runs.flatMap((r) => r.stops).find((s) => s.orderId === order.id);
+        expect(stop.idRequired).toBe(true);
+    });
+
+    it('says nothing rather than blank when the pharmacy sent no phone', async () => {
+        /* "Not provided" and "not checked" are different facts. The app shows
+           the first and refuses to let a courier tick it. */
+        const { order } = await atTheDoor({ recipientPhone: '' });
+        const ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+
+        const mine = await ada.get(`${UH}/runs/mine`);
+        const stop = mine.body.runs.flatMap((r) => r.stops).find((s) => s.orderId === order.id);
+        expect(stop.recipientPhone).toBe('');
+    });
+});

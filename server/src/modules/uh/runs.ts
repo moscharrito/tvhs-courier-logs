@@ -153,6 +153,22 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             address: [String(o['address_line']), String(o['address_line2'])].filter(Boolean).join(', '),
             city: String(o['city']),
             zip: String(o['zip']),
+            /* THE THIRD IDENTIFIER, and the reason it is on the manifest at
+             * all. University Health asks the courier to confirm the patient's
+             * name, address AND phone number at the door. The first two were
+             * already here; without this one the check cannot be made, and a
+             * courier asked to verify something the app never showed them
+             * would have to either skip it or make it up.
+             *
+             * Empty where the pharmacy's list did not carry one, which the
+             * app must show as "not provided" rather than as a blank field:
+             * those are different facts and only one of them is our problem. */
+            recipientPhone: String(o['recipient_phone'] ?? ''),
+            /* The pharmacy stamped the form. The courier cannot record this
+             * delivery without photographing identification, so they need to
+             * know before they knock rather than at the moment they are
+             * refused. */
+            idRequired: Boolean(o['id_required']),
             zone: o['zone'] === null ? null : Number(o['zone']),
             status: String(o['status']),
             dueAt: o['due_at'] === null ? null : String(o['due_at']),

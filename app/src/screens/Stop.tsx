@@ -36,6 +36,7 @@ import { queueAndSend } from '../lib/queue';
 import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/pod';
 import { SignatureMark } from './SignatureMark';
 import { handwrittenInitials } from '../lib/handwriting';
+import { readablePhone } from '../lib/phone';
 
 /** Addendum 1's own list, in its own terms. */
 const REASONS: Array<{ code: string; label: string }> = [
@@ -97,6 +98,20 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const [podOn, setPodOn] = useState<boolean | undefined>(undefined);
     const [photo, setPhoto] = useState<Captured | null>(null);
     const [photoNote, setPhotoNote] = useState<string | null>(null);
+    /* ─────────── University Health, 29 September 2026 ───────────────────
+     * The signature moved onto their own paper form, which the recipient
+     * signs and the courier photographs. `formPhoto` is what proves a
+     * handover now; the typed initials below remain only as the fallback
+     * for a handset that cannot upload at all.
+     *
+     * `idPhoto` is identification, and only where the pharmacy stamped the
+     * form. `checked` is the three identifiers the courier could actually
+     * confirm at the door, which is a subset and not a boolean: a phone the
+     * pharmacy never sent cannot be checked, and a form that made somebody
+     * tick it anyway would be manufacturing a fact. */
+    const [formPhoto, setFormPhoto] = useState<Captured | null>(null);
+    const [idPhoto, setIdPhoto] = useState<Captured | null>(null);
+    const [checked, setChecked] = useState<string[]>([]);
     const [said, setSaid] = useState<string | null>(null);
 
     const base = `/api/projects/${code}/uh/orders/${stop.orderId}`;
@@ -153,6 +168,20 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
         setPhotoNote(null);
     };
 
+    /** One camera open, one photograph, no library access. See lib/pod.ts. */
+    const captureInto = async (set: (c: Captured | null) => void) => {
+        const shot = await capturePhoto();
+        if (shot.kind !== 'captured') {
+            if (shot.kind === 'refused') setPhotoNote(shot.message);
+            return;
+        }
+        set(shot.photo);
+        setPhotoNote(null);
+    };
+
+    const toggle = (field: string) =>
+        setChecked((was) => (was.includes(field) ? was.filter((f) => f !== field) : [...was, field]));
+
     const deliver = async () => {
         /* THE PHOTO GOES FIRST, AND NEVER INTO THE OUTBOX. It is uploaded
            straight to S3 now, before the delivery is recorded, so a failure
@@ -169,14 +198,47 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                 setPhoto(null);
             }
         }
+        /* The form and the identification go up the same way and for the
+           same reason: now, while the courier is still standing there, so a
+           failure is something they find out about rather than something
+           discovered a week later by somebody reading a report.
+           UNLIKE THE DOORSTEP PHOTO, a failure here stops the delivery. A
+           doorstep drop without its picture is still a delivery; a handover
+           whose proof did not upload is a handover we cannot evidence, and
+           where the form was stamped ID Required it is one the pharmacy
+           forbade outright. */
+        let courierFormFileId: number | undefined;
+        let patientIdFileId: number | undefined;
+        for (const [shot, kind, label] of [
+            [formPhoto, 'courier_form', 'signed form'],
+            [idPhoto, 'patient_id', 'identification'],
+        ] as const) {
+            if (shot === null) continue;
+            setBusy(true);
+            const up = await uploadPhoto(token, code, stop.orderId, shot, kind);
+            setBusy(false);
+            if (up.kind === 'failed') {
+                setPhotoNote(`The ${label} photo could not be sent: ${up.message} Nothing was recorded. Try again, or record this as a failed attempt.`);
+                return;
+            }
+            if (kind === 'courier_form') courierFormFileId = up.fileId;
+            else patientIdFileId = up.fileId;
+        }
+
         await queue(
             `${base}/deliver`,
             {
                 signedName: signedName.trim(),
-                strokes: auto,
+                /* Only when there is no photographed form: the initials are
+                   the fallback for a handset that cannot upload, not a
+                   second signature sitting beside the paper one. */
+                strokes: courierFormFileId === undefined ? auto : [],
                 captureMethod: 'initials',
                 noSignatureReason: '',
                 note: note.trim(),
+                ...(courierFormFileId !== undefined ? { courierFormFileId } : {}),
+                ...(patientIdFileId !== undefined ? { patientIdFileId } : {}),
+                identifiersChecked: checked,
             },
             `Delivery for ${stop.recipientName}`,
         );
@@ -202,7 +264,24 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const auto = handwrittenInitials(signedName);
     /* The name never stops being required: a delivery with nobody's name
        against it is an anonymous handover of a prescription. */
-    const canDeliver = signedName.trim().length > 1 && auto.length > 0 && !busy;
+    /* WHAT THE PHARMACY REQUIRES, IN THE ORDER IT MATTERS.
+     *
+     * With storage on, the photographed form is the proof and the initials
+     * are not offered. With it off there is nowhere to put a photograph, so
+     * the initials remain the fallback rather than stranding a courier at a
+     * door with no way to record a handover that happened.
+     *
+     * ID Required with storage off is the one case with no way through: the
+     * pharmacy forbade the handover without a photograph and there is
+     * nowhere to put one. The screen says so and offers the failed attempt,
+     * which is the truthful record. */
+    const canPhotograph = podOn === true;
+    const needsId = stop.idRequired;
+    const idSatisfied = !needsId || idPhoto !== null;
+    const proofSatisfied = canPhotograph ? formPhoto !== null : auto.length > 0;
+    const blockedByStorage = needsId && !canPhotograph;
+    const canDeliver = signedName.trim().length > 1 && proofSatisfied && idSatisfied
+        && !blockedByStorage && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
     const knowsPackages = (detail?.packages.length ?? 0) > 0;
@@ -262,8 +341,112 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                         accessibilityLabel="Printed name of whoever took it"
                     />
 
-                    <Text style={styles.label}>Their signature</Text>
-                    <SignatureMark strokes={auto} />
+                    {/* THE THREE IDENTIFIERS, checked against the person at
+                        the door. University Health asks for name, address and
+                        phone before anything is handed over.
+
+                        Each is ticked separately and the phone is disabled
+                        when the pharmacy sent none, because "not provided" and
+                        "not checked" are different facts and a form that let
+                        somebody tick an empty field would be manufacturing
+                        one. What is ticked is what gets recorded. */}
+                    <Text style={styles.label}>Check these against the person</Text>
+                    {([
+                        ['name', 'Name', stop.recipientName],
+                        ['address', 'Address', `${stop.address}, ${stop.zip}`],
+                        ['phone', 'Phone', readablePhone(stop.recipientPhone)],
+                    ] as const).map(([field, label, value]) => {
+                        const missing = value.trim() === '';
+                        return (
+                            <Pressable
+                                key={field}
+                                style={[styles.check, checked.includes(field) && styles.checkOn, missing && styles.off]}
+                                onPress={() => { if (!missing) toggle(field); }}
+                                disabled={missing || busy}
+                                accessibilityRole="checkbox"
+                                accessibilityState={{ checked: checked.includes(field), disabled: missing }}
+                                accessibilityLabel={`${label}: ${missing ? 'not provided by the pharmacy' : value}`}
+                            >
+                                <Text style={styles.checkBox}>{checked.includes(field) ? '✓' : ' '}</Text>
+                                <View style={styles.checkBody}>
+                                    <Text style={styles.checkLabel}>{label}</Text>
+                                    <Text style={styles.checkValue}>
+                                        {missing ? 'Not provided by the pharmacy' : value}
+                                    </Text>
+                                </View>
+                            </Pressable>
+                        );
+                    })}
+
+                    {/* THE SIGNED PAPER FORM, which replaced the drawn
+                        signature at the client's request. Their document,
+                        signed by the recipient, photographed by us.
+                        The typed initials below are shown only when there is
+                        nowhere to put a photograph, so a courier is never
+                        stranded at a door by a storage outage. */}
+                    {canPhotograph ? (
+                        <>
+                            <Text style={styles.label}>Photo of the signed courier form</Text>
+                            <Pressable
+                                style={styles.photo}
+                                onPress={() => { void captureInto(setFormPhoto); }}
+                                disabled={busy}
+                                accessibilityRole="button"
+                                accessibilityLabel={formPhoto === null ? 'Photograph the signed courier form' : 'Retake the courier form photo'}
+                            >
+                                {formPhoto === null
+                                    ? <Text style={styles.photoText}>Take a photo  ·  required</Text>
+                                    : <Image source={{ uri: formPhoto.uri }} style={styles.photoShot} resizeMode="cover" />}
+                            </Pressable>
+                            {formPhoto !== null && (
+                                <Pressable onPress={() => setFormPhoto(null)} style={styles.photoDrop}>
+                                    <Text style={styles.photoDropText}>Retake it</Text>
+                                </Pressable>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <Text style={styles.label}>Their signature</Text>
+                            <SignatureMark strokes={auto} />
+                            <Text style={styles.photoNote}>
+                                Photo storage is unavailable, so the signed form cannot be captured.
+                                Their initials are being recorded instead.
+                            </Text>
+                        </>
+                    )}
+
+                    {/* ID REQUIRED. The pharmacy stamped this one, so the
+                        medication may only go to somebody who proved who they
+                        are. The server refuses the delivery without it, and
+                        this says so before the courier knocks rather than at
+                        the moment they are turned away. */}
+                    {needsId && canPhotograph && (
+                        <>
+                            <Text style={[styles.label, styles.warnLabel]}>ID REQUIRED  ·  photograph their identification</Text>
+                            <Pressable
+                                style={styles.photo}
+                                onPress={() => { void captureInto(setIdPhoto); }}
+                                disabled={busy}
+                                accessibilityRole="button"
+                                accessibilityLabel={idPhoto === null ? 'Photograph the recipient identification' : 'Retake the identification photo'}
+                            >
+                                {idPhoto === null
+                                    ? <Text style={styles.photoText}>Take a photo  ·  required</Text>
+                                    : <Image source={{ uri: idPhoto.uri }} style={styles.photoShot} resizeMode="cover" />}
+                            </Pressable>
+                            {idPhoto !== null && (
+                                <Pressable onPress={() => setIdPhoto(null)} style={styles.photoDrop}>
+                                    <Text style={styles.photoDropText}>Retake it</Text>
+                                </Pressable>
+                            )}
+                        </>
+                    )}
+                    {blockedByStorage && (
+                        <Text style={styles.photoNote}>
+                            This delivery is marked ID Required and photo storage is unavailable, so it
+                            cannot be recorded as handed over. Record it as a failed attempt instead.
+                        </Text>
+                    )}
 
                     {/* Proof of delivery. Drawn only when the server says it
                         has somewhere lawful to put it, and optional either
@@ -372,6 +555,24 @@ const styles = StyleSheet.create({
     photoShot: { width: '100%', height: 170 },
     photoDrop: { minHeight: 44, justifyContent: 'center' },
     photoDropText: { fontSize: 15, fontWeight: '600', color: theme.danger },
+    /* The three identifiers. Wide rows with the value printed under the
+       label, because a courier reads these aloud to somebody standing in a
+       doorway and a truncated address is worse than none. */
+    check: {
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        borderWidth: 1, borderColor: theme.line, borderRadius: 10,
+        paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8,
+    },
+    checkOn: { borderColor: theme.green, backgroundColor: theme.greenSoft },
+    checkBox: {
+        width: 22, height: 22, lineHeight: 22, textAlign: 'center',
+        borderWidth: 1, borderColor: theme.line, borderRadius: 4,
+        fontSize: 15, fontWeight: '700', color: theme.green,
+    },
+    checkBody: { flex: 1, minWidth: 0 },
+    checkLabel: { fontSize: 12, color: theme.muted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    checkValue: { fontSize: 15, color: theme.ink },
+    warnLabel: { color: theme.danger, fontWeight: '700' },
     photoNote: { fontSize: 15, color: theme.muted, lineHeight: 21, marginBottom: 8 },
     wrap: { flex: 1, backgroundColor: 'transparent' },
     inner: { padding: 16, paddingTop: 56, paddingBottom: 48 },

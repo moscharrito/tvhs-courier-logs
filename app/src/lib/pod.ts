@@ -118,8 +118,18 @@ export type UploadResult =
  * a courier's data rather than after. Some platforms do not report a size on
  * the asset, so it is measured from the blob when it comes back as zero.
  */
+/** What the photograph is of. The server refuses anything else, and each
+ *  kind has its own meaning in the proof of delivery:
+ *
+ *    doorstep      left at the door, with nobody to hand it to
+ *    courier_form  University Health's own paper form, signed by the
+ *                  recipient. This is what proves a handover now.
+ *    patient_id    identification, where the form is stamped ID Required.
+ *                  The most sensitive thing this app ever uploads. */
+export type PhotoKind = 'doorstep' | 'courier_form' | 'patient_id';
+
 export async function uploadPhoto(
-    token: string, code: string, orderId: number, photo: Captured,
+    token: string, code: string, orderId: number, photo: Captured, kind: PhotoKind = 'doorstep',
 ): Promise<UploadResult> {
     try {
         const blob = await (await fetch(photo.uri)).blob();
@@ -127,7 +137,7 @@ export async function uploadPhoto(
         if (bytes <= 0) return { kind: 'failed', message: 'The photo came back empty.' };
 
         const ticket = await post<UploadTicket>(`/api/projects/${code}/uh/files`, token, {
-            kind: 'doorstep',
+            kind,
             contentType: photo.contentType,
             bytes,
             orderId,
