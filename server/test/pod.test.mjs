@@ -365,3 +365,76 @@ describe('the proof of delivery', () => {
         await removeDir(dir);
     });
 });
+
+/* ------------------------------------------- the two copies of one document
+ *
+ * The client portal and the administrator both build a proof of delivery for
+ * the same delivery, from two routes. They drifted: the client's learned to
+ * carry photographs and the administrator's went on passing
+ * `photoAvailable: false`, so dispatch downloaded a document with no picture
+ * in it while the pharmacy downloaded the same delivery with two.
+ *
+ * Nothing failed, because nothing compared them. This does. */
+describe('our copy and the client copy', () => {
+    let client;
+    let projectId;
+
+    beforeAll(async () => {
+        client = srv.core.client;
+        projectId = Number((await client.execute("SELECT id FROM projects WHERE code = 'uh'")).rows[0].id);
+    });
+
+    /** A stored photograph, as a finished upload would leave one. */
+    async function storedFile(kind, orderId) {
+        const at = new Date().toISOString();
+        await client.execute({
+            sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+                  VALUES (?, ?, ?, ?, 'image/jpeg', 1024, 'stored', 'ada.courier', ?, ?)`,
+            args: [projectId, orderId, kind, `uh/test/${kind}/${Math.random()}.jpg`, at, at],
+        });
+    }
+
+    const asUh = async () => {
+        const uh = srv.agent();
+        await uh.post('/api/login').send({ username: 'uh.pharmacist', password: 'client-pass-1' });
+        return uh;
+    };
+
+    it('both admit a photographed courier form exists', async () => {
+        /* THE REGRESSION. The admin route decided this by reading
+           `signed_name`, then by not asking at all; either way our own record
+           of a controlled substance handover said no photograph was taken
+           while the file sat in the bucket. */
+        const order = await deliveredOrder();
+        await storedFile('courier_form', order.id);
+
+        const ours = pdfText(Buffer.from((await admin.get(`${ORDERS}/${order.id}/pod.pdf`)).body));
+        const theirs = pdfText(Buffer.from((await (await asUh()).get(`${CLIENT}/orders/${order.id}/pod.pdf`)).body));
+
+        for (const text of [ours, theirs]) expect(text).toMatch(/photograph/i);
+        /* Neither may claim there was none. */
+        for (const text of [ours, theirs]) expect(text).not.toMatch(/No photograph was taken/i);
+    });
+
+    it('both say there is none when none was uploaded', async () => {
+        /* The other direction, so the fix cannot be "always claim a photo". */
+        const order = await deliveredOrder();
+        const ours = pdfText(Buffer.from((await admin.get(`${ORDERS}/${order.id}/pod.pdf`)).body));
+        const theirs = pdfText(Buffer.from((await (await asUh()).get(`${CLIENT}/orders/${order.id}/pod.pdf`)).body));
+
+        for (const text of [ours, theirs]) expect(text).not.toMatch(/photograph was taken at the door/i);
+    });
+
+    it('stays a valid document when the bucket cannot be reached', async () => {
+        /* Storage is unconfigured in tests, so the fetch never happens. The
+           point is that a delivery WITH a file row still produces a document
+           a reader will open, rather than a 500 or a truncated file. */
+        const order = await deliveredOrder();
+        await storedFile('courier_form', order.id);
+        await storedFile('patient_id', order.id);
+
+        const res = await admin.get(`${ORDERS}/${order.id}/pod.pdf`);
+        expect(res.status).toBe(200);
+        checkStructure(Buffer.from(res.body));
+    });
+});

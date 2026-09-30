@@ -20,6 +20,8 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
+import { hasProofPhoto, attachPhotos } from './pod-photos';
+import type { FileStorage } from '../../core/files/storage';
 import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
 import { dateIn } from '../../core/dates';
@@ -166,7 +168,9 @@ const present = (o: OrderRow) => ({
     }),
 });
 
-export function createOrdersRouter({ client }: { client: Client }): Router {
+export function createOrdersRouter(
+    { client, storage }: { client: Client; storage: FileStorage },
+): Router {
     const router = Router({ mergeParams: true });
     const staff = requireProjectRole('admin');
     /* Reading an order means reading a patient's name and address. Couriers
@@ -480,14 +484,31 @@ export function createOrdersRouter({ client }: { client: Client }): Router {
         });
         const names = new Map(users.rows.map((u) => [String(u['username']), String(u['name'])]));
 
+        /* THE PHOTOGRAPHS BELONG IN THIS COPY TOO.
+         *
+         * `photoAvailable: false` sat here while the client's copy of the same
+         * delivery carried two pictures. It was true before there was a file
+         * service and became a lie the moment one was configured, and because
+         * these are two routes building one document, fixing the client's did
+         * nothing for ours. Dispatch downloaded a proof of delivery with
+         * nothing in it to look at.
+         *
+         * Both routes now go through pod-photos.ts. If the lookup changes
+         * again it changes for both, which is the only reason this is not a
+         * copy of the six lines in the portal. */
+        const hasPhoto = await hasProofPhoto(client, req.project!.id, Number(order.id));
+
         const data = await loadPodData(client, {
             projectId: req.project!.id,
             orderId: Number(order.id),
             timezone: req.project!.timezone,
+            hasPhoto,
             courierName: (username) => names.get(username) ?? username,
-            photoAvailable: false,
+            photoAvailable: storage.available,
         });
         if (!data) { res.status(404).json({ error: `Order ${req.params['id']} not found in this project` }); return; }
+
+        await attachPhotos(client, storage, req.project!.id, Number(order.id), data);
 
         await req.audit('order.pod', 'order', String(order.id), { status: data.status });
         sendPdf(res, renderPod(data), podFilename(Number(order.id), data.serviceDate));

@@ -35,6 +35,7 @@ import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor } from './eta';
 import { scopedReport, GROUPINGS, type Grouping } from './reports';
 import type { FileStorage } from '../../core/files/storage';
+import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos } from './pod-photos';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
@@ -140,15 +141,13 @@ function present(o: OrderRow, siteName: string, courierName: string) {
     };
 }
 
-/** What proves a handover, newest first. The signed paper form replaced the
- *  drawn signature; a doorstep picture proves a drop where nobody answered. */
-const PROOF_KINDS = ['courier_form', 'doorstep'] as const;
-
-/** Identification, photographed where the pharmacy stamped the form. Kept
- *  apart from the proof kinds and served by its own route, so that reading a
- *  government ID is a distinct, separately audited act rather than something
- *  that happens because somebody opened a delivery. */
-const ID_KIND = ['patient_id'] as const;
+/* PROOF_KINDS and ID_KIND now live in pod-photos.ts, with the lookup that
+ * uses them. Identification stays apart from the proof kinds and served by its
+ * own route, so that reading a government ID is a distinct, separately audited
+ * act rather than something that happens because somebody opened a delivery.
+ *
+ * They moved because the administrator's copy of this same document needs the
+ * identical lookup and had its own, which said no photograph existed. */
 
 export function createClientPortalRouter(
     { client, storage }: { client: Client; storage: FileStorage },
@@ -222,19 +221,9 @@ export function createClientPortalRouter(
          * proof of the handover would have been invisible to the only people
          * who need it.
          *
-         * Newest first across both kinds: a courier who photographed twice
-         * did so because the first was no good. */
-        const list = kinds.map(() => '?').join(',');
-        const rs = await client.execute({
-            sql: `SELECT id, s3_key, content_type FROM files
-                  WHERE project_id = ? AND order_id = ? AND kind IN (${list}) AND status = 'stored'
-                  ORDER BY id DESC LIMIT 1`,
-            args: [projectId, orderId, ...kinds],
-        });
-        const row = rs.rows[0];
-        return row
-            ? { id: Number(row['id']), key: String(row['s3_key']), contentType: String(row['content_type']) }
-            : null;
+         * The query is in pod-photos.ts now, because the administrator's copy
+         * of this document needs the same one and had a different answer. */
+        return storedPhoto(client, projectId, orderId, kinds);
     }
 
     /**
@@ -259,28 +248,6 @@ export function createClientPortalRouter(
             /** Attempts made after this one. More than one is a third go. */
             attempts: after.rows.map((r) => ({ id: Number(r['id']), status: String(r['status']) })),
         };
-    }
-
-    /**
-     * The JPEG behind a stored key, or undefined.
-     *
-     * Through the same presigned GET a browser would use, rather than a second
-     * code path with its own credentials: whatever is true of one is true of
-     * the other, and there is one place where an expiry or a key policy can be
-     * wrong.
-     *
-     * Never throws. A proof of delivery missing its photograph is worth
-     * printing; a 500 in place of one is not.
-     */
-    async function fetchPhoto(key: string): Promise<Buffer | undefined> {
-        try {
-            const signed = storage.presignDownload(key);
-            const res = await fetch(signed.url);
-            if (!res.ok) return undefined;
-            return Buffer.from(await res.arrayBuffer());
-        } catch {
-            return undefined;
-        }
     }
 
     /** What to tell the client about the photograph, asked rather than assumed. */
@@ -729,32 +696,29 @@ export function createClientPortalRouter(
         /* Looked up before the document is built, because whether a
            photograph exists decides what the document says as well as what it
            carries. */
-        const proof = await storedDoorstepPhoto(project.id, id);
-        const ident = await storedDoorstepPhoto(project.id, id, ID_KIND);
+        const hasPhoto = await hasProofPhoto(client, project.id, id);
 
         const data = await loadPodData(client, {
             projectId: project.id,
             orderId: id,
             timezone: project.timezone,
-            hasPhoto: proof !== null,
+            hasPhoto,
             courierName: (username) => names.get(username) ?? '',
             /* Was hardcoded false, which was true before there was a file
                service and became a lie the moment one was configured. The
                document now says what is actually so. */
             photoAvailable: storage.available,
         });
-        if (data) {
-            /* FETCHED HERE, NOT IN pod.ts. That module renders a document; it
-               does not reach for a bucket. Keeping the network on this side
-               means the renderer stays a pure function of its input, which is
-               why it can be tested without a bucket at all.
-               A photograph that will not come back is not an error: the page
-               says it could not be read and the rest of the document, which
-               is the part that proves the handover, still prints. */
-            if (proof && data.photo.available) data.photo.bytes = await fetchPhoto(proof.key);
-            if (ident && storage.available) data.idPhoto = { bytes: await fetchPhoto(ident.key) };
-        }
         if (!data) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        /* FETCHED HERE, NOT IN pod.ts. That module renders a document; it does
+           not reach for a bucket. Keeping the network on this side means the
+           renderer stays a pure function of its input, which is why it can be
+           tested without a bucket at all.
+           A photograph that will not come back is not an error: the page says
+           it could not be read and the rest of the document, which is the part
+           that proves the handover, still prints. */
+        await attachPhotos(client, storage, project.id, id, data);
 
         await req.audit('client.pod', 'order', String(id), { status: data.status });
         sendPdf(res, renderPod(data), podFilename(id, data.serviceDate));

@@ -308,7 +308,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     /* Before the general orders router, which owns /:id/events and would
        otherwise answer /:id/reattempt with a 404 from its own 404 handler. */
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, idempotent, createReattemptRouter({ client: database.client }));
-    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client }));
+    legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client, storage: fileStorage }));
     // Pickup first: its /:id/pickup must be matched before the runs
     // router's /:id, which would otherwise swallow it.
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, idempotent, createPickupRouter({ client: database.client }));
