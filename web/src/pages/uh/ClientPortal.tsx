@@ -18,6 +18,7 @@ import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
+import { useLive, agoLabel } from '../../app/useLive';
 import { slaLabel, type Sla } from './Orders';
 
 interface Pharmacy { id: number; code: string; name: string }
@@ -96,12 +97,39 @@ export function ClientPortal() {
     }, [base, qs]);
     useEffect(() => { void load(); }, [load]);
 
+    /* The screen stays current on its own, because this sits open on a
+       pharmacy counter all day and the question it answers changes under the
+       reader. It stops when the tab is hidden and when a pharmacist pauses it
+       to read a row without it moving. */
+    const live = useLive(load, 20);
+
+    /* Which pharmacies are rolled up. Collapsed sections are remembered by id
+       rather than by index, so a section does not expand because a different
+       one above it emptied out between polls. */
+    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+    const toggle = (key: string) => setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+    });
+
     /* Sorted here rather than below the early returns, because the pager
        holds state and a hook cannot live after a conditional return.
        Attention first: a pharmacist opening this wants the ones that went
        wrong, and those must not be on page 4. */
     const rows = [...(list?.orders ?? [])].sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)));
     const pagedRows = usePaged(rows);
+
+    /* By pharmacy, preserving the attention-first order inside each. Built
+       from the rows actually returned rather than from the account's
+       pharmacies, so a pharmacy with nothing today does not appear as an
+       empty section somebody has to collapse. */
+    const groups = [...rows.reduce((map, o) => {
+        const list2 = map.get(o.pharmacy) ?? [];
+        list2.push(o);
+        map.set(o.pharmacy, list2);
+        return map;
+    }, new Map<string, ClientOrder[]>())].sort((a, b) => a[0].localeCompare(b[0]));
 
     if (!project) {
         return (<><h1>Not available</h1><Link className="izy-btn secondary" to="/">Back</Link></>);
@@ -145,7 +173,30 @@ export function ClientPortal() {
             ))}
 
             <div className="izy-card">
-                <h2>Today</h2>
+                <div className="izy-row-between">
+                    <h2>Today</h2>
+                    {/* What a live screen owes its reader: whether it is live,
+                        when it last managed to look, and a way to stop it
+                        moving while they read a row. */}
+                    <span className="izy-muted">
+                        <span aria-hidden="true">{live.paused ? '■' : '●'}</span>
+                        {' '}{live.paused ? 'Paused' : 'Live'}
+                        {' · '}
+                        <span role="status" aria-live="off">updated {agoLabel(live.secondsAgo)}</span>
+                        {' '}
+                        <button
+                            type="button"
+                            className="izy-btn secondary"
+                            onClick={() => live.setPaused(!live.paused)}
+                        >
+                            {live.paused ? 'Resume' : 'Pause'}
+                        </button>
+                        {' '}
+                        <button type="button" className="izy-btn secondary" onClick={live.refresh} disabled={live.busy}>
+                            {live.busy ? 'Refreshing' : 'Refresh'}
+                        </button>
+                    </span>
+                </div>
                 <div className="izy-stats">
                     <div><b>{summary.total}</b><span>sent to us</span></div>
                     <div><b>{summary.outstanding}</b><span>still out</span></div>
@@ -211,48 +262,39 @@ export function ClientPortal() {
                 )}
                 {rows.length === 0 ? (
                     <p className="izy-muted">Nothing for this day.</p>
+                ) : groups.length > 1 ? (
+                    /* GROUPED AND COLLAPSIBLE when the account covers more
+                       than one pharmacy. A contract manager scoped to all
+                       eight is otherwise reading one undifferentiated list of
+                       several hundred rows; a pharmacist scoped to one never
+                       sees this branch at all. */
+                    groups.map(([pharmacy, list]) => {
+                        const shut = collapsed.has(pharmacy);
+                        const bad = list.filter(needsAttention).length;
+                        return (
+                            <section key={pharmacy} className="izy-group">
+                                <div className="izy-row-between">
+                                    <button
+                                        type="button"
+                                        className="izy-btn secondary small"
+                                        aria-expanded={!shut}
+                                        onClick={() => toggle(pharmacy)}
+                                    >
+                                        <span aria-hidden="true">{shut ? '▸' : '▾'}</span> {pharmacy}
+                                    </button>
+                                    <span className="izy-muted">
+                                        {list.length} {list.length === 1 ? 'delivery' : 'deliveries'}
+                                        {bad > 0 && <span className="izy-stat-bad"> · {bad} need attention</span>}
+                                    </span>
+                                </div>
+                                {!shut && <DeliveryTable rows={list} clock={clock} open={open} setOpen={setOpen} />}
+                            </section>
+                        );
+                    })
                 ) : (
                     <>
-                    <table className="izy-table">
-                        <thead>
-                            <tr>
-                                <th>Patient</th><th>Address</th><th>Status</th><th>Times</th><th>Courier</th><th />
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {pagedRows.rows.map((o) => (
-                                <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
-                                    <td>
-                                        {o.recipientName}
-                                        {o.reference && <><br /><code>{o.reference}</code></>}
-                                    </td>
-                                    <td>{o.address}<br /><span className="izy-muted">{o.city} {o.zip}</span></td>
-                                    <td>
-                                        {STATUS_LABEL[o.status] ?? o.status}
-                                        {o.status === 'failed' && o.failureReason && (
-                                            <><br /><span className="izy-muted">{o.failureReason.replace(/_/g, ' ')}</span></>
-                                        )}
-                                        {o.status !== 'delivered' && o.status !== 'failed' && (
-                                            <><br /><span className="izy-muted">{slaLabel(o.sla).text}</span></>
-                                        )}
-                                    </td>
-                                    <td className="izy-muted">
-                                        {o.pickedUpAt && <>collected {clock(o.pickedUpAt)}<br /></>}
-                                        {o.arrivedAt && <>arrived {clock(o.arrivedAt)}<br /></>}
-                                        {o.deliveredAt && <>delivered {clock(o.deliveredAt)}</>}
-                                        {!o.pickedUpAt && <>due {clock(o.dueAt)}</>}
-                                    </td>
-                                    <td>{o.courier || <span className="izy-muted">not yet</span>}</td>
-                                    <td>
-                                        <button className="izy-btn secondary small" type="button" onClick={() => setOpen(o.id === open ? null : o.id)}>
-                                            {o.id === open ? 'Hide' : 'Proof'}
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    <Pager of={pagedRows} noun="deliveries" />
+                        <DeliveryTable rows={pagedRows.rows} clock={clock} open={open} setOpen={setOpen} />
+                        <Pager of={pagedRows} noun="deliveries" />
                     </>
                 )}
             </div>
@@ -280,6 +322,57 @@ const EVENT_LABEL: Record<string, string> = {
 };
 
 /** The proof of delivery, on screen. The printable document is ticket 3.2. */
+/** One table of deliveries. Extracted so a grouped view and a flat one draw
+ *  exactly the same rows rather than two renderings that drift. */
+function DeliveryTable({ rows, clock, open, setOpen }: {
+    rows: ClientOrder[];
+    clock: (iso: string | null) => string;
+    open: number | null;
+    setOpen: (id: number | null) => void;
+}) {
+    return (
+        <table className="izy-table">
+            <thead>
+                <tr>
+                    <th>Patient</th><th>Address</th><th>Status</th><th>Times</th><th>Courier</th><th />
+                </tr>
+            </thead>
+            <tbody>
+                {rows.map((o) => (
+                    <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
+                        <td>
+                            {o.recipientName}
+                            {o.reference && <><br /><code>{o.reference}</code></>}
+                        </td>
+                        <td>{o.address}<br /><span className="izy-muted">{o.city} {o.zip}</span></td>
+                        <td>
+                            {STATUS_LABEL[o.status] ?? o.status}
+                            {o.status === 'failed' && o.failureReason && (
+                                <><br /><span className="izy-muted">{o.failureReason.replace(/_/g, ' ')}</span></>
+                            )}
+                            {o.status !== 'delivered' && o.status !== 'failed' && (
+                                <><br /><span className="izy-muted">{slaLabel(o.sla).text}</span></>
+                            )}
+                        </td>
+                        <td className="izy-muted">
+                            {o.pickedUpAt && <>collected {clock(o.pickedUpAt)}<br /></>}
+                            {o.arrivedAt && <>arrived {clock(o.arrivedAt)}<br /></>}
+                            {o.deliveredAt && <>delivered {clock(o.deliveredAt)}</>}
+                            {!o.pickedUpAt && <>due {clock(o.dueAt)}</>}
+                        </td>
+                        <td>{o.courier || <span className="izy-muted">not yet</span>}</td>
+                        <td>
+                            <button className="izy-btn secondary small" type="button" onClick={() => setOpen(o.id === open ? null : o.id)}>
+                                {o.id === open ? 'Hide' : 'Proof'}
+                            </button>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    );
+}
+
 function ProofOfDelivery({ code, order, onClose }: { code: string; order: ClientOrder; onClose: () => void }) {
     /* Same zone as the PDF this panel offers a link to. They used to
        disagree by the reader's offset from Central. */

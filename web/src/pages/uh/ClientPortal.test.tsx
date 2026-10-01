@@ -210,3 +210,83 @@ describe('ClientPortal', () => {
         await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Ask for 92 or fewer'));
     });
 });
+
+/* ------------------------------------------------- the live counter screen
+ *
+ * This sits open on a pharmacy counter all day. The questions it has to keep
+ * answering are "what is still out" and "what went wrong", and both change
+ * under the reader while they are looking at them. */
+describe('staying current', () => {
+    it('says it is live and when it last looked', async () => {
+        renderPortal();
+        expect(await screen.findByText(/Live/)).toBeInTheDocument();
+        expect(screen.getByText(/updated/)).toBeInTheDocument();
+    });
+
+    it('stops refreshing when a pharmacist pauses it to read a row', async () => {
+        /* A row moving under somebody mid-read is a support call. Pausing is
+           theirs to choose, and the screen keeps saying how stale it is. */
+        renderPortal();
+        const pause = await screen.findByRole('button', { name: 'Pause' });
+        fireEvent.click(pause);
+        expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument();
+        expect(screen.getByText(/Paused/)).toBeInTheDocument();
+    });
+
+    it('reloads on demand without waiting for the timer', async () => {
+        const { calls } = renderPortal();
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        const before = calls.filter((c) => c.includes('/client/orders')).length;
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        await waitFor(() => {
+            expect(calls.filter((c) => c.includes('/client/orders')).length).toBeGreaterThan(before);
+        });
+    });
+});
+
+describe('an account covering several pharmacies', () => {
+    const many = {
+        [`GET ${BASE}/orders*`]: list({
+            orders: [
+                order({ id: 21, pharmacy: 'Robert B Green Pharmacy' }),
+                order({ id: 22, pharmacy: 'Robert B Green Pharmacy', recipientName: 'Delphine Okonkwo' }),
+                order({ id: 23, pharmacy: 'University Hospital Discharge Pharmacy', recipientName: 'Marcus Ibarra' }),
+            ],
+        }),
+    };
+
+    it('groups the day by pharmacy rather than one long list', async () => {
+        /* A contract manager scoped to eight pharmacies was otherwise reading
+           several hundred undifferentiated rows. */
+        renderPortal(routes(many));
+        expect(await screen.findByRole('button', { name: /Robert B Green Pharmacy/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /University Hospital Discharge Pharmacy/ })).toBeInTheDocument();
+    });
+
+    it('counts each pharmacy in its own heading', async () => {
+        renderPortal(routes(many));
+        await screen.findByRole('button', { name: /Robert B Green Pharmacy/ });
+        expect(screen.getByText('2 deliveries')).toBeInTheDocument();
+        expect(screen.getByText('1 delivery')).toBeInTheDocument();
+    });
+
+    it('rolls a pharmacy up and leaves the others alone', async () => {
+        renderPortal(routes(many));
+        const rbg = await screen.findByRole('button', { name: /Robert B Green Pharmacy/ });
+        expect(rbg).toHaveAttribute('aria-expanded', 'true');
+        fireEvent.click(rbg);
+
+        await waitFor(() => expect(rbg).toHaveAttribute('aria-expanded', 'false'));
+        /* Its rows are gone and the other pharmacy's are not. */
+        expect(screen.queryByText('Delphine Okonkwo')).toBeNull();
+        expect(screen.getByText('Marcus Ibarra')).toBeInTheDocument();
+    });
+
+    it('does not group when the account covers one pharmacy', async () => {
+        /* A pharmacist at one counter should never see a section header that
+           only ever says their own name. */
+        renderPortal();
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        expect(screen.queryByRole('button', { name: /University Hospital Discharge Pharmacy/ })).toBeNull();
+    });
+});
