@@ -33,6 +33,13 @@
  *
  * Credentials come from the environment and are never printed:
  *   SEED_ADMIN_USER (default "admin")   SEED_ADMIN_PASS
+ *   SEED_COURIER_PASS                   optional, see below
+ *
+ * WITHOUT SEED_COURIER_PASS THE DOCUMENT NAMES THE WRONG PERSON. The custody
+ * record names whoever made the call, so a round performed entirely with the
+ * admin session produces a proof of delivery saying an administrator carried
+ * the item. Set it and the collection, arrival, photographs and handover are
+ * all recorded as the driver, which is what a real one looks like.
  */
 
 import fs from 'node:fs';
@@ -75,6 +82,12 @@ const courierUser = value('courier', 'demo.courier');
 /* ------------------------------------------------------------- plumbing */
 
 let cookie = '';
+const jar = {};
+let current = '';
+/** Switch identity. The custody record names whoever made the call, so which
+ *  session is current is not a detail: it is what the document says happened. */
+const as = (who) => { current = who; cookie = jar[who] ?? ''; };
+const remember = (who) => { current = who; jar[who] = cookie; };
 const say = (s) => console.log(s);
 
 async function call(pathname, options = {}) {
@@ -88,7 +101,13 @@ async function call(pathname, options = {}) {
         redirect: 'manual',
     });
     const set = res.headers.getSetCookie?.() ?? [];
-    if (set.length > 0) cookie = set.map((c) => c.split(';')[0]).join('; ');
+    if (set.length > 0) {
+        cookie = set.map((c) => c.split(';')[0]).join('; ');
+        /* Back into the jar as well, or a rotated session would be dropped
+           the next time the script changes identity and the call after that
+           would be unauthenticated for no visible reason. */
+        if (current !== '') jar[current] = cookie;
+    }
     const text = await res.text();
     let body = text;
     try { body = JSON.parse(text); } catch { /* an error page, kept as text */ }
@@ -157,6 +176,40 @@ insist('login', await call('/api/login', {
     body: JSON.stringify({ username: adminUser, password: adminPass }),
 }));
 say(`  signed in as ${adminUser}`);
+remember('admin');
+
+/* THE CUSTODY RECORD NAMES WHOEVER MADE THE CALL.
+ *
+ * Doing the whole round as the administrator produced a proof of delivery
+ * that said an administrator collected a controlled substance, carried it and
+ * handed it over. That is not what the document is for, and it is the first
+ * thing anybody reading one would notice.
+ *
+ * So the three steps a driver actually performs are performed as the driver,
+ * when there is a password to do it with. There is no way to obtain one from
+ * here: resetting the courier's own password to get it would be a seed script
+ * quietly changing a real account's credentials.
+ *
+ * Without it the seed still works and the document still carries its
+ * photographs; it just names the wrong person, and says so rather than
+ * letting somebody discover it on a screen in front of a room. */
+const courierPass = process.env['SEED_COURIER_PASS'] ?? '';
+let asCourier = false;
+if (courierPass !== '') {
+    const login = await call('/api/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: courierUser, password: courierPass }),
+    });
+    if (login.status >= 200 && login.status < 300) {
+        remember('courier');
+        asCourier = true;
+        say(`  signed in as ${courierUser}`);
+    } else {
+        console.error(`\n${courierUser} could not sign in: HTTP ${login.status}. Check SEED_COURIER_PASS.`);
+        process.exit(1);
+    }
+    as('admin');
+}
 
 /* File storage has to be on, or this produces exactly the empty document it
    exists to replace. Said now rather than after the order is written. */
@@ -225,9 +278,12 @@ const event = (type, body) => call(`${UH}/orders/${orderId}/events`, {
     body: JSON.stringify({ type, ...body }),
 });
 
+/* From here the driver is doing the work, so the driver is making the calls
+   and the chain of custody names them. */
+if (asCourier) as('courier');
 insist('collect', await event('picked_up', { at: stamp(minutesAgo(52)), signedName: DISPENSER }));
 insist('arrive', await event('arrived', { at: stamp(minutesAgo(9)) }));
-say('  collected, arrived');
+say(`  collected, arrived${asCourier ? ` as ${courierUser}` : ''}`);
 
 /* ---------------------------------------------------------- photographs */
 
@@ -304,6 +360,10 @@ insist('deliver', await call(`${UH}/orders/${orderId}/deliver`, {
 }));
 say('  delivered');
 
+/* Back to the administrator to read the documents: a courier may not open the
+   client portal, and should not be able to. */
+as('admin');
+
 /* ------------------------------------------------- read it back, as proof */
 
 /** What the document actually contains, read off the bytes rather than
@@ -345,6 +405,13 @@ if (wrong > 0) {
     process.exit(1);
 }
 say(`  Delivery #${orderId} is complete, with both photographs in both copies.`);
+if (!asCourier) {
+    say('');
+    say('  NOTE: the chain of custody on this one names the administrator, not a');
+    say('  driver, because every step was performed with the admin session. Set');
+    say(`  SEED_COURIER_PASS to ${courierUser}'s password and run it again if this`);
+    say('  document is going in front of anybody.');
+}
 if (PHONE_IS_REAL) {
     say(`  A text is queued for ${masked(PHONE)}. The sweep sends it within two minutes.`);
     say('  If nothing arrives, the 10DLC campaign is the thing to check: Twilio');
