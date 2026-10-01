@@ -131,7 +131,13 @@ describe('a simulated period, billed and then checked', () => {
         for (const [index, day] of [FROM, '2026-07-07', TO].entries()) {
             await simulateWave(srv.core.client, {
                 projectId, serviceDate: day, timezone: TZ, settings,
-                orders: 60, couriers: 4, seed: 4400 + index,
+                /* Enough that the awkward combinations actually occur. At 60
+                   a day this depended on luck: when the site weights were
+                   corrected to University Health's real volumes the stream
+                   moved and the failed STAT this period relied on stopped
+                   happening, which said nothing about the reconciliation and
+                   everything about the sample size. */
+                orders: 150, couriers: 6, seed: 4400 + index,
             });
         }
         const project = (await srv.core.client.execute("SELECT * FROM projects WHERE code = 'uh'")).rows[0];

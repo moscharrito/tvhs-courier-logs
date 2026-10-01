@@ -288,6 +288,13 @@
       "when": 1789998210935,
       "tag": "0040_patient_message_stages",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1789998211935,
+      "tag": "0041_remove_business_center",
+      "breakpoints": true
     }
   ]
 }

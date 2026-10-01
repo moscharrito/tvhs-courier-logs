@@ -27,10 +27,15 @@ describe('seeded UH pharmacies', () => {
     it('loads the nine pickup locations from the bid table, scoped to the uh project', async () => {
         const res = await admin.get(UH);
         expect(res.status).toBe(200);
-        expect(res.body).toHaveLength(9);
+        /* Eight. Business Center III was the ninth and is an office, not a
+           pharmacy: migration 0041 removes it and says why. Addendum 1 says
+           seven pick-up locations, and the eight here each took deliveries on
+           30 September 2026, so the contract's count is out of date rather
+           than this list being wrong. Exhibit E would settle it. */
+        expect(res.body).toHaveLength(8);
 
         const byCode = Object.fromEntries(res.body.map((s) => [s.code, s]));
-        expect(Object.keys(byCode).sort()).toEqual(['bc3', 'discharge', 'green', 'pavilion', 'southeast', 'southwest', 'tdi', 'vida', 'wheatley']);
+        expect(Object.keys(byCode).sort()).toEqual(['discharge', 'green', 'pavilion', 'southeast', 'southwest', 'tdi', 'vida', 'wheatley']);
 
         expect(byCode['pavilion']).toMatchObject({
             name: 'University Health Medical Center Pavilion Pharmacy',
@@ -39,10 +44,14 @@ describe('seeded UH pharmacies', () => {
         });
         expect(byCode['discharge']).toMatchObject({ name: 'University Hospital Discharge Pharmacy', zip: '78229' });
         expect(byCode['discharge'].notes).toMatch(/after-hours returns/i);
-        expect(byCode['bc3'].notes).toMatch(/open item 6/i);
+        /* Open item 6 is closed: it asked whether this was a pickup location
+           and the answer is no. Nothing should reintroduce it. */
+        expect(byCode['bc3']).toBeUndefined();
 
         // The ZIPs match the five the bid table lists for pickup locations.
-        expect([...new Set(res.body.map((s) => s.zip))].sort()).toEqual(['78207', '78220', '78223', '78224', '78229', '78237', '78249']);
+        /* 78249 went with Business Center III, which is the ZIP printed on the
+           solicitation as University Health's own procurement address. */
+        expect([...new Set(res.body.map((s) => s.zip))].sort()).toEqual(['78207', '78220', '78223', '78224', '78229', '78237']);
     });
 
     it('leaves coordinates unset rather than inventing them, pending ticket 1.4', async () => {
@@ -59,7 +68,7 @@ describe('seeded UH pharmacies', () => {
 
     it('seeds sites only for the uh project, and re-running the migration adds no duplicates', async () => {
         const rows = (await sql(`SELECT p.code AS project, COUNT(*) AS n FROM sites s JOIN projects p ON p.id = s.project_id GROUP BY p.code`)).rows.map((r) => ({ ...r }));
-        expect(rows).toEqual([{ project: 'uh', n: 9 }]);
+        expect(rows).toEqual([{ project: 'uh', n: 8 }]);
     });
 });
 
@@ -150,17 +159,17 @@ describe('create, update, delete', () => {
     });
 
     it('filters by status and type', async () => {
-        expect((await admin.get(`${UH}?status=active`)).body).toHaveLength(9);
+        expect((await admin.get(`${UH}?status=active`)).body).toHaveLength(8);
         expect((await admin.get(`${UH}?status=inactive`)).body.map((s) => s.code)).toEqual(['palo.alto']);
         expect((await admin.get(`${UH}?type=hospital`)).body.map((s) => s.code)).toEqual(['palo.alto']);
-        expect((await admin.get(`${UH}?type=pharmacy`)).body).toHaveLength(9);
+        expect((await admin.get(`${UH}?type=pharmacy`)).body).toHaveLength(8);
     });
 
     it('deletes a site and 404s afterwards', async () => {
         const site = (await admin.get(UH)).body.find((s) => s.code === 'palo.alto');
         expect((await admin.delete(`${UH}/${site.id}`)).body).toEqual({ ok: true, deleted: 'palo.alto' });
         expect((await admin.get(`${UH}/${site.id}`)).status).toBe(404);
-        expect((await admin.get(UH)).body).toHaveLength(9);
+        expect((await admin.get(UH)).body).toHaveLength(8);
         expect((await admin.get(`${UH}/999999`)).status).toBe(404);
         expect((await admin.get(`${UH}/not-a-number`)).status).toBe(404);
     });

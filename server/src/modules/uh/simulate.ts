@@ -43,9 +43,24 @@ export const WEEKEND_STOPS = 227;
 /* ASSUMED. Discharge is the only pharmacy UH described as highest volume; the
  * rest of this split is invented so the board has a realistic shape, and will
  * be replaced by the sample list. Weights, not counts: they are normalised. */
+/* MEASURED, NOT INVENTED, SINCE 30 SEPTEMBER 2026.
+ *
+ * University Health's Assistant Director of Pharmacy read yesterday's
+ * prescription counts out site by site on the board call. These are those
+ * numbers, used directly as weights.
+ *
+ * THE OLD GUESS HAD IT BACKWARDS. It put Discharge highest at 30 and Robert
+ * B. Green at 12. Green is the largest by a distance and Discharge is fifth,
+ * so every board, every rehearsal and any capacity thinking done off this
+ * table was weighted towards the wrong pharmacy.
+ *
+ * Prescriptions rather than orders, which is the same shape: roughly two
+ * prescriptions to an order, applied evenly. His stated total of 1,755 is the
+ * running sum through TDI and omits the last two sites; the per-site figures
+ * are the ones used here. */
 const SITE_WEIGHTS: Record<string, number> = {
-    discharge: 30, pavilion: 16, green: 12, southeast: 9, southwest: 9,
-    tdi: 8, vida: 7, wheatley: 6, bc3: 3,
+    green: 504, southwest: 335, tdi: 314, southeast: 285,
+    discharge: 195, pavilion: 122, wheatley: 17, vida: 14,
 };
 
 /* ASSUMED. Addendum 1 describes the daily list as the ordinary case, with STAT
