@@ -49,9 +49,23 @@ import { courierForm, idCard } from './lib/paper.mjs';
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(`--${flag}`);
+
+/**
+ * `--name=value` or `--name value`. Both, because seed-demo.mjs next door
+ * takes the second form and this one took only the first, so a command copied
+ * from one to the other silently fell back to the default: a run aimed at
+ * production quietly addressed localhost instead, and said so in one line
+ * nobody reads when they are expecting it to work.
+ */
 const value = (name, fallback) => {
-    const hit = args.find((a) => a.startsWith(`--${name}=`));
-    return hit ? hit.slice(name.length + 3) : fallback;
+    const joined = args.find((a) => a.startsWith(`--${name}=`));
+    if (joined) return joined.slice(name.length + 3);
+
+    const at = args.indexOf(`--${name}`);
+    if (at === -1) return fallback;
+    const next = args[at + 1];
+    /* A following flag is the next option, not this one's value. */
+    return next === undefined || next.startsWith('--') ? fallback : next;
 };
 
 const base = (value('base', process.env['SEED_BASE'] ?? 'http://127.0.0.1:3000')).replace(/\/$/, '');
