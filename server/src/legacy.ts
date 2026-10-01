@@ -167,6 +167,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         sweepIntervalSeconds: config.sweepIntervalSeconds,
         mailConfigured: mailer.available,
         filesConfigured: fileStorage.available,
+        smsConfigured: texter.available,
     }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));

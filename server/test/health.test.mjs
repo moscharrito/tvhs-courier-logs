@@ -33,6 +33,10 @@ describe('GET /health', () => {
         // Tests start without an interval, so it reports the honest answer.
         expect(res.body.scheduler.sweep).toBe('off');
         expect(res.body.scheduler.mail).toBe('off');
+        /* Texting was reported nowhere but the boot log, so "are patients
+           being told anything" could not be answered without the Render
+           dashboard open. */
+        expect(res.body.scheduler.sms).toBe('off');
         /* Off means a doorstep delivery is refused outright rather than
            recorded without its photograph. The blueprint no longer records
            whether this is on, so this endpoint is where it is answered. */
@@ -50,9 +54,10 @@ describe('GET /health', () => {
             sweepIntervalSeconds: 120,
             mailConfigured: true,
             filesConfigured: true,
+            smsConfigured: true,
         }));
         const res = await request(app).get('/health');
-        expect(res.body.scheduler).toEqual({ sweep: 'every 120s', mail: 'configured' });
+        expect(res.body.scheduler).toEqual({ sweep: 'every 120s', mail: 'configured', sms: 'configured' });
         expect(res.body.files).toBe('configured');
     });
 

@@ -36,9 +36,14 @@ interface Deps {
     mailConfigured?: boolean | undefined;
     /** Whether proof-of-delivery storage is usable. Not which bucket. */
     filesConfigured?: boolean | undefined;
+    /** Whether patient texting is configured. Not the number it sends from:
+     *  a from-number is on the list above of things that never appear here. */
+    smsConfigured?: boolean | undefined;
 }
 
-export function createHealthRouter({ client, version, sweepIntervalSeconds, mailConfigured, filesConfigured }: Deps): Router {
+export function createHealthRouter({
+    client, version, sweepIntervalSeconds, mailConfigured, filesConfigured, smsConfigured,
+}: Deps): Router {
     const router = Router();
     const started = Date.now();
 
@@ -67,6 +72,16 @@ export function createHealthRouter({ client, version, sweepIntervalSeconds, mail
                    sending something, and a health check that sends email is a
                    health check that mails a hospital every thirty seconds. */
                 mail: mailConfigured ? 'configured' : 'off',
+                /* Same rule as mail, for the same reason: proving Twilio
+                   answers would mean sending a text, and a health check that
+                   texts somebody is a health check that texts a patient.
+
+                   Here at all because it was not, and the only place that
+                   said whether texting was on was a line in the boot log.
+                   Anybody without access to that log -- which includes
+                   everyone who is not holding the Render dashboard -- had no
+                   way to answer "are the messages going out?" at all. */
+                sms: smsConfigured ? 'configured' : 'off',
             },
             /* Off means a doorstep delivery is refused outright rather than
                recorded without its photograph, so this is an operational
