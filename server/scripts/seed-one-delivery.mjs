@@ -210,6 +210,17 @@ remember('admin');
 const courierPass = process.env['SEED_COURIER_PASS'] ?? '';
 let asCourier = false;
 if (courierPass !== '') {
+    /* SWITCH IDENTITY BEFORE LOGGING IN, NOT AFTER.
+     *
+     * call() files every Set-Cookie under whichever identity is current. Sign
+     * the courier in while that is still "admin" and the courier's session is
+     * written into the admin slot, so the later as('admin') restores the
+     * courier and the first administrative call fails with a 403 that reads
+     * like a permissions problem rather than a clobbered session.
+     *
+     * as('courier') here starts from no cookie, which is what a login wants
+     * anyway, and the write-back lands where it belongs. */
+    as('courier');
     const login = await call('/api/login', {
         method: 'POST',
         body: JSON.stringify({ username: courierUser, password: courierPass }),
