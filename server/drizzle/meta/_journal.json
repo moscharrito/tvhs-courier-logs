@@ -295,6 +295,13 @@
       "when": 1789998211935,
       "tag": "0041_remove_business_center",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1789998212935,
+      "tag": "0042_site_lead_role",
+      "breakpoints": true
     }
   ]
 }

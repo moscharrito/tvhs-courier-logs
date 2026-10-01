@@ -27,7 +27,11 @@ import { users } from './tvhs';
  * The consolidation gave the people who were dispatchers the power to change
  * the price schedule and issue an invoice, which they did not have before.
  * That is the trade, and it is on the record in docs/build-backlog.md. */
-export const PROJECT_ROLES = ['admin', 'courier', 'pharmacy'] as const;
+/* 'lead' is a site lead: stationary at one pharmacy for the wave, owning the
+ * handover to drivers there. Scoped by settings.siteIds like a pharmacy
+ * membership, because the alternative was giving them admin, which would let
+ * a lead at Wheatley read Robert B. Green's day and the contract's pricing. */
+export const PROJECT_ROLES = ['admin', 'lead', 'courier', 'pharmacy'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
 export const projects = sqliteTable('projects', {
@@ -55,7 +59,7 @@ export const memberships = sqliteTable(
     (t) => [
         unique('memberships_user_project_unique').on(t.userId, t.projectId),
         index('memberships_project_id_idx').on(t.projectId),
-        check('memberships_role_check', sql`${t.role} IN ('admin','courier','pharmacy')`),
+        check('memberships_role_check', sql`${t.role} IN ('admin','lead','courier','pharmacy')`),
     ],
 );
 
