@@ -24,6 +24,12 @@
  *
  *   node scripts/seed-one-delivery.mjs                      # local
  *   node scripts/seed-one-delivery.mjs --i-mean-production  # the live site
+ *   ... --phone=2105551234                                  # text a real phone
+ *
+ * WITHOUT --phone THIS TEXTS NOBODY. The recipient is a 555 number no carrier
+ * will route. With it, recording the delivery queues the "delivered" message
+ * and the sweep sends it within two minutes, which is the only way to prove
+ * the texting works end to end without waiting for a real round.
  *
  * Credentials come from the environment and are never printed:
  *   SEED_ADMIN_USER (default "admin")   SEED_ADMIN_PASS
@@ -104,8 +110,44 @@ function insist(label, res, ok = (s) => s >= 200 && s < 300) {
 const PATIENT = 'Delphine Okonkwo';
 const ADDRESS = '418 Calle Rivera';
 const ZIP = '78229';
-const PHONE = '2105550147';
 const DISPENSER = 'R. Abiodun, Pharm Tech';
+
+/* A 555 number, which no carrier will route. The right default: the delivered
+ * message is switched on, so every run of this queues a text, and a seed that
+ * texted a real stranger because somebody reused a number from a fixture is a
+ * mistake that only has to happen once. */
+const UNROUTABLE = '2105550147';
+
+/**
+ * Who gets the text, when you want to prove the texting works.
+ *
+ *   --phone=2105551234
+ *
+ * Ten digits, or eleven starting with 1, which is what toE164 understands.
+ * Anything else is refused here rather than accepted and dropped by Twilio,
+ * where the symptom is a message that was sent and never arrived.
+ */
+function recipientPhone() {
+    const given = value('phone', '').trim();
+    if (given === '') return { phone: UNROUTABLE, real: false };
+
+    const digits = given.replace(/\D/g, '');
+    const usable = digits.length === 10 || (digits.length === 11 && digits.startsWith('1'));
+    if (!usable) {
+        console.error(`--phone=${given} is not a ten-digit number, or eleven starting with 1.`);
+        process.exit(1);
+    }
+    /* 555-01xx is the reserved fictional range. Someone passing one of those
+       meant to test and would otherwise wait for a text that cannot come. */
+    const fictional = /^1?\d{3}55501\d{2}$/.test(digits);
+    return { phone: digits, real: !fictional };
+}
+
+const { phone: PHONE, real: PHONE_IS_REAL } = recipientPhone();
+
+/** Last four only. The rest is somebody's phone number and does not need to
+ *  be in a terminal, a screenshot or a scrollback. */
+const masked = (digits) => `${'*'.repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
 
 /* --------------------------------------------------------------- run it */
 
@@ -123,6 +165,20 @@ if (status.status !== 200 || status.body?.configured === false) {
     console.error('\nFile storage is not configured on that server, so there would be no photographs.');
     console.error('Set FILES_ENABLED and the S3 values first.');
     process.exit(1);
+}
+
+/* Said before the order exists, not after the text has gone.
+ *
+ * The delivered message is switched on, so recording the handover queues a
+ * real text and the sweep sends it within two minutes. That is the point of
+ * --phone, and it is also a thing somebody should see coming. */
+if (PHONE_IS_REAL) {
+    say('');
+    say(`  A TEXT WILL BE SENT to ${masked(PHONE)} when this records the delivery.`);
+    say('  It bills a segment and, once the 10DLC campaign is live, arrives on that phone.');
+    say('');
+} else {
+    say(`  recipient   ${masked(PHONE)} (unroutable, so no text can arrive)`);
 }
 
 const sites = insist('sites', await call(`${UH}/sites`)).body;
@@ -289,5 +345,10 @@ if (wrong > 0) {
     process.exit(1);
 }
 say(`  Delivery #${orderId} is complete, with both photographs in both copies.`);
+if (PHONE_IS_REAL) {
+    say(`  A text is queued for ${masked(PHONE)}. The sweep sends it within two minutes.`);
+    say('  If nothing arrives, the 10DLC campaign is the thing to check: Twilio');
+    say('  reports success and carriers drop the message until it is approved.');
+}
 say(`  portal   ${base.replace(/\/api$/, '')}/projects/${projectCode}/deliveries`);
 say(`  ours     ${base.replace(/\/api$/, '')}/projects/${projectCode}/orders/${orderId}`);
