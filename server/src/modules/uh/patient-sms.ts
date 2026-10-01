@@ -119,7 +119,16 @@ export async function queueStageNotice(
         return true;
     } catch {
         /* The unique index on (order_id, kind), or anything else. A second
-           "delivered" for the same order is one delivery. */
+           "delivered" for the same order is one delivery.
+
+           THIS CATCH HID A REAL BUG ONCE. The kind column had a CHECK
+           constraint listing only 'delivery_today', so every stage added
+           afterwards was refused by the table, swallowed here, and reported
+           as "nothing written" -- which is indistinguishable from the stage
+           being switched off. Migration 0040 widened it, and a test compares
+           the constraint against the stage list so the two cannot drift
+           again. The catch stays broad: a delivery that happened must not be
+           undone by a text that was not queued. */
         return false;
     }
 }

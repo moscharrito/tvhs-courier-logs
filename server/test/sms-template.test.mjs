@@ -237,14 +237,24 @@ describe('every stage', () => {
         }
     });
 
-    it('is off except the morning notice', () => {
+    it('sends on the three that tell somebody something, and no others', () => {
         /* Six texts about one delivery is six times the cost and the reason
-           carriers filter a campaign. Turning one on is a decision. */
+           carriers filter a campaign. Turning one on is a decision, so the
+           set is written out here rather than counted: adding a stage should
+           not quietly start texting people. */
         const stages = resolveSettings({}).patientSms.stages;
-        expect(stages.delivery_today.enabled).toBe(true);
-        for (const name of STAGE_NAMES.filter((s) => s !== 'delivery_today')) {
-            expect(stages[name].enabled, name).toBe(false);
-        }
+        const on = STAGE_NAMES.filter((name) => stages[name].enabled);
+        expect(on.sort()).toEqual(['attempted', 'delivered', 'delivery_today']);
+    });
+
+    it('sends at most two in a delivery that goes normally', () => {
+        /* delivered and attempted are the two ways the same delivery ends,
+           so the worst case is the morning notice plus one of them. */
+        const stages = resolveSettings({}).patientSms.stages;
+        const perDelivery = STAGE_NAMES
+            .filter((name) => stages[name].enabled)
+            .filter((name) => name !== 'attempted');
+        expect(perDelivery).toHaveLength(2);
     });
 
     it('fits in two messages', () => {

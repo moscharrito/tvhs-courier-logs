@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
+import { STAGE_NAMES } from '../src/core/notify/sms-template.ts';
 import { assertMinimal, toE164, createTexter, OPTED_OUT } from '../src/core/notify/twilio.ts';
 import {
     DELIVERY_TODAY, inMorningWindow, queueMorningNotices, sendQueued, BATCH,
@@ -278,5 +279,151 @@ describe('the Twilio client', () => {
 
     it('knows the code that means somebody opted out', () => {
         expect(OPTED_OUT).toBe(21610);
+    });
+});
+
+/* ------------------------------------------- the stages after the morning
+ *
+ * The morning notice is queued by the sweep. The rest are queued by the
+ * custody event that causes them, from inside recordOrderEvent, which is the
+ * one place every status change in the system goes through.
+ *
+ * These go through the real endpoints a courier's app calls, because the
+ * claim being tested is that completing a delivery texts somebody, not that
+ * a function inserts a row when called directly. */
+describe('a text at each stage', () => {
+    let ada;
+
+    beforeAll(async () => {
+        await admin.post('/api/users').send({
+            username: 'stage.courier', name: 'Stage Courier', password: 'courier-pass-9', role: 'driver',
+        });
+        await admin.put('/api/users/stage.courier/memberships/uh').send({ role: 'courier', settings: {} });
+        ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'stage.courier', password: 'courier-pass-9' });
+    });
+
+    /** An order collected and standing at the door, ready to be closed. */
+    async function atTheDoor(over = {}) {
+        const o = await order(over);
+        await admin.post(`${UH}/runs`).send({
+            courierUsername: 'stage.courier', label: `Run ${o.id}`, orderIds: [o.id],
+        });
+        /* Through the events endpoint, which is where every status change in
+           the system goes and therefore where the hook lives. */
+        await ada.post(`${ORDERS}/${o.id}/events`).send({ type: 'picked_up', signedName: 'A Tech' });
+        await ada.post(`${ORDERS}/${o.id}/arrive`).send({});
+        return o;
+    }
+
+    const queued = async (orderId) => rows(
+        'SELECT kind, body FROM patient_messages WHERE order_id = ? ORDER BY kind', [orderId],
+    );
+
+    it('texts when a delivery is completed', async () => {
+        await clear();
+        const o = await atTheDoor();
+        const res = await ada.post(`${ORDERS}/${o.id}/deliver`).send({
+            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+        const got = await queued(o.id);
+        expect(got.map((r) => String(r.kind))).toEqual(['delivered']);
+        expect(String(got[0].body)).toMatch(/your delivery was completed at \d+:\d\d (AM|PM)/);
+        /* The time is the project's, not UTC, because that is what a person
+           reads off their own clock. */
+        expect(String(got[0].body)).not.toContain('{time}');
+    });
+
+    it('texts when an attempt fails, and says nothing about why', async () => {
+        await clear();
+        const o = await atTheDoor();
+        const res = await ada.post(`${ORDERS}/${o.id}/events`).send({ type: 'attempted', reason: 'no_access' });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+        const got = await queued(o.id);
+        expect(got.map((r) => String(r.kind))).toEqual(['attempted']);
+        /* The failure reason is operational detail and stays on our side. */
+        expect(String(got[0].body)).not.toMatch(/no.access/i);
+        expect(String(got[0].body)).toMatch(/could not complete it/);
+    });
+
+    it('stays quiet at the stages nobody turned on', async () => {
+        await clear();
+        const o = await atTheDoor();
+        /* Collected and arrived both happened above. Neither is switched on,
+           so neither may have written anything. */
+        expect(await queued(o.id)).toEqual([]);
+    });
+
+    it('texts once however many times a courier taps', async () => {
+        await clear();
+        const o = await atTheDoor();
+        await ada.post(`${ORDERS}/${o.id}/deliver`).send({
+            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+        });
+        await ada.post(`${ORDERS}/${o.id}/deliver`).send({
+            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+        });
+        /* The unique index on (order_id, kind), not the caller remembering. */
+        expect(await queued(o.id)).toHaveLength(1);
+    });
+
+    it('writes nothing for an order with no phone number', async () => {
+        await clear();
+        const o = await atTheDoor({ recipientPhone: '' });
+        await ada.post(`${ORDERS}/${o.id}/deliver`).send({
+            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+        });
+        expect(await queued(o.id)).toEqual([]);
+    });
+
+    it('goes out through the sender like any other message', async () => {
+        await clear();
+        const o = await atTheDoor();
+        await ada.post(`${ORDERS}/${o.id}/deliver`).send({
+            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+        });
+
+        const texter = fakeTexter();
+        const out = await sendQueued(client, texter, quiet);
+        expect(out.sent).toBe(1);
+        expect(texter.sent[0].body).toMatch(/your delivery was completed/);
+    });
+});
+
+/* ------------------------------------------- the constraint and the code
+ *
+ * 0039 wrote CHECK (kind IN ('delivery_today')) when that was the only kind.
+ * The code later grew five more, and because queueStageNotice swallows every
+ * error on purpose, each one was refused by the table and counted as "no row
+ * written" -- which looks exactly like a stage being switched off.
+ *
+ * So the two lists are compared directly. A stage added without a migration
+ * fails here rather than in a demonstration. */
+describe('the kinds the table accepts', () => {
+    it('is exactly the stages the code can send', async () => {
+        const sql = String((await rows(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'patient_messages'",
+        ))[0].sql);
+
+        for (const stage of STAGE_NAMES) {
+            expect(sql, `${stage} is missing from the CHECK constraint`).toContain(`'${stage}'`);
+        }
+
+        /* And nothing else, so a kind that was removed from the code cannot
+           linger in the schema as something that would still insert. */
+        const listed = [...sql.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+        expect(listed.sort()).toEqual([...STAGE_NAMES].sort());
+    });
+
+    it('actually refuses a kind nobody defined', async () => {
+        const o = await order();
+        await expect(client.execute({
+            sql: `INSERT INTO patient_messages (project_id, order_id, phone, kind, body, created_at)
+                  VALUES (?, ?, '2105550100', 'invented', 'x', ?)`,
+            args: [projectId, o.id, new Date().toISOString()],
+        })).rejects.toThrow();
     });
 });

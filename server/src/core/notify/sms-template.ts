@@ -55,11 +55,15 @@ export const SAMPLE_VARS: TemplateVars = {
  * causes it, so there is no table mapping one vocabulary onto another and no
  * way for a new event type to quietly have no notification.
  *
- * MOST OF THEM ARE OFF BY DEFAULT, deliberately. Six texts about one delivery
- * is six times the cost, it is what makes carriers filter a campaign as spam,
- * and a patient who gets a running commentary stops reading any of it. The
- * morning notice is the one University Health asked for; the rest are here so
- * they can be turned on one at a time, by somebody who decided to.
+ * HALF OF THEM ARE OFF, deliberately. Six texts about one delivery is six
+ * times the cost, it is what makes carriers filter a campaign as spam, and a
+ * patient who gets a running commentary stops reading any of it.
+ *
+ * The three that are on are the ones that tell somebody something they would
+ * otherwise have to ask: it is coming today, it arrived, or nobody came. The
+ * three that are off are progress reports. That is at most two texts in a
+ * normal delivery, because `delivered` and `attempted` are the two ways the
+ * same delivery can end and only one of them happens.
  *
  * `placeholders` is per stage. {window} in a "delivered" message would render
  * today's window into a sentence about something that already happened, so
@@ -111,7 +115,10 @@ export const STAGES = {
         label: 'Delivered',
         when: 'When the handover is recorded.',
         placeholders: ['company', 'time'],
-        enabledByDefault: false,
+        /* On at University Health's request, 30 September 2026. The two
+           chosen are the ones that close a delivery: a person who was told a
+           courier is coming is told how it ended, and nothing in between. */
+        enabledByDefault: true,
         template:
             '{company}: your delivery was completed at {time}. Thank you. '
             + 'Reply STOP to stop these messages.',
@@ -120,7 +127,9 @@ export const STAGES = {
         label: 'Could not deliver',
         when: 'When a delivery is attempted and fails.',
         placeholders: ['company'],
-        enabledByDefault: false,
+        /* The other half of the pair above. A failed attempt is the message
+           somebody actually needs: they waited in, and nobody came. */
+        enabledByDefault: true,
         template:
             '{company}: we tried to deliver today and could not complete it. '
             + 'We will be in touch to arrange another time. '
