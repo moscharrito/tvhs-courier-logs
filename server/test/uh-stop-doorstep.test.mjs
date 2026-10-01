@@ -31,6 +31,14 @@ beforeAll(async () => {
     dischargeId = (await admin.get('/api/projects/uh/uh/sites')).body.find((s) => s.code === 'discharge').id;
     await admin.post('/api/users').send({ username: 'ada.courier', name: 'Ada Courier', password: 'courier-pass-1', role: 'driver' });
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
+
+    /* ADDENDUM 2 CLAUSE 4 FORBIDS THIS FOR UNIVERSITY HEALTH, and the setting
+       that carries the prohibition defaults to on, so a project nobody
+       configured refuses too. Everything below is about whether the mechanism
+       is sound where a contract does permit it, so the switch is turned off
+       here deliberately and in one place. The default is covered by its own
+       describe at the end of the file. */
+    await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: false } });
 });
 afterAll(async () => { await srv.stop(); });
 
@@ -168,5 +176,78 @@ describe('a doorstep delivery', () => {
 
         const detail = await admin.get(`${ORDERS}/${order.id}`);
         expect(detail.body.sla).toMatchObject({ state: 'met', onTime: true, measuredFrom: 'arrived' });
+    });
+});
+
+
+/* --------------------------------------------------- what the contract says
+ *
+ * Addendum 2 clause 4: "Pharmacy packages shall not be left unattended at the
+ * doorstep, porch, entryway, lobby, mailbox, reception area, or any other
+ * unattended location. A delivery shall not be considered complete until the
+ * package has been personally received."
+ *
+ * The endpoint was written against Scope 1.2.3, which permits a doorstep
+ * delivery depending on the medication type. The addendum is later, explicit,
+ * and governs. */
+describe('a contract that forbids leaving a package', () => {
+    let other;
+
+    beforeAll(async () => {
+        other = await pickedUpOrder({ signatureRequired: false });
+        await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: true } });
+    });
+
+    afterAll(async () => {
+        await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: false } });
+    });
+
+    it('refuses the delivery and says why in words a courier can act on', async () => {
+        const res = await admin.post(`${ORDERS}/${other.id}/doorstep`).send({ fileId: 1 });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('doorstep.notPermitted');
+        expect(res.body.error).toMatch(/handed to a person/);
+        /* And it names the way out, because a courier standing at a door needs
+           to know what to do instead. */
+        expect(res.body.error).toMatch(/dry run/i);
+    });
+
+    it('refuses before it reads the body, so a malformed one is still refused', async () => {
+        /* The order of the checks matters: a courier app sending a bad body
+           should be told the delivery is not allowed, not that its JSON is
+           wrong, or somebody will fix the JSON and try again. */
+        const res = await admin.post(`${ORDERS}/${other.id}/doorstep`).send({ nonsense: true });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('doorstep.notPermitted');
+    });
+
+    it('records nothing when it refuses', async () => {
+        await admin.post(`${ORDERS}/${other.id}/doorstep`).send({ fileId: 1 });
+        const events = await sql(
+            "SELECT COUNT(*) AS n FROM custody_events WHERE order_id = ? AND type = 'delivered'", [other.id],
+        );
+        expect(Number(events.rows[0].n)).toBe(0);
+        const row = await sql('SELECT status FROM orders WHERE id = ?', [other.id]);
+        expect(String(row.rows[0].status)).not.toBe('delivered');
+    });
+
+    it('is the default for a project nobody has configured', async () => {
+        /* The property that matters most: this is not something University
+           Health had to ask for. A new project refuses until somebody decides
+           otherwise, in writing, in the audit trail. */
+        const { resolveSettings } = await import('../src/core/projects/settings.ts');
+        expect(resolveSettings({}).delivery.personalHandoverOnly).toBe(true);
+        expect(resolveSettings(null).delivery.personalHandoverOnly).toBe(true);
+    });
+
+    it('still allows a handover where the recipient would not sign', async () => {
+        /* The distinction the clause draws, and the one the product has to
+           keep: somebody took the package and declined to scrawl on a phone
+           is a completed delivery. Nobody was there is not. */
+        const handed = await pickedUpOrder({ signatureRequired: false });
+        const res = await admin.post(`${ORDERS}/${handed.id}/deliver`).send({
+            signedName: 'Recipient', noSignatureReason: 'Received at the door; declined to sign.',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 });

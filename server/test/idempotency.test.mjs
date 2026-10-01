@@ -164,10 +164,15 @@ describe('a request that fails on the server', () => {
         const ada = await courierAgent();
         const k = key();
 
-        // Force a failure: a doorstep with files switched off answers 503.
+        /* Force a failure: a doorstep with files switched off answers 503.
+           Doorstep is refused outright on this contract (Addendum 2 clause 4),
+           so the prohibition is lifted for this one request to reach the
+           failure path the test is actually about. */
+        await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: false } });
         const failed = await ada.post(`${ORDERS}/${order.id}/doorstep`)
             .send({ clientEventId: k, fileId: 1, noSignatureReason: 'Nobody answered' });
         expect(failed.status).toBe(503);
+        await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: true } });
 
         const rows = (await sql('SELECT state FROM client_events WHERE client_event_id = ?', [k])).rows;
         expect(rows).toHaveLength(0);

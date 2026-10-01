@@ -165,8 +165,40 @@ export interface PatientSmsSettings {
     company: string;
 }
 
+/**
+ * Whether a package may ever be left without a person taking it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ADDENDUM 2 CLAUSE 4 FORBIDS IT FOR UNIVERSITY HEALTH, in terms that leave
+ * no room:
+ *
+ *   "All pharmacy packages must be personally delivered to the intended
+ *    recipient or authorized individual. Pharmacy packages shall not be left
+ *    unattended at the doorstep, porch, entryway, lobby, mailbox, reception
+ *    area, or any other unattended location. A delivery shall not be
+ *    considered complete until the package has been personally received."
+ *
+ * The doorstep endpoint was written against Scope 1.2.3, which permits a
+ * doorstep delivery "depending on the medication type". The addendum is later
+ * and explicit, and an addendum governs: the same precedence already decides
+ * the after-hours window in the pricing section below.
+ *
+ * A SETTING RATHER THAN A DELETION, because this is a courier platform and
+ * the prohibition belongs to one contract. TVHS is a different contract.
+ *
+ * DEFAULTS TO REFUSING. A project nobody has configured is a project whose
+ * contract nobody has read, and leaving a medication on a porch is not the
+ * thing to do by default. Turning it on is a deliberate act, and an audited
+ * one.
+ */
+export interface DeliverySettings {
+    /** True means a package must be handed to somebody. No doorstep drops. */
+    personalHandoverOnly: boolean;
+}
+
 export interface ProjectSettings {
     sla: SlaSettings;
+    delivery: DeliverySettings;
     businessHours: BusinessHoursSettings;
     listRelease: ListReleaseSettings;
     pricing: PricingSection;
@@ -184,6 +216,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         statFromPickupMinutes: 60,
         adhocMinutes: 240,
     },
+    /* Addendum 2 clause 4. See DeliverySettings for why the safe answer is
+       the default rather than something University Health has to switch on. */
+    delivery: { personalHandoverOnly: true },
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00' },
     pricing: {
@@ -276,6 +311,11 @@ export const SettingsPatch = z.object({
            should solve with their own mail server rather than with ours. */
         dailyRecipients: z.array(z.string().trim().email()).max(20).optional(),
         days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+    }).strict().optional(),
+    delivery: z.object({
+        /* Changing this is a contract decision, not a preference. The audit
+           row records who did it and when, like every other setting here. */
+        personalHandoverOnly: z.boolean().optional(),
     }).strict().optional(),
     patientSms: z.object({
         /* Validated by the same rules the message would be sent under, so a
@@ -375,6 +415,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
     const stored = raw ?? {};
     return {
         sla: section(stored['sla'], DEFAULT_PROJECT_SETTINGS.sla),
+        delivery: section(stored['delivery'], DEFAULT_PROJECT_SETTINGS.delivery),
         businessHours: section(stored['businessHours'], DEFAULT_PROJECT_SETTINGS.businessHours),
         listRelease: section(stored['listRelease'], DEFAULT_PROJECT_SETTINGS.listRelease),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),

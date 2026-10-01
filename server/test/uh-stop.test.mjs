@@ -243,6 +243,17 @@ describe('delivering', () => {
 /* -------------------------------------------------------------- doorstep */
 
 describe('leaving it at the door', () => {
+    /* Addendum 2 clause 4 forbids it on this contract and the setting that
+       carries that defaults to on, so these checks about the mechanism are
+       run with the prohibition lifted. Whether the prohibition itself holds
+       is uh-stop-doorstep.test.mjs, which also proves the default. */
+    beforeAll(async () => {
+        await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: false } });
+    });
+    afterAll(async () => {
+        await admin.patch('/api/projects/uh/settings').send({ delivery: { personalHandoverOnly: true } });
+    });
+
     it('is refused outright when the medication needs a signature', async () => {
         /* Scope 1.2.3 allows it "depending on the medication type". Refused
            rather than warned about: a courier who can tap past a warning

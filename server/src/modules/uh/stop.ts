@@ -431,6 +431,32 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
     router.post('/:id/doorstep', operate, wrap(async (req, res) => {
         const order = await orderOr404(req, res);
         if (!order) return;
+
+        /* ADDENDUM 2 CLAUSE 4. First, before the body is even read.
+         *
+         * "Pharmacy packages shall not be left unattended at the doorstep,
+         *  porch, entryway, lobby, mailbox, reception area, or any other
+         *  unattended location. A delivery shall not be considered complete
+         *  until the package has been personally received."
+         *
+         * This endpoint was written against Scope 1.2.3, which allows a
+         * doorstep delivery depending on the medication type. The addendum is
+         * later and explicit and governs, the same way it governs the
+         * after-hours window.
+         *
+         * Checked here rather than removed, because the prohibition belongs
+         * to one contract and this is a platform. It defaults to refusing, so
+         * a project nobody configured refuses too. */
+        const settings = resolveSettings(req.project!.settings);
+        if (settings.delivery.personalHandoverOnly) {
+            res.status(409).json({
+                error: 'This contract requires every package to be handed to a person. '
+                    + 'It cannot be left at the door. Hand it over, or record a dry run and return it.',
+                code: 'doorstep.notPermitted',
+            });
+            return;
+        }
+
         const body = parse(Doorstep, req.body, res);
         if (!body) return;
         const at = whenOr400(body, res);

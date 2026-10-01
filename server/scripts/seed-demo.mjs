@@ -508,19 +508,28 @@ await call(`${UH}/orders/${live[0].id}/deliver`, {
 });
 deliveredCount += 1;
 
-/* 1: left at the door with a photograph */
-const shot1 = await photograph(live[1].id, 'doorstep');
-if (shot1) {
-    await call(`${UH}/orders/${live[1].id}/doorstep`, {
-        method: 'POST',
-        body: JSON.stringify({ at: at(today, 8, 48), fileId: shot1, noSignatureReason: 'Nobody answered; left in the porch as agreed.' }),
-    });
-} else {
-    await call(`${UH}/orders/${live[1].id}/deliver`, {
-        method: 'POST',
-        body: JSON.stringify({ at: at(today, 8, 48), signedName: 'Test Recipient Bravo', noSignatureReason: 'Rehearsal: storage off.' }),
-    });
-}
+/* 1: handed to somebody who would not sign, photographed.
+ *
+ * THIS USED TO BE A DOORSTEP DROP, and it cannot be. Addendum 2 clause 4
+ * forbids leaving a pharmacy package unattended anywhere, and a delivery is
+ * not complete until a person has received it. Seeding one would have put a
+ * contract breach on the screen in front of the people who wrote the clause.
+ *
+ * The case is still worth showing, because it is the common one: somebody
+ * took the package and would not scrawl on a phone. That is a handover with a
+ * reason recorded, which is a different thing from an unwitnessed drop. */
+const form1 = await photograph(live[1].id, 'courier_form');
+await call(`${UH}/orders/${live[1].id}/deliver`, {
+    method: 'POST',
+    body: JSON.stringify({
+        at: at(today, 8, 48),
+        signedName: 'Test Recipient Bravo',
+        identifiersChecked: ['name', 'address'],
+        ...(form1
+            ? { courierFormFileId: form1 }
+            : { noSignatureReason: 'Received at the door; declined to sign.' }),
+    }),
+});
 deliveredCount += 1;
 
 /* 2: failed, returned to the pharmacy, then reattempted and delivered */
