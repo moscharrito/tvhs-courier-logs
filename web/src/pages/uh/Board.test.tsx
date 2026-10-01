@@ -96,6 +96,24 @@ function renderBoard(r = routes(), initial = '/projects/uh/board') {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('Board', () => {
+    it('says when the board is showing fewer cards than the day holds', async () => {
+        /* The counts stay the whole day; only the cards are capped. A board
+           that showed a subset silently would be the fault the orders list
+           had, moved one screen across. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                carrying: { shown: 750, of: 1500, limit: 750, truncated: true },
+            }),
+        }));
+        expect(await screen.findByText(/Showing 750 of 1500 orders as cards/)).toBeInTheDocument();
+    });
+
+    it('says nothing about cards when it has the whole day', async () => {
+        renderBoard();
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        expect(screen.queryByText(/orders as cards/)).toBeNull();
+    });
+
     it('shows the pool grouped by pharmacy and a lane per courier', async () => {
         renderBoard();
         expect(await screen.findByRole('heading', { name: 'Dispatch board' })).toBeInTheDocument();

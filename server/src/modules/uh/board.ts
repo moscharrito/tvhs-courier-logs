@@ -46,6 +46,34 @@ const FEED_TYPES = ['picked_up', 'arrived', 'delivered', 'attempted', 'returned'
 
 const OPEN_STATUSES = ['pending', 'ready', 'assigned', 'picked_up'] as const;
 
+/* ──────────────────────────────────────────────────────── how much it sends
+ *
+ * This loaded every order for the service date, unbounded, and the board polls
+ * every fifteen seconds. That was fine for a rehearsal of six deliveries and
+ * is not fine for University Health, who run between five hundred and fifteen
+ * hundred a day: a dispatcher leaving the board open was about to pull a
+ * quarter of a megabyte every fifteen seconds, and two dispatchers twice that.
+ *
+ * A cap and not a cursor, because a board is not a list. It is read at a
+ * glance, dragged on, and polled; paging it would mean a card moving between
+ * pages while somebody reaches for it. The honest shape is a bounded view with
+ * the real counts beside it, and filters to narrow what is shown. Eight
+ * pharmacies are already a filter away.
+ */
+const BOARD_DEFAULT = 750;
+/** The ceiling for a caller that insists. Still bounded. */
+const BOARD_MAX = 2000;
+
+/* Named rather than `o.*`: a board card shows fourteen fields and the table
+ * has forty, so the rest were read out of the database on every poll for
+ * nothing. Several of them are patient data. */
+const BOARD_COLUMNS = [
+    'o.id', 'o.site_id', 'o.external_ref', 'o.service_type', 'o.recipient_name',
+    'o.address_line', 'o.address_line2', 'o.city', 'o.zip', 'o.zone', 'o.status',
+    'o.due_at', 'o.arrived_at', 'o.delivered_at', 'o.assigned_to_username',
+    'o.signature_required',
+].join(', ');
+
 interface OrderRow {
     id: number; site_id: number; external_ref: string; service_type: string;
     recipient_name: string; address_line: string; address_line2: string; city: string; zip: string;
@@ -98,13 +126,41 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         else if (q['zone']) { filters.push('o.zone = ?'); filterArgs.push(Number(q['zone'])); }
         const filterSql = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : '';
 
-        const orders = await client.execute({
-            sql: `SELECT o.* FROM orders o
-                  WHERE o.project_id = ? AND o.service_date = ?${filterSql}
-                  ORDER BY o.due_at IS NULL, o.due_at, o.id`,
+        /* THE COUNTS COME FROM EVERY ROW. THE CARDS DO NOT.
+         *
+         * Four columns, no patient data, for the whole day however large it
+         * is: the summary has to be exact or a dispatcher cannot trust the
+         * board at all, and it is read fifteen seconds apart.
+         *
+         * Deliberately not an aggregate in SQL. overdue and dueSoon come out
+         * of evaluateSla, and writing those rules a second time in a CASE
+         * expression is how the header starts disagreeing with the cards
+         * under it. One implementation, fed cheaply. */
+        const forCounts = await client.execute({
+            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at FROM orders o
+                  WHERE o.project_id = ? AND o.service_date = ?${filterSql}`,
             args: [project.id, serviceDate, ...filterArgs],
         });
-        const all = (orders.rows as unknown as OrderRow[]).map(presentOrder);
+
+        const limit = Math.min(BOARD_MAX, Math.max(1, Number(q['limit'] ?? BOARD_DEFAULT) || BOARD_DEFAULT));
+
+        /* SETTLED WORK GOES LAST, so that if anything is dropped it is the
+         * part of the day that is already finished. A delivered order on a
+         * dispatch board is history; an unassigned one at 4pm is the job.
+         * Within each group the existing order is kept, with the deadline key
+         * normalised so the nulls sort last rather than comparing as NULL. */
+        const orders = await client.execute({
+            sql: `SELECT ${BOARD_COLUMNS} FROM orders o
+                  WHERE o.project_id = ? AND o.service_date = ?${filterSql}
+                  ORDER BY CASE WHEN o.status IN ('delivered','failed','cancelled') THEN 1 ELSE 0 END,
+                           COALESCE(o.due_at, '~'), o.id
+                  LIMIT ${limit + 1}`,
+            args: [project.id, serviceDate, ...filterArgs],
+        });
+
+        const found = orders.rows as unknown as OrderRow[];
+        const truncated = found.length > limit;
+        const all = (truncated ? found.slice(0, limit) : found).map(presentOrder);
         const byId = new Map(all.map((o) => [o.id, o]));
 
         const sites = await client.execute({
@@ -308,16 +364,34 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             }))
             .sort((a, b) => a.site.name.localeCompare(b.site.name));
 
-        const count = (fn: (o: (typeof all)[number]) => boolean) => all.filter(fn).length;
+        /* OVER EVERY ROW OF THE DAY, not over the cards that fitted. The
+           header is the thing a dispatcher trusts; a count that quietly meant
+           "of the first 750" would be worse than no count. */
+        const countedAt = new Date();
+        const slaOf = (r: Record<string, unknown>) => evaluateSla({
+            status: String(r['status']) as OrderStatus,
+            dueAt: r['due_at'] ? new Date(String(r['due_at'])) : null,
+            arrivedAt: r['arrived_at'] ? new Date(String(r['arrived_at'])) : null,
+            deliveredAt: r['delivered_at'] ? new Date(String(r['delivered_at'])) : null,
+        }, countedAt);
+
+        const everyRow = forCounts.rows as unknown as Array<Record<string, unknown>>;
+        const count = (fn: (r: Record<string, unknown>) => boolean) => everyRow.filter(fn).length;
+        const isStatus = (s: string) => (r: Record<string, unknown>) => String(r['status']) === s;
         const summary = {
-            total: all.length,
+            total: everyRow.length,
+            /* The only count still taken from the loaded cards, because
+               "unassigned" is a fact about run stops rather than about the
+               order row. It is the open, unassigned work, which is the part
+               the cap keeps first, so it is exact until the day's open work
+               alone exceeds the cap. */
             unassigned: poolOrders.length,
-            assigned: count((o) => o.status === 'assigned'),
-            inTransit: count((o) => o.status === 'picked_up'),
-            delivered: count((o) => o.status === 'delivered'),
-            failed: count((o) => o.status === 'failed'),
-            overdue: count((o) => o.sla.state === 'overdue'),
-            dueSoon: count((o) => o.sla.state === 'due_soon'),
+            assigned: count(isStatus('assigned')),
+            inTransit: count(isStatus('picked_up')),
+            delivered: count(isStatus('delivered')),
+            failed: count(isStatus('failed')),
+            overdue: count((r) => slaOf(r).state === 'overdue'),
+            dueSoon: count((r) => slaOf(r).state === 'due_soon'),
         };
 
         const withPositions = couriers.map((c) => ({ ...c, position: positionByUsername.get(c.username) ?? null }));
@@ -332,6 +406,11 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             generatedAt: new Date().toISOString(),
             timezone: project.timezone,
             summary,
+            /* Said out loud rather than inferred from a round number of cards.
+               When this is true the counts above are still the whole day; it
+               is the cards below that are a subset, settled work dropped
+               first. */
+            carrying: { shown: all.length, of: summary.total, limit, truncated },
             pool,
             lanes,
             couriers: withPositions,

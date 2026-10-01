@@ -69,6 +69,9 @@ interface BoardData {
     generatedAt: string;
     timezone: string;
     summary: { total: number; unassigned: number; assigned: number; inTransit: number; delivered: number; failed: number; overdue: number; dueSoon: number };
+    /** How many cards arrived against how many orders the day holds. The
+     *  counts above are always the whole day; these are the cards. */
+    carrying: { shown: number; of: number; limit: number; truncated: boolean };
     pool: Array<{ site: { id: number; code: string; name: string }; orders: BoardOrder[]; overdue: number }>;
     lanes: Lane[];
     couriers: Courier[];
@@ -292,6 +295,16 @@ export function Board() {
                     <span className={s.dueSoon > 0 ? 'izy-stat-warn' : undefined}><b>{s.dueSoon}</b> due soon</span>
                     <span className={s.overdue > 0 ? 'izy-stat-bad' : undefined}><b>{s.overdue}</b> overdue</span>
                 </div>
+                {/* The counts above are the whole day. The cards below may not
+                    be, on a day big enough, and a board that quietly showed a
+                    subset would be the same fault the orders list had. */}
+                {data.carrying?.truncated && (
+                    <p className="izy-muted" style={{ marginTop: 6 }}>
+                        Showing {data.carrying.shown} of {data.carrying.of} orders as cards. The counts
+                        above cover the whole day; completed work is left out of the board first.
+                        Filter by pharmacy or zone to see all of it.
+                    </p>
+                )}
             </div>
 
             {/* Above the pool, deliberately. Everything below this line is

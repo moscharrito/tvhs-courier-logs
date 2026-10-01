@@ -605,3 +605,89 @@ describe('what the board says is happening now', () => {
         expect((await ada.get(BOARD)).status).toBe(403);
     });
 });
+
+/* ------------------------------------------------- how much the board sends
+ *
+ * The board loaded every order for the service date, unbounded, and polls
+ * every fifteen seconds. University Health run 500 to 1500 deliveries a day,
+ * so a dispatcher leaving it open was about to pull a quarter of a megabyte
+ * four times a minute, per dispatcher.
+ *
+ * The cards are capped. The counts are not, because the header is the thing a
+ * dispatcher trusts, and a total that quietly meant "of the first 750" would
+ * be worse than no total at all. */
+describe('a day too big for one screen', () => {
+    const DAY = '2027-05-06';
+    let projectId;
+    const TOTAL = 60;
+    const SETTLED = 25;
+
+    beforeAll(async () => {
+        projectId = Number((await sql("SELECT id FROM projects WHERE code = 'uh'")).rows[0].id);
+        const now = new Date().toISOString();
+        for (let i = 0; i < TOTAL; i += 1) {
+            /* The last of them are finished work, which is what the cap is
+               supposed to drop first. */
+            const done = i >= TOTAL - SETTLED;
+            await sql(
+                `INSERT INTO orders (project_id, site_id, external_ref, service_type, service_date,
+                                     recipient_name, address_line, city, state, zip, status,
+                                     received_at, due_at, delivered_at, signature_required, zone,
+                                     created_at, updated_at)
+                 VALUES (?, ?, ?, 'adhoc', ?, ?, '1 Board Way', 'San Antonio', 'TX', '78215', ?,
+                         ?, ?, ?, 1, 1, ?, ?)`,
+                [
+                    projectId, dischargeId, `BOARD-${i}`, DAY, `Recipient ${i}`,
+                    done ? 'delivered' : 'ready', now,
+                    `2027-05-06T${String(8 + (i % 12)).padStart(2, '0')}:00:00.000Z`,
+                    done ? now : null, now, now,
+                ],
+            );
+        }
+    });
+
+    it('counts every order of the day, however few cards it carries', async () => {
+        const res = await board(`?serviceDate=${DAY}&limit=10`);
+        expect(res.status).toBe(200);
+        /* The number that must not shrink with the cap. */
+        expect(res.body.summary.total).toBe(TOTAL);
+        expect(res.body.summary.delivered).toBe(SETTLED);
+        expect(res.body.carrying).toMatchObject({ shown: 10, of: TOTAL, limit: 10, truncated: true });
+    });
+
+    it('drops finished work before it drops anything a dispatcher can act on', async () => {
+        /* A delivered order on a dispatch board is history. An unassigned one
+           at four in the afternoon is the job. */
+        const res = await board(`?serviceDate=${DAY}&limit=20`);
+        const shown = res.body.pool.flatMap((p) => p.orders);
+        expect(shown.length).toBe(20);
+        expect(shown.every((o) => o.status === 'ready')).toBe(true);
+    });
+
+    it('says plainly when it is carrying everything', async () => {
+        const res = await board(`?serviceDate=${DAY}&limit=500`);
+        expect(res.body.carrying).toMatchObject({ shown: TOTAL, of: TOTAL, truncated: false });
+    });
+
+    it('keeps the counts right under a filter, not just overall', async () => {
+        /* The filters apply to both sides, so a filtered board that counted
+           the unfiltered day would be worse than the cap ever was. */
+        const res = await board(`?serviceDate=${DAY}&siteId=${greenId}`);
+        expect(res.body.summary.total).toBe(0);
+        expect(res.body.carrying).toMatchObject({ shown: 0, of: 0, truncated: false });
+    });
+
+    it('will not be talked into carrying an unbounded page', async () => {
+        const res = await board(`?serviceDate=${DAY}&limit=999999`);
+        expect(res.status).toBe(200);
+        expect(res.body.carrying.limit).toBeLessThanOrEqual(2000);
+    });
+
+    it('defaults to a bound rather than to everything', async () => {
+        const res = await board(`?serviceDate=${DAY}`);
+        expect(res.body.carrying.limit).toBe(750);
+        /* Sixty fits, so this day is whole; the point is that the field is
+           there and finite. */
+        expect(res.body.carrying.truncated).toBe(false);
+    });
+});
