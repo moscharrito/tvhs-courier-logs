@@ -43,6 +43,14 @@ export interface OrderRow {
     sla: Sla;
 }
 
+/** One page of the list, and how much of the whole it is. */
+interface OrderPage {
+    orders: OrderRow[];
+    total: number;
+    returned: number;
+    nextCursor: string | null;
+}
+
 interface Summary {
     total: number;
     byStatus: Record<string, number>;
@@ -80,6 +88,13 @@ export function Orders() {
     const [summary, setSummary] = useState<Summary | null>(null);
     const [sites, setSites] = useState<Site[]>([]);
     const [error, setError] = useState<string | null>(null);
+    /* How many exist against how many are loaded, and where to continue from.
+       University Health run up to 1,500 deliveries a day; this screen used to
+       request 200, page through them client-side, and give a dispatcher no
+       way to tell that was not the day. */
+    const [total, setTotal] = useState(0);
+    const [cursor, setCursor] = useState<string | null>(null);
+    const [loadingMore, setLoadingMore] = useState(false);
 
     const query = params.toString();
     const base = `/api/projects/${code}/uh/orders`;
@@ -87,17 +102,38 @@ export function Orders() {
     const load = useCallback(async () => {
         setError(null);
         try {
-            const [rows, sum] = await Promise.all([
-                api<OrderRow[]>(`${base}${query ? `?${query}` : ''}`),
+            const [page, sum] = await Promise.all([
+                api<OrderPage>(`${base}${query ? `?${query}` : ''}`),
                 api<Summary>(`${base}/summary${query ? `?${query}` : ''}`),
             ]);
-            setOrders(rows);
+            setOrders(page.orders);
+            setTotal(page.total);
+            setCursor(page.nextCursor);
             setSummary(sum);
         } catch {
             setError('Could not load orders.');
             setOrders([]);
+            setTotal(0);
+            setCursor(null);
         }
     }, [base, query]);
+
+    /* Appends rather than replaces, so the rows already on screen keep their
+       place while a dispatcher is reading them. */
+    const loadMore = useCallback(async () => {
+        if (!cursor || loadingMore) return;
+        setLoadingMore(true);
+        try {
+            const page = await api<OrderPage>(`${base}?${query ? `${query}&` : ''}cursor=${encodeURIComponent(cursor)}`);
+            setOrders((prev) => [...(prev ?? []), ...page.orders]);
+            setTotal(page.total);
+            setCursor(page.nextCursor);
+        } catch {
+            setError('Could not load the rest of the orders.');
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [base, query, cursor, loadingMore]);
 
     useEffect(() => { void load(); }, [load]);
     useEffect(() => {
@@ -232,10 +268,27 @@ export function Orders() {
                         </tbody>
                     </table>
                 )}
-                {/* The server caps this at 500, which is not the same as
-                    "these are all of them". Said here rather than left for
-                    somebody to infer from a round number. */}
-                <Pager of={paged} noun="orders" note={paged.total >= 500 ? 'the newest 500; narrow the filters to see past that' : undefined} />
+                {/* THIS USED TO SAY NOTHING UNTIL 500 ROWS, and the request
+                    only ever asked for 200, so it never said anything at all.
+                    The count now comes from the server's own total over the
+                    same filters, so a short list announces itself. */}
+                <Pager
+                    of={paged}
+                    noun="orders"
+                    note={total > (orders?.length ?? 0)
+                        ? `${orders?.length ?? 0} of ${total} loaded`
+                        : undefined}
+                />
+                {total > (orders?.length ?? 0) && (
+                    <p style={{ marginTop: 8 }}>
+                        <button type="button" className="izy-btn secondary" onClick={() => void loadMore()} disabled={loadingMore}>
+                            {loadingMore ? 'Loading...' : `Load the next ${Math.min(200, total - (orders?.length ?? 0))}`}
+                        </button>
+                        <span className="izy-muted" style={{ marginLeft: 10 }}>
+                            {total - (orders?.length ?? 0)} more match these filters. Narrowing them is quicker than loading everything.
+                        </span>
+                    </p>
+                )}
             </div>
         </>
     );

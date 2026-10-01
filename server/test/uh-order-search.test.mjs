@@ -114,17 +114,17 @@ describe('filters', () => {
 
     it('filters by site, status, service type and courier', async () => {
         const bySite = await admin.get(`${BASE}?siteId=${greenId}`);
-        expect(bySite.body.map((o) => o.id)).toEqual([otherSite.id]);
+        expect(bySite.body.orders.map((o) => o.id)).toEqual([otherSite.id]);
 
-        expect((await admin.get(`${BASE}?status=assigned`)).body.every((o) => o.status === 'assigned')).toBe(true);
-        expect((await admin.get(`${BASE}?serviceType=adhoc`)).body.map((o) => o.id)).toContain(adhocOrder.id);
+        expect((await admin.get(`${BASE}?status=assigned`)).body.orders.every((o) => o.status === 'assigned')).toBe(true);
+        expect((await admin.get(`${BASE}?serviceType=adhoc`)).body.orders.map((o) => o.id)).toContain(adhocOrder.id);
 
         const byCourier = await admin.get(`${BASE}?assignedTo=sam.courier`);
-        expect(byCourier.body.map((o) => o.id)).toEqual([statOrder.id]);
+        expect(byCourier.body.orders.map((o) => o.id)).toEqual([statOrder.id]);
 
         const unassigned = await admin.get(`${BASE}?assignedTo=unassigned`);
-        expect(unassigned.body.map((o) => o.id)).toContain(adhocOrder.id);
-        expect(unassigned.body.map((o) => o.id)).not.toContain(statOrder.id);
+        expect(unassigned.body.orders.map((o) => o.id)).toContain(adhocOrder.id);
+        expect(unassigned.body.orders.map((o) => o.id)).not.toContain(statOrder.id);
     });
 
     it('filters by a date and by a date range', async () => {
@@ -133,24 +133,24 @@ describe('filters', () => {
         const today = new Intl.DateTimeFormat('en-CA', {
             timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
         }).format(new Date());
-        expect((await admin.get(`${BASE}?serviceDate=${today}`)).body.length).toBeGreaterThan(0);
-        expect((await admin.get(`${BASE}?serviceDate=2001-01-01`)).body).toEqual([]);
-        expect((await admin.get(`${BASE}?from=2001-01-01&to=2001-01-02`)).body).toEqual([]);
-        expect((await admin.get(`${BASE}?from=2001-01-01`)).body.length).toBeGreaterThan(0);
+        expect((await admin.get(`${BASE}?serviceDate=${today}`)).body.orders.length).toBeGreaterThan(0);
+        expect((await admin.get(`${BASE}?serviceDate=2001-01-01`)).body.orders).toEqual([]);
+        expect((await admin.get(`${BASE}?from=2001-01-01&to=2001-01-02`)).body.orders).toEqual([]);
+        expect((await admin.get(`${BASE}?from=2001-01-01`)).body.orders.length).toBeGreaterThan(0);
     });
 
     it('finds an order by the pharmacy reference a caller reads out', async () => {
         const found = await admin.get(`${BASE}?ref=RX-7002`);
-        expect(found.body.map((o) => o.id)).toEqual([adhocOrder.id]);
-        expect((await admin.get(`${BASE}?ref=RX-nope`)).body).toEqual([]);
+        expect(found.body.orders.map((o) => o.id)).toEqual([adhocOrder.id]);
+        expect((await admin.get(`${BASE}?ref=RX-nope`)).body.orders).toEqual([]);
     });
 
     it('finds what is out of area and still needs a distance', async () => {
         const boerne = await makeOrder({ zip: '78006', externalRef: 'RX-7004' });
         const out = await admin.get(`${BASE}?zone=out_of_area`);
-        expect(out.body.map((o) => o.id)).toContain(boerne.id);
-        expect(out.body.every((o) => o.zone === null)).toBe(true);
-        expect((await admin.get(`${BASE}?zone=1`)).body.every((o) => o.zone === 1)).toBe(true);
+        expect(out.body.orders.map((o) => o.id)).toContain(boerne.id);
+        expect(out.body.orders.every((o) => o.zone === null)).toBe(true);
+        expect((await admin.get(`${BASE}?zone=1`)).body.orders.every((o) => o.zone === 1)).toBe(true);
     });
 
     it('lists what is overdue, and leaves settled orders out of it', async () => {
@@ -159,8 +159,8 @@ describe('filters', () => {
         await sql('UPDATE orders SET due_at = ? WHERE id = ?', [iso(Date.now() - HOUR), late.id]);
 
         const overdue = await admin.get(`${BASE}?overdue=true`);
-        expect(overdue.body.map((o) => o.id)).toContain(late.id);
-        expect(overdue.body.every((o) => o.sla.state === 'overdue')).toBe(true);
+        expect(overdue.body.orders.map((o) => o.id)).toContain(late.id);
+        expect(overdue.body.orders.every((o) => o.sla.state === 'overdue')).toBe(true);
 
         // Deliver it: it is now a missed deadline, not an overdue order.
         await ev(late.id, { type: 'assigned', courierUsername: 'sam.courier' });
@@ -168,13 +168,13 @@ describe('filters', () => {
         await ev(late.id, { type: 'delivered', signedName: 'Ines Vargas' });
 
         const after = await admin.get(`${BASE}?overdue=true`);
-        expect(after.body.map((o) => o.id)).not.toContain(late.id);
+        expect(after.body.orders.map((o) => o.id)).not.toContain(late.id);
         const detail = await admin.get(`${BASE}/${late.id}`);
         expect(detail.body.sla).toMatchObject({ state: 'missed', onTime: false });
     });
 
     it('carries the SLA view on every row', async () => {
-        const rows = (await admin.get(BASE)).body;
+        const rows = (await admin.get(BASE)).body.orders;
         expect(rows.length).toBeGreaterThan(0);
         for (const o of rows) {
             expect(o.sla.state).toBeTruthy();
@@ -189,11 +189,11 @@ describe('summary', () => {
     it('counts the same set the list returns, not the whole project', async () => {
         const all = await admin.get(`${BASE}/summary`);
         const rows = await admin.get(`${BASE}?limit=500`);
-        expect(all.body.total).toBe(rows.body.length);
+        expect(all.body.total).toBe(rows.body.orders.length);
 
         const scoped = await admin.get(`${BASE}/summary?siteId=${greenId}`);
         const scopedRows = await admin.get(`${BASE}?siteId=${greenId}&limit=500`);
-        expect(scoped.body.total).toBe(scopedRows.body.length);
+        expect(scoped.body.total).toBe(scopedRows.body.orders.length);
         expect(scoped.body.total).toBeLessThan(all.body.total);
     });
 
@@ -219,7 +219,7 @@ describe('summary', () => {
         const mine = await courier.get(`${BASE}/summary`);
         const all = await admin.get(`${BASE}/summary`);
         expect(mine.body.total).toBeLessThan(all.body.total);
-        expect(mine.body.total).toBe((await courier.get(`${BASE}?limit=500`)).body.length);
+        expect(mine.body.total).toBe((await courier.get(`${BASE}?limit=500`)).body.orders.length);
     });
 });
 
@@ -392,5 +392,138 @@ describe('order detail', () => {
         const audit = await admin.get('/api/audit?action=order.read&limit=5');
         expect(audit.body.events[0].detail).toMatchObject({ events: expect.any(Number) });
         expect(JSON.stringify(audit.body)).not.toContain('Ines');
+    });
+});
+
+/* ---------------------------------------------------------------- paging
+ *
+ * University Health run 500 to 1500 deliveries a day across eight pharmacies.
+ * This list returned at most 200 rows, capped at 500, and said nothing about
+ * the rest: staff reading a day's work saw under a quarter of it with no
+ * reason to doubt the screen.
+ *
+ * These are about reaching every row and knowing how many there are, not
+ * about the shape of one page. */
+describe('paging a day that does not fit', () => {
+    const PAGED = '/api/projects/uh/uh/orders';
+    let dayIds;
+    const DAY = '2027-03-04';
+
+    beforeAll(async () => {
+        /* Enough to page several times at a small limit. Written straight to
+           the table: the point is the read path, and 40 orders through the
+           create endpoint is 40 round trips of pricing and zone lookups. */
+        const now = new Date().toISOString();
+        const pid = (await sql("SELECT id FROM projects WHERE code = 'uh'")).rows[0].id;
+        for (let i = 0; i < 40; i += 1) {
+            /* A quarter with no deadline at all, because the nulls sort last
+               and are the group a cursor has to be able to cross. */
+            const due = i % 4 === 3 ? null : `2027-03-04T${String(8 + (i % 12)).padStart(2, '0')}:00:00.000Z`;
+            await sql(
+                `INSERT INTO orders (project_id, site_id, external_ref, service_type, service_date,
+                                     recipient_name, address_line, city, state, zip, status,
+                                     received_at, due_at, signature_required, zone, created_at, updated_at)
+                 VALUES (?, ?, ?, 'adhoc', ?, ?, '1 Paging Way', 'San Antonio', 'TX', '78215', 'pending',
+                         ?, ?, 1, 1, ?, ?)`,
+                [pid, dischargeId, `PAGE-${i}`, DAY, `Recipient ${i}`, now, due, now, now],
+            );
+        }
+        dayIds = (await sql('SELECT id FROM orders WHERE service_date = ? ORDER BY id', [DAY]))
+            .rows.map((r) => Number(r.id));
+        expect(dayIds.length).toBe(40);
+    });
+
+    /** Walk every page and return the ids, in the order they came back. */
+    async function walk(limit) {
+        const seen = [];
+        let cursor = null;
+        let pages = 0;
+        for (;;) {
+            const url = `${PAGED}?serviceDate=${DAY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+            const res = await admin.get(url);
+            expect(res.status, JSON.stringify(res.body)).toBe(200);
+            seen.push(...res.body.orders.map((o) => o.id));
+            pages += 1;
+            cursor = res.body.nextCursor;
+            if (!cursor) break;
+            /* A cursor that never terminates is the failure mode worth
+               catching here rather than by waiting. */
+            expect(pages).toBeLessThan(50);
+        }
+        return { seen, pages };
+    }
+
+    it('says how many there are, not just how many it sent', async () => {
+        const res = await admin.get(`${PAGED}?serviceDate=${DAY}&limit=10`);
+        expect(res.body.returned).toBe(10);
+        expect(res.body.total).toBe(40);
+        expect(res.body.nextCursor).toBeTruthy();
+    });
+
+    it('reaches every row, exactly once, across pages', async () => {
+        const { seen, pages } = await walk(7);
+        expect(pages).toBe(6);                       // 7*5 + 5
+        expect(seen.length).toBe(40);
+        expect(new Set(seen).size).toBe(40);
+        expect([...seen].sort((a, b) => a - b)).toEqual(dayIds);
+    });
+
+    it('returns the same rows in the same order however it is paged', async () => {
+        /* The property that matters: the page size must not change what the
+           day contains. */
+        const one = (await walk(40)).seen;
+        const small = (await walk(3)).seen;
+        const medium = (await walk(13)).seen;
+        expect(small).toEqual(one);
+        expect(medium).toEqual(one);
+    });
+
+    it('crosses the boundary into the orders with no deadline', async () => {
+        /* The nulls sort last, and every comparison against NULL is NULL, so
+           before the sort key was normalised a cursor could not step into
+           this group: the last page would repeat forever or stop early. */
+        const { seen } = await walk(6);
+        const withoutDue = (await sql('SELECT id FROM orders WHERE service_date = ? AND due_at IS NULL', [DAY]))
+            .rows.map((r) => Number(r.id));
+        expect(withoutDue.length).toBe(10);
+        for (const id of withoutDue) expect(seen, `missing ${id}`).toContain(id);
+        /* And they come last, after everything that has a deadline. */
+        const firstNull = seen.findIndex((id) => withoutDue.includes(id));
+        expect(seen.slice(firstNull).every((id) => withoutDue.includes(id))).toBe(true);
+    });
+
+    it('ends with a null cursor rather than an empty page', async () => {
+        const res = await admin.get(`${PAGED}?serviceDate=${DAY}&limit=40`);
+        expect(res.body.returned).toBe(40);
+        expect(res.body.nextCursor).toBeNull();
+    });
+
+    it('treats a nonsense cursor as the beginning, not an error', async () => {
+        /* Somebody edits the address bar. A dispatch board showing a stack
+           trace is worse than one showing page one. */
+        for (const bad of ['nonsense', '', 'eyJub3QiOiJhbiBhcnJheSJ9', '%%%']) {
+            const res = await admin.get(`${PAGED}?serviceDate=${DAY}&limit=5&cursor=${encodeURIComponent(bad)}`);
+            expect(res.status, bad).toBe(200);
+            expect(res.body.returned, bad).toBe(5);
+        }
+    });
+
+    it('refuses to be asked for more than a page can carry', async () => {
+        const res = await admin.get(`${PAGED}?serviceDate=${DAY}&limit=100000`);
+        expect(res.status).toBe(200);
+        /* Clamped, not honoured: the guard against one request trying to
+           carry a whole month. */
+        expect(res.body.returned).toBeLessThanOrEqual(1000);
+    });
+
+    it('keeps a courier inside their own work while paging', async () => {
+        /* The filter that must survive a cursor: a courier paging through a
+           day must not step into somebody else's orders at a page boundary. */
+        const courier = srv.agent();
+        await courier.post('/api/login').send({ username: 'sam.courier', password: 'courier-pass-1' });
+        const res = await courier.get(`${PAGED}?serviceDate=${DAY}&limit=5`);
+        expect(res.status).toBe(200);
+        expect(res.body.total).toBe(0);
+        expect(res.body.orders).toEqual([]);
     });
 });

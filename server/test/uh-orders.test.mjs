@@ -468,7 +468,7 @@ describe('access control', () => {
 
         const list = await courier.get(BASE);
         expect(list.status).toBe(200);
-        const ids = list.body.map((o) => o.id);
+        const ids = list.body.orders.map((o) => o.id);
         expect(ids).toContain(mine.id);
         expect(ids).not.toContain(theirs.id);
 
@@ -493,9 +493,9 @@ describe('access control', () => {
 
     it('filters the list and scopes every order to its project', async () => {
         const byStatus = await admin.get(`${BASE}?status=delivered`);
-        expect(byStatus.body.every((o) => o.status === 'delivered')).toBe(true);
+        expect(byStatus.body.orders.every((o) => o.status === 'delivered')).toBe(true);
         const byType = await admin.get(`${BASE}?serviceType=adhoc`);
-        expect(byType.body.every((o) => o.serviceType === 'adhoc')).toBe(true);
+        expect(byType.body.orders.every((o) => o.serviceType === 'adhoc')).toBe(true);
 
         const projects = (await sql('SELECT DISTINCT p.code FROM orders o JOIN projects p ON p.id = o.project_id')).rows;
         expect(projects.map((r) => r.code)).toEqual(['uh']);

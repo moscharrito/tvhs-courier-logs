@@ -49,11 +49,17 @@ function renderOrders(routes: Record<string, unknown>, initial = '/projects/uh/o
     );
 }
 
+/* The list is paged: it answers with the rows plus how many exist in total,
+   so a short page announces itself instead of looking like the whole day. */
+const page = (rows: unknown[], over: Record<string, unknown> = {}) => ({
+    orders: rows, total: rows.length, returned: rows.length, nextCursor: null, ...over,
+});
+
 const baseRoutes = {
     'GET /api/session': session,
     'GET /api/me/projects': projects,
     'GET /api/projects/uh/uh/sites': sites,
-    'GET /api/projects/uh/uh/orders': [row(), row({ id: 13, status: 'delivered', sla: sla({ state: 'overdue', minutesToDue: -22 }) })],
+    'GET /api/projects/uh/uh/orders': page([row(), row({ id: 13, status: 'delivered', sla: sla({ state: 'overdue', minutesToDue: -22 }) })]),
     'GET /api/projects/uh/uh/orders/summary': summary,
 };
 
@@ -118,14 +124,14 @@ describe('Orders', () => {
     });
 
     it('says so when nothing matches', async () => {
-        renderOrders({ ...baseRoutes, 'GET /api/projects/uh/uh/orders': [] });
+        renderOrders({ ...baseRoutes, 'GET /api/projects/uh/uh/orders': page([]) });
         expect(await screen.findByText('No orders match these filters.')).toBeInTheDocument();
     });
 
     it('counts one order as an order, not as "1 orders"', async () => {
         renderOrders({
             ...baseRoutes,
-            'GET /api/projects/uh/uh/orders': [row()],
+            'GET /api/projects/uh/uh/orders': page([row()]),
             'GET /api/projects/uh/uh/orders/summary': { ...summary, total: 1, byStatus: { assigned: 1 } },
         });
         await screen.findByRole('heading', { name: 'Orders' });
@@ -133,8 +139,46 @@ describe('Orders', () => {
         expect(document.querySelector('.izy-statline')?.textContent).not.toContain('1 orders');
     });
 
+    /* THE FAILURE THIS REPLACES. The request asked for 200 rows and the
+       screen warned only above 500, so a day of 875 deliveries showed 200 and
+       said nothing at all. The client-side pager made it worse: it offered
+       page numbers over the subset, which reads as the whole day. */
+    it('says how much of the day it is actually showing', async () => {
+        renderOrders({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/orders': page([row()], { total: 875, nextCursor: 'abc' }),
+            'GET /api/projects/uh/uh/orders/summary': { ...summary, total: 875 },
+        });
+        expect(await screen.findByText(/1 of 875 loaded/)).toBeInTheDocument();
+        expect(screen.getByText(/874 more match these filters/)).toBeInTheDocument();
+    });
+
+    it('fetches the next page from the cursor rather than refetching the first', async () => {
+        const { calls } = mockFetch({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/orders': page([row()], { total: 2, nextCursor: 'CURSOR1' }),
+        });
+        render(
+            <MemoryRouter initialEntries={['/projects/uh/orders']}>
+                <AuthProvider>
+                    <Routes><Route path="/projects/:code/orders" element={<Orders />} /></Routes>
+                </AuthProvider>
+            </MemoryRouter>,
+        );
+        const more = await screen.findByRole('button', { name: /Load the next/ });
+        fireEvent.click(more);
+        await waitFor(() => expect(calls.some((c) => c.includes('cursor=CURSOR1'))).toBe(true));
+    });
+
+    it('says nothing about loading more when it already has everything', async () => {
+        renderOrders(baseRoutes);
+        await screen.findByRole('heading', { name: 'Orders' });
+        expect(screen.queryByRole('button', { name: /Load the next/ })).toBeNull();
+        expect(screen.queryByText(/loaded/)).toBeNull();
+    });
+
     it('flags an out-of-area order in the list rather than leaving the zone blank', async () => {
-        renderOrders({ ...baseRoutes, 'GET /api/projects/uh/uh/orders': [row({ zone: null })] });
+        renderOrders({ ...baseRoutes, 'GET /api/projects/uh/uh/orders': page([row({ zone: null })]) });
         expect(await screen.findByText('out of area')).toBeInTheDocument();
     });
 });

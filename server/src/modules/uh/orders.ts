@@ -40,6 +40,57 @@ import {
 
 const zipSchema = z.string().trim().regex(/^\d{5}(-\d{4})?$/, 'five digit ZIP, optionally ZIP+4');
 
+/* ───────────────────────────────────────────────────────────────── paging
+ *
+ * University Health run between five hundred and fifteen hundred deliveries a
+ * day across eight pharmacies; the day they quoted us was 1,755 prescriptions,
+ * about 875 orders. This list returned at most two hundred rows, capped at
+ * five hundred, with nothing in the response to say that more existed. Staff
+ * reading a day's work saw under a quarter of it and had no reason to doubt
+ * what was on screen.
+ *
+ * THE SORT KEY IS NORMALISED so it can be compared.
+ *
+ * The old order was `due_at IS NULL, due_at, id`, which is three expressions
+ * and includes a NULL. A cursor has to say "everything after this point", and
+ * every comparison against NULL is NULL, so the nulls-last group could never
+ * be paged through. COALESCE to a sentinel that sorts after any timestamp
+ * gives one comparable key with identical ordering: ISO timestamps begin with
+ * a digit, and '~' is above every digit and letter in ASCII.
+ */
+const DUE_SENTINEL = '~';
+const DUE_KEY = `COALESCE(o.due_at, '${DUE_SENTINEL}')`;
+
+/** The default page. Large enough that a quiet pharmacy needs one request. */
+const PAGE_DEFAULT = 200;
+/** The most one response may carry. A dispatcher does not read two thousand
+ *  rows; a script asking for them is better served by paging. */
+const PAGE_MAX = 1000;
+
+/** Where a page stopped: the sort key of its last row. */
+interface Cursor { due: string; id: number }
+
+function encodeCursor(row: OrderRow): string {
+    const due = row.due_at === null || row.due_at === undefined ? DUE_SENTINEL : String(row.due_at);
+    return Buffer.from(JSON.stringify([due, Number(row.id)]), 'utf8').toString('base64url');
+}
+
+/** Opaque on the way in: a malformed or hand-edited cursor starts from the
+ *  beginning rather than erroring, because the alternative is a dispatch board
+ *  that shows a stack trace when somebody edits the address bar. */
+function decodeCursor(raw: string | undefined): Cursor | null {
+    if (!raw) return null;
+    try {
+        const parsed: unknown = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+        if (!Array.isArray(parsed) || parsed.length !== 2) return null;
+        const [due, id] = parsed as [unknown, unknown];
+        if (typeof due !== 'string' || typeof id !== 'number' || !Number.isInteger(id)) return null;
+        return { due, id };
+    } catch {
+        return null;
+    }
+}
+
 /* Manual creation is for the non-scheduled work: a STAT call from a pharmacy,
  * or an ad hoc request from a department. Scheduled orders come from a daily
  * list; creating one by hand would sidestep the import's duplicate detection. */
@@ -418,14 +469,58 @@ export function createOrdersRouter(
     router.get('/', readers, wrap(async (req, res) => {
         const { where, args, applied } = filterFor(req);
         const q = req.query as Record<string, string | undefined>;
-        const limit = Math.min(500, Math.max(1, Number(q['limit'] ?? 200) || 200));
-        const rs = await client.execute({
-            sql: `SELECT o.* FROM orders o WHERE ${where.join(' AND ')} ORDER BY o.due_at IS NULL, o.due_at, o.id LIMIT ${limit}`,
+        const limit = Math.min(PAGE_MAX, Math.max(1, Number(q['limit'] ?? PAGE_DEFAULT) || PAGE_DEFAULT));
+
+        /* The total over the same filters, on every page, so a caller always
+           knows the size of the thing it is holding part of. This is the
+           number that was missing: the list returned two hundred rows out of
+           a day's eight hundred and said nothing, and a dispatcher reading it
+           had no way to know the rest existed. */
+        const totalRs = await client.execute({
+            sql: `SELECT COUNT(*) AS n FROM orders o WHERE ${where.join(' AND ')}`,
             args,
         });
-        const rows = (rs.rows as unknown as OrderRow[]).map(present);
-        await req.audit('order.list', 'order', null, { returned: rows.length, filters: applied });
-        res.json(rows);
+        const total = Number(totalRs.rows[0]?.['n'] ?? 0);
+
+        const page = [...where];
+        const pageArgs = [...args];
+        const after = decodeCursor(q['cursor']);
+        if (after) {
+            /* Keyset, not OFFSET. A dispatch board is read while couriers are
+               changing the rows under it, and OFFSET skips or repeats rows
+               when the set shifts between pages: with OFFSET, a delivery
+               completed on page one silently pushes one order off page two
+               and nobody ever sees it. A cursor names where it got to. */
+            page.push(`(${DUE_KEY} > ? OR (${DUE_KEY} = ? AND o.id > ?))`);
+            pageArgs.push(after.due, after.due, after.id);
+        }
+
+        /* One more than asked for, so "is there another page" is answered by
+           the database rather than by guessing from a full page. */
+        const rs = await client.execute({
+            sql: `SELECT o.* FROM orders o WHERE ${page.join(' AND ')}
+                  ORDER BY ${DUE_KEY}, o.id LIMIT ${limit + 1}`,
+            args: pageArgs,
+        });
+
+        const found = rs.rows as unknown as OrderRow[];
+        const hasMore = found.length > limit;
+        const slice = hasMore ? found.slice(0, limit) : found;
+        const last = slice[slice.length - 1];
+        const rows = slice.map(present);
+
+        await req.audit('order.list', 'order', null, {
+            returned: rows.length, total, filters: applied, paged: after !== null,
+        });
+        res.json({
+            orders: rows,
+            /* How many there are, against how many are in this response. A
+               caller that ignores both is at least no longer being told a
+               short list is the whole list. */
+            total,
+            returned: rows.length,
+            nextCursor: hasMore && last ? encodeCursor(last) : null,
+        });
     }));
 
     /* Counts over the same filtered set, so the screen's header cannot
