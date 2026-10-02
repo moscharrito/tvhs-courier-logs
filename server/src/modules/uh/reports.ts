@@ -128,7 +128,53 @@ export interface OrderFact {
     receivedAt: string | null;
     /** For turnaround. When the medication left the counter. */
     pickedUpAt: string | null;
+    /** Why it failed, where it did. One of DRY_RUN_REASONS, or ''. */
+    failureReason: string;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * WHOSE FAILURE IT WAS.
+ *
+ * University Health's Executive Director of Pharmacy, 30 September 2026: "if
+ * the mistake originates with pharmacy, you know, you won't be penalized...
+ * if it's something that we in pharmacy made a mistake on in terms of the
+ * incorrect address or otherwise". He named the incorrect address, and
+ * separately "if we did not receive the proper contact for or correct
+ * address".
+ *
+ * So the reason codes, which say what happened, need a second axis saying who
+ * it happened because of. Addendum 1's six are mapped below.
+ *
+ * THIS MAPPING IS A PROPOSAL UNTIL UNIVERSITY HEALTH AGREE IT. It decides
+ * what our completion rate reads as, which makes it a contract conversation
+ * rather than an engineering one. Two are plainly theirs; the rest are
+ * argued, and the argument is written down so it can be disagreed with:
+ *
+ *   incorrect_address    theirs. He named it.
+ *   incomplete_shipment  theirs. The shipment is packed at their counter.
+ *   recipient_not_located nobody's. A patient who is out is not a mistake,
+ *                        and attributing it to them would read as blaming a
+ *                        patient on a report a hospital reads.
+ *   no_access            nobody's. A locked gate is a circumstance.
+ *   refused              nobody's. A patient may decline.
+ *   other                unknown, and counted against us, because a bucket
+ *                        that excuses us by default is a bucket that fills.
+ *
+ * Nothing here is attributed to the courier explicitly: a failure that is
+ * ours has no code of its own, it is simply one we do not exclude. */
+export type Fault = 'pharmacy' | 'nobody' | 'unknown';
+
+export const FAULT_BY_REASON: Record<string, Fault> = {
+    incorrect_address: 'pharmacy',
+    incomplete_shipment: 'pharmacy',
+    recipient_not_located: 'nobody',
+    no_access: 'nobody',
+    refused: 'nobody',
+    other: 'unknown',
+};
+
+/** Only the pharmacy's own mistakes come out of the measure. */
+export const isPharmacyFault = (reason: string): boolean => FAULT_BY_REASON[reason] === 'pharmacy';
 
 /**
  * How long deliveries took, in minutes.
@@ -232,11 +278,21 @@ export interface Totals {
     onTimeMissed: number;
     /** Closed orders with no deadline or no arrival: measured against nothing. */
     notMeasured: number;
+    /** Failures the pharmacy caused, which they have said will not count
+     *  against us. Counted rather than silently dropped, because a figure
+     *  that improves for reasons nobody can see is a figure nobody trusts. */
+    notDeliveredPharmacyFault: number;
 }
 
 export interface Rates {
     /** Successful deliveries over attempts. The sensible reading of 1.2.5. */
     completionRate: number | null;
+    /** The same, with the pharmacy's own mistakes taken out of the
+     *  denominator. This is the number University Health said they would hold
+     *  us to; completionRate is what actually happened. Both are reported,
+     *  because one of them is the truth about the day and the other is the
+     *  truth about us, and a single figure cannot be both. */
+    completionRateAdjusted: number | null;
     /** On-time arrivals over arrivals that could be measured (Addendum 1). */
     onTimeRate: number | null;
     /** Attempts that ended as a dry run. */
@@ -251,7 +307,7 @@ const rate = (numerator: number, denominator: number): number | null =>
     (denominator === 0 ? null : Math.round((numerator / denominator) * 1000) / 10);
 
 export const emptyTotals = (): Totals => ({
-    orders: 0, delivered: 0, notDelivered: 0, cancelled: 0, stillOpen: 0,
+    orders: 0, delivered: 0, notDelivered: 0, cancelled: 0, stillOpen: 0, notDeliveredPharmacyFault: 0,
     attempts: 0, onTimeMet: 0, onTimeMissed: 0, notMeasured: 0,
 });
 
@@ -259,7 +315,10 @@ export const emptyTotals = (): Totals => ({
 export function addFact(totals: Totals, fact: OrderFact, now: Date): Totals {
     const next = { ...totals, orders: totals.orders + 1 };
     if (fact.status === 'delivered') next.delivered += 1;
-    else if (fact.status === 'failed') next.notDelivered += 1;
+    else if (fact.status === 'failed') {
+        next.notDelivered += 1;
+        if (isPharmacyFault(fact.failureReason)) next.notDeliveredPharmacyFault += 1;
+    }
     else if (fact.status === 'cancelled') next.cancelled += 1;
     else next.stillOpen += 1;
 
@@ -282,6 +341,7 @@ export function ratesFor(totals: Totals): Rates {
     const measured = totals.onTimeMet + totals.onTimeMissed;
     return {
         completionRate: rate(totals.delivered, totals.attempts),
+        completionRateAdjusted: rate(totals.delivered, totals.attempts - totals.notDeliveredPharmacyFault),
         onTimeRate: rate(totals.onTimeMet, measured),
         dryRunRate: rate(totals.notDelivered, totals.attempts),
         literalScopeRatio: totals.delivered === 0
@@ -336,7 +396,7 @@ export async function dailyFigures(
     const rs = await client.execute({
         sql: `SELECT o.service_date, o.service_type, o.site_id, s.name AS site_name, o.zone,
                      o.status, o.due_at, o.arrived_at, o.delivered_at,
-                     o.received_at, o.pickup_at
+                     o.received_at, o.pickup_at, o.failure_reason
               FROM orders o JOIN sites s ON s.id = o.site_id
               WHERE o.project_id = ? AND o.service_date = ?`,
         args: [projectId, serviceDate],
@@ -353,6 +413,7 @@ export async function dailyFigures(
         deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
         receivedAt: r['received_at'] === null ? null : String(r['received_at']),
         pickedUpAt: r['pickup_at'] === null ? null : String(r['pickup_at']),
+        failureReason: r['failure_reason'] === null || r['failure_reason'] === undefined ? '' : String(r['failure_reason']),
     }));
 
     const totals = facts.reduce((acc, f) => addFact(acc, f, now), emptyTotals());
@@ -456,7 +517,7 @@ export async function scopedReport(client: Client, input: ScopedReportInput) {
     const rs = await client.execute({
         sql: `SELECT o.service_date, o.service_type, o.site_id, s.name AS site_name, o.zone,
                      o.status, o.due_at, o.arrived_at, o.delivered_at,
-                     o.received_at, o.pickup_at
+                     o.received_at, o.pickup_at, o.failure_reason
               FROM orders o JOIN sites s ON s.id = o.site_id
               WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${scope}`,
         args,
@@ -473,6 +534,7 @@ export async function scopedReport(client: Client, input: ScopedReportInput) {
         deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
         receivedAt: r['received_at'] === null ? null : String(r['received_at']),
         pickedUpAt: r['pickup_at'] === null ? null : String(r['pickup_at']),
+        failureReason: r['failure_reason'] === null || r['failure_reason'] === undefined ? '' : String(r['failure_reason']),
     }));
 
     const totals = facts.reduce((acc, f) => addFact(acc, f, now), emptyTotals());
@@ -601,7 +663,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
         const rs = await client.execute({
             sql: `SELECT o.service_date, o.service_type, o.site_id, s.name AS site_name, o.zone,
                          o.status, o.due_at, o.arrived_at, o.delivered_at,
-                         o.received_at, o.pickup_at
+                         o.received_at, o.pickup_at, o.failure_reason
                   FROM orders o JOIN sites s ON s.id = o.site_id
                   WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?${filter}`,
             args,
@@ -618,6 +680,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             deliveredAt: r['delivered_at'] === null ? null : String(r['delivered_at']),
             receivedAt: r['received_at'] === null ? null : String(r['received_at']),
             pickedUpAt: r['pickup_at'] === null ? null : String(r['pickup_at']),
+            failureReason: r['failure_reason'] === null || r['failure_reason'] === undefined ? '' : String(r['failure_reason']),
         }));
 
         /* WHY THE FAILURES ARE COUNTED FROM PACKAGES AND NOT FROM ORDERS.

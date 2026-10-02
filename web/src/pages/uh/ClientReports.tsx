@@ -38,7 +38,7 @@ interface Slice {
     key: string;
     label: string;
     totals: { orders: number; delivered: number; notDelivered: number; stillOpen: number; attempts: number };
-    rates: { completionRate: number | null; onTimeRate: number | null; dryRunRate: number | null };
+    rates: { completionRate: number | null; completionRateAdjusted: number | null; onTimeRate: number | null; dryRunRate: number | null };
 }
 
 interface Report {
@@ -47,9 +47,9 @@ interface Report {
     notes: string[];
     totals: {
         orders: number; delivered: number; notDelivered: number; cancelled: number;
-        stillOpen: number; attempts: number; onTimeMet: number; onTimeMissed: number; notMeasured: number;
+        stillOpen: number; attempts: number; onTimeMet: number; onTimeMissed: number; notMeasured: number; notDeliveredPharmacyFault: number;
     };
-    rates: { completionRate: number | null; onTimeRate: number | null; dryRunRate: number | null };
+    rates: { completionRate: number | null; completionRateAdjusted: number | null; onTimeRate: number | null; dryRunRate: number | null };
     turnaround: {
         inOurHands: { count: number; medianMinutes: number | null; p90Minutes: number | null };
         endToEnd: { count: number; medianMinutes: number | null; p90Minutes: number | null };
@@ -199,7 +199,22 @@ export function ClientReports() {
                                 <tr>
                                     <td>Completion rate</td>
                                     <td><b>{pct(report.rates.completionRate)}</b></td>
-                                    <td className="izy-muted">expected {report.target}%</td>
+                                    <td className="izy-muted">everything attempted</td>
+                                </tr>
+                                {/* SHOWN BESIDE IT, NOT INSTEAD OF IT. One of
+                                    these is the truth about the day and the
+                                    other is the truth about the courier, and
+                                    replacing the first with the second would
+                                    be marking our own homework. */}
+                                <tr>
+                                    <td>Completion, excluding pharmacy errors</td>
+                                    <td><b>{pct(report.rates.completionRateAdjusted)}</b></td>
+                                    <td className="izy-muted">
+                                        expected {report.target}%
+                                        {report.totals.notDeliveredPharmacyFault > 0 && (
+                                            <> &middot; {report.totals.notDeliveredPharmacyFault} excluded</>
+                                        )}
+                                    </td>
                                 </tr>
                                 <tr>
                                     <td>On-time rate</td>
@@ -208,9 +223,12 @@ export function ClientReports() {
                                 </tr>
                             </tbody>
                         </table>
-                        {report.rates.completionRate !== null && report.rates.completionRate < report.target && (
+                        {report.rates.completionRateAdjusted !== null
+                            && report.rates.completionRateAdjusted < report.target && (
                             <div className="izy-alert warn" role="status">
-                                Below the {report.target} per cent expected for this range.
+                                Below the {report.target} per cent expected for this range, after
+                                setting aside deliveries that could not be made because of the
+                                information supplied.
                             </div>
                         )}
                     </div>
