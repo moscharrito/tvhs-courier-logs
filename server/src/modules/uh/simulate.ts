@@ -43,24 +43,22 @@ export const WEEKEND_STOPS = 227;
 /* ASSUMED. Discharge is the only pharmacy UH described as highest volume; the
  * rest of this split is invented so the board has a realistic shape, and will
  * be replaced by the sample list. Weights, not counts: they are normalised. */
-/* MEASURED, NOT INVENTED, SINCE 30 SEPTEMBER 2026.
+/* MEASURED OVER SIX MONTHS, NOT QUOTED FROM ONE DAY.
  *
- * University Health's Assistant Director of Pharmacy read yesterday's
- * prescription counts out site by site on the board call. These are those
- * numbers, used directly as weights.
+ * University Health's own extract, 169,602 deliveries from January to June
+ * 2026, averaged per calendar day. These replace the figures their Assistant
+ * Director read out on the board call, which were one Tuesday and ran high at
+ * Southwest and TDI and low at Discharge and Pavilion.
  *
- * THE OLD GUESS HAD IT BACKWARDS. It put Discharge highest at 30 and Robert
- * B. Green at 12. Green is the largest by a distance and Discharge is fifth,
- * so every board, every rehearsal and any capacity thinking done off this
- * table was weighted towards the wrong pharmacy.
+ * THE PAIRING THAT LOOKED SAFE IS THE BIGGEST LOAD IN THE CONTRACT. Discharge
+ * and Pavilion were put under one lead on the strength of "about 160 between
+ * them". They are 155 and 114, so 269 a day together, more than Robert B.
+ * Green's 241. See docs/volume-2026-h1.md.
  *
- * Prescriptions rather than orders, which is the same shape: roughly two
- * prescriptions to an order, applied evenly. His stated total of 1,755 is the
- * running sum through TDI and omits the last two sites; the per-site figures
- * are the ones used here. */
+ * Weights, not counts: they are normalised. */
 const SITE_WEIGHTS: Record<string, number> = {
-    green: 504, southwest: 335, tdi: 314, southeast: 285,
-    discharge: 195, pavilion: 122, wheatley: 17, vida: 14,
+    green: 241, discharge: 155, southeast: 147, southwest: 134,
+    tdi: 128, pavilion: 114, wheatley: 11, vida: 7,
 };
 
 /* ASSUMED. Addendum 1 describes the daily list as the ordinary case, with STAT
