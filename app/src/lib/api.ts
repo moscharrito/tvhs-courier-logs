@@ -84,7 +84,9 @@ export interface Project {
     code: string;
     name: string;
     timezone: string;
-    role: 'admin' | 'courier' | 'pharmacy';
+    /* 'lead' is a site lead: stationary at one pharmacy, owning the handover
+     *  to drivers there. App.tsx renders them a different shell. */
+    role: 'admin' | 'lead' | 'courier' | 'pharmacy';
 }
 
 export interface Stop {

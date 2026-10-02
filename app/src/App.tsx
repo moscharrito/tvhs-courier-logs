@@ -39,6 +39,7 @@ import { Apply } from './screens/Apply';
 import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
+import { Leading } from './screens/Leading';
 import { ChooseContract } from './screens/ChooseContract';
 import { Splash } from './screens/Splash';
 import { TvhsSignIn } from './screens/TvhsSignIn';
@@ -236,6 +237,21 @@ export function App() {
                     onPick={setProject}
                     onSignedOut={onSignedOut}
                     onEmpty={() => setHasProjects(false)}
+                />
+            ) : project.role === 'lead' ? (
+                /* THE SPLIT. A site lead and a driver share a login, a
+                   contract and almost no screens: one has a counter and the
+                   people in front of it, the other has their own round. The
+                   role comes from the membership the server already sends,
+                   and rendering the wrong shell would grant nothing anyway,
+                   because the server refuses a lead everything outside their
+                   own pharmacies regardless. */
+                <Leading
+                    token={token}
+                    project={project}
+                    username={who}
+                    onSignedOut={onSignedOut}
+                    onBack={() => { setProject(null); chooseContract(null); setMismatch(null); }}
                 />
             ) : (
                 <Driving
