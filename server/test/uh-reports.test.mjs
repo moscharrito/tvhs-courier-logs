@@ -13,7 +13,7 @@ import ExcelJS from 'exceljs';
 import { startServer } from './helpers/server.mjs';
 import {
     bucketFor, dayType, addFact, ratesFor, sliceBy, emptyTotals,
-    DEFINITIONS, COMPLETION_TARGET, GROUPINGS, turnaroundsFor, percentile, REASON_LABELS,
+    DEFINITIONS, COMPLETION_TARGET, INTERNAL_GOAL, GROUPINGS, turnaroundsFor, percentile, REASON_LABELS,
 } from '../src/modules/uh/reports.ts';
 
 const REPORTS = '/api/projects/uh/uh/reports';
@@ -311,7 +311,11 @@ describe('the report endpoint', () => {
 
     it('says whether the contract figure was met, and what that figure is', async () => {
         const res = await admin.get(`${REPORTS}/sla?from=${today}&to=${today}`);
-        expect(res.body.target).toEqual({ completion: COMPLETION_TARGET, internalGoal: 95 });
+        /* 99.5, which is what University Health said they measure by on the
+           board call, not the 95 the amended scope obliges us to. Reporting
+           against the floor would show green on a month that fails them. */
+        expect(res.body.target).toEqual({ completion: COMPLETION_TARGET, internalGoal: INTERNAL_GOAL });
+        expect(COMPLETION_TARGET).toBe(99.5);
         // 75 per cent against a floor of 85.
         expect(res.body.meetsContract).toBe(false);
     });

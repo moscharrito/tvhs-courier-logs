@@ -2,20 +2,23 @@
 /* The site leads, one account each, scoped to the pharmacies they stand in.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * SIX, NOT EIGHT, AND NOT SEVEN.
+ * ONE PER PHARMACY. EIGHT.
  *
- * The staffing follows the volumes University Health's Assistant Director of
- * Pharmacy read out on 30 September 2026, not the site count. Robert B. Green
- * alone is a third of the contract; Wheatley and Vida are about eight orders
- * each between them and a stationary lead there would be a person watching
- * one driver. So the small sites pair up and the main campus pairs up:
+ * An earlier version paired the small sites and the main campus on volume
+ * grounds: Wheatley and Vida are eighteen deliveries between them, and a
+ * stationary lead at either is a person watching one driver.
  *
- *   Robert B. Green   ~252    its own lead
- *   Southwest         ~168    its own lead
- *   TDI               ~157    its own lead
- *   Southeast         ~143    its own lead
- *   Discharge+Pavilion ~160   one lead, both, same campus
- *   Wheatley+Vida      ~16    one lead, both, and that lead drives
+ * That was the wrong shape and the six months of data says why. Discharge and
+ * Pavilion were paired on "about 160 between them"; they are 155 and 114, so
+ * 269 together, which is more than Robert B. Green and the largest single
+ * load in the contract. A pairing that can be wrong by that much is a pairing
+ * decided on the wrong axis.
+ *
+ * A lead is a person standing at a counter. There are eight counters, so
+ * there are eight leads, and whether one of them also drives because their
+ * counter is quiet is a rostering decision rather than an account structure.
+ * Deliveries a day, from docs/volume-2026-h1.md, are in the notes below so
+ * that the roster can be argued about from numbers.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * THE SCOPE IS THE ACCOUNT.
@@ -79,22 +82,14 @@ const projectCode = value('project', 'uh');
 /* ------------------------------------------------------------- the leads */
 
 const LEADS = [
-    { username: 'lead.green', name: 'Lead, Robert B. Green', sites: ['green'], note: 'largest site, around 252 deliveries' },
-    { username: 'lead.southwest', name: 'Lead, Southwest', sites: ['southwest'], note: 'around 168' },
-    { username: 'lead.tdi', name: 'Lead, Texas Diabetes Institute', sites: ['tdi'], note: 'around 157' },
-    { username: 'lead.southeast', name: 'Lead, Southeast', sites: ['southeast'], note: 'around 143' },
-    {
-        username: 'lead.maincampus',
-        name: 'Lead, Main Campus',
-        sites: ['discharge', 'pavilion'],
-        note: 'both main campus counters, around 160 between them',
-    },
-    {
-        username: 'lead.northeast',
-        name: 'Lead, Wheatley and Vida',
-        sites: ['wheatley', 'vida'],
-        note: 'around 16 between them; this lead also drives',
-    },
+    { username: 'lead.green', name: 'Lead, Robert B. Green', sites: ['green'], note: '241 a day, the largest site' },
+    { username: 'lead.discharge', name: 'Lead, Discharge Pharmacy', sites: ['discharge'], note: '155 a day, and the 24-hour returns counter' },
+    { username: 'lead.southeast', name: 'Lead, Southeast', sites: ['southeast'], note: '147 a day' },
+    { username: 'lead.southwest', name: 'Lead, Southwest', sites: ['southwest'], note: '134 a day' },
+    { username: 'lead.tdi', name: 'Lead, Texas Diabetes Institute', sites: ['tdi'], note: '128 a day' },
+    { username: 'lead.pavilion', name: 'Lead, Pavilion', sites: ['pavilion'], note: '114 a day' },
+    { username: 'lead.wheatley', name: 'Lead, Wheatley', sites: ['wheatley'], note: '11 a day' },
+    { username: 'lead.vida', name: 'Lead, Vida', sites: ['vida'], note: '7 a day' },
 ];
 
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -216,6 +211,25 @@ for (const lead of made) {
     say(`      sees      ${lead.sites.join(' and ')}  — ${lead.note}`);
     say('');
 }
+/* The paired accounts an earlier version of this script created. They are
+ * still scoped and still work, which is the problem: two logins covering the
+ * same counters as the single-site leads is two more passwords in circulation
+ * for no gain. Named rather than deleted, because disabling somebody's login
+ * is not a thing a seeding script should decide. */
+const RETIRED = ['lead.maincampus', 'lead.northeast'];
+const stale = [];
+for (const username of RETIRED) {
+    const found = await call(`/api/users/${username}`);
+    if (found.status === 200) stale.push(username);
+}
+if (stale.length > 0) {
+    say(`  ${stale.join(' and ')} ${stale.length === 1 ? 'is' : 'are'} left over from the paired`);
+    say('  version of this script and now cover counters that have their own lead.');
+    say('  Disable them once nobody is signed in on one:');
+    for (const username of stale) say(`    PATCH /api/users/${username}  {"status":"disabled"}`);
+    say('');
+}
+
 say('  They sign in to the courier app and get the lead screens, not a stop list.');
 say('  Each sees only their own pharmacies: the board, the counter, and the drivers');
 say('  on shift there. No pricing, no invoices, no other pharmacy.');

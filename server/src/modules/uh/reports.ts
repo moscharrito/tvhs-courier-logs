@@ -49,8 +49,26 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
  * "what we promised" and "what we aim for". A month at 94 per cent is now a
  * contract miss rather than a near miss, and the reporting says so.
  */
-export const COMPLETION_TARGET = 95;
-export const INTERNAL_GOAL = 95;
+/* ─────────────────────────────────────────────────────────────────────────
+ * 99.5, NOT 95, SINCE THE BOARD CALL OF 30 SEPTEMBER 2026.
+ *
+ * The 85 in Scope 1.2.5 and the 95 that replaced it are both below what
+ * University Health actually expect. Their Executive Director of Pharmacy put
+ * it plainly: the national average is 99.5 to 99.7, the previous contractor
+ * ran 99.7, "the original contract said like 85 and that's just way out of
+ * line", and the expectation "really aligns with more of 100% delivery
+ * accuracy".
+ *
+ * So the number reported against is theirs, not the contract's. Reporting
+ * against a floor nobody is measuring us by would show green on a month that
+ * fails, which is the worst direction for this figure to be wrong in.
+ *
+ * THE CONTRACT FLOOR IS KEPT SEPARATELY. It is what a dispute would be argued
+ * from, and deleting it would lose the fact that there are two numbers. */
+export const COMPLETION_TARGET = 99.5;
+/** What Scope 1.2.5 as amended actually obliges us to. Lower, and still true. */
+export const CONTRACT_FLOOR = 95;
+export const INTERNAL_GOAL = 99.5;
 
 /** A year at a time is the most anybody reads in one go. */
 const MAX_RANGE_DAYS = 400;
