@@ -477,8 +477,11 @@ export function Board() {
                         </section>
                     ))}
 
-                    <section className="izy-card izy-lane" aria-label="Recent activity">
-                        <h2>What just happened</h2>
+                    <Section
+                        id="board-activity"
+                        title="What just happened"
+                        summary={data.activity.length === 0 ? 'nothing recorded yet' : `${data.activity.length} recent`}
+                    >
                         {data.activity.length === 0 ? (
                             <p className="izy-muted">No courier has recorded anything today yet.</p>
                         ) : (
@@ -505,7 +508,7 @@ export function Board() {
                             </ol>
                         )}
                         <Pager of={pagedFeed} noun="events" />
-                    </section>
+                    </Section>
 
                     </div>
                 </div>

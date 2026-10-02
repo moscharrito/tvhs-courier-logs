@@ -303,7 +303,7 @@ export function ClientReports() {
                         id="client-report-glossary"
                         title="What these numbers mean"
                         summary="how each figure is counted"
-                        defaultOpen={false}
+                       
                     >
                         <table className="izy-table">
                             <thead><tr><th>Measure</th><th>Definition</th><th>Note</th></tr></thead>

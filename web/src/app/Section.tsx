@@ -75,9 +75,17 @@ export function Section({ id, title, summary, intro, actions, defaultOpen = true
     const header = typeof actions === 'function' ? actions(expand) : actions;
 
     return (
-        <section className={`izy-card izy-section${open ? '' : ' is-folded'}`}>
+        /* NAMED, so it is a landmark a screen reader can jump between rather
+           than an anonymous group. A bare <section> has no accessible name and
+           therefore no region role at all, which meant a page of eight of
+           these was eight unlabelled boxes. Pointed at the heading rather than
+           duplicating the title into an aria-label, so the two cannot drift. */
+        <section
+            className={`izy-card izy-section${open ? '' : ' is-folded'}`}
+            aria-labelledby={`${id}-heading`}
+        >
             <div className="izy-section-head">
-                <h2>
+                <h2 id={`${id}-heading`}>
                     <button type="button" className="izy-section-toggle" aria-expanded={open} onClick={toggle}>
                         <Chevron open={open} />
                         <span className="izy-section-title">{title}</span>

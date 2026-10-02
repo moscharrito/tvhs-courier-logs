@@ -332,7 +332,7 @@ describe('Board', () => {
 describe('Board: what just happened', () => {
     it('lists the courier events a dispatcher cannot otherwise see', async () => {
         renderBoard();
-        const feed = await screen.findByRole('region', { name: 'Recent activity' });
+        const feed = await screen.findByRole('region', { name: /What just happened/ });
         expect(feed).toHaveTextContent('Ada Courier');
         expect(feed).toHaveTextContent('delivered to');
         expect(feed).toHaveTextContent('Marcus Ibarra');
@@ -345,7 +345,7 @@ describe('Board: what just happened', () => {
                 activity: [activity({ type: 'attempted', reason: 'no_access', note: 'Gate code failed' })],
             }),
         }));
-        const feed = await screen.findByRole('region', { name: 'Recent activity' });
+        const feed = await screen.findByRole('region', { name: /What just happened/ });
         expect(feed).toHaveTextContent('could not deliver to');
         expect(feed).toHaveTextContent('could not get access');
         expect(feed).toHaveTextContent('Gate code failed');
@@ -385,7 +385,7 @@ describe('Board: what just happened', () => {
 
     it('says the board has stopped updating rather than showing stale numbers as live', async () => {
         const { fn } = renderBoard();
-        await screen.findByRole('region', { name: 'Recent activity' });
+        await screen.findByRole('region', { name: /What just happened/ });
         // The next poll fails.
         fn.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         fireEvent(document, new Event('visibilitychange'));

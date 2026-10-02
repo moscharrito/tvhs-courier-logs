@@ -12,6 +12,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
+import { Section } from '../../app/Section';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { todayIn } from '../../lib/when';
 
@@ -186,8 +187,7 @@ export function Reports() {
             {table('By day type', 'Day type', report.byDayType)}
 
             {report.turnaround && (
-                <div className="izy-card">
-                    <h2>How long deliveries took</h2>
+                <Section id="reports-turnaround" title="How long deliveries took" summary={`median ${minutes(report.turnaround.inOurHands.medianMinutes)} in our hands`}>
                     {/* Median first, because it is the one that describes a
                         normal day. The 90th percentile beside it because the
                         tail is what a hospital is actually worried about, and
@@ -217,12 +217,11 @@ export function Reports() {
                         Delivered orders only. A failed attempt has no handover to measure to,
                         and counting one as nil would flatter the figure.
                     </p>
-                </div>
+                </Section>
             )}
 
             {report.failureReasons && (
-                <div className="izy-card">
-                    <h2>Why deliveries failed</h2>
+                <Section id="reports-failures" title="Why deliveries failed" summary={`${report.failureReasons.length} ${report.failureReasons.length === 1 ? "reason" : "reasons"}`}>
                     {report.failureReasons.length === 0 ? (
                         /* Said out loud. A blank card reads as a page that did
                            not load; this reads as a clean fortnight. */
@@ -249,11 +248,10 @@ export function Reports() {
                             </p>
                         </>
                     )}
-                </div>
+                </Section>
             )}
 
-            <div className="izy-card">
-                <h2>What these numbers mean</h2>
+            <Section id="reports-glossary" title="What these numbers mean" summary="how each figure is counted">
                 {/* On the page, not behind a link. A rate whose basis is a
                     click away is a rate somebody quotes without the basis. */}
                 <table className="izy-table">
@@ -275,7 +273,7 @@ export function Reports() {
                         Raise it with University Health before the first quarterly review.
                     </p>
                 )}
-            </div>
+            </Section>
         </>
     );
 }
@@ -288,8 +286,7 @@ function SliceTable({ title, first, slices, target }: {
 }) {
     const paged = usePaged(slices);
     return (
-        <div className="izy-card">
-            <h2>{title}</h2>
+        <Section id={`reports-slice-${title.toLowerCase().replace(/\W+/g, "-")}`} title={title} summary={slices.length === 0 ? "nothing in this range" : `${slices.length} ${slices.length === 1 ? "row" : "rows"}`}>
             {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
                 <>
                     <table className="izy-table">
@@ -318,6 +315,6 @@ function SliceTable({ title, first, slices, target }: {
                     <Pager of={paged} noun="rows" />
                 </>
             )}
-        </div>
+        </Section>
     );
 }
