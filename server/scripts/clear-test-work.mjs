@@ -89,10 +89,13 @@ const meansProduction = process.argv.includes('--i-mean-production');
  * into something about an invalid URL. The instructions for this script say
  * "the Turso values from the Render dashboard", and the shape of that mistake
  * is pasting the instruction. */
-for (const name of ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN']) {
+for (const name of [
+    'TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN',
+    'S3_BUCKET', 'S3_REGION', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_KMS_KEY_ID',
+]) {
     const v = process.env[name] ?? '';
     if (/[<>]/.test(v)) {
-        console.error(`${name} is still a placeholder: ${name.endsWith('TOKEN') ? '<...>' : v}`);
+        console.error(`${name} is still a placeholder: ${/TOKEN|SECRET/.test(name) ? '<...>' : v}`);
         console.error('Copy the real values from the Render dashboard, Environment tab.');
         process.exit(1);
     }
