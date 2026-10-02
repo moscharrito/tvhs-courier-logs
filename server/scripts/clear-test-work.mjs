@@ -85,6 +85,19 @@ if (!byId && (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(t
 
 const meansProduction = process.argv.includes('--i-mean-production');
 
+/* A placeholder pasted instead of filled in, caught before loadConfig turns it
+ * into something about an invalid URL. The instructions for this script say
+ * "the Turso values from the Render dashboard", and the shape of that mistake
+ * is pasting the instruction. */
+for (const name of ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN']) {
+    const v = process.env[name] ?? '';
+    if (/[<>]/.test(v)) {
+        console.error(`${name} is still a placeholder: ${name.endsWith('TOKEN') ? '<...>' : v}`);
+        console.error('Copy the real values from the Render dashboard, Environment tab.');
+        process.exit(1);
+    }
+}
+
 const config = loadConfig();
 
 /* ─────────────────────────────────────────────────────────────────────────
