@@ -30,6 +30,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Section } from '../../app/Section';
 import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 
@@ -108,9 +109,15 @@ export function ClientReports() {
 
     useEffect(() => { void load(); }, [load]);
 
+    /* Folded panels say what is inside, so a pharmacist can skip one without
+       opening it. The id is the storage key and must stay stable. */
     const table = (title: string, first: string, slices: Slice[]) => (
-        <div className="izy-card" key={title}>
-            <h2>{title}</h2>
+        <Section
+            key={title}
+            id={`client-report-${first.toLowerCase().replace(/\W+/g, '-')}`}
+            title={title}
+            summary={slices.length === 0 ? 'nothing in this range' : `${slices.length} ${slices.length === 1 ? 'row' : 'rows'}`}
+        >
             {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
                 <table className="izy-table">
                     <thead>
@@ -134,7 +141,7 @@ export function ClientReports() {
                     </tbody>
                 </table>
             )}
-        </div>
+        </Section>
     );
 
     return (
@@ -208,8 +215,11 @@ export function ClientReports() {
                         )}
                     </div>
 
-                    <div className="izy-card">
-                        <h2>How long deliveries took</h2>
+                    <Section
+                        id="client-report-turnaround"
+                        title="How long deliveries took"
+                        summary={`median ${mins(report.turnaround.inOurHands.medianMinutes)} in our hands`}
+                    >
                         <table className="izy-table">
                             <thead>
                                 <tr><th>Span</th><th>Median</th><th>90th percentile</th><th>Measured over</th></tr>
@@ -233,10 +243,15 @@ export function ClientReports() {
                             Delivered orders only. A failed attempt has no handover to measure to,
                             and counting one as nil would flatter the figure.
                         </p>
-                    </div>
+                    </Section>
 
-                    <div className="izy-card">
-                        <h2>Why deliveries failed</h2>
+                    <Section
+                        id="client-report-failures"
+                        title="Why deliveries failed"
+                        summary={report.failureReasons.length === 0
+                            ? 'none in this range'
+                            : `${report.failureReasons.length} ${report.failureReasons.length === 1 ? 'reason' : 'reasons'}`}
+                    >
                         {report.failureReasons.length === 0
                             ? <p className="izy-muted">No failed deliveries in this range.</p>
                             : (
@@ -257,10 +272,12 @@ export function ClientReports() {
                                     </p>
                                 </>
                             )}
-                    </div>
+                    </Section>
 
-                    <div className="izy-card">
-                        <h2>Reattempted, cancelled and returned</h2>
+                    <Section
+                        id="client-report-reattempts"
+                        title="Reattempted, cancelled and returned"
+                    >
                         <div className="izy-stats">
                             <div><b>{report.followUp.reattempts}</b><span>reattempted</span></div>
                             <div><b>{report.totals.cancelled}</b><span>cancelled</span></div>
@@ -272,7 +289,7 @@ export function ClientReports() {
                         <p className="izy-muted">
                             Not yet returned is medication that failed and is still in a van.
                         </p>
-                    </div>
+                    </Section>
 
                     {table('By pharmacy', 'Pharmacy', report.bySite)}
                     {table('By service level', 'Service level', report.byServiceType)}
@@ -282,8 +299,12 @@ export function ClientReports() {
                         report.byPeriod,
                     )}
 
-                    <div className="izy-card">
-                        <h2>What these numbers mean</h2>
+                    <Section
+                        id="client-report-glossary"
+                        title="What these numbers mean"
+                        summary="how each figure is counted"
+                        defaultOpen={false}
+                    >
                         <table className="izy-table">
                             <thead><tr><th>Measure</th><th>Definition</th><th>Note</th></tr></thead>
                             <tbody>
@@ -296,7 +317,7 @@ export function ClientReports() {
                                 ))}
                             </tbody>
                         </table>
-                    </div>
+                    </Section>
                 </>
             )}
         </>

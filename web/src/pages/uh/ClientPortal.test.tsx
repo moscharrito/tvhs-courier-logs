@@ -263,11 +263,16 @@ describe('an account covering several pharmacies', () => {
         expect(screen.getByRole('button', { name: /University Hospital Discharge Pharmacy/ })).toBeInTheDocument();
     });
 
-    it('counts each pharmacy in its own heading', async () => {
+    it('says what is inside a pharmacy once it is folded away', async () => {
+        /* The shared folding panel shows its summary only while folded: it
+           stands in for the content, so printing it above the table it
+           describes is the clutter the primitive exists to remove. Folding
+           should cost less information, not all of it. */
         renderPortal(routes(many));
-        await screen.findByRole('button', { name: /Robert B Green Pharmacy/ });
-        expect(screen.getByText('2 deliveries')).toBeInTheDocument();
-        expect(screen.getByText('1 delivery')).toBeInTheDocument();
+        const rbg = await screen.findByRole('button', { name: /Robert B Green Pharmacy/ });
+        expect(screen.queryByText(/2 deliveries/)).toBeNull();
+        fireEvent.click(rbg);
+        expect(await screen.findByText(/2 deliveries/)).toBeInTheDocument();
     });
 
     it('rolls a pharmacy up and leaves the others alone', async () => {

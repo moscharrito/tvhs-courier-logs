@@ -16,6 +16,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
+import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { useLive, agoLabel } from '../../app/useLive';
@@ -103,15 +104,6 @@ export function ClientPortal() {
        to read a row without it moving. */
     const live = useLive(load, 20);
 
-    /* Which pharmacies are rolled up. Collapsed sections are remembered by id
-       rather than by index, so a section does not expand because a different
-       one above it emptied out between polls. */
-    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-    const toggle = (key: string) => setCollapsed((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key); else next.add(key);
-        return next;
-    });
 
     /* Sorted here rather than below the early returns, because the pager
        holds state and a hook cannot live after a conditional return.
@@ -263,32 +255,23 @@ export function ClientPortal() {
                 {rows.length === 0 ? (
                     <p className="izy-muted">Nothing for this day.</p>
                 ) : groups.length > 1 ? (
-                    /* GROUPED AND COLLAPSIBLE when the account covers more
-                       than one pharmacy. A contract manager scoped to all
-                       eight is otherwise reading one undifferentiated list of
-                       several hundred rows; a pharmacist scoped to one never
-                       sees this branch at all. */
+                    /* THE SHARED FOLDING PANEL, not a toggle invented here.
+                       It remembers what a pharmacist folded away, it says
+                       what is inside while folded, and it is a real heading
+                       with a real button. My first version of this did none
+                       of those: it was a bare button, forgot every reload,
+                       and was invisible to anything navigating by heading. */
                     groups.map(([pharmacy, list]) => {
-                        const shut = collapsed.has(pharmacy);
                         const bad = list.filter(needsAttention).length;
                         return (
-                            <section key={pharmacy} className="izy-group">
-                                <div className="izy-row-between">
-                                    <button
-                                        type="button"
-                                        className="izy-btn secondary small"
-                                        aria-expanded={!shut}
-                                        onClick={() => toggle(pharmacy)}
-                                    >
-                                        <span aria-hidden="true">{shut ? '▸' : '▾'}</span> {pharmacy}
-                                    </button>
-                                    <span className="izy-muted">
-                                        {list.length} {list.length === 1 ? 'delivery' : 'deliveries'}
-                                        {bad > 0 && <span className="izy-stat-bad"> · {bad} need attention</span>}
-                                    </span>
-                                </div>
-                                {!shut && <DeliveryTable rows={list} clock={clock} open={open} setOpen={setOpen} />}
-                            </section>
+                            <Section
+                                key={pharmacy}
+                                id={`portal-pharmacy-${pharmacy.toLowerCase().replace(/\W+/g, '-')}`}
+                                title={pharmacy}
+                                summary={`${list.length} ${list.length === 1 ? 'delivery' : 'deliveries'}${bad > 0 ? `, ${bad} need attention` : ''}`}
+                            >
+                                <DeliveryTable rows={list} clock={clock} open={open} setOpen={setOpen} />
+                            </Section>
                         );
                     })
                 ) : (

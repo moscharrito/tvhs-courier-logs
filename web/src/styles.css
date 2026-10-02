@@ -334,9 +334,3 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 }
 .izy-pod-photo figcaption { margin-top: 6px; font-size: 13px; }
 
-/* A collapsible pharmacy section in the client portal. A rule above each one
-   rather than a box around it: the sections sit inside a card already, and
-   nesting a border in a border reads as a bug. The first has no rule because
-   the card's own heading is directly above it. */
-.izy-group { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--izy-line, #e3e6ea); }
-.izy-group:first-of-type { padding-top: 0; margin-top: 0; border-top: 0; }
