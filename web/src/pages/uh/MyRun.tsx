@@ -24,6 +24,7 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
+import { Section } from '../../app/Section';
 
 interface Stop {
     sequence: number;
@@ -212,8 +213,18 @@ export function MyRun() {
                         </div>
                     )}
 
-                    <div className="izy-card">
-                        <h2>All stops</h2>
+                    {/* THE ONLY THING ON THIS PAGE THAT FOLDS.
+                        Collect-first is a blocker and the next stop is the
+                        work; folding either would hide the reason a driver
+                        opened the page. The whole list is reference once the
+                        next stop is on screen, and a driver who has memorised
+                        their round should be able to put it away and have it
+                        stay away. */}
+                    <Section
+                        id="myrun-all-stops"
+                        title="All stops"
+                        summary={`${stops.length} ${stops.length === 1 ? 'stop' : 'stops'}${done > 0 ? `, ${done} done` : ''}`}
+                    >
                         <ol className="izy-stoplist">
                             {pagedStops.rows.map((s) => (
                                 <li key={s.orderId} className={DONE.includes(s.status) ? 'izy-stop-done' : undefined}>
@@ -233,7 +244,7 @@ export function MyRun() {
                             ))}
                         </ol>
                         <Pager of={pagedStops} noun="stops" />
-                    </div>
+                    </Section>
                 </>
             )}
 

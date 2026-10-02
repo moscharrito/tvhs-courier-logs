@@ -85,6 +85,14 @@ export function Stop() {
 
     const [order, setOrder] = useState<OrderDetail | null>(null);
     const [filesAvailable, setFilesAvailable] = useState<boolean | null>(null);
+    /* ADDENDUM 2 CLAUSE 4. University Health forbid leaving a package
+       anywhere unattended, and a delivery is not complete until a person has
+       received it. The server refuses the doorstep endpoint outright; without
+       this the screen would still offer the button, and a courier would
+       photograph a porch, type a reason, submit, and be told no. Null while
+       it loads, and the button stays hidden until the answer arrives: better
+       a control that appears a moment late than one that cannot work. */
+    const [handoverOnly, setHandoverOnly] = useState<boolean | null>(null);
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
     const [strokes, setStrokes] = useState<SignatureStrokes>([]);
@@ -109,6 +117,14 @@ export function Stop() {
         api<{ available: boolean }>(`/api/projects/${code}/uh/files/status/check`)
             .then((s) => setFilesAvailable(s.available))
             .catch(() => setFilesAvailable(false));
+    }, [code]);
+    useEffect(() => {
+        /* Fails closed. If this cannot be read, assume the stricter contract:
+           refusing a doorstep that was allowed is a phone call, and recording
+           one that was forbidden is a breach. */
+        api<{ settings: { delivery?: { personalHandoverOnly?: boolean } } }>(`/api/projects/${code}/settings`)
+            .then((r) => setHandoverOnly(r.settings.delivery?.personalHandoverOnly !== false))
+            .catch(() => setHandoverOnly(true));
     }, [code]);
 
     if (order === null) {
@@ -267,8 +283,10 @@ export function Stop() {
                                 <button className="izy-btn" type="button" disabled={busy} onClick={() => setChoice('deliver')}>
                                     Handed over
                                 </button>
-                                {/* Only when the medication allows it (Scope 1.2.3). */}
-                                {!needsSignature && (
+                                {/* Only when the medication allows it (Scope 1.2.3) AND the
+                                    contract does (Addendum 2 clause 4, which supersedes it
+                                    for University Health). */}
+                                {!needsSignature && handoverOnly === false && (
                                     <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setChoice('doorstep')}>
                                         Left at the door
                                     </button>

@@ -40,10 +40,21 @@ const order = (over: Record<string, unknown> = {}) => ({
     ...over,
 });
 
+/* A contract that allows a doorstep drop, for the tests about the mechanism
+   rather than about the prohibition. */
+const DOORSTEP_ALLOWED = {
+    'GET /api/projects/uh/settings': { settings: { delivery: { personalHandoverOnly: false } } },
+};
+
 const routes = (over: Record<string, unknown> = {}) => ({
     'GET /api/session': session,
     'GET /api/me/projects': projects,
     'GET /api/projects/uh/uh/files/status/check': { available: true, reason: '' },
+    /* Addendum 2 clause 4: University Health forbid leaving a package
+       unattended, so the default here is the contract the product actually
+       runs under. The tests that exercise the doorstep flow turn it off,
+       because the capability still exists for a contract that permits one. */
+    'GET /api/projects/uh/settings': { settings: { delivery: { personalHandoverOnly: true } } },
     [`GET ${ORDER}`]: order(),
     ...over,
 });
@@ -216,6 +227,7 @@ describe('Stop', () => {
            doorstep drop on the record with no photo behind it. */
         const { fn, calls } = renderStop({
             ...routes(),
+            ...DOORSTEP_ALLOWED,
             'POST /api/projects/uh/uh/files': {
                 status: 201,
                 body: { id: 9, upload: { method: 'PUT', url: 'https://bucket.example/put?sig=x', headers: { 'Content-Type': 'image/jpeg' } } },
@@ -225,7 +237,7 @@ describe('Stop', () => {
             [`POST ${ORDER}/doorstep`]: { status: 201, body: { status: 'delivered', photoFileId: 9 } },
         });
         await screen.findByRole('heading', { name: 'Stop' });
-        fireEvent.click(screen.getByRole('button', { name: 'Left at the door' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Left at the door' }));
 
         const photo = new File(['pretend jpeg bytes'], 'door.jpg', { type: 'image/jpeg' });
         fireEvent.change(screen.getByLabelText(/Photo of where you left it/), { target: { files: [photo] } });
@@ -241,10 +253,35 @@ describe('Stop', () => {
         expect(bodyOf(fn, `POST ${ORDER}/doorstep`)).toMatchObject({ fileId: 9, noSignatureReason: 'Nobody answered, left inside the screen door' });
     });
 
-    it('says so rather than pretending when photo storage is not switched on', async () => {
-        renderStop({ ...routes(), 'GET /api/projects/uh/uh/files/status/check': { available: false, reason: 'S3 is not configured' } });
+    it('does not offer a doorstep drop on a contract that forbids one', async () => {
+        /* ADDENDUM 2 CLAUSE 4. The server refuses the endpoint outright.
+           Without this the screen would still show the button, and a courier
+           would photograph a porch, type a reason, submit, and be told no,
+           having already put the package down. */
+        renderStop(routes());
         await screen.findByRole('heading', { name: 'Stop' });
-        fireEvent.click(screen.getByRole('button', { name: 'Left at the door' }));
+        expect(screen.queryByRole('button', { name: 'Left at the door' })).not.toBeInTheDocument();
+        /* The two that remain are the two the contract allows. */
+        expect(screen.getByRole('button', { name: 'Handed over' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Could not deliver' })).toBeInTheDocument();
+    });
+
+    it('fails closed when it cannot read the contract', async () => {
+        /* Refusing a doorstep that was allowed is a phone call. Recording one
+           that was forbidden is a breach of the contract. */
+        renderStop({ ...routes(), 'GET /api/projects/uh/settings': { status: 500, body: { error: 'nope' } } });
+        await screen.findByRole('heading', { name: 'Stop' });
+        expect(screen.queryByRole('button', { name: 'Left at the door' })).not.toBeInTheDocument();
+    });
+
+    it('says so rather than pretending when photo storage is not switched on', async () => {
+        renderStop({
+            ...routes(),
+            ...DOORSTEP_ALLOWED,
+            'GET /api/projects/uh/uh/files/status/check': { available: false, reason: 'S3 is not configured' },
+        });
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(await screen.findByRole('button', { name: 'Left at the door' }));
 
         expect(await screen.findByText(/photo storage is not switched on yet/)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Record the delivery' })).toBeDisabled();
