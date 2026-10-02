@@ -47,20 +47,30 @@ const CREDENTIALS = {};
    and the property that makes that safe is that it belongs to no project. It
    is in this table so that every row below is also the question "can an
    unvetted stranger reach this", answered for the whole application at once. */
-const PRINCIPALS = ['anon', 'applicant', 'outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
+const PRINCIPALS = ['anon', 'applicant', 'outsider', 'pharmacy', 'lead', 'courier', 'projectAdmin', 'platformAdmin'];
 
 /* Shorthand for the groups the table uses over and over. `platformAdmin` is a
  * member of every project at boot, so it appears in every project group. */
 const EVERYONE = PRINCIPALS;
-const SIGNED_IN = ['applicant', 'outsider', 'pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
+const SIGNED_IN = ['applicant', 'outsider', 'pharmacy', 'lead', 'courier', 'projectAdmin', 'platformAdmin'];
 const PLATFORM_ADMIN = ['platformAdmin'];
-const UH_MEMBER = ['pharmacy', 'courier', 'projectAdmin', 'platformAdmin'];
+const UH_MEMBER = ['pharmacy', 'lead', 'courier', 'projectAdmin', 'platformAdmin'];
 /* UH_MANAGE used to be narrower than UH_STAFF: editing the rate card and
  * issuing an invoice were an ops manager's, and a dispatcher was refused
  * them. The merge in 5.12 made those the same set of people, so there is one
  * name for it now rather than two identical lists pretending otherwise. */
 const UH_STAFF = ['projectAdmin', 'platformAdmin'];
 const UH_STAFF_AND_COURIER = ['courier', 'projectAdmin', 'platformAdmin'];
+/* A site lead reads their own pharmacies' work and nothing else. The guard
+ * only says who may knock; what they actually see is narrowed by
+ * modules/uh/lead-scope.ts, which has its own tests. */
+const UH_LEAD_READ = ['lead', 'courier', 'projectAdmin', 'platformAdmin'];
+/* The board is the lead's screen: today's packages at their counter and the
+ * drivers on shift there. A courier has their own run and does not get it. */
+const UH_LEAD_BOARD = ['lead', 'projectAdmin', 'platformAdmin'];
+/* Moving an order between drivers, which is the lead's one write. Not
+ * creating a run, resequencing one or closing it. */
+const UH_REASSIGN = ['lead', 'projectAdmin', 'platformAdmin'];
 const UH_MANAGE = UH_STAFF;
 const UH_CLIENT_VIEW = ['pharmacy', 'projectAdmin', 'platformAdmin'];
 const TVHS_MEMBER = ['outsider', 'platformAdmin'];
@@ -78,6 +88,7 @@ beforeAll(async () => {
        endpoint. */
     const people = [
         ['matrix.pharmacy', 'pharmacy'],
+        ['matrix.lead', 'lead'],
         ['matrix.courier', 'courier'],
         ['matrix.projectadmin', 'admin'],
     ];
@@ -100,6 +111,7 @@ beforeAll(async () => {
     Object.assign(CREDENTIALS, {
         outsider: { username: srv.creds.south.username, password: srv.creds.south.password },
         pharmacy: { username: 'matrix.pharmacy', password: PASS },
+        lead: { username: 'matrix.lead', password: PASS },
         courier: { username: 'matrix.courier', password: PASS },
         projectAdmin: { username: 'matrix.projectadmin', password: PASS },
         platformAdmin: { username: srv.creds.admin.username, password: srv.creds.admin.password },
@@ -118,6 +130,7 @@ beforeAll(async () => {
     who.applicant = await signIn(applicantEmail);
     who.outsider = await srv.login('south');
     who.pharmacy = await signIn('matrix.pharmacy');
+    who.lead = await signIn('matrix.lead');
     who.courier = await signIn('matrix.courier');
     who.projectAdmin = await signIn('matrix.projectadmin');
     who.platformAdmin = admin;
@@ -253,9 +266,9 @@ const MATRIX = [
     ['POST', '/api/projects/uh/settings/patient-sms/preview', UH_MANAGE, ''],
 
     /* --- pharmacies. Addresses and contacts of University Health sites. */
-    ['GET', `${UH}/sites`, UH_STAFF_AND_COURIER, 'a courier needs the pickup address'],
+    ['GET', `${UH}/sites`, UH_LEAD_READ, 'a courier needs the pickup address; a lead works at one'],
     ['POST', `${UH}/sites`, UH_MANAGE, ''],
-    ['GET', `${UH}/sites/999999`, UH_STAFF_AND_COURIER, ''],
+    ['GET', `${UH}/sites/999999`, UH_LEAD_READ, ''],
     ['PATCH', `${UH}/sites/999999`, UH_MANAGE, ''],
     ['DELETE', `${UH}/sites/999999`, UH_MANAGE, ''],
 
@@ -282,11 +295,11 @@ const MATRIX = [
 
     /* --- orders: patient names and addresses. */
     ['POST', `${UH}/orders`, UH_STAFF, 'a manual order'],
-    ['GET', `${UH}/orders`, UH_STAFF_AND_COURIER, 'couriers are narrowed to their own work inside'],
-    ['GET', `${UH}/orders/summary`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/orders/999999`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/orders/999999/pod.pdf`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/orders/999999/directions`, UH_STAFF_AND_COURIER, ''],
+    ['GET', `${UH}/orders`, UH_LEAD_READ, 'couriers narrowed to their own work inside, leads to their own pharmacies'],
+    ['GET', `${UH}/orders/summary`, UH_LEAD_READ, ''],
+    ['GET', `${UH}/orders/999999`, UH_LEAD_READ, ''],
+    ['GET', `${UH}/orders/999999/pod.pdf`, UH_LEAD_READ, ''],
+    ['GET', `${UH}/orders/999999/directions`, UH_LEAD_READ, ''],
     ['POST', `${UH}/orders/999999/events`, UH_STAFF_AND_COURIER, 'which event is then gated by role again'],
     /* Sending somebody back to a door. Dispatch only: a courier does not
        decide that a delivery is worth a second trip, and a pharmacy asking
@@ -346,8 +359,8 @@ const MATRIX = [
     ['DELETE', '/api/me/push-devices/999999', SIGNED_IN, 'it will not any more'],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
-    ['POST', `${UH}/runs/999999/stops`, UH_STAFF, ''],
-    ['DELETE', `${UH}/runs/999999/stops/999999`, UH_STAFF, ''],
+    ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'a lead moves a package at their own counter'],
+    ['DELETE', `${UH}/runs/999999/stops/999999`, UH_REASSIGN, ''],
     ['PUT', `${UH}/runs/999999/sequence`, UH_STAFF, ''],
     ['POST', `${UH}/runs/999999/sequence/auto`, UH_STAFF, ''],
     ['GET', `${UH}/runs/999999/pickup`, UH_STAFF_AND_COURIER, ''],
@@ -359,7 +372,7 @@ const MATRIX = [
 
     /* --- the dispatch board: every patient address in the contract on one
        screen. Couriers see their own run instead. */
-    ['GET', `${UH}/board`, UH_STAFF, ''],
+    ['GET', `${UH}/board`, UH_LEAD_BOARD, 'the screen the lead role exists for, scoped to their sites'],
 
     /* --- what the pharmacy sees. The only endpoints a client viewer may
        reach, and each one narrows to the sites that viewer is scoped to. */

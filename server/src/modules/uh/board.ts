@@ -18,6 +18,7 @@ import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
+import { leadScope } from './lead-scope';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -106,7 +107,10 @@ const presentOrder = (o: OrderRow) => ({
 
 export function createBoardRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin');
+    /* A lead gets the board for their own pharmacies. It is the screen the
+       role exists for: today's packages at their counter and the drivers on
+       shift there. Scoped below, after every filter a caller can set. */
+    const staff = requireProjectRole('admin', 'lead');
 
     router.get('/', staff, wrap(async (req, res) => {
         const project = req.project!;
@@ -124,6 +128,12 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         if (q['serviceType']) { filters.push('o.service_type = ?'); filterArgs.push(String(q['serviceType'])); }
         if (q['zone'] === 'out_of_area') filters.push('o.zone IS NULL');
         else if (q['zone']) { filters.push('o.zone = ?'); filterArgs.push(Number(q['zone'])); }
+        /* Last, so no query parameter can reach past it: a lead asking for
+           another pharmacy's siteId gets their own sites ANDed with it, which
+           is nothing. */
+        const scope = leadScope(req);
+        if (scope) { filters.push(scope.sql); filterArgs.push(...scope.args); }
+
         const filterSql = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : '';
 
         /* THE COUNTS COME FROM EVERY ROW. THE CARDS DO NOT.

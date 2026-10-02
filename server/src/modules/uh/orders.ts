@@ -21,6 +21,7 @@ import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { hasProofPhoto, attachPhotos } from './pod-photos';
+import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
 import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
@@ -228,7 +229,10 @@ export function createOrdersRouter(
      * are included and then narrowed to their own work further down; a client
      * viewer is not, because this endpoint is the whole project and their view
      * of their own pharmacy is the portal (ticket 3.1). */
-    const readers = requireProjectRole('admin', 'courier');
+    /* A lead reads their own pharmacies' work. Every query behind this guard
+       is scoped by leadScope or leadMaySee; the guard only says who may
+       knock. */
+    const readers = requireProjectRole('admin', 'lead', 'courier');
     /* Everyone who may record any event at all. Which event is a second
      * question, answered per type below against EVENT_RULES. */
     const records = requireProjectRole('admin', 'courier');
@@ -251,6 +255,14 @@ export function createOrdersRouter(
         if (!order) { res.status(404).json({ error: 'Order not found' }); return null; }
         if (isCourier(req) && order.assigned_to_username !== (req.session.user?.username ?? null)) {
             res.status(403).json({ error: 'That order is not assigned to you' });
+            return null;
+        }
+        /* 404, not 403, for a lead reaching outside their pharmacies. A 403
+           confirms the order exists, which is the one bit a lead at another
+           site should not learn by guessing ids. The courier case above says
+           403 because they were told the id by us in the first place. */
+        if (!leadMaySee(req, order.site_id === null ? null : Number(order.site_id))) {
+            res.status(404).json({ error: 'Order not found' });
             return null;
         }
         return order;
@@ -462,6 +474,14 @@ export function createOrdersRouter(
         // A courier sees their own work and nothing else. Last, so nothing
         // above can widen it.
         if (isCourier(req)) { where.push('o.assigned_to_username = ?'); args.push(req.session.user?.username ?? ''); }
+
+        /* And a lead sees their own pharmacies and nothing else, for the same
+           reason and in the same place: after every filter a caller can set,
+           so no query parameter can reach past it. A lead at Wheatley asking
+           for siteId=green gets their own sites ANDed with that one, which is
+           nothing, rather than Robert B. Green's day. */
+        const scope = leadScope(req);
+        if (scope) { where.push(scope.sql); args.push(...scope.args); }
 
         return { where, args, applied };
     }

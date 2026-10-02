@@ -50,7 +50,7 @@ const RegisterDevice = z.object({
 export function createNotificationsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const run = (sql: string, args: InValue[] = []) => client.execute({ sql, args });
-    const members = requireProjectRole('admin', 'courier', 'pharmacy');
+    const members = requireProjectRole('admin', 'lead', 'courier', 'pharmacy');
     const meOf = (req: Request) => req.session.user?.username ?? '';
 
     router.get('/', members, wrap(async (req, res) => {

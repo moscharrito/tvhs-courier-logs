@@ -23,6 +23,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { leadScope, leadMaySee, isLead } from './lead-scope';
 import { todayIn } from '../../core/dates';
 import { getConfig } from '../../config';
 import { resolveSettings } from '../../core/projects/settings';
@@ -101,6 +102,17 @@ const presentRun = (r: RunRow) => ({
 export function createRunsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const staff = requireProjectRole('admin');
+    /* MOVING AN ORDER BETWEEN DRIVERS IS THE LEAD'S ONE WRITE.
+     *
+     * Dispatch assigns from the forecast when the list lands. The lead is the
+     * person standing at the counter when a driver is late or a batch is too
+     * big for one round, and making them ring dispatch to move one package is
+     * how packages stop being moved at all.
+     *
+     * Only these two routes: adding a stop and taking one off. A lead cannot
+     * create a run, resequence one, or close it. Both handlers check the
+     * order's own site below, so a lead can only move work that is theirs. */
+    const reassign = requireProjectRole('admin', 'lead');
     /* A run is a courier's day and every stop on it. Couriers read their own
      * (narrowed below); a client viewer has no business reading any of it. */
     const readers = requireProjectRole('admin', 'courier');
@@ -125,6 +137,42 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             return null;
         }
         return run;
+    }
+
+    /**
+     * Refuse a lead who is reaching at an order outside their pharmacies.
+     *
+     * Checked on the ORDER rather than on the run, deliberately. A run belongs
+     * to a courier, not to a site, and a driver's round can legitimately carry
+     * work from more than one pharmacy. What a lead may move is a package from
+     * their own counter, wherever it is going and whoever is carrying it.
+     *
+     * Answers 404 rather than 403, so a lead cannot discover which ids exist
+     * at another pharmacy by trying them.
+     */
+    async function leadMayMove(req: Request, res: Response, orderIds: number[]): Promise<boolean> {
+        if (!isLead(req)) return true;
+        const scope = leadScope(req, 'site_id');
+        if (!scope || orderIds.length === 0) { res.status(404).json({ error: 'Order not found' }); return false; }
+
+        const rs = await client.execute({
+            sql: `SELECT id FROM orders
+                  WHERE project_id = ? AND id IN (${orderIds.map(() => '?').join(',')}) AND ${scope.sql}`,
+            args: [req.project!.id, ...orderIds, ...scope.args],
+        });
+        const mine = new Set(rs.rows.map((r) => Number(r['id'])));
+        const theirs = orderIds.filter((id) => !mine.has(id));
+        if (theirs.length > 0) {
+            /* Named, because a lead moving a batch needs to know which one was
+               refused rather than that the request failed. They are ids the
+               caller already sent, so nothing is disclosed by listing them. */
+            res.status(404).json({
+                error: 'Those orders are not at your pharmacy.',
+                orderIds: theirs,
+            });
+            return false;
+        }
+        return true;
     }
 
     /** A courier must actually be a member of the project before work lands on them. */
@@ -317,7 +365,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
 
     /* --------------------------------------------------------------- stops */
 
-    router.post('/:id/stops', staff, wrap(async (req, res) => {
+    router.post('/:id/stops', reassign, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;
         if (run.status === 'completed' || run.status === 'cancelled') {
@@ -326,6 +374,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         }
         const body = parse(AddStops, req.body, res);
         if (!body) return;
+        if (!await leadMayMove(req, res, body.orderIds)) return;
         const projectId = req.project!.id;
 
         const countRs = await client.execute({
@@ -362,10 +411,11 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             .json({ ...presentRun(run), stops: await stopsOf(projectId, Number(run.id)), added, rejected });
     }));
 
-    router.delete('/:id/stops/:orderId', staff, wrap(async (req, res) => {
+    router.delete('/:id/stops/:orderId', reassign, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;
         const orderId = Number(req.params['orderId']);
+        if (!await leadMayMove(req, res, [orderId])) return;
         const projectId = req.project!.id;
 
         const stop = await client.execute({

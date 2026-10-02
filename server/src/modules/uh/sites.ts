@@ -98,7 +98,7 @@ export function createSitesRouter({ client }: { client: Client }): Router {
      * contact who sees their own deliveries through the portal, and this list
      * is every location in the contract. Reading it was open to any member
      * until the access matrix in ticket 4.2 asked the question out loud. */
-    const readers = requireProjectRole('admin', 'courier');
+    const readers = requireProjectRole('admin', 'lead', 'courier');
 
     async function findById(projectId: number, id: number): Promise<SiteRow | null> {
         const rs = await client.execute({ sql: 'SELECT * FROM sites WHERE project_id = ? AND id = ?', args: [projectId, id] });
