@@ -198,6 +198,50 @@ export function createSitesRouter({ client }: { client: Client }): Router {
     router.delete('/:id', manage, wrap(async (req, res) => {
         const site = await loadOr404(req, res);
         if (!site) return;
+
+        /* NOTHING MAY REFERENCE IT.
+         *
+         * This deleted unconditionally. An administrator could remove Robert
+         * B. Green mid-contract and leave two hundred and fifty orders, their
+         * custody records and the invoices built from them pointing at a site
+         * id that no longer exists: a proof of delivery that cannot name
+         * where the medication was collected from, which is the one thing
+         * Scope 1.2.8 requires it to carry.
+         *
+         * Migration 0041 already refused to drop a site with orders against
+         * it, for the same reason. The live endpoint had no such guard, which
+         * is the worse of the two places to be missing it.
+         *
+         * Counted per table rather than as one EXISTS, because a refusal that
+         * says "deliveries" is actionable and one that says "it is in use" is
+         * a support call. */
+        const projectId = req.project!.id;
+        const siteId = Number(site.id);
+        const uses = [
+            ['deliveries', 'SELECT COUNT(*) AS n FROM orders WHERE project_id = ? AND site_id = ?'],
+            ['returns', 'SELECT COUNT(*) AS n FROM orders WHERE project_id = ? AND returned_to_site_id = ?'],
+            ['daily lists', 'SELECT COUNT(*) AS n FROM daily_lists WHERE project_id = ? AND site_id = ?'],
+            ['import mappings', 'SELECT COUNT(*) AS n FROM import_mappings WHERE project_id = ? AND site_id = ?'],
+            ['invoices', 'SELECT COUNT(*) AS n FROM invoices WHERE project_id = ? AND site_id = ?'],
+        ] as const;
+
+        const holding: string[] = [];
+        for (const [what, sql] of uses) {
+            const rs = await client.execute({ sql, args: [projectId, siteId] });
+            const n = Number(rs.rows[0]?.['n'] ?? 0);
+            if (n > 0) holding.push(`${n} ${what}`);
+        }
+
+        if (holding.length > 0) {
+            res.status(409).json({
+                error: `${site.name} still has ${holding.join(', ')} against it, so it cannot be removed. `
+                    + 'Mark it inactive instead, which takes it off the lists without breaking the record.',
+                code: 'site.inUse',
+                holding,
+            });
+            return;
+        }
+
         await client.execute({ sql: 'DELETE FROM sites WHERE project_id = ? AND id = ?', args: [req.project!.id, Number(site.id)] });
         await req.audit('site.delete', 'site', site.code, { name: site.name });
         res.json({ ok: true, deleted: site.code });

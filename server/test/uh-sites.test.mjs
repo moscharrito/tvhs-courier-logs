@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 
 const UH = '/api/projects/uh/uh/sites';
+const ORDERS = '/api/projects/uh/uh/orders';
 
 let srv;
 let admin;
@@ -163,6 +164,35 @@ describe('create, update, delete', () => {
         expect((await admin.get(`${UH}?status=inactive`)).body.map((s) => s.code)).toEqual(['palo.alto']);
         expect((await admin.get(`${UH}?type=hospital`)).body.map((s) => s.code)).toEqual(['palo.alto']);
         expect((await admin.get(`${UH}?type=pharmacy`)).body).toHaveLength(8);
+    });
+
+    it('refuses to delete a pharmacy that deliveries point at', async () => {
+        /* This endpoint deleted unconditionally. An administrator could have
+           removed Robert B. Green mid-contract and left its orders, their
+           custody records and the invoices built from them pointing at a site
+           id that no longer exists -- a proof of delivery that cannot name
+           where the medication was collected from, which is the one thing
+           Scope 1.2.8 requires it to carry. Migration 0041 already refused
+           this; the live endpoint did not, which is the worse of the two
+           places to be missing it. */
+        const discharge = (await admin.get(UH)).body.find((s) => s.code === 'discharge');
+        const created = await admin.post(ORDERS).send({
+            siteId: discharge.id, serviceType: 'adhoc', recipientName: 'Someone',
+            addressLine: '1 Guard Street', zip: '78215',
+            description: 'Oral solids', quantity: 1, externalRef: 'SITE-GUARD-1',
+        });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+
+        const res = await admin.delete(`${UH}/${discharge.id}`);
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('site.inUse');
+        /* Says how many of what, because "it is in use" is a support call. */
+        expect(res.body.holding.join(' ')).toMatch(/\d+ deliveries/);
+        /* And points at the thing that does work. */
+        expect(res.body.error).toMatch(/inactive/);
+
+        /* Still there, and still usable. */
+        expect((await admin.get(`${UH}/${discharge.id}`)).status).toBe(200);
     });
 
     it('deletes a site and 404s afterwards', async () => {
