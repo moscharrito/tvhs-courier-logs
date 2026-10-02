@@ -691,3 +691,64 @@ describe('a day too big for one screen', () => {
         expect(res.body.carrying.truncated).toBe(false);
     });
 });
+
+/* ------------------------------------------------ a day worked one counter
+ *
+ * At University Health's real volume a whole-contract board is 1,417 cards on
+ * a Tuesday across eight pharmacies, where the largest single counter is 241.
+ * Raising the card limit trades a truncated board for an unusable one, so the
+ * board has to be able to say what is on each counter. */
+describe('what is on each counter', () => {
+    const DAY = '2027-07-08';
+    let projectId;
+
+    beforeAll(async () => {
+        projectId = Number((await sql("SELECT id FROM projects WHERE code = 'uh'")).rows[0].id);
+        const now = new Date().toISOString();
+        const make = async (siteId, n, status) => {
+            for (let i = 0; i < n; i += 1) {
+                await sql(
+                    `INSERT INTO orders (project_id, site_id, external_ref, service_type, service_date,
+                                         recipient_name, address_line, city, state, zip, status,
+                                         received_at, due_at, signature_required, zone, created_at, updated_at)
+                     VALUES (?, ?, ?, 'adhoc', ?, ?, '1 Counter Way', 'San Antonio', 'TX', '78215', ?,
+                             ?, ?, 1, 1, ?, ?)`,
+                    [projectId, siteId, `COUNTER-${siteId}-${i}-${status}`, DAY, `Recipient ${i}`, status,
+                        now, '2027-07-08T18:00:00.000Z', now, now],
+                );
+            }
+        };
+        await make(dischargeId, 9, 'ready');
+        await make(dischargeId, 3, 'delivered');
+        await make(greenId, 4, 'ready');
+    });
+
+    it('counts every pharmacy over the whole day, busiest first', async () => {
+        const res = await board(`?serviceDate=${DAY}`);
+        expect(res.status).toBe(200);
+        const names = res.body.bySite.map((s) => s.site.id);
+        expect(names[0]).toBe(dischargeId);
+        const discharge = res.body.bySite.find((s) => s.site.id === dischargeId);
+        /* Total is the day; open is what a dispatcher can still act on. The
+           difference is the point: a counter with 200 delivered and 2 open
+           does not need somebody sent to it. */
+        expect(discharge).toMatchObject({ total: 12, open: 9 });
+        expect(res.body.bySite.find((s) => s.site.id === greenId)).toMatchObject({ total: 4, open: 4 });
+    });
+
+    it('counts the day, not the cards it managed to carry', async () => {
+        const res = await board(`?serviceDate=${DAY}&limit=2`);
+        expect(res.body.carrying.truncated).toBe(true);
+        expect(res.body.carrying.shown).toBe(2);
+        /* The whole reason this exists: the picker has to be right when the
+           board is not. */
+        expect(res.body.bySite.find((s) => s.site.id === dischargeId).total).toBe(12);
+    });
+
+    it('narrows to one counter when asked, counts and all', async () => {
+        const res = await board(`?serviceDate=${DAY}&siteId=${greenId}`);
+        expect(res.body.summary.total).toBe(4);
+        expect(res.body.bySite).toHaveLength(1);
+        expect(res.body.bySite[0].site.id).toBe(greenId);
+    });
+});

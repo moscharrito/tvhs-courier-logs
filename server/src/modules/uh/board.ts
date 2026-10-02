@@ -147,7 +147,7 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * expression is how the header starts disagreeing with the cards
          * under it. One implementation, fed cheaply. */
         const forCounts = await client.execute({
-            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at FROM orders o
+            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at, o.site_id FROM orders o
                   WHERE o.project_id = ? AND o.service_date = ?${filterSql}`,
             args: [project.id, serviceDate, ...filterArgs],
         });
@@ -404,6 +404,27 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             dueSoon: count((r) => slaOf(r).state === 'due_soon'),
         };
 
+        /* PER PHARMACY, OVER EVERY ROW OF THE DAY.
+         *
+         * At University Health's real volume a whole-contract board is 1,417
+         * cards on a Tuesday, which is not a screen anybody can work. The
+         * answer is to work one counter at a time, and a dispatcher cannot
+         * choose a counter without knowing what is on each. These come from
+         * the same unfiltered count query as the summary, so they are the
+         * day rather than the page. */
+        const bySite = [...everyRow.reduce((map, r) => {
+            const id = Number(r['site_id']);
+            const at = map.get(id) ?? { total: 0, open: 0, overdue: 0 };
+            at.total += 1;
+            if ((OPEN_STATUSES as readonly string[]).includes(String(r['status']))) at.open += 1;
+            if (slaOf(r).state === 'overdue') at.overdue += 1;
+            map.set(id, at);
+            return map;
+        }, new Map())].map(([id, at]) => ({
+            site: siteById.get(id) ?? { id, code: '', name: `Site ${id}` },
+            ...at,
+        })).sort((a, b) => b.total - a.total);
+
         const withPositions = couriers.map((c) => ({ ...c, position: positionByUsername.get(c.username) ?? null }));
 
         // Counts and ids only; the board is full of patient addresses.
@@ -421,6 +442,9 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                is the cards below that are a subset, settled work dropped
                first. */
             carrying: { shown: all.length, of: summary.total, limit, truncated },
+            /** Every pharmacy with work today, busiest first, so a dispatcher
+             *  can pick a counter rather than scroll a contract. */
+            bySite,
             pool,
             lanes,
             couriers: withPositions,

@@ -63,6 +63,8 @@ const boardData = (over = {}) => ({
     couriers: [courier()],
     idleCouriers: [courier({ username: 'bo.courier', name: 'Bo Courier', present: false, lastSeenAt: null, minutesSinceSeen: null })],
     activity: [activity()],
+    carrying: { shown: 3, of: 3, limit: 750, truncated: false },
+    bySite: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, total: 3, open: 1, overdue: 1 }],
     ...over,
 });
 
@@ -96,16 +98,34 @@ function renderBoard(r = routes(), initial = '/projects/uh/board') {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('Board', () => {
-    it('says when the board is showing fewer cards than the day holds', async () => {
-        /* The counts stay the whole day; only the cards are capped. A board
-           that showed a subset silently would be the fault the orders list
-           had, moved one screen across. */
+    it('offers a counter to work rather than a bigger pile', async () => {
+        /* 1,417 cards on a Tuesday is not a screen. The largest single
+           pharmacy is 241, so the fix is to pick one, and a dispatcher cannot
+           pick without knowing what is on each. */
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
-                carrying: { shown: 750, of: 1500, limit: 750, truncated: true },
+                carrying: { shown: 750, of: 1417, limit: 750, truncated: true },
+                bySite: [
+                    { site: { id: 1, code: 'green', name: 'Robert B Green' }, total: 241, open: 180, overdue: 4 },
+                    { site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, total: 155, open: 90, overdue: 0 },
+                ],
             }),
         }));
-        expect(await screen.findByText(/Showing 750 of 1500 orders as cards/)).toBeInTheDocument();
+        expect(await screen.findByText(/1417 deliveries today/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Robert B Green \(180\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Discharge Pharmacy \(90\)/ })).toBeInTheDocument();
+    });
+
+    it('still says how much it is carrying once a counter is chosen', async () => {
+        /* With a pharmacy picked, the picker has done its job and the honest
+           line about what is on screen takes its place. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                carrying: { shown: 750, of: 1417, limit: 750, truncated: true },
+            }),
+        }), '/projects/uh/board?siteId=7');
+        expect(await screen.findByText(/Showing 750 of 1417/)).toBeInTheDocument();
+        expect(screen.queryByText(/deliveries today/)).toBeNull();
     });
 
     it('says nothing about cards when it has the whole day', async () => {

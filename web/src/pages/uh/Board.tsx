@@ -72,6 +72,8 @@ interface BoardData {
     /** How many cards arrived against how many orders the day holds. The
      *  counts above are always the whole day; these are the cards. */
     carrying: { shown: number; of: number; limit: number; truncated: boolean };
+    /** Every pharmacy with work today, busiest first. */
+    bySite: Array<{ site: { id: number; code: string; name: string }; total: number; open: number; overdue: number }>;
     pool: Array<{ site: { id: number; code: string; name: string }; orders: BoardOrder[]; overdue: number }>;
     lanes: Lane[];
     couriers: Courier[];
@@ -298,11 +300,38 @@ export function Board() {
                 {/* The counts above are the whole day. The cards below may not
                     be, on a day big enough, and a board that quietly showed a
                     subset would be the same fault the orders list had. */}
-                {data.carrying?.truncated && (
+                {/* A DAY TOO BIG FOR ONE BOARD IS A DAY WORKED ONE COUNTER AT
+                    A TIME. University Health run 1,417 deliveries on a
+                    Tuesday across eight pharmacies; the largest single
+                    counter is 241. Raising the card limit would only trade a
+                    truncated board for an unusable one, so this offers the
+                    thing that actually works and says why. */}
+                {data.carrying?.truncated && get('siteId') === '' && (
+                    <div className="izy-alert warn" role="status" style={{ marginTop: 8 }}>
+                        <p style={{ marginTop: 0 }}>
+                            <b>{data.carrying.of} deliveries today</b>, and the board is showing{' '}
+                            {data.carrying.shown} of them as cards. The counts above are the whole day.
+                            Pick a pharmacy to work one counter at a time.
+                        </p>
+                        <div className="izy-row">
+                            {(data.bySite ?? []).map((s) => (
+                                <button
+                                    key={s.site.id}
+                                    type="button"
+                                    className="izy-btn secondary"
+                                    onClick={() => set('siteId', String(s.site.id))}
+                                >
+                                    {s.site.name} ({s.open})
+                                    {s.overdue > 0 && <span className="izy-stat-bad"> {s.overdue} late</span>}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {data.carrying?.truncated && get('siteId') !== '' && (
                     <p className="izy-muted" style={{ marginTop: 6 }}>
-                        Showing {data.carrying.shown} of {data.carrying.of} orders as cards. The counts
-                        above cover the whole day; completed work is left out of the board first.
-                        Filter by pharmacy or zone to see all of it.
+                        Showing {data.carrying.shown} of {data.carrying.of}. Completed work is left off
+                        the board before anything a dispatcher can act on.
                     </p>
                 )}
             </div>
