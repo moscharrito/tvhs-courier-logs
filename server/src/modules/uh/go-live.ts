@@ -37,6 +37,7 @@ interface Deps {
          *  live. Blocks go-live on its own: see the check by that name. */
         patientGeocodeAllowed: boolean;
         patientGeocodeUntil: string | undefined;
+        patientGeocodeBasis: 'baa' | 'temporary grant' | 'none';
         trustProxy: number;
         isProduction: boolean;
     };
@@ -89,13 +90,28 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations }: D
          * is invented. Going live means real patient addresses arrive, and
          * that combination is a disclosure to a processor with no agreement
          * covering it. So it blocks, by name, at the top of the list. */
+        /* COVERED, OR REFUSED, BUT NOT TEMPORARILY ALLOWED.
+         *
+         * This used to block on any patient geocoding at all, because Google
+         * had no agreement covering the Maps APIs and the only permission in
+         * the system was a dated grant for a test phase of invented
+         * addresses. With an executed agreement that names the geocoding
+         * service, sending a delivery address is a disclosure to a business
+         * associate and is fine.
+         *
+         * What still blocks is the temporary grant. A date that lapses is the
+         * right tool for a test phase and the wrong one for live patients,
+         * and the difference between the two is exactly what this check is
+         * for. */
         add({
-            id: 'geo.patientAddressesRefused',
-            what: 'Delivery addresses are not being sent to the geocoder',
-            pass: !deployment.patientGeocodeAllowed,
-            detail: deployment.patientGeocodeAllowed
-                ? `UH_PATIENT_GEOCODE_UNTIL is live${deployment.patientGeocodeUntil ? ` until ${deployment.patientGeocodeUntil}` : ''}. That was granted for a test phase in which every address is invented. Remove it before any real University Health address is loaded: Google Maps is not covered by a BAA.`
-                : 'Refused in code. Only site addresses reach the geocoder.',
+            id: 'geo.patientAddresses',
+            what: 'Delivery addresses are only geocoded under an agreement that covers them',
+            pass: deployment.patientGeocodeBasis !== 'temporary grant',
+            detail: deployment.patientGeocodeBasis === 'baa'
+                ? 'Covered by a signed business associate agreement naming the geocoding service.'
+                : deployment.patientGeocodeBasis === 'temporary grant'
+                    ? `Permitted by UH_PATIENT_GEOCODE_UNTIL${deployment.patientGeocodeUntil ? `, which lapses ${deployment.patientGeocodeUntil}` : ''}. That was granted for a test phase in which every address is invented. Replace it with GEO_BAA_COVERS_PATIENT_ADDRESSES before any real University Health address is loaded, or remove it.`
+                    : 'Refused in code. Only site addresses reach the geocoder.',
             blocking: true,
         });
         add({

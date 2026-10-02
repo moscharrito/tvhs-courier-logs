@@ -37,6 +37,10 @@ export interface Config {
         patientGeocodeUntil: string | undefined;
         /** Whether that permission is live right now. Computed at boot. */
         patientGeocodeAllowed: boolean;
+        /** How it is permitted: by a signed agreement, or by the dated grant
+         *  that exists for a test phase. The difference is what go-live
+         *  reports, and they are not the same thing at all. */
+        patientGeocodeBasis: 'baa' | 'temporary grant' | 'none';
     };
     retention: {
         /** Days a courier's shift track is kept. Undefined means nobody has
@@ -155,6 +159,7 @@ const EnvSchema = z.object({
      * exemption cannot outlive the invented data it was granted for, and the
      * direction it fails in is the safe one. */
     UH_PATIENT_GEOCODE_UNTIL: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    GEO_BAA_COVERS_PATIENT_ADDRESSES: boolish,
     /* How many days a courier's minute-by-minute track is kept (ticket 6.6).
      * SETTING THIS IS THE DECISION. While it is unset the retention period
      * for location traces is undecided, and the tracking endpoint refuses
@@ -322,25 +327,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
      * The go-live check reports it as a blocker while it is live. */
     const MAX_GRANT_DAYS = 90;
     const patientGeocode = (() => {
+        /* A SIGNED AGREEMENT, WHICH DOES NOT LAPSE.
+         *
+         * Everything below this exists because Google's BAA did not cover the
+         * Maps APIs and their terms excluded protected health information.
+         * With an executed agreement that names the geocoding service, a
+         * delivery address is a disclosure to a business associate like any
+         * other and needs no expiry.
+         *
+         * Set this ONLY against a countersigned agreement whose covered
+         * services list names the service we call. "Google Cloud" in general
+         * is the usual source of this mistake and does not cover Maps. */
+        if (e.GEO_BAA_COVERS_PATIENT_ADDRESSES) return { allowed: true, basis: 'baa' };
+
         const until = e.UH_PATIENT_GEOCODE_UNTIL;
-        if (!until) return { allowed: false };
+        if (!until) return { allowed: false, basis: 'none' };
         const lapses = Date.parse(`${until}T23:59:59Z`);
         if (!Number.isFinite(lapses)) {
             problems.push('UH_PATIENT_GEOCODE_UNTIL is not a real date');
-            return { allowed: false };
+            return { allowed: false, basis: 'none' };
         }
         const now = Date.now();
         if (lapses < now) {
             /* Not a problem: an expired grant is the system working. Said out
                loud at boot so nobody spends an afternoon on "why did geocoding
                stop". */
-            return { allowed: false, lapsed: true };
+            return { allowed: false, lapsed: true, basis: 'none' };
         }
         if (lapses - now > MAX_GRANT_DAYS * 86400000) {
             problems.push(`UH_PATIENT_GEOCODE_UNTIL is more than ${MAX_GRANT_DAYS} days out. This permission exists for a test phase, not for a year.`);
-            return { allowed: false };
+            return { allowed: false, basis: 'none' };
         }
-        return { allowed: true };
+        return { allowed: true, basis: 'temporary grant' };
     })();
 
     /* Same shape as the mail block, and refused the same way: a server that
@@ -404,6 +422,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             embedMaps: e.UH_MAPS_EMBED,
             patientGeocodeUntil: e.UH_PATIENT_GEOCODE_UNTIL,
             patientGeocodeAllowed: patientGeocode.allowed,
+            patientGeocodeBasis: patientGeocode.basis as 'baa' | 'temporary grant' | 'none',
         },
         retention: { locationTraceDays: e.RETENTION_LOCATION_TRACE_DAYS },
         sweepIntervalSeconds: e.SWEEP_INTERVAL_SECONDS,

@@ -67,3 +67,53 @@ describe('permission to geocode a delivery address', () => {
         expect(load({ UH_PATIENT_GEOCODE_UNTIL: day(10) }).geo.patientGeocodeAllowed).toBe(true);
     });
 });
+
+/* ------------------------------------------------- an agreement that covers it
+ *
+ * Everything above exists because Google's BAA did not extend to the Maps
+ * APIs and their terms excluded protected health information, so the only
+ * permission was a dated grant for a test phase of invented addresses.
+ *
+ * With an executed agreement naming the geocoding service, a delivery address
+ * is a disclosure to a business associate like any other. The distinction the
+ * code has to keep is between that and the temporary grant, because one is
+ * fine to go live on and the other is not. */
+describe('a signed agreement rather than a dated grant', () => {
+    it('permits patient addresses with no expiry', () => {
+        const config = load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' });
+        expect(config.geo.patientGeocodeAllowed).toBe(true);
+        expect(config.geo.patientGeocodeBasis).toBe('baa');
+    });
+
+    it('needs no date beside it', () => {
+        /* The whole point: an agreement does not lapse, so requiring a date
+           alongside it would reintroduce the thing it replaces. */
+        const config = load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' });
+        expect(config.geo.patientGeocodeUntil).toBeUndefined();
+        expect(config.geo.patientGeocodeAllowed).toBe(true);
+    });
+
+    it('wins over an expired grant rather than being blocked by it', () => {
+        const config = load({
+            GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true',
+            UH_PATIENT_GEOCODE_UNTIL: day(-1),
+        });
+        expect(config.geo.patientGeocodeAllowed).toBe(true);
+        expect(config.geo.patientGeocodeBasis).toBe('baa');
+    });
+
+    it('is off unless it is actually set', () => {
+        /* Defaults matter most on the control that permits a disclosure. */
+        expect(load({}).geo.patientGeocodeAllowed).toBe(false);
+        expect(load({}).geo.patientGeocodeBasis).toBe('none');
+        expect(load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'false' }).geo.patientGeocodeAllowed).toBe(false);
+    });
+
+    it('still calls a dated grant what it is', () => {
+        /* So go-live can block on the temporary one and pass the agreement.
+           If both reported the same basis the check would be useless. */
+        const config = load({ UH_PATIENT_GEOCODE_UNTIL: day(30) });
+        expect(config.geo.patientGeocodeAllowed).toBe(true);
+        expect(config.geo.patientGeocodeBasis).toBe('temporary grant');
+    });
+});

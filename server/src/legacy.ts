@@ -278,6 +278,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
             geocoderConfigured: config.geo.googleApiKey !== undefined,
             patientGeocodeAllowed: config.geo.patientGeocodeAllowed,
             patientGeocodeUntil: config.geo.patientGeocodeUntil,
+            patientGeocodeBasis: config.geo.patientGeocodeBasis,
             trustProxy: config.trustProxy,
             isProduction: config.isProduction,
         },
