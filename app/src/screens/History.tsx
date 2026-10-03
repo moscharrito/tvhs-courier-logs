@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Chip, Ground, Notice, Panel } from '../ui/Glass';
+import { ScreenHeader } from '../ui/Screen';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
 import { deliveryHistory, type DeliveryHistory, type HistoryDay } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
@@ -61,8 +62,7 @@ export function History({ token, code, onSignedOut }: {
     return (
         <Ground>
             <ScrollView contentContainerStyle={styles.wrap}>
-                <Text style={styles.title}>Delivery History</Text>
-                <Text style={styles.sub}>Your finished work. Nobody else's.</Text>
+                <ScreenHeader title="History" subtitle="Your finished work. Nobody else's." />
 
                 <View style={styles.segment}>
                     {([7, 30, 90] as Window[]).map((n) => (
@@ -161,8 +161,6 @@ function Total({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
     wrap: { padding: SPACE.md, paddingTop: SPACE.lg, paddingBottom: SPACE.xl },
-    title: { fontSize: TYPE.title, fontWeight: '800', color: theme.ink },
-    sub: { fontSize: TYPE.label, color: theme.muted, marginTop: 2, marginBottom: SPACE.md },
     block: { marginBottom: SPACE.md },
     eyebrow: { fontSize: TYPE.meta, fontWeight: '700', color: theme.greenBright, letterSpacing: 1 },
     spinner: { marginVertical: SPACE.lg },

@@ -29,6 +29,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
+import { ScreenHeader } from '../ui/Screen';
 import { theme } from '../theme';
 import { get, type MyRun, type Project, type Stop as StopRow } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
@@ -166,10 +167,10 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         <View style={styles.context}>
             <TopBar backLabel="Contracts" onBack={onBack} onSignOut={onSignedOut} />
 
-            <Text style={styles.title}>Today</Text>
-            {data !== null && (
-                <Text style={styles.sub}>{data.serviceDate} · {done} of {stops.length} done</Text>
-            )}
+            <ScreenHeader
+                title="Today"
+                subtitle={data === null ? undefined : `${data.serviceDate} · ${done} of ${stops.length} done`}
+            />
 
             {next !== null && (
                 <Panel style={styles.nextPanel}>
@@ -306,8 +307,6 @@ const styles = StyleSheet.create({
     context: { paddingHorizontal: 22, paddingTop: 56, paddingBottom: 16 },
     backTap: { minHeight: 44, justifyContent: 'center' },
     back: { color: theme.greenBright, fontSize: 16, fontWeight: '600' },
-    title: { fontSize: 32, fontWeight: '800', color: theme.ink, marginTop: 4 },
-    sub: { fontSize: 16, color: theme.muted, marginTop: 4 },
 
     nextPanel: { marginTop: 16 },
     nextLabel: { fontSize: 15, color: theme.muted, letterSpacing: 0.6 },

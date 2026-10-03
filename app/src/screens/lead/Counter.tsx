@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { Panel, Chip, Notice } from '../../ui/Glass';
+import { ScreenHeader } from '../../ui/Screen';
 import { get } from '../../lib/api';
 import { batchesByZone, type BoardData, type ZoneBatch } from '../../lib/lead';
 
@@ -66,11 +67,11 @@ export function Counter({ token, code, onSignedOut, onHandOver }: Props) {
             contentContainerStyle={styles.body}
             refreshControl={<RefreshControl refreshing={busy} onRefresh={() => void load()} />}
         >
-            <Text style={styles.heading}>Counter</Text>
-            <Text style={styles.sub}>
-                {waiting === 0 ? 'Nothing waiting' : `${waiting} waiting to go out`}
-                {board.summary.overdue > 0 ? ` · ${board.summary.overdue} late` : ''}
-            </Text>
+            <ScreenHeader
+                title="Counter"
+                subtitle={`${waiting === 0 ? 'Nothing waiting' : `${waiting} waiting to go out`}`
+                    + `${board.summary.overdue > 0 ? ` · ${board.summary.overdue} late` : ''}`}
+            />
 
             {error !== null && <Notice text={error} tone="warn" />}
 
@@ -124,8 +125,6 @@ function HandOverButton({ batch, onPress }: { batch: ZoneBatch; onPress: () => v
 const styles = StyleSheet.create({
     body: { padding: 16, paddingBottom: 120, gap: 12 },
     centre: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-    heading: { fontSize: 28, fontWeight: '700', color: theme.ink },
-    sub: { fontSize: 15, color: theme.muted, marginBottom: 4 },
     batch: { gap: 8 },
     batchHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     batchTitle: { fontSize: 18, fontWeight: '600', color: theme.ink },

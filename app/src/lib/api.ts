@@ -253,50 +253,20 @@ export const startShift = (token: string, code: string): Promise<unknown> =>
 export const endShift = (token: string, code: string): Promise<unknown> =>
     post(`/api/projects/${code}/uh/shifts/end`, token, {});
 
-/** One claimable delivery. No patient name and no street: see the server's
- *  modules/uh/requests.ts, which decides what a courier may browse. */
-export interface Claimable {
-    orderId: number;
-    reference: string;
-    serviceType: string;
-    zone: number | null;
-    zip: string;
-    pickUpFrom: string | null;
-    dueAt: string | null;
-    packages: number;
-    requested: boolean;
-}
+/* ASKING FOR WORK IS GONE, AND THE SERVER ENDPOINTS ARE NOT.
+ *
+ * Dispatch assigns every delivery from the forecast and a site lead moves one
+ * at the counter; a courier choosing their own stops is not in the operating
+ * model University Health were shown. So the app no longer browses or claims,
+ * and Board, Requests and lib/work.ts went with it.
+ *
+ * The /uh/requests endpoints stay on the server. They are still reachable by
+ * a courier and are still covered by the access matrix, because deleting a
+ * working API to remove a screen is two changes dressed as one, and the
+ * decision about the API belongs with whoever decides whether any contract
+ * ever wants self-assignment again.
+ */
 
-export interface AvailableWork {
-    serviceDate: string;
-    onShift: boolean;
-    available: Claimable[];
-}
-
-export const availableWork = (token: string, code: string): Promise<AvailableWork> =>
-    get<AvailableWork>(`/api/projects/${code}/uh/requests/available`, token);
-
-export const askFor = (token: string, code: string, orderIds: number[]): Promise<{ requested: number[]; refused: unknown[] }> =>
-    post(`/api/projects/${code}/uh/requests`, token, { orderIds });
-
-export interface MyRequest {
-    id: number;
-    orderId: number;
-    status: 'pending' | 'approved' | 'denied' | 'withdrawn' | 'superseded';
-    requestedAt: string;
-    decidedAt: string | null;
-    decisionReason: string;
-    zip: string;
-    zone: number | null;
-    serviceType: string;
-    dueAt: string | null;
-}
-
-export const myRequests = (token: string, code: string): Promise<{ requests: MyRequest[] }> =>
-    get<{ requests: MyRequest[] }>(`/api/projects/${code}/uh/requests/mine`, token);
-
-export const withdrawRequest = (token: string, code: string, id: number): Promise<unknown> =>
-    request(fetch, baseUrl(), `/api/projects/${code}/uh/requests/${id}`, { method: 'DELETE', token });
 
 export interface Notification {
     id: number;

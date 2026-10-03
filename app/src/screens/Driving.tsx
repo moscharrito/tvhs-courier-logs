@@ -1,36 +1,44 @@
-/* The three things a courier does all day (ticket 7.3).
+/* What a courier does all day.
  *
- * Today's run, work going, and what I asked for. A tab bar, because they are
- * siblings: a driver moves between them a dozen times an hour and none of
- * them is "inside" another.
+ * ─────────────────────────────────────────────────────────────────────────
+ * THREE TABS, AND IT USED TO BE FIVE.
  *
- * NO ROUTER, AND THAT IS A CHANGE OF MIND WORTH RECORDING. Ticket 7.1 said
- * expo-router would arrive here once there was something to route. Having
- * built it: there is not, yet. These three screens have no history, no back
- * stack, no deep links and no parameters. A router would add a dependency, a
- * directory move and a build-time plugin to produce the same three taps, and
- * I cannot run this app to find out what it broke.
+ * Today, Work, Asked, History, You. Two of those were a driver browsing
+ * unassigned deliveries and asking for the ones they fancied, which is not
+ * the operating model University Health were shown: dispatch assigns from the
+ * forecast, and a site lead moves a package at the counter when somebody is
+ * late. A courier picking their own stops would compete with both.
  *
- * What WILL earn it is ticket 7.4: a push notification that opens one stop is
- * a deep link, and deep links are what routers are for. Adding it then means
- * adding it for a reason.
+ * So Work and Asked are gone, along with lib/work.ts behind them. What is
+ * left is the shape the job actually has: the round, what I have finished,
+ * and who I am.
+ *
+ * It also fixes a thing five tabs caused. Five labels share a 390 point
+ * phone, which is about 75 points each, and "Work going" truncated to
+ * "Work goin..." at 14pt; the label was shortened to "Work" to live with it.
+ * Three tabs have room for a word that means something.
+ *
+ * The lead shell next door is also three. That is not a coincidence worth
+ * undoing: two people carrying the same app in the same pocket should not
+ * have to learn two different shapes.
+ *
+ * NO ROUTER, STILL. These screens have no history, no back stack, no deep
+ * links and no parameters. Ticket 7.4's push notification that opens one stop
+ * is a deep link and is what will earn one.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ground } from '../ui/Glass';
 import { TabBar, type TabDef } from '../ui/Nav';
-import { AskedIcon, BoardIcon, HistoryIcon, ProfileIcon, RouteIcon } from '../ui/Icons';
+import { HistoryIcon, ProfileIcon, RouteIcon } from '../ui/Icons';
 import { Profile } from './Profile';
 import { readQueue } from '../lib/queue';
-import { useEffect } from 'react';
 import type { Project } from '../lib/api';
 import { Run } from './Run';
-import { Board } from './Board';
-import { Requests } from './Requests';
 import { History } from './History';
 
-type Tab = 'run' | 'board' | 'asked' | 'history' | 'you';
+type Tab = 'run' | 'history' | 'you';
 
 interface Props {
     token: string;
@@ -42,13 +50,6 @@ interface Props {
 
 const TABS: ReadonlyArray<TabDef<Tab>> = [
     { key: 'run', label: 'Today', Icon: RouteIcon, hint: 'The stops assigned to you today' },
-    /* "Work" rather than "Work going". A fifth tab arrived with Delivery
-       History and five labels share a 390 point phone, which leaves about 75
-       points each; "Work going" at 14pt truncates to "Work goin...", and a
-       cut label reads worse than a short one. The hint below still says what
-       it is, and a screen reader reads the hint. */
-    { key: 'board', label: 'Work', Icon: BoardIcon, hint: 'Deliveries you can ask for' },
-    { key: 'asked', label: 'Asked', Icon: AskedIcon, hint: 'What you have asked for and the answers' },
     { key: 'history', label: 'History', Icon: HistoryIcon, hint: 'The deliveries you have already finished' },
     /* Who is signed in and how to get out, which had no home anywhere in the
        app: an approved courier never sees the onboarding screen again, so a
@@ -71,12 +72,6 @@ export function Driving({ token, project, username, onSignedOut, onBack }: Props
             <View style={styles.body}>
                 {tab === 'run' && (
                     <Run token={token} project={project} onSignedOut={onSignedOut} onBack={onBack} />
-                )}
-                {tab === 'board' && (
-                    <Board token={token} code={project.code} onSignedOut={onSignedOut} />
-                )}
-                {tab === 'asked' && (
-                    <Requests token={token} code={project.code} onSignedOut={onSignedOut} />
                 )}
                 {tab === 'history' && (
                     <History token={token} code={project.code} onSignedOut={onSignedOut} />

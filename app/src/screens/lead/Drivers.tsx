@@ -22,6 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { Panel, Chip, Notice, CardButton, Confirm } from '../../ui/Glass';
+import { ScreenHeader } from '../../ui/Screen';
 import { get, post } from '../../lib/api';
 import {
     driverLoads, presenceLabel, handoverRefusal,
@@ -99,12 +100,12 @@ export function Drivers({ token, code, onSignedOut, holding, onHandedOver }: Pro
                 contentContainerStyle={styles.body}
                 refreshControl={<RefreshControl refreshing={busy} onRefresh={() => void load()} />}
             >
-                <Text style={styles.heading}>Drivers</Text>
-                <Text style={styles.sub}>
-                    {holding === null
+                <ScreenHeader
+                    title="Drivers"
+                    subtitle={holding === null
                         ? `${loads.filter((d) => d.present).length} here now`
                         : `Holding ${holding.orders.length} from ${holding.label}`}
-                </Text>
+                />
 
                 {error !== null && <Notice text={error} tone="warn" />}
 
@@ -171,8 +172,6 @@ export function Drivers({ token, code, onSignedOut, holding, onHandedOver }: Pro
 const styles = StyleSheet.create({
     body: { padding: 16, paddingBottom: 120, gap: 12 },
     centre: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-    heading: { fontSize: 28, fontWeight: '700', color: theme.ink },
-    sub: { fontSize: 15, color: theme.muted, marginBottom: 4 },
     driver: { gap: 6 },
     driverHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     name: { fontSize: 18, fontWeight: '600', color: theme.ink },
