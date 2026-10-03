@@ -211,7 +211,14 @@ describe('a delivery that cannot be priced', () => {
     let invoice;
     beforeAll(async () => {
         // Out of area: no zone, and no mileage until ticket 1.9 exists.
-        await billable('delivered', { serviceDate: '2026-07-06', zip: '78006' });
+        const far = await billable('delivered', { serviceDate: '2026-07-06', zip: '78006' });
+        /* Authorised first, because Addendum 2 clause 9 makes that a
+           precondition and an unauthorised line is held back whatever its
+           mileage. This test is about the missing distance, so the earlier
+           gate has to be satisfied for it to be reached at all. */
+        await admin.post(`${ORDERS}/${far.id}/out-of-area`).send({
+            authorisedBy: 'Jason Wong', reference: 'Email 6 Jul',
+        });
         await billable('delivered', { serviceDate: '2026-07-06' });
         invoice = await draft({ from: '2026-07-06', to: '2026-07-12' });
     });

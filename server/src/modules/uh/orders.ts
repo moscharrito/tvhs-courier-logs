@@ -173,6 +173,9 @@ interface OrderRow {
     /** The pharmacy stamped the form ID Required (drizzle/0038). */
     id_required: number;
     delivery_kind: string;
+    out_of_area_authorised_by: string;
+    out_of_area_authorised_at: string | null;
+    out_of_area_reference: string;
     received_at: string; due_at: string | null; pickup_due_at: string | null;
     pickup_at: string | null; arrived_at: string | null; delivered_at: string | null;
     assigned_to_username: string | null; assigned_at: string | null;
@@ -203,6 +206,16 @@ const present = (o: OrderRow) => ({
     signatureRequired: Boolean(o.signature_required),
     idRequired: Boolean(o.id_required),
     deliveryKind: String(o.delivery_kind ?? 'patient'),
+    /* Addendum 2 clause 9. A destination outside every zone is a zone of
+       null, and it may not be driven or billed until University Health have
+       said yes. Reported on every order so a board can show the ones waiting
+       rather than a dispatcher finding out from an invoice. */
+    outOfArea: o.zone !== null ? null : {
+        authorised: o.out_of_area_authorised_at !== null,
+        authorisedBy: String(o.out_of_area_authorised_by ?? ''),
+        authorisedAt: o.out_of_area_authorised_at,
+        reference: String(o.out_of_area_reference ?? ''),
+    },
     status: o.status,
     receivedAt: o.received_at,
     dueAt: o.due_at,
@@ -596,6 +609,72 @@ export function createOrdersRouter(
              * in Scope 1.2.5 is written inverted; reporting is ticket 3.3. */
             onTime: { met, missed, measured, rate: measured === 0 ? null : Math.round((met / measured) * 1000) / 10 },
         });
+    }));
+
+    /* ---------------------------------------- out-of-area authorisation
+     *
+     * Addendum 2 clause 9: a destination outside every zone needs PRIOR
+     * University Health authorisation, and only approved ones may be billed
+     * at the out-of-area rate.
+     *
+     * Recorded rather than requested: the approval happens in an email or on
+     * a phone call between two people, and a system that tried to be the
+     * approval workflow would be a system nobody used. What it has to do is
+     * hold the reference, so that the line can be defended months later by
+     * pointing at the thing they sent.
+     *
+     * Staff only. A courier cannot authorise their own long drive.
+     */
+    const OutOfArea = z.object({
+        /* THEIRS, NOT OURS. An email subject, a ticket number, whatever the
+           person who approved it can be asked about later. Required, because
+           a bare yes recorded by us is us marking our own homework. */
+        reference: z.string().trim().min(1).max(200),
+        /** Who at University Health approved it. */
+        authorisedBy: z.string().trim().min(1).max(160),
+    });
+
+    router.post('/:id/out-of-area', staff, wrap(async (req, res) => {
+        const order = await loadOr404(req, res);
+        if (!order) return;
+
+        if (order.zone !== null) {
+            res.status(409).json({
+                error: 'That delivery is inside a priced zone, so it needs no out-of-area authorisation.',
+                code: 'outOfArea.notApplicable',
+            });
+            return;
+        }
+
+        const parsed = OutOfArea.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: 'Invalid request',
+                details: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`),
+            });
+            return;
+        }
+
+        await client.execute({
+            sql: `UPDATE orders
+                     SET out_of_area_authorised_by = ?, out_of_area_reference = ?,
+                         out_of_area_authorised_at = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE project_id = ? AND id = ?`,
+            args: [
+                parsed.data.authorisedBy, parsed.data.reference,
+                new Date().toISOString(), req.project!.id, Number(order.id),
+            ],
+        });
+
+        /* The reference goes in the audit detail. These are contract
+           parameters rather than patient data, and an invoice dispute turns
+           on who recorded what and when. */
+        await req.audit('order.outOfArea.authorised', 'order', String(order.id), {
+            authorisedBy: parsed.data.authorisedBy, reference: parsed.data.reference,
+        });
+
+        const reloaded = await findOrder(req.project!.id, Number(order.id));
+        res.json(reloaded === null ? { ok: true } : present(reloaded));
     }));
 
     /* The proof of delivery, for our own people. Before /:id so the .pdf

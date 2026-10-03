@@ -298,6 +298,7 @@ const MATRIX = [
     ['GET', `${UH}/orders`, UH_LEAD_READ, 'couriers narrowed to their own work inside, leads to their own pharmacies'],
     ['GET', `${UH}/orders/summary`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999`, UH_LEAD_READ, ''],
+    ['POST', `${UH}/orders/999999/out-of-area`, UH_STAFF, 'a courier cannot authorise their own long drive'],
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999/directions`, UH_LEAD_READ, ''],
     ['POST', `${UH}/orders/999999/events`, UH_STAFF_AND_COURIER, 'which event is then gated by role again'],

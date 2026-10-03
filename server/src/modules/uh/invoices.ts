@@ -143,6 +143,7 @@ export async function buildDraft(
     for (const row of rs.rows) {
         const order = row as unknown as PricedOrderRow & {
             external_ref: string; site_name: string; zip: string;
+            out_of_area_authorised_at: string | null;
         };
         const pricing = await priceOrder(client, order, project);
         const reference = String(order.external_ref ?? '');
@@ -156,6 +157,22 @@ export async function buildDraft(
          * invoice into notes: a missing mileage is the one that matters, and
          * billing it as zero would quietly under-charge us while looking
          * settled. */
+        /* ADDENDUM 2 CLAUSE 9. Out of area and nobody at University Health
+         * said yes to it, so it does not go on an invoice as though they had.
+         * An exception rather than a silent drop: the delivery happened and
+         * somebody has to decide whether to chase the approval after the fact
+         * or write it off, and a line that vanishes gets neither. */
+        if (pricing.zone === null && order.out_of_area_authorised_at === null) {
+            exceptions.push({
+                orderId: Number(order.id),
+                serviceDate: order.service_date,
+                reference,
+                reason: 'Out of area with no University Health authorisation on record. '
+                    + 'Addendum 2 clause 9 requires one before it can be billed at the out-of-area rate. '
+                    + 'Record their approval against the order, or leave it off this invoice.',
+            });
+            continue;
+        }
         if (pricing.zone === null && pricing.outOfArea.miles === 0) {
             exceptions.push({
                 orderId: Number(order.id),

@@ -271,6 +271,12 @@ export const orders = sqliteTable(
          * Pavilion to Business Center III. No patient means no morning text,
          * no identity check, and a different line on the report. */
         deliveryKind: text('delivery_kind', { enum: ['patient', 'facility'] }).notNull().default('patient'),
+        /* Addendum 2 clause 9: a destination outside every zone needs prior
+         * University Health authorisation. Their reference, not ours, so the
+         * person who approved it can be asked about months later. */
+        outOfAreaAuthorisedBy: text('out_of_area_authorised_by').notNull().default(''),
+        outOfAreaAuthorisedAt: text('out_of_area_authorised_at'),
+        outOfAreaReference: text('out_of_area_reference').notNull().default(''),
         returnedBy: text('returned_by').notNull().default(''),
 
         /* Duplicate detection within a site and a day: a hash of the external
