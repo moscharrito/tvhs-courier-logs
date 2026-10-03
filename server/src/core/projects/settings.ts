@@ -196,9 +196,36 @@ export interface DeliverySettings {
     personalHandoverOnly: boolean;
 }
 
+/**
+ * What a courier must have done before a failure may be billed as a dry run.
+ *
+ * Addendum 2 clause 5 requires "all required delivery attempts, recipient
+ * contact efforts, applicable waiting requirements, documentation, and
+ * notifications required by University Health" first. Two of those are
+ * conditions a system can hold; the rest are process.
+ *
+ * BOTH DEFAULT TO NOT ENFORCED, and that is deliberate rather than timid. The
+ * driver app in couriers' hands does not send these fields yet, so switching
+ * them on before an app release would answer 400 to a courier standing at a
+ * door trying to record a failed delivery, which is worse than the gap. And
+ * University Health have not said what the waiting requirement is: enforcing
+ * a guess would refuse legitimate dry runs in their name.
+ *
+ * Turn them on once the app sends them and University Health have given a
+ * number. The record is captured either way, so the evidence accumulates
+ * before the rule does.
+ */
+export interface DryRunSettings {
+    /** Refuse an attempt that records no attempt to reach anybody. */
+    requireContactEffort: boolean;
+    /** Refuse one that waited less than this. 0 means not enforced. */
+    minimumWaitMinutes: number;
+}
+
 export interface ProjectSettings {
     sla: SlaSettings;
     delivery: DeliverySettings;
+    dryRun: DryRunSettings;
     businessHours: BusinessHoursSettings;
     listRelease: ListReleaseSettings;
     pricing: PricingSection;
@@ -219,6 +246,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     /* Addendum 2 clause 4. See DeliverySettings for why the safe answer is
        the default rather than something University Health has to switch on. */
     delivery: { personalHandoverOnly: true },
+    /* Captured now, enforced when the app sends it and UH give a number. */
+    dryRun: { requireContactEffort: false, minimumWaitMinutes: 0 },
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00' },
     pricing: {
@@ -311,6 +340,11 @@ export const SettingsPatch = z.object({
            should solve with their own mail server rather than with ours. */
         dailyRecipients: z.array(z.string().trim().email()).max(20).optional(),
         days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+    }).strict().optional(),
+    dryRun: z.object({
+        requireContactEffort: z.boolean().optional(),
+        /* Two hours is longer than any doorstep wait anybody would defend. */
+        minimumWaitMinutes: z.number().int().min(0).max(120).optional(),
     }).strict().optional(),
     delivery: z.object({
         /* Changing this is a contract decision, not a preference. The audit
@@ -416,6 +450,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
     return {
         sla: section(stored['sla'], DEFAULT_PROJECT_SETTINGS.sla),
         delivery: section(stored['delivery'], DEFAULT_PROJECT_SETTINGS.delivery),
+        dryRun: section(stored['dryRun'], DEFAULT_PROJECT_SETTINGS.dryRun),
         businessHours: section(stored['businessHours'], DEFAULT_PROJECT_SETTINGS.businessHours),
         listRelease: section(stored['listRelease'], DEFAULT_PROJECT_SETTINGS.listRelease),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),

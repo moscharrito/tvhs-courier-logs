@@ -61,6 +61,12 @@ export interface CustodyEventInput {
     lng?: number | undefined;
     packageId?: number | undefined;
     fileId?: number | undefined;
+    /** What a courier tried before giving up, for a dry run that will be
+     *  billed. Addendum 2 clause 5. Empty where the app did not ask. */
+    contactEfforts?: readonly string[] | undefined;
+    /** Minutes at the door. -1 for not recorded, which is not the same fact
+     *  as zero. */
+    waitedMinutes?: number | undefined;
 }
 
 /**
@@ -76,12 +82,14 @@ export function custodyEventStatement(e: CustodyEventInput): { sql: string; args
     return {
         sql: `INSERT INTO custody_events
                 (project_id, order_id, package_id, type, at, actor, from_status, to_status,
-                 signed_name, signature_key, reason, lat, lng, file_id)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 signed_name, signature_key, reason, lat, lng, file_id,
+                 contact_efforts, waited_minutes)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
             e.projectId, e.orderId, e.packageId ?? null, e.type, e.at.toISOString(), e.actor,
             e.fromStatus, e.toStatus, e.signedName ?? '', e.signatureKey ?? '', e.reason ?? '',
             e.lat ?? null, e.lng ?? null, e.fileId ?? null,
+            (e.contactEfforts ?? []).join(','), e.waitedMinutes ?? -1,
         ],
     };
 }
@@ -144,6 +152,7 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
         fromStatus: order.status, toStatus: applied.toStatus,
         signedName: event.signedName, signatureKey: event.signatureKey,
         reason: event.reason, lat: event.lat, lng: event.lng, fileId: event.fileId,
+        contactEfforts: event.contactEfforts, waitedMinutes: event.waitedMinutes,
     };
 
     if (packageIds.length > 0) {

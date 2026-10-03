@@ -128,6 +128,11 @@ export interface EventInput {
      *  is append-only, so there is no afterwards. */
     fileId?: number | undefined;
     reason?: string | undefined;
+    /** What was tried before giving up, on an `attempted` event. Addendum 2
+     *  clause 5 requires contact efforts before a dry run may be billed. */
+    contactEfforts?: readonly string[] | undefined;
+    /** Minutes waited at the door, or -1 where the app did not ask. */
+    waitedMinutes?: number | undefined;
     /** Which site took the packages back. Set on a `returned` event only. */
     returnedToSiteId?: number | undefined;
     lat?: number | undefined;

@@ -112,8 +112,20 @@ const Doorstep = z.object({
     noSignatureReason: z.string().trim().min(3).max(300),
 });
 
+/* What a courier can have tried before giving up, in the terms Addendum 2
+ * clause 5 uses: "recipient contact efforts". Recorded whether or not the
+ * contract currently obliges it, so the evidence accumulates before the rule
+ * does. */
+export const CONTACT_EFFORTS = ['called', 'texted', 'knocked', 'buzzer', 'neighbour'] as const;
+
 const Attempt = z.object({
     ...Where,
+    /** Which of those were actually made. Empty is allowed by the schema and
+     *  may be refused by the project's settings; see dryRun.requireContactEffort. */
+    contactEfforts: z.array(z.enum(CONTACT_EFFORTS)).max(CONTACT_EFFORTS.length).default([]),
+    /** Minutes spent at the door. Undefined means the app did not ask, which
+     *  is a different fact from zero and is stored as one. */
+    waitedMinutes: z.number().int().min(0).max(120).optional(),
     /** One entry per package that could not be delivered. */
     packages: z.array(z.object({
         packageId: z.number().int().positive(),
@@ -571,6 +583,34 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             return;
         }
 
+        /* ADDENDUM 2 CLAUSE 5, WHERE THE PROJECT HAS ASKED FOR IT.
+         *
+         * A dry run is billed, so "did you actually try" is a question an
+         * invoice has to answer. Both conditions are off by default: the
+         * driver app does not send these fields yet, and refusing a courier
+         * at a door because their build is a week old would be worse than the
+         * gap it closes. */
+        const dryRun = resolveSettings(req.project!.settings).dryRun;
+        if (dryRun.requireContactEffort && body.contactEfforts.length === 0) {
+            res.status(409).json({
+                error: 'Record what you tried before this can go down as a dry run: a call, a text, '
+                    + 'the buzzer, or a knock. The contract requires it before we can bill one.',
+                code: 'attempt.noContactEffort',
+                efforts: CONTACT_EFFORTS,
+            });
+            return;
+        }
+        if (dryRun.minimumWaitMinutes > 0
+            && (body.waitedMinutes === undefined || body.waitedMinutes < dryRun.minimumWaitMinutes)) {
+            res.status(409).json({
+                error: `Wait at least ${dryRun.minimumWaitMinutes} minutes before recording a dry run, `
+                    + 'and say how long you waited.',
+                code: 'attempt.waitTooShort',
+                minimumWaitMinutes: dryRun.minimumWaitMinutes,
+            });
+            return;
+        }
+
         const ids = body.packages.map((p) => p.packageId);
         let inferredArrival = false;
         try {
@@ -586,6 +626,10 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                     // The order-level reason is a summary; the per-package
                     // codes below are what an invoice line is defended with.
                     reason: body.packages.map((p) => p.reasonCode).join(', '),
+                    /* And what was tried before it, which is the other half
+                       of defending that line under Addendum 2 clause 5. */
+                    contactEfforts: body.contactEfforts,
+                    ...(body.waitedMinutes !== undefined ? { waitedMinutes: body.waitedMinutes } : {}),
                     ...(body.lat !== undefined ? { lat: body.lat } : {}),
                     ...(body.lng !== undefined ? { lng: body.lng } : {}),
                     packageIds: ids,

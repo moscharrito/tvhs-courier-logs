@@ -1,0 +1,36 @@
+-- What was tried before a delivery was called a dry run.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- ADDENDUM 2 CLAUSE 5 PUTS CONDITIONS ON THE WORD.
+--
+--   "Before a delivery may be classified as a Dry Run, the Vendor must
+--    complete all required delivery attempts, recipient contact efforts,
+--    applicable waiting requirements, documentation, and notifications
+--    required by University Health."
+--
+-- A dry run is billed. So the question "did you actually try" is one an
+-- invoice has to be able to answer, and today the record carries a reason
+-- code and a free-text note and nothing about what the courier did before
+-- writing them.
+--
+-- Two columns on the custody event, not on the package. A dry run is billed
+-- per item and recorded per item, but the courier rang the bell once: putting
+-- "called" on four packages would be recording one act four times and then
+-- having to explain the arithmetic to somebody reading an invoice.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- A PLAIN COLUMN ADD, SO THE APPEND-ONLY TRIGGER IS UNDISTURBED.
+--
+-- custody_events forbids UPDATE and DELETE by trigger. ALTER TABLE ADD COLUMN
+-- rewrites no rows and leaves triggers in place, which is the only shape of
+-- change this table can take without dropping the thing that protects it.
+--
+-- Empty on every existing row and that is correct: nobody recorded this
+-- before, and a default suggesting otherwise would be inventing evidence.
+
+ALTER TABLE `custody_events` ADD `contact_efforts` text DEFAULT '' NOT NULL;
+--> statement-breakpoint
+-- Minutes waited at the door. -1 rather than 0 for "not recorded", because a
+-- courier who waited no time at all is a different fact from a courier using
+-- an app that never asked.
+ALTER TABLE `custody_events` ADD `waited_minutes` integer DEFAULT -1 NOT NULL;
