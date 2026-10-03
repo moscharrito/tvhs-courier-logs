@@ -104,10 +104,15 @@ export async function queueStageNotice(
     if (!stage?.enabled) return false;
     try {
         const rs = await client.execute({
-            sql: 'SELECT recipient_phone FROM orders WHERE project_id = ? AND id = ?',
+            sql: 'SELECT recipient_phone, delivery_kind FROM orders WHERE project_id = ? AND id = ?',
             args: [opts.projectId, opts.orderId],
         });
-        const phone = String(rs.rows[0]?.['recipient_phone'] ?? '').trim();
+        const row = rs.rows[0];
+        /* Same rule as the morning notice, and checked here too rather than
+           trusted from there: these are two separate paths to the same table
+           and only one of them used to exist. */
+        if (String(row?.['delivery_kind'] ?? 'patient') !== 'patient') return false;
+        const phone = String(row?.['recipient_phone'] ?? '').trim();
         if (phone === '') return false;
 
         const body = noticeFor(opts.settings, opts.stage, { when: opts.now, timezone: opts.timezone });
@@ -171,8 +176,16 @@ export async function queueMorningNotices(
     if (opts.settings && !opts.settings.patientSms.stages.delivery_today.enabled) return result;
     try {
         const rs = await client.execute({
+            /* A FACILITY IS NOT TEXTED.
+             *
+             * Thirteen a day move between two University Health buildings
+             * with no patient on the other end. The phone on such a row is a
+             * goods-in desk, and "a courier has a delivery for you today" is
+             * at best noise and at worst a message about medication sent to a
+             * number nobody vetted for it. */
             sql: `SELECT o.id, o.recipient_phone FROM orders o
                   WHERE o.project_id = ? AND o.service_date = ?
+                    AND o.delivery_kind = 'patient'
                     AND o.status NOT IN ('cancelled', 'delivered', 'failed')`,
             args: [opts.projectId, opts.serviceDate],
         });

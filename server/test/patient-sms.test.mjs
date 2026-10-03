@@ -427,3 +427,71 @@ describe('the kinds the table accepts', () => {
         })).rejects.toThrow();
     });
 });
+
+/* ---------------------------------------------- a delivery with no patient
+ *
+ * University Health's own extract carries 2,312 rows of "Courier to BC3 (6200
+ * NW Pkwy)" over six months, about thirteen a day, sent from Discharge and
+ * Pavilion. Medication moving between two of their buildings, with nobody on
+ * the other end to tell.
+ *
+ * The phone on such a row is a goods-in desk. A morning notice to it is at
+ * best noise and at worst a message about medication to a number nobody
+ * vetted for that. */
+describe('a facility transfer', () => {
+    let transfer;
+    let patient;
+
+    beforeAll(async () => {
+        await clear();
+        transfer = await order({ deliveryKind: 'facility', recipientName: 'Business Center III', idRequired: true });
+        patient = await order();
+    });
+
+    it('is never queued a morning notice', async () => {
+        const out = await queueMorningNotices(client, {
+            projectId, serviceDate: today(), now: new Date(),
+        });
+        expect(out.queued).toBeGreaterThan(0);
+        const queued = await rows('SELECT order_id FROM patient_messages');
+        const ids = queued.map((r) => Number(r.order_id));
+        expect(ids).toContain(patient.id);
+        expect(ids).not.toContain(transfer.id);
+    });
+
+    it('is not counted as a missing phone number either', async () => {
+        /* noPhone is the pharmacy's data quality, surfaced so somebody can
+           act on it. A loading bay with no phone is not a data problem, and
+           counting it would send somebody looking for a patient's number that
+           was never meant to exist.
+           Measured as a difference rather than against zero: other tests in
+           this file leave orders behind, and an absolute assertion here would
+           be testing their state rather than this one's. */
+        await clear();
+        const before = await queueMorningNotices(client, {
+            projectId, serviceDate: today(), now: new Date(),
+        });
+        await order({ deliveryKind: 'facility', recipientPhone: '' });
+        await clear();
+        const after = await queueMorningNotices(client, {
+            projectId, serviceDate: today(), now: new Date(),
+        });
+        expect(after.noPhone).toBe(before.noPhone);
+    });
+
+    it('cannot require identification, whatever the list says', async () => {
+        /* Nobody at a goods-in desk can produce a patient's identity
+           document. Forced off rather than refused, because the flag comes
+           from a pharmacy's own file and rejecting their list over it would
+           stop the day. */
+        const detail = await admin.get(`${ORDERS}/${transfer.id}`);
+        expect(detail.body.idRequired).toBe(false);
+        expect(detail.body.deliveryKind).toBe('facility');
+    });
+
+    it('still says patient for everything else, including the default', async () => {
+        /* 98.6 per cent of the contract, and all of the history. */
+        const detail = await admin.get(`${ORDERS}/${patient.id}`);
+        expect(detail.body.deliveryKind).toBe('patient');
+    });
+});

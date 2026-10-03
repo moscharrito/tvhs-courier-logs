@@ -264,6 +264,13 @@ export const orders = sqliteTable(
          * the origin: after hours the Discharge Pharmacy is the one that is
          * open, and an origin that shut early sends a courier elsewhere. */
         returnedToSiteId: integer('returned_to_site_id').references(() => sites.id),
+        /* Whether there is a patient on the other end.
+         *
+         * 'facility' is medication moving between two University Health
+         * buildings: 13 a day in their own extract, from Discharge and
+         * Pavilion to Business Center III. No patient means no morning text,
+         * no identity check, and a different line on the report. */
+        deliveryKind: text('delivery_kind', { enum: ['patient', 'facility'] }).notNull().default('patient'),
         returnedBy: text('returned_by').notNull().default(''),
 
         /* Duplicate detection within a site and a day: a hash of the external

@@ -109,6 +109,10 @@ const CreateOrder = z.object({
     description: z.string().trim().max(300).default(''),
     quantity: z.number().int().min(1).max(500).default(1),
     signatureRequired: z.boolean().default(true),
+    /* Whether there is a patient on the other end. 'facility' is medication
+     * moving between two University Health buildings: thirteen a day in their
+     * own extract, Discharge and Pavilion to Business Center III. */
+    deliveryKind: z.enum(['patient', 'facility']).default('patient'),
     /* The pharmacy's form is stamped ID Required, so the courier must
      * photograph the recipient's identification before this can be recorded
      * as delivered (University Health, 29 September 2026). Defaults false:
@@ -168,6 +172,7 @@ interface OrderRow {
     zone: number | null; out_of_area_miles: number | null; signature_required: number;
     /** The pharmacy stamped the form ID Required (drizzle/0038). */
     id_required: number;
+    delivery_kind: string;
     received_at: string; due_at: string | null; pickup_due_at: string | null;
     pickup_at: string | null; arrived_at: string | null; delivered_at: string | null;
     assigned_to_username: string | null; assigned_at: string | null;
@@ -197,6 +202,7 @@ const present = (o: OrderRow) => ({
     geocodeStatus: o.geocode_status,
     signatureRequired: Boolean(o.signature_required),
     idRequired: Boolean(o.id_required),
+    deliveryKind: String(o.delivery_kind ?? 'patient'),
     status: o.status,
     receivedAt: o.received_at,
     dueAt: o.due_at,
@@ -302,14 +308,22 @@ export function createOrdersRouter(
             sql: `INSERT INTO orders
                     (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                      recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                     delivery_notes, zone, signature_required, id_required, received_at, due_at, dedupe_key, status)
-                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
+                     delivery_notes, zone, signature_required, id_required, received_at, due_at, dedupe_key,
+                     delivery_kind, status)
+                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
             args: [
                 project.id, Number(site['id']), body.externalRef, body.serviceType, serviceDate,
                 body.recipientName, normalizePhone(body.recipientPhone), body.addressLine, body.addressLine2,
                 body.city, body.state.toUpperCase(), zip, body.deliveryNotes,
-                zone as InValue, body.signatureRequired ? 1 : 0, body.idRequired ? 1 : 0, receivedAt.toISOString(),
+                                zone as InValue, body.signatureRequired ? 1 : 0,
+                /* NOBODY AT A GOODS-IN DESK CAN PRODUCE A PATIENT'S ID.
+                   Forced off for a transfer rather than refused, because the
+                   flag arrives from a pharmacy's own list and rejecting their
+                   file over it would stop the day. */
+                body.deliveryKind === 'facility' ? 0 : (body.idRequired ? 1 : 0),
+                receivedAt.toISOString(),
                 due.dueAt ? due.dueAt.toISOString() : null, dedupeKey,
+                body.deliveryKind,
             ],
         });
         const created = Object.fromEntries(Object.entries(orderRs.rows[0]!)) as unknown as OrderRow;

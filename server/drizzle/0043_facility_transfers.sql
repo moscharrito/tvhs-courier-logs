@@ -1,0 +1,51 @@
+-- Not every delivery goes to a patient.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- THIRTEEN A DAY, AND THE SYSTEM HAD NO WORD FOR THEM.
+--
+-- University Health's six-month extract carries a delivery method column with
+-- two values: "Courier", and "Courier to BC3 (6200 NW Pkwy)". The second is
+-- 2,312 rows, about thirteen a day, sent only from Discharge and Pavilion.
+-- They are medication moving between two University Health buildings, with no
+-- patient on the other end.
+--
+-- Every order in this system assumes there is one. A transfer booked today
+-- would be given a recipient who is a building, and then:
+--
+--   texted, because the morning notice goes to the recipient_phone on the row
+--   and a loading bay does not want to know a courier is coming;
+--
+--   asked for identification where the pharmacy stamped ID Required, which
+--   nobody at a goods-in desk can produce;
+--
+--   counted and reported as a patient delivery, which it is not.
+--
+-- So the row says which kind it is, and the code that assumes a patient asks.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- DEFAULT 'patient', BECAUSE THAT IS WHAT EVERY EXISTING ROW IS.
+--
+-- 98.6 per cent of the contract is a patient delivery and all of the history
+-- is. A default of 'facility' would silently reclassify the lot.
+--
+-- NO CHECK CONSTRAINT, the same reasoning as packages.failure_reason_code:
+-- SQLite cannot add one without rebuilding the table, and rebuilding a table
+-- of delivery records is a risk out of proportion to a two-value enum that
+-- zod already enforces at the edge.
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- AND NO INDEX ON IT, WHICH WAS THE FIRST THING I WROTE.
+--
+-- (project_id, service_date, delivery_kind) looked obviously right: the
+-- texting filters on exactly those three. It then won as a COVERING index
+-- over orders_project_date_idx on "every order for a day", which is the
+-- hottest query in the application, because it carries the same two leading
+-- columns and the rowid.
+--
+-- The same mistake was made in this project once before with an index on
+-- id_required, and removed for the same reason. A facility transfer is
+-- thirteen rows in nine hundred, so narrowing a day by delivery_kind saves
+-- almost nothing, while perturbing the planner on the board's own query costs
+-- something on every page load. The day index already does the work.
+
+ALTER TABLE `orders` ADD `delivery_kind` text DEFAULT 'patient' NOT NULL;
