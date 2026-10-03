@@ -19,7 +19,14 @@
       }
     },
     "android": {
-      "package": "com.izyglobalservices.courier"
+      "package": "com.izyglobalservices.courier",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ]
     },
     "plugins": [
       [
@@ -40,6 +47,14 @@
         "projectId": "2092230f-1dac-4165-a510-3561568bf4b8"
       }
     },
-    "owner": "tag-courier"
+    "owner": "tag-courier",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/2092230f-1dac-4165-a510-3561568bf4b8",
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    }
   }
 }
