@@ -104,6 +104,28 @@ export const priceSchedules = sqliteTable(
     (t) => [unique('price_schedules_project_from_unique').on(t.projectId, t.effectiveFrom)],
 );
 
+/* A rate for one ZIP, allowed by Addendum 2 clause 3 in zones 4 and 5 only.
+ * Belongs to a schedule rather than carrying its own date: a contract price
+ * list changes as a whole, and an independently dated rate would allow a
+ * half-escalated one. Empty until University Health's Pricing Schedule
+ * arrives; every ZIP prices at its zone rate until then. */
+export const zipPrices = sqliteTable(
+    'zip_prices',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        scheduleId: integer('schedule_id').notNull().references(() => priceSchedules.id),
+        zip: text('zip').notNull(),
+        price: real('price').notNull(),
+        /** A named community, where the rate is for one rather than a ZIP. */
+        label: text('label').notNull().default(''),
+        note: text('note').notNull().default(''),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [unique('zip_prices_schedule_zip_unique').on(t.scheduleId, t.zip)],
+);
+
+export type ZipPrice = typeof zipPrices.$inferSelect;
 export type ZoneZip = typeof zoneZips.$inferSelect;
 export type PriceSchedule = typeof priceSchedules.$inferSelect;
 

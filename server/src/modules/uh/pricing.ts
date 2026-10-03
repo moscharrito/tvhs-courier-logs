@@ -33,9 +33,30 @@ import { DEFAULT_PROJECT_SETTINGS, resolveSettings } from '../../core/projects/s
 export type ServiceType = 'scheduled' | 'stat' | 'adhoc';
 export type Zone = 1 | 2 | 3 | 4 | 5;
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * ZIP-SPECIFIC RATES, WHERE THE CONTRACT ALLOWS THEM.
+ *
+ * Addendum 2 clause 3: zones 1 to 3 take one flat rate each, applied
+ * uniformly, and "ZIP-specific pricing will not be accepted" there. Zones 4
+ * and 5 may be priced by individual ZIP, community, or University
+ * Health-designated area.
+ *
+ * So a ZIP rate is not a general override. Applying one inside zone 1 would
+ * bill something the contract says will not be accepted, which is worse than
+ * failing to apply it: the first is a disputed invoice, the second is an
+ * invoice that is merely wrong in our own favour's opposite direction.
+ *
+ * Empty until University Health's Pricing Schedule arrives. Every ZIP prices
+ * at its zone rate until a row exists, which is exactly the behaviour before
+ * this existed.
+ */
+export const ZIP_RATE_ZONES: readonly Zone[] = [4, 5];
+
 export interface PriceSchedule {
     effectiveFrom: string;
     zoneRates: Record<Zone, number>;
+    /** Five-digit ZIP to its own rate, for zones 4 and 5 only. */
+    zipRates?: ReadonlyMap<string, number> | undefined;
     statSurcharge: number;
     afterHoursSurcharge: number;
     dryRunFee: number;
@@ -59,6 +80,9 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
 export interface PriceInput {
     /** Resolved zone, or null when the destination is out of area. */
     zone: Zone | null;
+    /** The destination ZIP, for a zone 4 or 5 rate held against it. Optional,
+     *  so every existing caller keeps the zone rate it already had. */
+    zip?: string | null | undefined;
     serviceType: ServiceType;
     /** Set explicitly, or left out and derived from `at`. */
     afterHours?: boolean;
@@ -148,7 +172,27 @@ export function priceFor(input: PriceInput, schedule: PriceSchedule, settings: P
         outOfAreaCents = Math.round(cents(schedule.outOfAreaPerMile) * outOfAreaMiles);
         notes.push('Destination ZIP is outside the published zone list; billed per one-way loaded mile.');
     } else {
-        baseCents = cents(schedule.zoneRates[input.zone]);
+        /* A ZIP rate wins inside zones 4 and 5, and is ignored anywhere else
+           because clause 3 says it will not be accepted there. Ignored rather
+           than refused: a rate loaded against the wrong ZIP is somebody's
+           data-entry mistake, and refusing to price the delivery would stop a
+           day's invoicing over it. The note says it happened. */
+        const zipRate = input.zip === undefined || input.zip === null
+            ? undefined
+            : schedule.zipRates?.get(String(input.zip).trim().slice(0, 5));
+
+        if (zipRate !== undefined && ZIP_RATE_ZONES.includes(input.zone)) {
+            baseCents = cents(zipRate);
+            notes.push(`Priced at the rate held for this ZIP rather than the zone ${input.zone} rate.`);
+        } else {
+            if (zipRate !== undefined) {
+                notes.push(
+                    `A ZIP rate is held for this destination but zone ${input.zone} is priced uniformly `
+                    + '(Addendum 2 clause 3), so the zone rate was used.',
+                );
+            }
+            baseCents = cents(schedule.zoneRates[input.zone]);
+        }
     }
 
     const statCents = input.serviceType === 'stat' ? cents(schedule.statSurcharge) : 0;

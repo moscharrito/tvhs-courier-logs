@@ -30,8 +30,21 @@ export async function scheduleOn(client: Client, projectId: number, on: string):
     });
     const r = rs.rows[0];
     if (!r) return null;
+
+    /* Any ZIP rates belonging to this schedule. Loaded with it rather than
+       separately, because a price list changes as a whole and a rate read
+       from one schedule against a zone read from another would be a figure
+       nobody could reconstruct later.
+       Empty until University Health's Pricing Schedule arrives, and an empty
+       map prices exactly as before it existed. */
+    const zips = await client.execute({
+        sql: 'SELECT zip, price FROM zip_prices WHERE project_id = ? AND schedule_id = ?',
+        args: [projectId, Number(r['id'])],
+    });
+
     return {
         effectiveFrom: String(r['effective_from']),
+        zipRates: new Map(zips.rows.map((z) => [String(z['zip']).trim().slice(0, 5), Number(z['price'])])),
         zoneRates: {
             1: Number(r['zone1']), 2: Number(r['zone2']), 3: Number(r['zone3']),
             4: Number(r['zone4']), 5: Number(r['zone5']),

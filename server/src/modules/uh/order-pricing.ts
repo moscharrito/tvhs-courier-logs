@@ -34,6 +34,9 @@ export interface PricedOrderRow {
     service_type: string;
     status: string;
     zone: number | null;
+    /** Destination ZIP, for a zone 4 or 5 rate held against it. Optional so
+     *  that callers which never had it keep pricing by zone. */
+    zip?: string | null;
     out_of_area_miles: number | null;
     received_at: string;
     pickup_at: string | null;
@@ -83,6 +86,9 @@ export async function priceOrder(
 
     const breakdown = priceFor({
         zone: (order.zone === null ? null : Number(order.zone)) as Zone | null,
+        /* For a zone 4 or 5 rate held against this destination. Ignored
+           anywhere else; Addendum 2 clause 3. */
+        zip: order.zip ?? null,
         serviceType: order.service_type as 'scheduled' | 'stat' | 'adhoc',
         at,
         dryRun,

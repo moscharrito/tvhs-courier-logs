@@ -55,7 +55,14 @@ export function createPricingRouter({ client }: { client: Client }): Router {
         const settings = pricingSettingsFrom(req.project!.settings, req.project!.timezone);
         res.json({
             on,
-            schedule,
+            /* zipRates is a Map, which JSON turns into {}. Presented as a
+               list so a caller can actually read it, and kept out of the
+               schedule object so that object stays the set of figures the
+               contract calls the price schedule. */
+            schedule: schedule === null ? null : { ...schedule, zipRates: undefined },
+            zipRates: schedule === null ? [] : [...(schedule.zipRates ?? new Map())]
+                .map(([zip, price]) => ({ zip, price }))
+                .sort((a, b) => a.zip.localeCompare(b.zip)),
             settings,
             zoneZipCounts: counts.rows.map((r) => ({ zone: Number(r['zone']), zips: Number(r['n']) })),
         });
