@@ -62,6 +62,10 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
     let timer: NodeJS.Timeout | null = null;
 
     async function runOnce(): Promise<void> {
+        /* Projects whose texting is paused, collected as the loop goes and
+           handed to the sender below. The queue is keyed on the message
+           rather than the project, so the sender has to be told. */
+        const pausedProjectIds: number[] = [];
         /* Every project, because the sweep is a courier-network idea and the
            next contract will want it too. Projects are few and this is a
            cheap query. */
@@ -71,6 +75,8 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
             const timezone = String(p['timezone']);
             let settings: Record<string, unknown> = {};
             try { settings = JSON.parse(String(p['settings'] ?? '{}')) as Record<string, unknown>; } catch { settings = {}; }
+
+            if (resolveSettings(settings).patientSms.paused) pausedProjectIds.push(projectId);
 
             const outcome = await sweepUnclaimed(client, {
                 projectId,
@@ -159,7 +165,7 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
         /* Outside the project loop, like the mail queue and for the same
            reason: the queue is keyed on the message, not the project. */
         if (texter) {
-            await sendQueued(client, texter, logger);
+            await sendQueued(client, texter, logger, pausedProjectIds);
         }
     }
 

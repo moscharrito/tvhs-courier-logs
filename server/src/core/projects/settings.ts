@@ -151,6 +151,23 @@ export interface PatientSmsStage {
 }
 
 export interface PatientSmsSettings {
+    /* ─────────────────────────────────────────────────────────────────────
+     * ONE SWITCH THAT STOPS EVERYTHING, AND IT STARTS ON.
+     *
+     * Every message costs a Twilio segment. Between proving the 10DLC
+     * campaign works and the pharmacy team agreeing the wording, there is a
+     * window where the system is entirely capable of texting several hundred
+     * patients a day with a sentence nobody has signed off.
+     *
+     * Paused by default for the same reason the doorstep setting refuses by
+     * default: a project nobody has configured is a project whose contract
+     * nobody has read, and the failure of texting too early is a message in a
+     * patient's hand that cannot be taken back.
+     *
+     * Nothing is queued while it is true, and anything already queued is left
+     * alone rather than sent. Turning it on is a deliberate act, audited like
+     * every other setting. */
+    paused: boolean;
     /** One per point in the delivery. See core/notify/sms-template STAGES for
      *  what each is and why all but the first start switched off. */
     stages: Record<Stage, PatientSmsStage>;
@@ -277,6 +294,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
        the message now says so, because "we will call first" is the part
        patients act on. */
     patientSms: {
+        /* Until the pharmacy team have agreed the wording and somebody says
+           go. Proving the campaign works is not the same as being ready. */
+        paused: true,
         stages: Object.fromEntries(STAGE_NAMES.map((name) => [name, {
             enabled: STAGES[name].enabledByDefault,
             template: STAGES[name].template,
@@ -352,6 +372,7 @@ export const SettingsPatch = z.object({
         personalHandoverOnly: z.boolean().optional(),
     }).strict().optional(),
     patientSms: z.object({
+        paused: z.boolean().optional(),
         /* Validated by the same rules the message would be sent under, so a
            wording that could never go out is refused while somebody is
            editing it rather than discovered by a silent send failure at 8am.
@@ -427,6 +448,7 @@ function section<T extends object>(raw: unknown, defaults: T): T {
 function patientSmsSection(raw: unknown): PatientSmsSettings {
     const defaults = DEFAULT_PROJECT_SETTINGS.patientSms;
     const flat = section(raw, {
+        paused: defaults.paused,
         windowStart: defaults.windowStart,
         windowEnd: defaults.windowEnd,
         callMinutes: defaults.callMinutes,

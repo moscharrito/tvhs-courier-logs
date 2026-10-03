@@ -100,6 +100,7 @@ export async function queueStageNotice(
     client: Client,
     opts: { projectId: number; orderId: number; stage: Stage; settings: ProjectSettings; timezone: string; now: Date },
 ): Promise<boolean> {
+    if (opts.settings.patientSms.paused) return false;
     const stage = opts.settings.patientSms.stages[opts.stage];
     if (!stage?.enabled) return false;
     try {
@@ -170,6 +171,9 @@ export async function queueMorningNotices(
     const result: QueueResult = { queued: 0, noPhone: 0 };
     /* The body is stored on the row, so a wording change affects what is sent
        next and never what somebody has already been told. */
+    /* PAUSED STOPS IT BEFORE THE ROW EXISTS. A message not written is a
+       message that cannot be sent by a later sweep that forgot to ask. */
+    if (opts.settings?.patientSms.paused) return result;
     const body = opts.settings ? noticeFor(opts.settings, 'delivery_today') : DELIVERY_TODAY;
     /* Off means no row is written at all, so nothing can be sent by accident
        later by a sweep that does not re-read the setting. */
@@ -232,7 +236,7 @@ export const BATCH = 50;
  * rather than being rediscovered once per order forever.
  */
 export async function sendQueued(
-    client: Client, texter: Texter, logger: Logger,
+    client: Client, texter: Texter, logger: Logger, pausedProjectIds: readonly number[] = [],
 ): Promise<SendResult> {
     const result: SendResult = { considered: 0, sent: 0, failed: 0, optedOut: 0 };
     if (!texter.available) return result;
@@ -240,11 +244,18 @@ export async function sendQueued(
     let rows;
     try {
         const rs = await client.execute({
+            /* A PAUSED PROJECT'S QUEUE IS LEFT WHERE IT IS, not sent and not
+               deleted. Pausing is usually temporary: somebody is waiting on
+               wording, or on a campaign, and throwing the queue away would
+               mean the morning's patients are never told at all once it
+               resumes. Skipped here rather than filtered at write time
+               because a row may have been queued before the pause. */
             sql: `SELECT m.id, m.phone, m.body FROM patient_messages m
                   LEFT JOIN patient_optouts o ON o.phone = m.phone
                   WHERE m.sent_at IS NULL AND o.id IS NULL
+                    ${pausedProjectIds.length > 0 ? `AND m.project_id NOT IN (${pausedProjectIds.map(() => '?').join(',')})` : ''}
                   ORDER BY m.id LIMIT ?`,
-            args: [BATCH],
+            args: [...pausedProjectIds, BATCH],
         });
         rows = rs.rows;
     } catch (err) {

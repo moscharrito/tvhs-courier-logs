@@ -47,6 +47,13 @@ const today = () => new Intl.DateTimeFormat('en-CA', {
 }).format(new Date());
 
 const rows = async (sql, args = []) => (await client.execute({ sql, args })).rows;
+
+/** The project's settings as the scheduler would resolve them. */
+async function settingsNow() {
+    const { resolveSettings } = await import('../src/core/projects/settings.ts');
+    const row = (await client.execute("SELECT settings FROM projects WHERE code = 'uh'")).rows[0];
+    return resolveSettings(JSON.parse(String(row.settings ?? '{}')));
+}
 const clear = async () => {
     await client.execute('DELETE FROM patient_messages');
     await client.execute('DELETE FROM patient_optouts');
@@ -295,6 +302,11 @@ describe('a text at each stage', () => {
     let ada;
 
     beforeAll(async () => {
+        /* Texting is paused by default: proving the campaign works is not the
+           same as being ready to send several hundred a day with wording
+           nobody has signed off. These tests are about what happens when it
+           is running, so they turn it on. */
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
         await admin.post('/api/users').send({
             username: 'stage.courier', name: 'Stage Courier', password: 'courier-pass-9', role: 'driver',
         });
@@ -493,5 +505,74 @@ describe('a facility transfer', () => {
         /* 98.6 per cent of the contract, and all of the history. */
         const detail = await admin.get(`${ORDERS}/${patient.id}`);
         expect(detail.body.deliveryKind).toBe('patient');
+    });
+});
+
+/* ------------------------------------------------------------- the pause
+ *
+ * Every message costs a Twilio segment. Between proving the 10DLC campaign
+ * works and the pharmacy team agreeing the wording, the system is entirely
+ * capable of texting several hundred patients a day with a sentence nobody
+ * has signed off. One switch stops it, and it starts on. */
+describe('paused', () => {
+    beforeAll(async () => {
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: true } });
+        await clear();
+    });
+    afterAll(async () => {
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+    });
+
+    it('is the default for a project nobody has configured', async () => {
+        /* The behaviour that matters most, because the failure of texting too
+           early is a message in a patient's hand that cannot be taken back. */
+        const { resolveSettings } = await import('../src/core/projects/settings.ts');
+        expect(resolveSettings({}).patientSms.paused).toBe(true);
+        expect(resolveSettings(null).patientSms.paused).toBe(true);
+    });
+
+    it('queues no morning notice at all', async () => {
+        const settings = await settingsNow();
+        const out = await queueMorningNotices(client, {
+            projectId, serviceDate: today(), now: new Date(), settings,
+        });
+        expect(out.queued).toBe(0);
+        expect(await rows('SELECT id FROM patient_messages')).toEqual([]);
+    });
+
+    it('writes nothing when a delivery is recorded either', async () => {
+        const o = await order();
+        await admin.post(`${ORDERS}/${o.id}/events`).send({ type: 'assigned', courierUsername: 'stage.courier' });
+        await admin.post(`${ORDERS}/${o.id}/events`).send({ type: 'picked_up', signedName: 'Tech' });
+        await admin.post(`${ORDERS}/${o.id}/events`).send({ type: 'delivered', signedName: 'Recipient' });
+        expect(await rows('SELECT id FROM patient_messages WHERE order_id = ?', [o.id])).toEqual([]);
+    });
+
+    it('leaves a queue made before the pause where it is, unsent', async () => {
+        /* Not sent and not deleted. Pausing is usually temporary: somebody is
+           waiting on wording or on a campaign, and throwing the queue away
+           would mean that morning's patients are never told at all once it
+           resumes. */
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+        const before = await queueMorningNotices(client, {
+            projectId, serviceDate: today(), now: new Date(), settings: await settingsNow(),
+        });
+        expect(before.queued).toBeGreaterThan(0);
+
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: true } });
+        const texter = fakeTexter();
+        const out = await sendQueued(client, texter, quiet, [projectId]);
+        expect(out.sent).toBe(0);
+        expect(texter.sent).toEqual([]);
+
+        const still = await rows('SELECT sent_at FROM patient_messages');
+        expect(still.length).toBeGreaterThan(0);
+        for (const r of still) expect(r.sent_at).toBeNull();
+    });
+
+    it('sends that same queue once it resumes', async () => {
+        const texter = fakeTexter();
+        const out = await sendQueued(client, texter, quiet, []);
+        expect(out.sent).toBeGreaterThan(0);
     });
 });
