@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
+import { asScreen } from './helpers/board.mjs';
 
 const ORDERS = '/api/projects/uh/uh/orders';
 const RUNS = '/api/projects/uh/uh/runs';
@@ -180,8 +181,9 @@ describe('a board read while couriers are writing', () => {
         expect(board.status).toBe(200);
         expect(writes.every((r) => r.status === 201)).toBe(true);
 
-        const laneOrderIds = board.body.lanes.flatMap((l) => l.stops.map((s) => s.order.id));
-        const poolOrderIds = board.body.pool.flatMap((p) => p.orders.map((o) => o.id));
+        const screen = asScreen(board);
+        const laneOrderIds = screen.body.lanes.flatMap((l) => l.stops.map((s) => s.order.id));
+        const poolOrderIds = screen.body.pool.flatMap((p) => p.orders.map((o) => o.id));
         // Nothing is in the pool and on a lane at once, which is the whole
         // reason the board is a single query.
         expect(laneOrderIds.filter((id) => poolOrderIds.includes(id))).toEqual([]);

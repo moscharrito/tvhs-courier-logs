@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
+import { asScreen } from './helpers/board.mjs';
 import {
     haversineMiles, nearestNeighbour, byDue, sequenceStops, SequencingError,
 } from '../src/modules/uh/sequencing.ts';
@@ -59,7 +60,10 @@ async function makeRun(over = {}) {
     return res.body;
 }
 
-const board = (query = '') => admin.get(`${BOARD}${query}`);
+/* Rehydrated: the endpoint sends cards in a map and points at them by id,
+   and these tests ask about the board rather than about its serialisation.
+   See test/helpers/board.mjs; the wire shape is test/board-delta.test.mjs. */
+const board = async (query = '') => asScreen(await admin.get(`${BOARD}${query}`));
 
 /* ------------------------------------------------------------ pure routing */
 

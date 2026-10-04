@@ -38,6 +38,11 @@ const board = {
     serviceDate: '2026-09-18', generatedAt: new Date().toISOString(), timezone: 'America/Chicago',
     summary: { total: 0, unassigned: 0, assigned: 0, inTransit: 0, delivered: 0, failed: 0, dueSoon: 0, overdue: 0 },
     pool: [], lanes: [], activity: [], couriers: [], idleCouriers: [],
+    /* The board sends cards in their own map now, with the pool and the lanes
+       pointing at them by id. Nothing is on this board, so the map is empty;
+       `complete` is what tells the page it is looking at a whole board rather
+       than a delta. See lib/board.ts. */
+    orders: {}, cursor: null, complete: true,
 };
 
 function renderBoard(routes: Record<string, unknown> = {}, sweep: SweepState = { automatic: false, everySeconds: null }) {

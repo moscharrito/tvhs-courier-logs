@@ -102,6 +102,36 @@ try {
         + `${b.lanes.reduce((n, l) => n + l.stops.length, 0)} on lanes`);
     console.log(`  carrying                 ${b.carrying.shown} of ${b.carrying.of}, truncated ${b.carrying.truncated}`);
 
+    /* ─────────────────────────────────────────────────── the delta poll
+     *
+     * The first GET above is what a dispatcher's first load costs. This is
+     * what the fourteen polls a minute after it cost, which is the number
+     * that actually matters for a board left open all day. */
+    if (b.cursor) {
+        const t2 = Date.now();
+        const second = await admin.get(`/api/projects/uh/uh/board?serviceDate=${serviceDate}&since=${encodeURIComponent(b.cursor)}`);
+        const took2 = Date.now() - t2;
+        const doc2 = JSON.stringify(second.body);
+        const raw2 = Buffer.byteLength(doc2);
+        const wire2 = second.headers['content-encoding']
+            ? (Number(second.headers['content-length']) || gzipSync(doc2, { level: 6 }).length)
+            : raw2;
+
+        console.log('');
+        console.log(`  second poll, ?since=${b.cursor}`);
+        console.log(`    took                   ${took2} ms`);
+        console.log(`    cards sent             ${Object.keys(second.body.orders).length} of ${Object.keys(b.orders).length}`);
+        console.log(`    document               ${kb(raw2)}`);
+        console.log(`    on the wire            ${kb(wire2)}`);
+        console.log(`    complete               ${second.body.complete}`);
+        /* Membership must be whole on a delta poll. If it is not, a card
+           would silently vanish off a lane. */
+        const ids1 = new Set([...b.lanes.flatMap((l) => l.stops.map((st) => st.orderId)), ...b.pool.flatMap((x) => x.orderIds)]);
+        const ids2 = new Set([...second.body.lanes.flatMap((l) => l.stops.map((st) => st.orderId)), ...second.body.pool.flatMap((x) => x.orderIds)]);
+        console.log(`    membership ids         ${ids2.size} (first poll had ${ids1.size})`);
+        console.log(`    summary total          ${second.body.summary.total} (first poll had ${b.summary.total})`);
+    }
+
     console.log('');
     const dispatchers = 4;
     const perDay = (n) => (n * dispatchers * 4 * 60 * 10) / 1024 / 1024 / 1024;

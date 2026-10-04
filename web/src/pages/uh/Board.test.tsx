@@ -44,7 +44,53 @@ const activity = (over = {}) => ({
     hasPosition: true, ...over,
 });
 
-const boardData = (over = {}) => ({
+/* ──────────────────────────────────────────────── the wire, and the screen
+ *
+ * The fixtures below are written in the shape the board RENDERS: lanes whose
+ * stops carry an order, pools whose entries carry orders. That used to be
+ * what the server sent too.
+ *
+ * It no longer is. A poll now carries the cards in a map keyed by id and has
+ * the pool and the lanes point at them, so that a poll with a cursor can omit
+ * the ones that did not move (lib/board.ts merges them back). Rewriting forty
+ * fixtures into that shape would have made them unreadable and would have
+ * tested the fixture writer rather than the board.
+ *
+ * So the conversion happens here, at the boundary, once. Every test below is
+ * unchanged, and as a side effect they now all exercise the real merge rather
+ * than mocking past it. */
+type ScreenBoard = ReturnType<typeof screenBoard>;
+type OrderFixture = ReturnType<typeof order>;
+
+function toWire(b: ScreenBoard) {
+    const orders: Record<string, OrderFixture> = {};
+    /* Stops first, then anything only currentStop referenced. The fixtures
+       sometimes build currentStop from a thinner copy of the same order, and
+       the server would only ever send one card per id: the richer one the
+       stop carries. */
+    for (const lane of b.lanes) for (const st of lane.stops) orders[String(st.order.id)] = st.order;
+    for (const p of b.pool) for (const o of p.orders) orders[String(o.id)] ??= o;
+    for (const lane of b.lanes) {
+        if (lane.currentStop) orders[String(lane.currentStop.order.id)] ??= lane.currentStop.order;
+    }
+    return {
+        ...b,
+        orders,
+        cursor: '2026-09-14T18:02:00.000Z',
+        complete: true,
+        pool: b.pool.map((p) => ({ site: p.site, orderIds: p.orders.map((o) => o.id), overdue: p.overdue })),
+        lanes: b.lanes.map((lane) => {
+            const { currentStop, ...rest } = lane;
+            return {
+                ...rest,
+                stops: lane.stops.map((st) => ({ sequence: st.sequence, orderId: st.order.id })),
+                currentStopOrderId: currentStop ? currentStop.order.id : null,
+            };
+        }),
+    };
+}
+
+const screenBoard = (over = {}) => ({
     serviceDate: '2026-09-14',
     generatedAt: '2026-09-14T18:02:00.000Z',
     timezone: 'America/Chicago',
@@ -67,6 +113,9 @@ const boardData = (over = {}) => ({
     bySite: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, total: 3, open: 1, overdue: 1 }],
     ...over,
 });
+
+/** A board as the server sends it, built from a fixture in screen shape. */
+const boardData = (over = {}) => toWire(screenBoard(over));
 
 const routes = (over = {}) => ({
     'GET /api/session': session,
@@ -290,7 +339,7 @@ describe('Board', () => {
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
                 lanes: [{
-                    ...boardData().lanes[0],
+                    ...screenBoard().lanes[0],
                     courier: courier({ present: false, lastSeenAt: null, minutesSinceSeen: null }),
                 }],
             }),
@@ -380,7 +429,7 @@ describe('Board: what just happened', () => {
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
                 lanes: [{
-                    ...boardData().lanes[0],
+                    ...screenBoard().lanes[0],
                     courier: courier({ position: position({ minutesAgo: 3, fresh: true }) }),
                 }],
             }),
@@ -395,7 +444,7 @@ describe('Board: what just happened', () => {
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
                 lanes: [{
-                    ...boardData().lanes[0],
+                    ...screenBoard().lanes[0],
                     courier: courier({ position: position({ minutesAgo: 47, fresh: false }) }),
                 }],
             }),

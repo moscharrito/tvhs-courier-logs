@@ -73,6 +73,9 @@ const BOARD_COLUMNS = [
     'o.address_line', 'o.address_line2', 'o.city', 'o.zip', 'o.zone', 'o.status',
     'o.due_at', 'o.arrived_at', 'o.delivered_at', 'o.assigned_to_username',
     'o.signature_required',
+    /* Not shown on a card. It decides whether the card is sent at all: see
+       the delta note below. Maintained by a trigger, migration 0047. */
+    'o.updated_at',
 ].join(', ');
 
 interface OrderRow {
@@ -80,8 +83,39 @@ interface OrderRow {
     recipient_name: string; address_line: string; address_line2: string; city: string; zip: string;
     zone: number | null; status: string; due_at: string | null;
     arrived_at: string | null; delivered_at: string | null; assigned_to_username: string | null;
-    signature_required: number; delivery_notes: string;
+    signature_required: number; delivery_notes: string; updated_at: string | null;
 }
+
+/* ───────────────────────────────────────────────────────────── the delta
+ *
+ * A poll used to send the whole board: 361 KB, of which 340 KB was seven
+ * hundred and fifty cards that had almost all been sent fifteen seconds
+ * earlier unchanged.
+ *
+ * So the cards now travel in their own map, keyed by id, and `pool` and
+ * `lanes` reference them by id. Given `?since=`, the map holds only the cards
+ * that have moved since then, and the client keeps the rest from the last
+ * poll.
+ *
+ * WHAT IS NEVER A DELTA: the membership and the counts. Every poll carries
+ * the full set of ids in the pool and on every lane, and a summary taken over
+ * every row of the day. That is deliberate and it is what makes this safe to
+ * put in front of a dispatcher: the worst a cursor bug can do is leave a card
+ * showing stale detail, never hide a delivery or miscount the day. And the
+ * client can tell: an id it has no card for is a hole it can see, so it
+ * refetches in full rather than rendering a gap.
+ *
+ * WHAT THIS DOES NOT FIX: the server still reads the same rows out of Turso
+ * to compute the counts and the lane totals. This is bytes on the wire, not
+ * load on the database. Said plainly because the obvious next assumption is
+ * that it fixed both, and it did not.
+ */
+
+/** The shape a cursor must have: exactly what toISOString gives, which is
+ *  what the trigger writes. Anything else is treated as no cursor at all
+ *  rather than guessed at, because a half-understood cursor silently
+ *  under-sends and that is the failure that looks like success. */
+const CURSOR = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const presentOrder = (o: OrderRow) => ({
     id: Number(o.id),
@@ -119,6 +153,10 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             ? q['serviceDate']
             : todayIn(project.timezone);
 
+        /* The caller's cursor, or nothing. Nothing means send every card,
+           which is what a first load and a filter change both want. */
+        const since = q['since'] && CURSOR.test(q['since']) ? q['since'] : null;
+
         /* Filters narrow what a dispatcher looks at. They apply to the orders
          * on both sides of the board, so the counts stay consistent with what
          * is on screen. */
@@ -147,10 +185,31 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * expression is how the header starts disagreeing with the cards
          * under it. One implementation, fed cheaply. */
         const forCounts = await client.execute({
-            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at, o.site_id FROM orders o
+            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at, o.site_id, o.updated_at FROM orders o
                   WHERE o.project_id = ? AND o.service_date = ?${filterSql}`,
             args: [project.id, serviceDate, ...filterArgs],
         });
+
+        /* The cursor handed back, taken over EVERY row of the day rather than
+           over the cards that fitted under the cap. Taking it from the loaded
+           cards would advance it past a change in a settled order the cap
+           dropped, and that change would then never be sent.
+           
+           Read out of the count rows rather than asked for separately. A
+           `SELECT MAX(updated_at)` was the obvious way and it is a second
+           walk of the day: the index is (project_id, updated_at), so it
+           cannot seek on service_date, and measuring it put a poll up from
+           213 ms to 640 ms. These rows are already here.
+
+           The next poll asks for `updated_at >= cursor`, not `>`, so the row
+           that set the mark comes back once more. One redundant card beats a
+           dropped one, and a change landing after this read carries a later
+           stamp and is caught next time. */
+        let cursor: string | null = null;
+        for (const r of forCounts.rows) {
+            const at = r['updated_at'] === null ? null : String(r['updated_at']);
+            if (at !== null && (cursor === null || at > cursor)) cursor = at;
+        }
 
         const limit = Math.min(BOARD_MAX, Math.max(1, Number(q['limit'] ?? BOARD_DEFAULT) || BOARD_DEFAULT));
 
@@ -170,8 +229,13 @@ export function createBoardRouter({ client }: { client: Client }): Router {
 
         const found = orders.rows as unknown as OrderRow[];
         const truncated = found.length > limit;
-        const all = (truncated ? found.slice(0, limit) : found).map(presentOrder);
+        const kept = truncated ? found.slice(0, limit) : found;
+        const all = kept.map(presentOrder);
         const byId = new Map(all.map((o) => [o.id, o]));
+        /* id -> when it last changed, for deciding what to send. Kept beside
+           the cards rather than on them: a dispatcher's screen has no use for
+           it and it would be seven hundred and fifty more strings. */
+        const stampById = new Map(kept.map((o) => [Number(o.id), o.updated_at ?? '']));
 
         const sites = await client.execute({
             sql: 'SELECT id, code, name FROM sites WHERE project_id = ? ORDER BY name',
@@ -345,9 +409,11 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                     ...(courierByUsername.get(username) ?? { username, name: username, lastSeenAt: null, minutesSinceSeen: null, present: false }),
                     position: positionByUsername.get(username) ?? null,
                 },
-                stops: laneStops,
+                /* By id. The card itself is in `orders`, once, however many
+                   lanes and pools would otherwise have embedded a copy. */
+                stops: laneStops.map((st) => ({ sequence: st.sequence, orderId: st.order.id })),
                 /** The next stop that still needs doing, which is where the courier is working. */
-                currentStop: remaining[0] ?? null,
+                currentStopOrderId: remaining[0]?.order.id ?? null,
                 counts: {
                     total: laneStops.length,
                     remaining: remaining.length,
@@ -369,7 +435,10 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         const pool = [...poolBySite.entries()]
             .map(([siteId, list]) => ({
                 site: siteById.get(siteId) ?? { id: siteId, code: '', name: `Site ${siteId}` },
-                orders: list,
+                /* Ids, in the order they were going to be rendered in. The
+                   order matters and the client cannot recover it from a map,
+                   so it travels here. */
+                orderIds: list.map((o) => o.id),
                 overdue: list.filter((o) => o.sla.state === 'overdue').length,
             }))
             .sort((a, b) => a.site.name.localeCompare(b.site.name));
@@ -427,9 +496,34 @@ export function createBoardRouter({ client }: { client: Client }): Router {
 
         const withPositions = couriers.map((c) => ({ ...c, position: positionByUsername.get(c.username) ?? null }));
 
+        /* ──────────────────────────────────────────────── what to send
+         *
+         * Only the cards somebody on this board references, and of those only
+         * the ones that have moved. A card loaded for the counts but sitting
+         * in neither the pool nor a lane was never sent before this change
+         * either; what is new is that an unchanged one is not sent twice.
+         *
+         * `since` being absent sends everything, which is what a first load
+         * and a filter change both need. */
+        const shown = new Set<number>();
+        for (const p of pool) for (const id of p.orderIds) shown.add(id);
+        for (const l of lanes) for (const st of l.stops) shown.add(st.orderId);
+
+        const cards: Record<string, unknown> = {};
+        let omitted = 0;
+        for (const id of shown) {
+            const card = byId.get(id);
+            if (card === undefined) continue;
+            /* >= and not >, matching the query above: the row that set the
+               last cursor is resent once rather than risked. */
+            if (since !== null && (stampById.get(id) ?? '') < since) { omitted += 1; continue; }
+            cards[String(id)] = card;
+        }
+
         // Counts and ids only; the board is full of patient addresses.
         await req.audit('board.read', 'board', serviceDate, {
             orders: all.length, lanes: lanes.length, unassigned: poolOrders.length,
+            sent: Object.keys(cards).length, omitted,
         });
 
         res.json({
@@ -437,6 +531,17 @@ export function createBoardRouter({ client }: { client: Client }): Router {
             generatedAt: new Date().toISOString(),
             timezone: project.timezone,
             summary,
+            /** The cards, by id. Pass `cursor` back as `?since=` and the next
+             *  poll carries only the ones that moved. */
+            orders: cards,
+            /** Hand this back as `?since=`. Null when the day has no orders. */
+            cursor,
+            /** True when `orders` holds every card this board references, so
+             *  a client with nothing cached can render from this alone. A
+             *  client that asked with `since` and finds an id it has no card
+             *  for should refetch without one; that is a hole it can see
+             *  rather than a gap it would draw. */
+            complete: since === null,
             /* Said out loud rather than inferred from a round number of cards.
                When this is true the counts above are still the whole day; it
                is the cards below that are a subset, settled work dropped

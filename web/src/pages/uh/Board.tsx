@@ -28,8 +28,15 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
 import { Requests } from './Requests';
+import { mergeBoard, type BoardView, type BoardWire } from '../../lib/board';
 
 const POLL_MS = 15_000;
+
+/* How often a poll asks for the whole board rather than a delta. Ten polls is
+ * two and a half minutes. The membership arrives complete every time, so this
+ * is not what keeps the board correct; it is what makes a mistake in the
+ * cursor logic self-correcting rather than permanent. */
+const FULL_EVERY = 10;
 
 interface BoardOrder {
     id: number; siteId: number; externalRef: string; serviceType: string;
@@ -59,27 +66,26 @@ interface Activity {
 interface Lane {
     run: { id: number; courierUsername: string; serviceDate: string; label: string; status: string; startedAt: string | null };
     courier: Courier;
+    /** Put back by lib/board.ts from the ids the server sent. */
     stops: Array<{ sequence: number; order: BoardOrder }>;
     currentStop: { sequence: number; order: BoardOrder } | null;
     counts: { total: number; remaining: number; done: number; overdue: number };
 }
 
-interface BoardData {
-    serviceDate: string;
-    generatedAt: string;
-    timezone: string;
+/* The board as this page renders it.
+ *
+ * A poll no longer carries the cards inside the lanes and the pool; they
+ * arrive in a map keyed by id, and with a cursor only the ones that moved
+ * arrive at all. lib/board.ts puts them back, so everything below this line
+ * sees the same shape it always did. The only thing that changed up here is
+ * where the shape is defined. */
+type BoardData = BoardView<BoardOrder, Courier, Activity> & {
     summary: { total: number; unassigned: number; assigned: number; inTransit: number; delivered: number; failed: number; overdue: number; dueSoon: number };
-    /** How many cards arrived against how many orders the day holds. The
-     *  counts above are always the whole day; these are the cards. */
-    carrying: { shown: number; of: number; limit: number; truncated: boolean };
-    /** Every pharmacy with work today, busiest first. */
-    bySite: Array<{ site: { id: number; code: string; name: string }; total: number; open: number; overdue: number }>;
-    pool: Array<{ site: { id: number; code: string; name: string }; orders: BoardOrder[]; overdue: number }>;
-    lanes: Lane[];
     couriers: Courier[];
     idleCouriers: Courier[];
     activity: Activity[];
-}
+    lanes: Lane[];
+};
 
 /** Addendum 1's dry-run codes, in words a dispatcher would use out loud. */
 const REASON_LABEL: Record<string, string> = {
@@ -131,14 +137,44 @@ export function Board() {
     const [stale, setStale] = useState(false);
     const [newRunCourier, setNewRunCourier] = useState('');
     const pollRef = useRef<number | null>(null);
+    /* The cards we already hold, and the cursor that says what we have seen.
+       Refs rather than state: a poll reads and replaces both, and making them
+       state would re-run the effect that polls and restart the interval every
+       fifteen seconds. */
+    const cardsRef = useRef<ReadonlyMap<number, BoardOrder>>(new Map());
+    const cursorRef = useRef<string | null>(null);
+    /* A full load every so often regardless, so that any drift between what
+       we hold and what is really there corrects itself without anybody
+       noticing. The membership arriving whole on every poll means drift
+       should be impossible; this is for the case where it is not. */
+    const pollsRef = useRef(0);
 
     const base = `/api/projects/${code}/uh`;
     const query = params.toString();
 
-    const load = useCallback(async () => {
+    const load = useCallback(async (full = false) => {
         try {
-            setData(await api<BoardData>(`${base}/board${query ? `?${query}` : ''}`));
+            /* Every tenth poll asks for the whole board, which at fifteen
+               seconds is about every two and a half minutes. */
+            const wantsFull = full || cursorRef.current === null || pollsRef.current % FULL_EVERY === 0;
+            const parts = [query, wantsFull ? '' : `since=${encodeURIComponent(cursorRef.current!)}`]
+                .filter(Boolean).join('&');
+            const wire = await api<BoardWire<BoardOrder, Courier, Activity>>(`${base}/board${parts ? `?${parts}` : ''}`);
+
+            const merged = mergeBoard(wire, cardsRef.current);
+            cardsRef.current = merged.cards;
+            cursorRef.current = merged.cursor;
+            pollsRef.current += 1;
+            setData(merged.view as BoardData);
             setStale(false);
+
+            /* A card the membership named and we do not hold. Not a gap to
+               draw: ask again for everything, immediately. See lib/board.ts
+               for why this is better than a placeholder. */
+            if (merged.missing.length > 0 && !wantsFull) {
+                cursorRef.current = null;
+                void load(true);
+            }
         } catch (err) {
             /* Say the board has stopped updating rather than leaving a
                dispatcher reading minute-old numbers as if they were live.
@@ -149,7 +185,16 @@ export function Board() {
         }
     }, [base, query]);
 
-    useEffect(() => { void load(); }, [load]);
+    /* A filter change rebuilds `load`, and the cache behind it belongs to the
+       previous filter: a board scoped to one pharmacy holds none of the cards
+       the unscoped one will reference. Dropping the cursor here makes the
+       next call a full load. */
+    useEffect(() => {
+        cardsRef.current = new Map();
+        cursorRef.current = null;
+        pollsRef.current = 0;
+        void load(true);
+    }, [load]);
 
     useEffect(() => {
         const tick = () => { if (!document.hidden) void load(); };

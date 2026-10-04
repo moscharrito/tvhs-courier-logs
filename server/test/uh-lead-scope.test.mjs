@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
+import { asScreen } from './helpers/board.mjs';
 
 const UH = '/api/projects/uh/uh';
 const PASS = 'lead-pass-77';
@@ -104,7 +105,7 @@ describe('a lead reading the day', () => {
     });
 
     it('gets their own board and not the whole contract', async () => {
-        const res = await lead.get(`${UH}/board`);
+        const res = asScreen(await lead.get(`${UH}/board`));
         expect(res.status).toBe(200);
         const onBoard = res.body.pool.flatMap((p) => p.orders).map((o) => o.id);
         expect(onBoard).not.toContain(theirs.id);
