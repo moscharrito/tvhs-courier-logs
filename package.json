@@ -9,9 +9,11 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm run app:typecheck",
+    "test": "npm run test --workspaces --if-present && npm run app:test",
     "ci": "npm run typecheck && npm run test",
+    "app:typecheck": "cd app && npm run typecheck",
+    "app:test": "cd app && npm run test",
     "audit": "npm audit --omit=dev --audit-level=high",
     "start": "npm start -w server",
     "dev": "npm run dev -w server",

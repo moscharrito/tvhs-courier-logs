@@ -14,5 +14,18 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          # Two lockfiles, because the phone app is deliberately outside the
+          # root workspaces (app/README.md). Without the second path the
+          # cache key ignores app/package-lock.json and a dependency bump
+          # there is served a stale cache.
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
       - run: npm ci
+      # Separate install for the same reason: `npm ci` at the root does not
+      # reach a directory that is not a workspace, so without this the app's
+      # typecheck and tests fail on missing modules rather than on anything
+      # anybody wrote.
+      - run: npm ci
+        working-directory: app
       - run: npm run ci
