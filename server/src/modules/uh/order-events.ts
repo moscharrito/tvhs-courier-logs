@@ -125,7 +125,12 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
     const sets = Object.keys(applied.set);
     if (sets.length > 0) {
         await client.execute({
-            sql: `UPDATE orders SET ${sets.map((c) => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP
+            /* updated_at is NOT set here. A trigger owns it (migration
+               0047), because three other writers to this table used to
+               forget and the board now depends on the column being right.
+               Setting it by hand would also defeat the trigger's guard and
+               put CURRENT_TIMESTAMP's unsortable format back in the row. */
+            sql: `UPDATE orders SET ${sets.map((c) => `${c} = ?`).join(', ')}
                   WHERE project_id = ? AND id = ?`,
             args: [...sets.map((c) => applied.set[c] as InValue), projectId, orderId],
         });

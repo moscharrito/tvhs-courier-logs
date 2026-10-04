@@ -656,9 +656,10 @@ export function createOrdersRouter(
         }
 
         await client.execute({
+            /* updated_at left to the trigger; see migration 0047. */
             sql: `UPDATE orders
                      SET out_of_area_authorised_by = ?, out_of_area_reference = ?,
-                         out_of_area_authorised_at = ?, updated_at = CURRENT_TIMESTAMP
+                         out_of_area_authorised_at = ?
                    WHERE project_id = ? AND id = ?`,
             args: [
                 parsed.data.authorisedBy, parsed.data.reference,
