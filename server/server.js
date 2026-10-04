@@ -113,6 +113,11 @@ async function bootstrapAdmin() {
 // Request id + structured request log (src/core/http/request.ts). First, so
 // every later line and error carries the id.
 app.use(bridge.get('requestMiddleware'));
+// Gzip for res.json (src/core/http/compress.ts). Before the routes and
+// before the body parser, so it wraps every JSON response there is. It does
+// not touch PDFs, photographs or spreadsheet exports; see that file for why
+// it is deliberately narrow.
+app.use(bridge.get('compressionMiddleware'));
 app.use(express.json());
 // The legacy TVHS frontend now lives under /legacy; the platform shell
 // (web/dist, mounted by src/legacy.ts) owns /. The shell loads these files

@@ -26,6 +26,7 @@ import { Logger } from './core/http/logger';
 import { createRequestMiddleware } from './core/http/request';
 import { errorFields } from './core/http/logger';
 import { securityHeadersFor } from './core/http/security';
+import { createCompressionMiddleware } from './core/http/compress';
 import { createAuthThrottles, tooManyAttempts } from './core/auth/throttle';
 import { createRetentionRouter } from './core/retention/routes';
 import { startRetentionSweep } from './core/retention/sweep';
@@ -115,6 +116,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     bridge.set('tooManyAttempts', tooManyAttempts);
     bridge.set('trustProxy', config.trustProxy);
     bridge.set('requestMiddleware', createRequestMiddleware(logger));
+    /* Wraps res.json so the big documents leave compressed. Mounted straight
+       after the request logger and before everything that answers, so that
+       every route is covered by it rather than whichever ones remembered. */
+    bridge.set('compressionMiddleware', createCompressionMiddleware());
     const { middleware, store } = createSessionMiddleware({ client: database.client, config });
     bridge.set('sessionMiddleware', middleware);
     const { middleware: auditMiddleware, log } = createAuditMiddleware({ client: database.client });
