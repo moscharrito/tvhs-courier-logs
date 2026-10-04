@@ -29,6 +29,7 @@
 
 import type { Client, InValue } from '@libsql/client';
 import { resolveSettings, type ProjectSettings } from '../../core/projects/settings';
+import { instantAt } from '../../core/dates';
 import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { dueForNewOrder } from './lifecycle';
 import type { ServiceType } from './import-parse';
@@ -211,11 +212,25 @@ export async function simulateWave(client: Client, options: SimulateOptions): Pr
 
     /* ------------------------------------------------------------ orders */
 
-    // The day's list lands between noon and 2pm (Addendum 1).
-    const listAt = new Date(`${serviceDate}T12:00:00`);
-    const localOffsetMs = listAt.getTime() - Date.parse(`${serviceDate}T12:00:00Z`);
-    const atLocal = (hour: number, minute: number) =>
-        new Date(Date.parse(`${serviceDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`) + localOffsetMs);
+    /* A wall clock in the pharmacy's own city, which is what every hour in
+       this file means. The day's list lands between noon and 2pm (Addendum 1),
+       and an after-hours request arrives at 20:15 San Antonio time whether the
+       simulation is run from Texas or from a build runner in UTC.
+
+       This used to derive the offset from a date-time string with no Z, which
+       Node parses in the HOST machine's zone. Under UTC every 20:15 became
+       15:15 in San Antonio, so a simulated day contained no after-hours
+       deliveries at all: a billing line that exists in the contract and
+       silently never appeared in seeded data, in the load test, or in a demo.
+
+       It was not even right on the machine it was written on, which is
+       America/New_York, an hour ahead of the project. There it produced 19:15,
+       just before the 20:00 boundary, and the test that depended on it passed
+       only because receivedAt adds a random 0 to 120 minutes and some orders
+       drifted over the line. That assertion had already gone flaky once and
+       was answered by raising the sample from 60 orders a day to 150, which
+       bought more luck rather than fixing the clock. */
+    const atLocal = (hour: number, minute: number) => instantAt(serviceDate, hour, minute, timezone);
 
     const orderIds: number[] = [];
     const orderMeta = new Map<number, { siteId: number; serviceType: ServiceType; signatureRequired: boolean; packageId: number; receivedAt: Date; afterHours: boolean }>();
