@@ -174,19 +174,49 @@ export function createBoardRouter({ client }: { client: Client }): Router {
 
         const filterSql = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : '';
 
-        /* THE COUNTS COME FROM EVERY ROW. THE CARDS DO NOT.
+        /* THE COUNTS COVER EVERY ROW. THEY NO LONGER READ EVERY ROW.
          *
-         * Four columns, no patient data, for the whole day however large it
-         * is: the summary has to be exact or a dispatcher cannot trust the
-         * board at all, and it is read fifteen seconds apart.
-         *
-         * Deliberately not an aggregate in SQL. overdue and dueSoon come out
-         * of evaluateSla, and writing those rules a second time in a CASE
+         * This used to pull six columns for the whole day, 1,417 rows and
+         * 209 KB out of Turso, on every poll by every dispatcher, in order to
+         * count them in JavaScript. The comment that stood here said it was
+         * deliberately not an aggregate, because overdue and dueSoon come out
+         * of evaluateSla and writing those rules a second time in a CASE
          * expression is how the header starts disagreeing with the cards
-         * under it. One implementation, fed cheaply. */
-        const forCounts = await client.execute({
-            sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at, o.site_id, o.updated_at FROM orders o
-                  WHERE o.project_id = ? AND o.service_date = ?${filterSql}`,
+         * under it.
+         *
+         * That reasoning was right and it is kept. What was wrong was the
+         * conclusion that the whole day therefore had to be read.
+         *
+         * evaluateSla can only answer 'overdue' or 'due_soon' for an order
+         * that is not cancelled, not delivered, not failed, and has a
+         * deadline. Everything else it calls met, missed or not_applicable.
+         * That is a property of lifecycle.ts, asserted in its own tests, and
+         * it means the two counts that need the rule need only the open rows
+         * that have a due_at. Every other count is arithmetic over statuses,
+         * which is what GROUP BY is for.
+         *
+         * So: one aggregate for the shape of the day, and one narrow read of
+         * the rows where a deadline can actually have been missed. The rule
+         * still lives once, in evaluateSla, and is still the only thing that
+         * decides overdue. It is just not fed a megabyte to decide it. */
+        const tallies = await client.execute({
+            sql: `SELECT o.site_id, o.status, COUNT(*) AS n, MAX(o.updated_at) AS last_changed
+                    FROM orders o
+                   WHERE o.project_id = ? AND o.service_date = ?${filterSql}
+                   GROUP BY o.site_id, o.status`,
+            args: [project.id, serviceDate, ...filterArgs],
+        });
+
+        /* The rows a deadline can still be missed on. Three columns, and
+           settled work excluded, because evaluateSla cannot call any of it
+           overdue. At nine in the morning this is most of the day and at six
+           in the evening it is almost nothing, which is the right shape: the
+           query gets cheaper exactly as the board gets busier. */
+        const atRisk = await client.execute({
+            sql: `SELECT o.site_id, o.status, o.due_at FROM orders o
+                   WHERE o.project_id = ? AND o.service_date = ?${filterSql}
+                     AND o.status NOT IN ('delivered', 'failed', 'cancelled')
+                     AND o.due_at IS NOT NULL`,
             args: [project.id, serviceDate, ...filterArgs],
         });
 
@@ -194,20 +224,19 @@ export function createBoardRouter({ client }: { client: Client }): Router {
            over the cards that fitted under the cap. Taking it from the loaded
            cards would advance it past a change in a settled order the cap
            dropped, and that change would then never be sent.
-           
-           Read out of the count rows rather than asked for separately. A
-           `SELECT MAX(updated_at)` was the obvious way and it is a second
-           walk of the day: the index is (project_id, updated_at), so it
-           cannot seek on service_date, and measuring it put a poll up from
-           213 ms to 640 ms. These rows are already here.
+
+           MAX(updated_at) per group, so the aggregate carries it and there is
+           no second walk of the day. Asking for it separately was measured at
+           213 ms to 640 ms on a poll, because the index is
+           (project_id, updated_at) and cannot seek on service_date.
 
            The next poll asks for `updated_at >= cursor`, not `>`, so the row
            that set the mark comes back once more. One redundant card beats a
            dropped one, and a change landing after this read carries a later
            stamp and is caught next time. */
         let cursor: string | null = null;
-        for (const r of forCounts.rows) {
-            const at = r['updated_at'] === null ? null : String(r['updated_at']);
+        for (const r of tallies.rows) {
+            const at = r['last_changed'] === null ? null : String(r['last_changed']);
             if (at !== null && (cursor === null || at > cursor)) cursor = at;
         }
 
@@ -447,30 +476,64 @@ export function createBoardRouter({ client }: { client: Client }): Router {
            header is the thing a dispatcher trusts; a count that quietly meant
            "of the first 750" would be worse than no count. */
         const countedAt = new Date();
-        const slaOf = (r: Record<string, unknown>) => evaluateSla({
+
+        /* evaluateSla, unchanged and still the only thing that decides a
+           deadline. Fed the at-risk rows: arrivedAt and deliveredAt are null
+           because a row in this set is by definition not delivered and not
+           failed, and the function only reads them on the closed branch. */
+        const slaStateOf = (r: Record<string, unknown>) => evaluateSla({
             status: String(r['status']) as OrderStatus,
             dueAt: r['due_at'] ? new Date(String(r['due_at'])) : null,
-            arrivedAt: r['arrived_at'] ? new Date(String(r['arrived_at'])) : null,
-            deliveredAt: r['delivered_at'] ? new Date(String(r['delivered_at'])) : null,
-        }, countedAt);
+            arrivedAt: null,
+            deliveredAt: null,
+        }, countedAt).state;
 
-        const everyRow = forCounts.rows as unknown as Array<Record<string, unknown>>;
-        const count = (fn: (r: Record<string, unknown>) => boolean) => everyRow.filter(fn).length;
-        const isStatus = (s: string) => (r: Record<string, unknown>) => String(r['status']) === s;
+        /* The day's shape, from the aggregate. */
+        const perStatus = new Map<string, number>();
+        const perSite = new Map<number, { total: number; open: number; overdue: number }>();
+        let total = 0;
+        for (const r of tallies.rows) {
+            const status = String(r['status']);
+            const siteId = Number(r['site_id']);
+            const n = Number(r['n']);
+            total += n;
+            perStatus.set(status, (perStatus.get(status) ?? 0) + n);
+            const at = perSite.get(siteId) ?? { total: 0, open: 0, overdue: 0 };
+            at.total += n;
+            if ((OPEN_STATUSES as readonly string[]).includes(status)) at.open += n;
+            perSite.set(siteId, at);
+        }
+
+        /* The two counts that need the rule, from the narrow read. */
+        let overdue = 0;
+        let dueSoon = 0;
+        for (const r of atRisk.rows as unknown as Array<Record<string, unknown>>) {
+            const state = slaStateOf(r);
+            if (state === 'overdue') {
+                overdue += 1;
+                const siteId = Number(r['site_id']);
+                const at = perSite.get(siteId) ?? { total: 0, open: 0, overdue: 0 };
+                at.overdue += 1;
+                perSite.set(siteId, at);
+            } else if (state === 'due_soon') {
+                dueSoon += 1;
+            }
+        }
+
         const summary = {
-            total: everyRow.length,
+            total,
             /* The only count still taken from the loaded cards, because
                "unassigned" is a fact about run stops rather than about the
                order row. It is the open, unassigned work, which is the part
                the cap keeps first, so it is exact until the day's open work
                alone exceeds the cap. */
             unassigned: poolOrders.length,
-            assigned: count(isStatus('assigned')),
-            inTransit: count(isStatus('picked_up')),
-            delivered: count(isStatus('delivered')),
-            failed: count(isStatus('failed')),
-            overdue: count((r) => slaOf(r).state === 'overdue'),
-            dueSoon: count((r) => slaOf(r).state === 'due_soon'),
+            assigned: perStatus.get('assigned') ?? 0,
+            inTransit: perStatus.get('picked_up') ?? 0,
+            delivered: perStatus.get('delivered') ?? 0,
+            failed: perStatus.get('failed') ?? 0,
+            overdue,
+            dueSoon,
         };
 
         /* PER PHARMACY, OVER EVERY ROW OF THE DAY.
@@ -478,18 +541,10 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * At University Health's real volume a whole-contract board is 1,417
          * cards on a Tuesday, which is not a screen anybody can work. The
          * answer is to work one counter at a time, and a dispatcher cannot
-         * choose a counter without knowing what is on each. These come from
-         * the same unfiltered count query as the summary, so they are the
-         * day rather than the page. */
-        const bySite = [...everyRow.reduce((map, r) => {
-            const id = Number(r['site_id']);
-            const at = map.get(id) ?? { total: 0, open: 0, overdue: 0 };
-            at.total += 1;
-            if ((OPEN_STATUSES as readonly string[]).includes(String(r['status']))) at.open += 1;
-            if (slaOf(r).state === 'overdue') at.overdue += 1;
-            map.set(id, at);
-            return map;
-        }, new Map())].map(([id, at]) => ({
+         * choose a counter without knowing what is on each. Built from the
+         * same two reads as the summary, so they are the day rather than the
+         * page and cannot disagree with the header above them. */
+        const bySite = [...perSite.entries()].map(([id, at]) => ({
             site: siteById.get(id) ?? { id, code: '', name: `Site ${id}` },
             ...at,
         })).sort((a, b) => b.total - a.total);

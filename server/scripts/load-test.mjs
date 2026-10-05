@@ -125,12 +125,39 @@ const results = {};
 
 /* The board's own two queries, which run every fifteen seconds per
    dispatcher. These are the ones that decide whether the screen is usable. */
-results.boardCounts = await time(
-    'board: counts over the whole day',
-    `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at, o.site_id FROM orders o
-      WHERE o.project_id = ? AND o.service_date = ?`,
+/* These two replaced a single read of every row of the day, which is what
+   this script used to time here. Keeping the old query would have reported a
+   cost the board no longer pays, the same way the payload figures in this
+   file were database rows being read as a response size. If board.ts changes
+   again, change these with it. */
+results.boardTallies = await time(
+    'board: counts, as a GROUP BY',
+    `SELECT o.site_id, o.status, COUNT(*) AS n, MAX(o.updated_at) AS last_changed
+       FROM orders o
+      WHERE o.project_id = ? AND o.service_date = ?
+      GROUP BY o.site_id, o.status`,
     [projectId, serviceDate],
 );
+results.boardAtRisk = await time(
+    'board: the rows a deadline can be missed on',
+    `SELECT o.site_id, o.status, o.due_at FROM orders o
+      WHERE o.project_id = ? AND o.service_date = ?
+        AND o.status NOT IN ('delivered', 'failed', 'cancelled')
+        AND o.due_at IS NOT NULL`,
+    [projectId, serviceDate],
+);
+/* THE WORST CASE FOR THAT QUERY, measured rather than reasoned about.
+   simulateWave delivers the whole day, so the read above finds nothing and
+   reports 0 rows, which would be a flattering figure to quote. At nine in the
+   morning every order is open and the set is the whole day. Same query with
+   the status exclusion dropped, which is that upper bound. */
+results.boardAtRiskWorst = await time(
+    '  same, on a day where nothing is settled yet',
+    `SELECT o.site_id, o.status, o.due_at FROM orders o
+      WHERE o.project_id = ? AND o.service_date = ? AND o.due_at IS NOT NULL`,
+    [projectId, serviceDate],
+);
+
 results.boardCards = await time(
     'board: 750 cards, settled work last',
     `SELECT o.id, o.site_id, o.external_ref, o.service_type, o.recipient_name,
@@ -197,11 +224,19 @@ say(`  Heaviest  ${heaviest[0]} at ${kb(heaviest[1].bytes)}`);
 /* A board polled every fifteen seconds by several dispatchers is the thing
  * most likely to hurt, so it gets its own arithmetic rather than leaving
  * somebody to do it. */
-const perPoll = results.boardCounts.bytes + results.boardCards.bytes;
+const perPoll = results.boardTallies.bytes + results.boardAtRisk.bytes + results.boardCards.bytes;
 const dispatchers = 4;
 say('');
-say(`  A board poll carries ${kb(perPoll)}. At 15 seconds and ${dispatchers} dispatchers`);
+/* READ FROM THE DATABASE, not sent to a browser. The response is measured by
+   scripts/board-payload.mjs, which asks the server rather than guessing from
+   row sizes; conflating the two is how a 512 KB figure for the payload got
+   quoted for a document that turned out to be 361 KB and is now 6 KB on the
+   wire. This number is Turso traffic and Turso rows. */
+say(`  A board poll READS ${kb(perPoll)} from the database. At 15 seconds and ${dispatchers} dispatchers`);
 say(`  that is ${((perPoll * dispatchers * 4) / 1024 / 1024).toFixed(1)} MB a minute, ${((perPoll * dispatchers * 4 * 60 * 10) / 1024 / 1024 / 1024).toFixed(1)} GB over a ten hour day.`);
+const worstPoll = results.boardTallies.bytes + results.boardAtRiskWorst.bytes + results.boardCards.bytes;
+say(`  On a morning, before anything is settled: ${kb(worstPoll)} a poll,`);
+say(`  ${((worstPoll * dispatchers * 4 * 60 * 10) / 1024 / 1024 / 1024).toFixed(1)} GB over the day. That is the number to plan against.`);
 
 if (!has('keep')) {
     say('');
