@@ -246,25 +246,80 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * part of the day that is already finished. A delivered order on a
          * dispatch board is history; an unassigned one at 4pm is the job.
          * Within each group the existing order is kept, with the deadline key
-         * normalised so the nulls sort last rather than comparing as NULL. */
-        const orders = await client.execute({
-            sql: `SELECT ${BOARD_COLUMNS} FROM orders o
+         * normalised so the nulls sort last rather than comparing as NULL.
+         *
+         * ─────────────────────────────────────────────────────────────────
+         * TWO QUESTIONS, AND ONLY ONE OF THEM IS ABOUT PATIENTS.
+         *
+         * The board needs to know WHICH orders are where: what is in the pool
+         * at each counter, what is on each lane and in what order, and how
+         * each stands against its deadline. Four columns answer all of that.
+         *
+         * It also needs the CARD: the recipient, the address, the reference,
+         * the signature flag. Seventeen columns, and after the delta it sends
+         * perhaps one of them per poll while reading seven hundred and fifty.
+         *
+         * So on a delta poll those are asked separately: the narrow one over
+         * the whole board, the wide one restricted to what actually moved.
+         * 302 KB becomes about 40.
+         *
+         * ON A FULL LOAD IT STAYS ONE QUERY. Splitting it there would read
+         * the day twice to send it once, and a first load has to send every
+         * card anyway. `since` is what decides, which means the expensive
+         * shape is the rare one. */
+        /* Four columns, and updated_at is deliberately NOT one of them. It
+           was, until the card read started asking for `updated_at >= since`
+           itself: anything the card query returned has moved and anything it
+           did not has not, so carrying the stamp on every slot was 751 ISO
+           strings, 18 KB a poll, to re-derive something already known. */
+        const SLOT_COLUMNS = 'o.id, o.site_id, o.status, o.due_at';
+        const ordering = `ORDER BY CASE WHEN o.status IN ('delivered','failed','cancelled') THEN 1 ELSE 0 END,
+                                   COALESCE(o.due_at, '~'), o.id
+                          LIMIT ${limit + 1}`;
+
+        const slotRows = await client.execute({
+            sql: `SELECT ${since === null ? BOARD_COLUMNS : SLOT_COLUMNS} FROM orders o
                   WHERE o.project_id = ? AND o.service_date = ?${filterSql}
-                  ORDER BY CASE WHEN o.status IN ('delivered','failed','cancelled') THEN 1 ELSE 0 END,
-                           COALESCE(o.due_at, '~'), o.id
-                  LIMIT ${limit + 1}`,
+                  ${ordering}`,
             args: [project.id, serviceDate, ...filterArgs],
         });
 
-        const found = orders.rows as unknown as OrderRow[];
+        const found = slotRows.rows as unknown as OrderRow[];
         const truncated = found.length > limit;
         const kept = truncated ? found.slice(0, limit) : found;
-        const all = kept.map(presentOrder);
-        const byId = new Map(all.map((o) => [o.id, o]));
-        /* id -> when it last changed, for deciding what to send. Kept beside
-           the cards rather than on them: a dispatcher's screen has no use for
-           it and it would be seven hundred and fifty more strings. */
-        const stampById = new Map(kept.map((o) => [Number(o.id), o.updated_at ?? '']));
+
+        /* What the board reasons with: where each order is and how it stands.
+           evaluateSla is fed status and dueAt only, which is all it reads for
+           anything that is not closed; a closed order's state is 'met' or
+           'missed' and the board asks neither of those of a slot. */
+        const slotSla = (status: string, dueAt: string | null) => evaluateSla({
+            status: status as OrderStatus,
+            dueAt: dueAt ? new Date(dueAt) : null,
+            arrivedAt: null,
+            deliveredAt: null,
+        });
+        const slots = kept.map((o) => ({
+            id: Number(o.id),
+            siteId: Number(o.site_id),
+            status: String(o.status),
+            sla: slotSla(String(o.status), o.due_at),
+        }));
+        const slotById = new Map(slots.map((sl) => [sl.id, sl]));
+
+        /* The cards themselves. On a full load they are already in hand; on a
+           delta only the ones that moved are fetched, and `>=` matches the
+           cursor the response hands back. */
+        const cardRows = since === null
+            ? kept
+            : (await client.execute({
+                sql: `SELECT ${BOARD_COLUMNS} FROM orders o
+                      WHERE o.project_id = ? AND o.service_date = ?${filterSql}
+                        AND o.updated_at >= ?
+                      ${ordering}`,
+                args: [project.id, serviceDate, ...filterArgs, since],
+            })).rows as unknown as OrderRow[];
+
+        const byId = new Map(cardRows.map((o) => [Number(o.id), presentOrder(o)]));
 
         const sites = await client.execute({
             sql: 'SELECT id, code, name FROM sites WHERE project_id = ? ORDER BY name',
@@ -419,11 +474,14 @@ export function createBoardRouter({ client }: { client: Client }): Router {
 
         const lanes = runs.rows.map((r) => {
             const runId = Number(r['id']);
+            /* Over slots, not cards. A lane needs where each stop stands,
+               not who lives there, and the card may legitimately not have
+               been fetched on a delta poll. */
             const laneStops = (stopsByRun.get(runId) ?? [])
-                .map((s) => ({ sequence: s.sequence, order: byId.get(s.orderId) ?? null }))
-                .filter((s): s is { sequence: number; order: NonNullable<ReturnType<typeof presentOrder>> } => s.order !== null);
+                .map((s) => ({ sequence: s.sequence, slot: slotById.get(s.orderId) ?? null }))
+                .filter((s): s is { sequence: number; slot: NonNullable<ReturnType<typeof slotById.get>> } => s.slot !== null);
 
-            const remaining = laneStops.filter((s) => (OPEN_STATUSES as readonly string[]).includes(s.order.status));
+            const remaining = laneStops.filter((s) => (OPEN_STATUSES as readonly string[]).includes(s.slot.status));
             const username = String(r['courier_username']);
             return {
                 run: {
@@ -440,14 +498,14 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                 },
                 /* By id. The card itself is in `orders`, once, however many
                    lanes and pools would otherwise have embedded a copy. */
-                stops: laneStops.map((st) => ({ sequence: st.sequence, orderId: st.order.id })),
+                stops: laneStops.map((st) => ({ sequence: st.sequence, orderId: st.slot.id })),
                 /** The next stop that still needs doing, which is where the courier is working. */
-                currentStopOrderId: remaining[0]?.order.id ?? null,
+                currentStopOrderId: remaining[0]?.slot.id ?? null,
                 counts: {
                     total: laneStops.length,
                     remaining: remaining.length,
                     done: laneStops.length - remaining.length,
-                    overdue: laneStops.filter((s) => s.order.sla.state === 'overdue').length,
+                    overdue: laneStops.filter((s) => s.slot.sla.state === 'overdue').length,
                 },
             };
         });
@@ -455,7 +513,7 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         /* The pool is what nobody is carrying: not on a run, and not already
          * settled. Grouped by pharmacy because that is how the work arrives
          * and how a dispatcher batches it. */
-        const poolOrders = all.filter((o) => !assignedIds.has(o.id) && (o.status === 'ready' || o.status === 'pending'));
+        const poolOrders = slots.filter((o) => !assignedIds.has(o.id) && (o.status === 'ready' || o.status === 'pending'));
         const poolBySite = new Map<number, typeof poolOrders>();
         for (const o of poolOrders) {
             if (!poolBySite.has(o.siteId)) poolBySite.set(o.siteId, []);
@@ -568,16 +626,17 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         let omitted = 0;
         for (const id of shown) {
             const card = byId.get(id);
-            if (card === undefined) continue;
-            /* >= and not >, matching the query above: the row that set the
-               last cursor is resent once rather than risked. */
-            if (since !== null && (stampById.get(id) ?? '') < since) { omitted += 1; continue; }
+            /* On a delta the card query already asked for `updated_at >=
+               since`, so anything byId holds has moved and anything it does
+               not hold has not. The stamp comparison that used to be here was
+               filtering a list that was already filtered. */
+            if (card === undefined) { omitted += 1; continue; }
             cards[String(id)] = card;
         }
 
         // Counts and ids only; the board is full of patient addresses.
         await req.audit('board.read', 'board', serviceDate, {
-            orders: all.length, lanes: lanes.length, unassigned: poolOrders.length,
+            orders: slots.length, lanes: lanes.length, unassigned: poolOrders.length,
             sent: Object.keys(cards).length, omitted,
         });
 
@@ -601,7 +660,7 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                When this is true the counts above are still the whole day; it
                is the cards below that are a subset, settled work dropped
                first. */
-            carrying: { shown: all.length, of: summary.total, limit, truncated },
+            carrying: { shown: slots.length, of: summary.total, limit, truncated },
             /** Every pharmacy with work today, busiest first, so a dispatcher
              *  can pick a counter rather than scroll a contract. */
             bySite,

@@ -158,6 +158,19 @@ results.boardAtRiskWorst = await time(
     [projectId, serviceDate],
 );
 
+/* What a DELTA poll reads instead of the seven hundred and fifty cards: where
+   each order is and how it stands, four columns, plus the cards for whatever
+   moved. The wide read below is now only a first load and one poll in ten. */
+results.boardSlots = await time(
+    'board: delta poll, the slots it reasons with',
+    `SELECT o.id, o.site_id, o.status, o.due_at FROM orders o
+      WHERE o.project_id = ? AND o.service_date = ?
+      ORDER BY CASE WHEN o.status IN ('delivered','failed','cancelled') THEN 1 ELSE 0 END,
+               COALESCE(o.due_at, '~'), o.id
+      LIMIT 751`,
+    [projectId, serviceDate],
+);
+
 results.boardCards = await time(
     'board: 750 cards, settled work last',
     `SELECT o.id, o.site_id, o.external_ref, o.service_type, o.recipient_name,
@@ -234,6 +247,11 @@ say('');
    wire. This number is Turso traffic and Turso rows. */
 say(`  A board poll READS ${kb(perPoll)} from the database. At 15 seconds and ${dispatchers} dispatchers`);
 say(`  that is ${((perPoll * dispatchers * 4) / 1024 / 1024).toFixed(1)} MB a minute, ${((perPoll * dispatchers * 4 * 60 * 10) / 1024 / 1024 / 1024).toFixed(1)} GB over a ten hour day.`);
+const deltaPoll = results.boardTallies.bytes + results.boardAtRiskWorst.bytes + results.boardSlots.bytes;
+say('');
+say(`  A DELTA poll, which is nine in ten of them, reads ${kb(deltaPoll)}:`);
+say(`  ${((deltaPoll * dispatchers * 4 * 60 * 10) / 1024 / 1024 / 1024).toFixed(2)} GB over the day, worst case, before anything settles.`);
+
 const worstPoll = results.boardTallies.bytes + results.boardAtRiskWorst.bytes + results.boardCards.bytes;
 say(`  On a morning, before anything is settled: ${kb(worstPoll)} a poll,`);
 say(`  ${((worstPoll * dispatchers * 4 * 60 * 10) / 1024 / 1024 / 1024).toFixed(1)} GB over the day. That is the number to plan against.`);
