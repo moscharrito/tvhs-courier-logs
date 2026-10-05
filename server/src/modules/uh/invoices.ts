@@ -35,7 +35,7 @@ import type { Client, InValue } from '@libsql/client';
 import ExcelJS from 'exceljs';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn, dateIn } from '../../core/dates';
-import { priceOrder, type PricedOrderRow } from './order-pricing';
+import { priceOrder, createPricingCache, type PricedOrderRow } from './order-pricing';
 import { buildPdf, Page, PAGE, wrap } from '../../core/pdf/writer';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -129,13 +129,48 @@ export async function buildDraft(
     let filter = '';
     if (period.siteId) { filter = ' AND o.site_id = ?'; args.push(period.siteId); }
 
+    /* Named, not o.*. The orders table has forty-odd columns and pricing a
+       line reads thirteen of them; the rest were marshalled out of Turso for
+       28,200 rows and thrown away. Several are patient data that has no
+       business in an invoicing path at all. */
     const rs = await client.execute({
-        sql: `SELECT o.*, s.name AS site_name FROM orders o JOIN sites s ON s.id = o.site_id
+        sql: `SELECT o.id, o.service_date, o.service_type, o.status, o.zone, o.zip,
+                     o.out_of_area_miles, o.received_at, o.pickup_at, o.delivered_at,
+                     o.external_ref, o.out_of_area_authorised_at, s.name AS site_name
+                FROM orders o JOIN sites s ON s.id = o.site_id
               WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?
                 AND o.status IN ('delivered', 'failed')${filter}
               ORDER BY o.service_date, o.id`,
         args,
     });
+
+    /* ──────────────────────────────────────── one month, not one order
+     *
+     * priceOrder asked the database for the price schedule in effect on each
+     * order's service date, and scheduleOn is two queries. A month of 28,200
+     * orders was 56,400 round trips to learn thirty days of schedules, and
+     * the draft took 81 seconds: past the point where month-end works at all
+     * behind Cloudflare's 100 second limit on an origin.
+     *
+     * The cache is keyed by service date, so a period that spans a price
+     * escalation still bills each day at the schedule in force that day. */
+    const cache = createPricingCache();
+
+    /* And the failed items, counted once for the whole period instead of per
+       dry run. A dry run bills per item (Addendum 1), so every failed order
+       needed its own SUM(quantity); at five percent of a month that is
+       another 1,400 queries in series. */
+    const failed = await client.execute({
+        sql: `SELECT p.order_id, COALESCE(SUM(p.quantity), 0) AS n
+                FROM packages p JOIN orders o ON o.id = p.order_id
+               WHERE p.project_id = ? AND o.service_date >= ? AND o.service_date <= ?
+                 AND p.outcome = 'failed'
+               GROUP BY p.order_id`,
+        args: [project.id, period.from, period.to],
+    });
+    for (const r of failed.rows) {
+        cache.failedItems.set(Number(r['order_id']), Math.max(1, Number(r['n'])));
+    }
 
     const lines: DraftLine[] = [];
     const exceptions: Exception[] = [];
@@ -145,7 +180,7 @@ export async function buildDraft(
             external_ref: string; site_name: string; zip: string;
             out_of_area_authorised_at: string | null;
         };
-        const pricing = await priceOrder(client, order, project);
+        const pricing = await priceOrder(client, order, project, cache);
         const reference = String(order.external_ref ?? '');
         if (!pricing.available) {
             exceptions.push({

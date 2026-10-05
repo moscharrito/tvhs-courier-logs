@@ -62,10 +62,50 @@ export type OrderPricing =
         provisional: boolean;
     });
 
+/* ─────────────────────────────────────────────── pricing a lot of orders
+ *
+ * priceOrder is written for one order and is right for one order. Pricing a
+ * month is the same call 28,200 times, and each one asked the database for
+ * the price schedule in effect on that order's service date: scheduleOn is
+ * two queries, so a month was 56,400 round trips to fetch thirty days of
+ * schedules. Measured at 81 seconds for a month, which is the whole of why
+ * month-end was about to fail behind Cloudflare's 100 second limit.
+ *
+ * So a caller pricing many orders can bring a cache. Nothing else changes:
+ * without one, every call behaves exactly as before.
+ *
+ * KEYED BY SERVICE DATE, NOT BY PROJECT. A price schedule is effective-dated,
+ * so a period spanning an escalation has two of them, and a cache keyed any
+ * more coarsely than the date would bill part of the month at the wrong
+ * rates. That is the kind of error nobody spots until a dispute.
+ */
+export interface PricingCache {
+    /** Service date -> the schedule in effect, including "none". */
+    readonly schedules: Map<string, Awaited<ReturnType<typeof scheduleOn>>>;
+    /** Order id -> failed items, for callers that counted them in one go. */
+    readonly failedItems: Map<number, number>;
+}
+
+export const createPricingCache = (): PricingCache => ({
+    schedules: new Map(),
+    failedItems: new Map(),
+});
+
 export async function priceOrder(
     client: Client, order: PricedOrderRow, project: PricedProject,
+    cache?: PricingCache,
 ): Promise<OrderPricing> {
-    const schedule = await scheduleOn(client, project.id, order.service_date);
+    let schedule;
+    if (cache && cache.schedules.has(order.service_date)) {
+        schedule = cache.schedules.get(order.service_date);
+    } else {
+        schedule = await scheduleOn(client, project.id, order.service_date);
+        /* Cached even when it is null. "No schedule on this date" is an answer
+           worth not asking for twice, and a month with no schedule would
+           otherwise make the same two queries 28,200 times to be told the
+           same thing. */
+        cache?.schedules.set(order.service_date, schedule);
+    }
     if (!schedule) return { available: false, reason: `No price schedule is in effect on ${order.service_date}.` };
 
     const settings = pricingSettingsFrom(project.settings, project.timezone);
@@ -76,12 +116,17 @@ export async function priceOrder(
     const dryRun = order.status === 'failed';
     let items = 1;
     if (dryRun) {
-        const rs = await client.execute({
-            sql: `SELECT COALESCE(SUM(quantity), 0) AS n FROM packages
-                  WHERE project_id = ? AND order_id = ? AND outcome = 'failed'`,
-            args: [project.id, Number(order.id)],
-        });
-        items = Math.max(1, Number(rs.rows[0]?.['n'] ?? 0));
+        const known = cache?.failedItems.get(Number(order.id));
+        if (known !== undefined) {
+            items = known;
+        } else {
+            const rs = await client.execute({
+                sql: `SELECT COALESCE(SUM(quantity), 0) AS n FROM packages
+                      WHERE project_id = ? AND order_id = ? AND outcome = 'failed'`,
+                args: [project.id, Number(order.id)],
+            });
+            items = Math.max(1, Number(rs.rows[0]?.['n'] ?? 0));
+        }
     }
 
     const breakdown = priceFor({
