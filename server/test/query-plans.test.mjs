@@ -115,20 +115,114 @@ describe('the other queries a wave leans on', () => {
         expect(plan.join(' | ')).toMatch(/runs_courier_date_idx|runs_project_date_idx/);
     });
 
-    it('reads one order\'s custody events through an index', async () => {
-        const plan = await planFor('SELECT id FROM custody_events WHERE order_id = ?', [1]);
+    /* THIS TEST USED TO ASK THE WRONG QUESTION.
+     *
+     * It planned `WHERE order_id = ?` and passed, while the order detail page
+     * issues `WHERE project_id = ? AND order_id = ?` and chose a different
+     * index entirely. A plan test for a query shape the application never
+     * sends is worse than no plan test: it reports safety it has not checked.
+     * Measured on a month of volume, 84 ms against 0.5 ms.
+     *
+     * The real shape has two candidate indexes, and which one it picks
+     * depends on statistics, so that dependency is what is asserted. */
+    const CUSTODY_READ = `SELECT id, package_id, type, at, actor, from_status, to_status,
+                                 signed_name, signature_key, reason, lat, lng
+                            FROM custody_events
+                           WHERE project_id = ? AND order_id = ? ORDER BY id`;
+
+    it('reads one order\'s custody events through the order index, once analysed', async () => {
+        /* ANALYZE outright rather than through optimize(), which declines to
+           gather statistics for a table this small and is right to. */
+        await client.execute('ANALYZE custody_events');
+        const plan = await planFor(CUSTODY_READ, [2, 1]);
         expect(plan.join(' | ')).toMatch(/custody_events_order_idx/);
+        expect(plan.join(' | ')).not.toMatch(/custody_events_project_at_idx/);
     });
 });
 
 describe('optimize', () => {
     it('is safe to call twice, and safe when it can do nothing', async () => {
-        await expect(optimize(client)).resolves.toBeUndefined();
-        await expect(optimize(client)).resolves.toBeUndefined();
+        const first = await optimize(client);
+        expect(first.pragma).toBe(true);
+        const second = await optimize(client);
+        expect(second.pragma).toBe(true);
     });
 
     it('never throws, because a bad plan is better than no server', async () => {
         const broken = { execute: async () => { throw new Error('no such pragma'); } };
-        await expect(optimize(broken)).resolves.toBeUndefined();
+        const report = await optimize(broken);
+        expect(report.pragma).toBe(false);
+        expect(report.error).toMatch(/no such pragma/);
+    });
+
+    it('says the pragma was refused rather than failing silently', async () => {
+        /* The whole reason this returns a report. A database that will not
+           optimise used to look exactly like one that had, and the symptom
+           would have arrived months later as "the app got slow". */
+        const refusing = {
+            execute: async (q) => {
+                const sql = typeof q === 'string' ? q : q.sql;
+                if (sql.includes('PRAGMA optimize')) throw new Error('not supported');
+                return { rows: [] };
+            },
+        };
+        const report = await optimize(refusing);
+        expect(report.pragma).toBe(false);
+        expect(report.error).toBe('not supported');
+    });
+
+    it('leaves a small table alone, matching SQLite\'s own judgement', async () => {
+        const report = await optimize(client);
+        /* The test database holds a handful of rows. Gathering statistics for
+           it would be work for nothing, and claiming it had done so would
+           make this suite disagree with production. */
+        expect(report.analysed).toEqual([]);
+        expect(report.missing).toEqual([]);
+    });
+
+    it('leaves a table big enough to need statistics holding some', async () => {
+        /* The OUTCOME, not the mechanism. Either the pragma noticed the
+           growth or the explicit ANALYZE caught it; a test that insisted on
+           one would fail the day SQLite got better at the other. What must
+           never happen is a table this size with no statistics, because that
+           is the 84 ms custody read. */
+        await client.execute(`INSERT INTO packages (project_id, order_id, description, quantity, outcome)
+            WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 6000)
+            SELECT 2, 1, 'bulk', 1, 'pending' FROM seq`);
+
+        const report = await optimize(client);
+        expect(report.missing).toEqual([]);
+
+        const stat = await client.execute('SELECT 1 FROM sqlite_stat1 WHERE tbl = \'packages\' LIMIT 1');
+        expect(stat.rows.length).toBe(1);
+    });
+
+    it('analyses it itself when the pragma will not, which is the case that bites', async () => {
+        /* PRAGMA optimize declines tables it judges too small, and on
+           1 November these go from almost nothing to a month of a contract
+           between one daily run and the next. A fake that refuses the pragma
+           and allows everything else isolates that path. */
+        const ran = [];
+        const fake = {
+            execute: async (q) => {
+                const sql = typeof q === 'string' ? q : q.sql;
+                ran.push(sql.trim().split('\n')[0].trim());
+                if (sql.includes('PRAGMA optimize')) throw new Error('declined');
+                if (sql.includes('FROM sqlite_stat1')) {
+                    /* No statistics until an ANALYZE has been seen for it. */
+                    const table = (typeof q === 'string' ? [] : q.args)[0];
+                    return { rows: ran.some((r) => r === `ANALYZE ${table}`) ? [{ 1: 1 }] : [] };
+                }
+                if (sql.includes('COUNT(*)')) return { rows: [{ n: 50_000 }] };
+                return { rows: [] };
+            },
+        };
+
+        const report = await optimize(fake);
+        expect(report.pragma).toBe(false);
+        expect(report.analysed).toContain('custody_events');
+        expect(report.analysed).toContain('run_stops');
+        expect(report.missing).toEqual([]);
+        expect(ran).toContain('ANALYZE custody_events');
     });
 });

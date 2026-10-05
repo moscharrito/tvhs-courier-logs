@@ -221,8 +221,21 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         sms: texter.available ? 'on' : (texter.reason ?? 'off'),
     });
     /* Query planner statistics, refreshed at boot and daily (ticket 4.8).
-     * Without them the pickup manifest walks every stop in the project. */
-    startOptimize(database.client);
+     * Without them the pickup manifest walks every stop in the project, and
+     * the order detail page walks every custody event in it: measured at
+     * 84 ms against 0.5 ms on a month of University Health volume.
+     *
+     * Logged, because PRAGMA optimize is allowed to fail here. A database
+     * that does not expose it leaves the planner guessing forever, and
+     * without this line that looks exactly like a healthy boot. */
+    startOptimize(database.client, (report) => {
+        logger.info('db.statistics', {
+            pragma: report.pragma ? 'ran' : 'refused',
+            ...(report.analysed.length > 0 ? { analysed: report.analysed.join(',') } : {}),
+            ...(report.missing.length > 0 ? { missingStatistics: report.missing.join(',') } : {}),
+            ...(report.error !== undefined ? { error: report.error } : {}),
+        });
+    });
 
     legacy.app.use('/api/projects/:pid/settings', requireProject, createProjectSettingsRouter({ client: database.client }));
     /* Address lookup (ticket 1.4). Wrapped in scopedTo so that the provider

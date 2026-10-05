@@ -140,17 +140,56 @@ try {
     results.sla = await timeGet('SLA report, the whole month', `${UH}/reports/sla?from=${FROM}&to=${TO}`);
     results.ordersPage = await timeGet('orders, first page over the month', `${UH}/orders?from=${FROM}&to=${TO}`);
 
-    /* The thing I wrongly called the problem, timed for the record so that
-       the next person does not have to take my word for it being per-order. */
+    /* ───────────────────────────────────────────── one order's detail page
+     *
+     * Measured at 1,243 ms and then 807 ms on a month-sized database, against
+     * 17 ms on a three-day one. Two runs agreeing rules out a cold cache, and
+     * reading the handler does not explain it: it is six small queries, all
+     * of them indexed. So each one is timed separately here rather than
+     * reasoned about, because the last three times I reasoned about a cost in
+     * this codebase I was wrong.
+     *
+     * The request is repeated, because the first of anything on a database
+     * that has just had 115,000 rows written to it is not the number a member
+     * of staff experiences. */
     console.log('');
-    console.log('  Custody, for the record');
-    const t = Date.now();
+    console.log("  One order's detail page, broken down");
     const oneOrder = Number((await srv.core.client.execute({
         sql: 'SELECT id FROM orders WHERE project_id = ? AND service_date = ? LIMIT 1',
         args: [projectId, FROM],
     })).rows[0].id);
-    const chain = await admin.get(`${UH}/orders/${oneOrder}`);
-    console.log(`    one order's chain of custody              ${chain.status}    ${String(Date.now() - t).padStart(6)} ms`);
+
+    const timeSql = async (label, sql, sqlArgs) => {
+        const t = Date.now();
+        const rs = await srv.core.client.execute({ sql, args: sqlArgs });
+        console.log(`    ${label.padEnd(42)} ${String(Date.now() - t).padStart(6)} ms  ${String(rs.rows.length).padStart(5)} rows`);
+    };
+
+    await timeSql('the order row itself', 'SELECT * FROM orders WHERE project_id = ? AND id = ?', [projectId, oneOrder]);
+    await timeSql('its packages',
+        'SELECT id, description, quantity, signature_required, outcome FROM packages WHERE project_id = ? AND order_id = ? ORDER BY id',
+        [projectId, oneOrder]);
+    await timeSql('its custody events',
+        `SELECT id, package_id, type, at, actor, from_status, to_status, signed_name, signature_key, reason, lat, lng
+           FROM custody_events WHERE project_id = ? AND order_id = ? ORDER BY id`,
+        [projectId, oneOrder]);
+    await timeSql('the price schedule priceOrder asks for',
+        `SELECT * FROM price_schedules WHERE project_id = ? AND effective_from <= ?
+          ORDER BY effective_from DESC LIMIT 1`,
+        [projectId, FROM]);
+    await timeSql('one audit row written per read',
+        'SELECT COUNT(*) AS n FROM audit_events WHERE project_id = ?', [projectId]);
+
+    console.log('');
+    console.log('    the whole request, five times:');
+    for (let i = 0; i < 5; i += 1) {
+        const t = Date.now();
+        const chain = await admin.get(`${UH}/orders/${oneOrder}`);
+        console.log(`      ${i + 1}  ${chain.status}  ${String(Date.now() - t).padStart(6)} ms`
+            + `  ${chain.body.custody?.length ?? 0} custody, ${chain.body.packages?.length ?? 0} packages`);
+    }
+    console.log('');
+    console.log('  Custody over a range, for the record');
     console.log(`    the month's events, were anything to read them in one go:`);
     const t2 = Date.now();
     const all = await srv.core.client.execute({
