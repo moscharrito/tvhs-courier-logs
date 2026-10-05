@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../app/auth';
 import { App } from '../app/App';
@@ -51,5 +51,144 @@ describe('Users', () => {
         renderAt('/users');
         await waitFor(() => expect(screen.getByText('Welcome, Dispatcher')).toBeInTheDocument());
         expect(screen.queryByRole('heading', { name: 'Users' })).not.toBeInTheDocument();
+    });
+});
+
+/* ───────────────────────────────────────────── turning somebody's access off
+ *
+ * Revoking access used to need a shell, an admin password and a PATCH, which
+ * for a platform carrying patient data is the wrong shape. The risk of
+ * putting it on a page is the opposite one: disabling signs out every device
+ * immediately, so a misclick on the wrong row during a wave takes a phone out
+ * of a courier's hand.
+ *
+ * So what is tested is mostly the asking, not the doing.
+ */
+describe('Users: disabling an account', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    /* Anchored on the <code> cell, because a username can also appear in a
+       membership pill and in a role label, and "admin" matches all three. */
+    const rowFor = (username: string) => {
+        const cell = screen.getAllByText(username).find((el) => el.tagName === 'CODE');
+        if (!cell) throw new Error(`no row for ${username}`);
+        return within(cell.closest('tr') as HTMLElement);
+    };
+
+    it('says how many devices will be signed out before asking', async () => {
+        const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'GET /api/users/north.driver/sessions': [{ id: 1 }, { id: 2 }],
+        });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+
+        fireEvent.click(rowFor('north.driver').getByRole('button', { name: 'Disable' }));
+
+        await waitFor(() => expect(confirmed).toHaveBeenCalled());
+        expect(confirmed.mock.calls[0]![0]).toContain('signs out 2 signed-in devices straight away');
+        expect(confirmed.mock.calls[0]![0]).toContain('north.driver');
+    });
+
+    it('does nothing at all when the question is declined', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        const { calls } = mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'GET /api/users/north.driver/sessions': [{ id: 1 }],
+        });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+
+        fireEvent.click(rowFor('north.driver').getByRole('button', { name: 'Disable' }));
+        await waitFor(() => expect(calls).toContain('GET /api/users/north.driver/sessions'));
+        expect(calls).not.toContain('PATCH /api/users/north.driver');
+    });
+
+    it('disables and says how many devices it signed out', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const { calls } = mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'GET /api/users/north.driver/sessions': [{ id: 1 }, { id: 2 }],
+            'PATCH /api/users/north.driver': { ...users[1], status: 'disabled', revokedSessions: 2 },
+        });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+
+        fireEvent.click(rowFor('north.driver').getByRole('button', { name: 'Disable' }));
+
+        expect(await screen.findByRole('status')).toHaveTextContent('Disabled north.driver. 2 devices signed out.');
+        expect(calls).toContain('PATCH /api/users/north.driver');
+    });
+
+    it('says one device in the singular, because a count nobody reads is a count nobody trusts', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'GET /api/users/north.driver/sessions': [{ id: 1 }],
+            'PATCH /api/users/north.driver': { ...users[1], status: 'disabled', revokedSessions: 1 },
+        });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+        fireEvent.click(rowFor('north.driver').getByRole('button', { name: 'Disable' }));
+        expect(await screen.findByRole('status')).toHaveTextContent('1 device signed out.');
+    });
+
+    it('admits when it could not find out, rather than implying none', async () => {
+        /* The dishonest version of this reports "no signed-in devices" when
+           the lookup failed, which is the one answer that would make somebody
+           click through without thinking. */
+        const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'GET /api/users/north.driver/sessions': { status: 500, body: { error: 'nope' } },
+        });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+
+        fireEvent.click(rowFor('north.driver').getByRole('button', { name: 'Disable' }));
+        await waitFor(() => expect(confirmed).toHaveBeenCalled());
+        expect(confirmed.mock.calls[0]![0]).toContain('could not check how many');
+    });
+
+    it('offers to re-enable a disabled account, and does not count devices for it', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const { calls } = mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'PATCH /api/users/old.staff': { ...users[2], status: 'active', revokedSessions: 0 },
+        });
+        renderAt('/users');
+        await screen.findByText('Old Staff');
+
+        fireEvent.click(rowFor('old.staff').getByRole('button', { name: 'Re-enable' }));
+
+        expect(await screen.findByRole('status')).toHaveTextContent('Re-enabled old.staff');
+        /* Nothing to sign out, so nothing is asked about. */
+        expect(calls).not.toContain('GET /api/users/old.staff/sessions');
+    });
+
+    it('does not offer it on your own row', async () => {
+        mockFetch({ 'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+        /* The server refuses it with a 400, and an admin who locks themselves
+           out of the only admin account has nobody left to let them back in. */
+        expect(rowFor('admin').queryByRole('button')).toBeNull();
+        expect(rowFor('admin').getByText('this is you')).toBeInTheDocument();
+    });
+
+    it('surfaces a refusal from the server instead of looking like it worked', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockFetch({
+            'GET /api/session': admin, 'GET /api/me/projects': projects, 'GET /api/users': users,
+            'GET /api/users/north.driver/sessions': [],
+            'PATCH /api/users/north.driver': { status: 400, body: { error: 'You cannot disable or demote your own account' } },
+        });
+        renderAt('/users');
+        await screen.findByText('Bereket Nigusse');
+
+        fireEvent.click(rowFor('north.driver').getByRole('button', { name: 'Disable' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('You cannot disable or demote your own account');
+        expect(screen.queryByRole('status')).toBeNull();
     });
 });
