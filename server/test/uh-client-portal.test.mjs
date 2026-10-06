@@ -37,11 +37,11 @@ beforeAll(async () => {
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
 
     // A pharmacist who may see the Discharge Pharmacy and nothing else.
-    await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'Karthik Pharmacist', password: 'client-pass-1', role: 'staff' });
+    await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'Karthik Pharmacist', password: 'client-pass-1', role: 'staff', mustChangePassword: false });
     await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 
     // And one with no pharmacies named at all.
-    await admin.post('/api/users').send({ username: 'uh.newstarter', name: 'New Starter', password: 'client-pass-2', role: 'staff' });
+    await admin.post('/api/users').send({ username: 'uh.newstarter', name: 'New Starter', password: 'client-pass-2', role: 'staff', mustChangePassword: false });
     await admin.put('/api/users/uh.newstarter/memberships/uh').send({ role: 'pharmacy', settings: {} });
 });
 afterAll(async () => { await srv.stop(); });

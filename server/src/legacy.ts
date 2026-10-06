@@ -45,6 +45,7 @@ import { MIGRATIONS_FOLDER } from './db/migrate';
 import { todayIn } from './core/dates';
 import { createHealthRouter, type StatisticsState } from './core/http/health';
 import { createPrivacyRouter } from './core/http/privacy';
+import { createMustChangeMiddleware } from './core/auth/must-change';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
 import { createProjectSettingsRouter } from './core/projects/settings-routes';
@@ -125,6 +126,11 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     bridge.set('sessionMiddleware', middleware);
     const { middleware: auditMiddleware, log } = createAuditMiddleware({ client: database.client });
     bridge.set('auditMiddleware', auditMiddleware);
+    /* A password somebody else chose does nothing until it is replaced
+       (drizzle/0049). After the session middleware, because it reads the
+       session; before the routes, because refusing on the screen instead of
+       the server would make it a suggestion. */
+    bridge.set('mustChangeMiddleware', createMustChangeMiddleware());
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const legacy = require('../server.js') as LegacyServer;

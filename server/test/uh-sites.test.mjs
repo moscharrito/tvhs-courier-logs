@@ -16,7 +16,7 @@ const sql = (q, args = []) => srv.core.client.execute({ sql: q, args });
 
 /** A member of uh with a given project role, for access-control checks. */
 async function memberWith(role, username) {
-    await admin.post('/api/users').send({ username, name: `Test ${role}`, password: 'member-pass-12', role: 'staff' });
+    await admin.post('/api/users').send({ username, name: `Test ${role}`, password: 'member-pass-12', role: 'staff', mustChangePassword: false });
     await admin.put(`/api/users/${username}/memberships/uh`).send({ role, settings: {} });
     const a = srv.agent();
     const res = await a.post('/api/login').send({ username, password: 'member-pass-12' });

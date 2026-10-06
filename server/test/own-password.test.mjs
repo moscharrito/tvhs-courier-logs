@@ -47,7 +47,7 @@ let seq = 0;
 async function somebody() {
     seq += 1;
     const username = `user.${seq}`;
-    await admin.post('/api/users').send({ username, name: `User ${seq}`, password: FIRST, role: 'staff' });
+    await admin.post('/api/users').send({ username, name: `User ${seq}`, password: FIRST, role: 'staff', mustChangePassword: false });
     return { username, agent: await agentFor(username, FIRST) };
 }
 

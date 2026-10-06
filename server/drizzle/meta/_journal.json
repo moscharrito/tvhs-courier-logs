@@ -344,6 +344,13 @@
       "when": 1789998218935,
       "tag": "0048_demo_project",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1789998219935,
+      "tag": "0049_must_change_password",
+      "breakpoints": true
     }
   ]
 }

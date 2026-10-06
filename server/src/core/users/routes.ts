@@ -31,6 +31,24 @@ interface Deps {
 const TVHS_ROUTES = ['northbound', 'southbound'] as const;
 const BCRYPT_ROUNDS = 10;
 
+/* ─────────────────────────────── whose password is temporary, and whose
+ *
+ * A password an administrator chose is temporary: two people know it, and one
+ * of them is us. The person must replace it before the account does anything.
+ *
+ * A DRIVER IS EXEMPT, and that is a limitation rather than a judgement. The
+ * same API serves the courier app and that app has no screen for changing a
+ * password, so forcing it would refuse every request a courier makes with no
+ * way for them to comply: somebody standing at a pharmacy counter at seven in
+ * the morning, locked out, whose only remedy is telephoning us. Eight leads
+ * and every courier would have met that on the first morning.
+ *
+ * Leads are platform-role drivers too (scripts/create-leads.mjs), so they are
+ * covered by the same exemption for the same reason.
+ *
+ * When the app grows the screen, this function is the one line to change. */
+const mustChangeFor = (role: string): boolean => role !== 'driver';
+
 const usernameSchema = z.string().trim().toLowerCase().min(2).max(120).regex(/^[a-z0-9._@+-]+$/, 'letters, digits, . _ @ + - only');
 const passwordSchema = z.string().min(8).max(200);
 const pinSchema = z.string().regex(/^\d{4,6}$/, 'PIN must be 4 to 6 digits');
@@ -41,6 +59,15 @@ const CreateUser = z.object({
     email: z.string().trim().email().max(200).optional(),
     password: passwordSchema,
     role: z.enum(USER_ROLES).default('staff'),
+    /* Default true, because the usual case is an administrator choosing a
+     * password and telling somebody what it is, and that password should not
+     * outlive the conversation.
+     *
+     * False exists for the accounts where it would be wrong: a fixture
+     * standing in for somebody who settled in long ago, or an account being
+     * created with a credential its owner already chose. It has to be asked
+     * for, so nobody gets the weaker behaviour by not thinking about it. */
+    mustChangePassword: z.boolean().optional(),
 });
 
 const PatchUser = z.object({
@@ -190,8 +217,16 @@ export function createUsersRouter({ client, store }: Deps): Router {
             return;
         }
         await run(
-            'INSERT INTO users (username, password, name, email, role, status) VALUES (?, ?, ?, ?, ?, ?)',
-            [body.username, bcrypt.hashSync(body.password, BCRYPT_ROUNDS), body.name, body.email ?? null, body.role, 'active'],
+            `INSERT INTO users (username, password, name, email, role, status, must_change_password)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                body.username, bcrypt.hashSync(body.password, BCRYPT_ROUNDS), body.name,
+                body.email ?? null, body.role, 'active',
+                /* Somebody else chose this password, so it is temporary,
+                   unless the caller said otherwise. See mustChangeFor for why
+                   a driver is exempt either way. */
+                (body.mustChangePassword ?? true) && mustChangeFor(body.role) ? 1 : 0,
+            ],
         );
         const created = await findUser(body.username);
         await req.audit('user.create', 'user', body.username, { role: body.role, hasEmail: body.email !== undefined });
@@ -244,7 +279,10 @@ export function createUsersRouter({ client, store }: Deps): Router {
         if (!u) return;
         const body = parse(SetPassword, req.body, res);
         if (!body) return;
-        await run('UPDATE users SET password = ? WHERE id = ?', [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(u.id)]);
+        await run(
+            'UPDATE users SET password = ?, must_change_password = ? WHERE id = ?',
+            [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), mustChangeFor(u.role) ? 1 : 0, Number(u.id)],
+        );
         // Every device signs out, including the admin's own if they reset themselves.
         const revoked = await store.revokeAllForUser(Number(u.id));
         await req.audit('user.password_reset', 'user', u.username, { revokedSessions: revoked });
@@ -324,7 +362,12 @@ export function createUsersRouter({ client, store }: Deps): Router {
             return;
         }
 
-        await run('UPDATE users SET password = ? WHERE id = ?', [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(me.id)]);
+        /* And this is the only thing that clears the flag. A password the
+           person chose themselves is not temporary. */
+        await run(
+            'UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?',
+            [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(me.id)],
+        );
         /* Keeping the session doing the changing. Being signed out of the tab
            you are typing in reads as a failure, and people respond to that by
            trying again. A session with no id cannot be excepted, so every

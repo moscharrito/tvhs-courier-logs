@@ -1,0 +1,33 @@
+-- A password somebody else chose is temporary.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHAT THIS CLOSES.
+--
+-- An administrator sets a password and tells the person what it is. Until
+-- they change it, two people know the credential to an account that reaches
+-- patient data, and nothing ever made them change it. Self-service changing
+-- arrived in the commit before this one; this is what makes it happen rather
+-- than merely be possible.
+--
+-- Set when somebody else chose the password: on an admin creating an account,
+-- and on an admin resetting one. Cleared when the person changes it
+-- themselves, which is the only thing that can clear it.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- DRIVERS ARE EXEMPT, AND THAT IS A LIMITATION RATHER THAN A DECISION.
+--
+-- The same API serves the courier app, and that app has no screen for
+-- changing a password. Forcing it on a driver would refuse every request
+-- they make with no way for them to comply: a courier standing at a pharmacy
+-- counter at seven in the morning, locked out of the app, with the only
+-- remedy being a telephone call to us. Eight leads and every courier would
+-- have hit that the first morning.
+--
+-- So enforcement covers the platform roles that use the web, where the form
+-- exists. When the app grows the screen, the exemption comes out and this
+-- comment is the record of why it was ever there.
+--
+-- DEFAULT 0, so every account that already exists is unaffected. Nobody is
+-- locked out by a deploy; the flag only attaches to passwords set after it.
+
+ALTER TABLE `users` ADD COLUMN `must_change_password` integer DEFAULT 0 NOT NULL;

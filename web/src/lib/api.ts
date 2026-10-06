@@ -31,6 +31,10 @@ export interface SessionUser {
     name: string;
     role: 'admin' | 'staff' | 'driver';
     route: string | null;
+    /** True while the password was set by an administrator and not yet
+     *  replaced. The server refuses almost everything until it is; this is
+     *  so the app can say why rather than draw a page of refusals. */
+    mustChangePassword?: boolean;
 }
 
 export interface ProjectMembership {

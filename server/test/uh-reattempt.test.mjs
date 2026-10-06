@@ -23,7 +23,7 @@ beforeAll(async () => {
     await admin.post('/api/users').send({ username: 'ada.courier', name: 'Ada Fitzgerald', password: 'courier-pass-1', role: 'driver' });
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
 
-    await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'A Pharmacist', password: 'client-pass-1', role: 'staff' });
+    await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'A Pharmacist', password: 'client-pass-1', role: 'staff', mustChangePassword: false });
     await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 });
 afterAll(async () => { await srv.stop(); });

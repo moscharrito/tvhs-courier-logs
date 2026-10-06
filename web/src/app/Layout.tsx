@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
 import { initials } from '../lib/initials';
@@ -46,6 +46,18 @@ export function Layout() {
     }, []);
 
     if (!user) return null;
+
+    /* A password an administrator chose has to be replaced before the account
+       does anything, and the server refuses almost every request until it is
+       (core/auth/must-change.ts). Without this the person sees a working
+       application where every page reports an error.
+       
+       Sent to the page carrying the form rather than shown a message, because
+       the only useful next action is on that page. Not a route guard: the
+       refusal is the server's and this is the courtesy on top of it. */
+    if (user.mustChangePassword && pathname !== '/devices') {
+        return <Navigate to="/devices" replace />;
+    }
 
     const onSignOut = async () => {
         await signOut();

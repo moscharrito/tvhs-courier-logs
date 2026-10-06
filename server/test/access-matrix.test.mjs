@@ -93,7 +93,7 @@ beforeAll(async () => {
         ['matrix.projectadmin', 'admin'],
     ];
     for (const [username, role] of people) {
-        const created = await admin.post('/api/users').send({ username, name: username, password: PASS, role: 'staff' });
+        const created = await admin.post('/api/users').send({ username, name: username, password: PASS, role: 'staff', mustChangePassword: false });
         expect(created.status, created.text).toBe(201);
         const member = await admin.put(`/api/users/${username}/memberships/uh`).send({ role, settings: {} });
         expect(member.status, member.text).toBe(200);
@@ -187,6 +187,9 @@ const MATRIX = [
        client's password rotation back through an Izy administrator, which is
        the gap this closed. */
     ['POST', '/api/me/password', SIGNED_IN, 'changing my own password, current one required'],
+    /* Reachable even by an account that must change its password, which is
+       the point: refusing it would be a locked account whose only remedy is
+       telephoning us. See core/auth/must-change.ts for the whole allowlist. */
     /* The one thing an unvetted account may read, and only ever their own:
        the query is keyed on the session's username, so there is no id to
        change. Anybody without an application gets a 404. */
