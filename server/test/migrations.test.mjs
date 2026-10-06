@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications', '0034_onboarding_submissions', '0035_signature_capture_method', '0036_reattempt', '0037_mail_suppressions', '0038_paper_form_and_identifiers', '0039_patient_messages', '0040_patient_message_stages', '0041_remove_business_center', '0042_site_lead_role', '0043_facility_transfers', '0044_dry_run_efforts', '0045_out_of_area_authorisation', '0046_zip_rates', '0047_orders_updated_at'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications', '0034_onboarding_submissions', '0035_signature_capture_method', '0036_reattempt', '0037_mail_suppressions', '0038_paper_form_and_identifiers', '0039_patient_messages', '0040_patient_message_stages', '0041_remove_business_center', '0042_site_lead_role', '0043_facility_transfers', '0044_dry_run_efforts', '0045_out_of_area_authorisation', '0046_zip_rates', '0047_orders_updated_at', '0048_demo_project'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -213,6 +213,17 @@ describe('fresh database', () => {
             expect(projects).toEqual([
                 { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', settings: '{}' },
                 { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', settings: '{}' },
+                /* The app store reviewers' own project (0048). Separate from uh
+                   so that invented work for a reviewer can be dated forward,
+                   which it must be for the app to look alive weeks after
+                   submission, without appearing on a client's live board. */
+                {
+                    id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago',
+                    /* hidden keeps it off the public sign-in picker; the
+                       other two keep the scheduler quiet for a project whose
+                       only recipients are invented. */
+                    settings: '{"hidden":true,"patientSms":{"paused":true},"reporting":{"recipients":[]}}',
+                },
             ]);
         } finally {
             database.client.close();
@@ -227,7 +238,10 @@ describe('fresh database', () => {
             const again = await runMigrations(database);
             expect(again.appliedCount).toBe(MIGRATION_COUNT);
             expect(await migrationRows(database.client)).toBe(MIGRATION_COUNT);
-            expect(await count(database.client, 'projects')).toBe(2);
+            /* tvhs, uh, demo. The point of this assertion is that a second
+               run does not insert them again, which the WHERE NOT EXISTS in
+               each project migration is there to prevent. */
+            expect(await count(database.client, 'projects')).toBe(3);
         } finally {
             database.client.close();
         }

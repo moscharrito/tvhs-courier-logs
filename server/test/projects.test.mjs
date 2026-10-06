@@ -5,10 +5,18 @@ import { startServer } from './helpers/server.mjs';
 const TVHS = '/api/projects/tvhs/tvhs';
 
 let srv;
+/* The id of the project nobody belongs to. Read rather than assumed: this
+   test pinned it at 3 and broke the day a third project shipped, which is
+   exactly the fragility it was using to prove a 403. */
+let otherId;
 beforeAll(async () => {
     srv = await startServer();
-    // A third project nobody belongs to (tvhs and uh are seeded), and a user with no memberships at all.
-    await srv.db.execute("INSERT INTO projects (id, code, name) VALUES (3, 'other', 'Other Contract')");
+    /* A project nobody belongs to, and a user with no memberships at all.
+       The id is not stated: tvhs, uh and demo are seeded by migrations, and
+       pinning this at 3 collided with demo the day 0048 landed. Let SQLite
+       choose, and nothing here has to know how many projects ship. */
+    await srv.db.execute("INSERT INTO projects (code, name) VALUES ('other', 'Other Contract')");
+    otherId = Number((await srv.db.execute("SELECT id FROM projects WHERE code = 'other'")).rows[0].id);
     await srv.db.execute({
         sql: "INSERT INTO users (username, password, name, role, route) VALUES (?, ?, ?, 'driver', NULL)",
         args: ['outsider', bcrypt.hashSync('outsider-pass', 4), 'No Membership'],
@@ -30,6 +38,10 @@ describe('membership bootstrap', () => {
             JOIN users u ON u.id = m.user_id JOIN projects p ON p.id = m.project_id
             ORDER BY u.username`)).rows.map((r) => ({ ...r }));
         expect(rows).toEqual([
+            /* A platform admin administers every project a migration made:
+               tvhs (0001), uh (0005), demo (0048). Drivers are enrolled in
+               tvhs alone, which is the property this test is really about. */
+            { username: 'admin', code: 'demo', role: 'admin' },
             { username: 'admin', code: 'tvhs', role: 'admin' },
             { username: 'admin', code: 'uh', role: 'admin' },
             { username: 'north.driver', code: 'tvhs', role: 'courier' },
@@ -39,7 +51,10 @@ describe('membership bootstrap', () => {
 
     it('GET /api/me/projects lists the caller\'s projects with their role', async () => {
         const admin = await srv.login('admin');
+        /* Sorted by code, so demo leads. An admin is a member of all three
+           seeded projects; the reviewer's demo project is 0048. */
         expect((await admin.get('/api/me/projects')).body).toEqual([
+            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin' },
             { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin' },
             { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' },
         ]);
@@ -56,6 +71,11 @@ describe('sign-in scoping', () => {
     it('GET /api/login/projects is public and lists project names only', async () => {
         const res = await srv.agent().get('/api/login/projects');
         expect(res.status).toBe(200);
+        /* THE DEMO PROJECT IS NOT HERE, AND THAT IS THE POINT.
+           This is the pre-sign-in contract picker, seen by every driver and
+           every member of University Health's staff. The reviewers' project
+           (drizzle/0048) carries "hidden": true in its settings and is
+           filtered out. Everything else is listed. */
         expect(res.body).toEqual([
             { code: 'other', name: 'Other Contract' },
             { code: 'tvhs', name: 'TVHS RMD Courier' },
@@ -63,6 +83,29 @@ describe('sign-in scoping', () => {
         ]);
         // No user or membership data leaks through this endpoint.
         expect(JSON.stringify(res.body)).not.toMatch(/driver|admin|route|id/i);
+    });
+
+    it('hides a project from the picker without hiding it from its members', async () => {
+        /* The property that makes hiding safe. A reviewer signs in and still
+           finds their contract, because the picker inside the app is driven
+           by /api/me/projects, which asks what this person belongs to rather
+           than what exists. Hidden means unlisted, never unreachable. */
+        const anonymous = (await srv.agent().get('/api/login/projects')).body;
+        expect(anonymous.map((p) => p.code)).not.toContain('demo');
+
+        const admin = await srv.login('admin');
+        expect((await admin.get('/api/me/projects')).body.map((p) => p.code)).toContain('demo');
+        expect((await admin.get('/api/projects/demo')).status).toBe(200);
+    });
+
+    it('lists a project whose settings say nothing about hiding', async () => {
+        /* COALESCE over json_extract: the common case is settings of {}, and
+           a null must mean listed rather than hidden. Getting that backwards
+           would empty the sign-in page for everybody. */
+        const codes = (await srv.agent().get('/api/login/projects')).body.map((p) => p.code);
+        expect(codes).toContain('tvhs');
+        expect(codes).toContain('uh');
+        expect(codes).toContain('other');
     });
 
     it('GET /api/drivers/list?project= only returns that project\'s couriers', async () => {
@@ -216,9 +259,10 @@ describe('project resolution and access', () => {
         expect((await admin.get('/api/projects/nope')).status).toBe(404);
         expect((await admin.get('/api/projects/999/tvhs/routes')).status).toBe(404);
 
-        // admin is a member of tvhs and uh, but not of project 3
+        /* admin is a member of every project a migration created, and of no
+           project created any other way. "other" is the latter. */
         expect((await admin.get('/api/projects/other')).status).toBe(403);
-        expect((await admin.get('/api/projects/3/tvhs/admin/logs')).status).toBe(403);
+        expect((await admin.get(`/api/projects/${otherId}/tvhs/admin/logs`)).status).toBe(403);
         expect((await admin.get('/api/projects/uh')).status).toBe(200);
 
         const outsider = await loginAs('outsider', 'outsider-pass');

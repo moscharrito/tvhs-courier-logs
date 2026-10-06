@@ -412,11 +412,30 @@ app.get('/api/drivers/list', async (req, res) => {
     })));
 });
 
-// Public: the projects a person can sign in to, names only. The sign-in page
-// asks which project first, then shows that project's couriers. No membership
-// or user data is exposed here.
+/* Public: the projects a person can sign in to, names only. The sign-in page
+ * asks which project first, then shows that project's couriers. No membership
+ * or user data is exposed here.
+ *
+ * A PROJECT CAN ASK NOT TO BE LISTED, with "hidden": true in its settings.
+ * Added for the app store reviewers' project (drizzle/0048), which otherwise
+ * put "Izy Courier Demo" on the sign-in page in front of every driver and
+ * every member of University Health's staff.
+ *
+ * It hides the project from this list and from nothing else. Members still
+ * reach it: the picker inside the app is driven by /api/me/projects, which
+ * asks what this person belongs to rather than what exists. So a reviewer
+ * signs in and sees their contract; a pharmacist never knows it is there.
+ *
+ * The flag is a top-level key rather than a settings section on purpose:
+ * mergeSettings spreads the stored blob and overwrites only the sections it
+ * knows, so this survives an admin saving unrelated settings. A section would
+ * have to be added to the schema to get the same guarantee. */
 app.get('/api/login/projects', async (req, res) => {
-    res.json(await dbAll('SELECT code, name FROM projects ORDER BY name'));
+    res.json(await dbAll(
+        `SELECT code, name FROM projects
+          WHERE COALESCE(json_extract(settings, '$.hidden'), 0) != 1
+          ORDER BY name`,
+    ));
 });
 
 /* Driver quick login with a PIN, keyed on the route.

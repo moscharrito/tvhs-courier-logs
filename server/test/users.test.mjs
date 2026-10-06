@@ -21,8 +21,12 @@ describe('bootstrap', () => {
         ]);
         const members = (await sql(`SELECT u.username, m.role, m.settings FROM memberships m JOIN users u ON u.id = m.user_id ORDER BY u.username`)).rows.map((r) => ({ ...r }));
         expect(members).toEqual([
+            /* A platform admin is an admin of every project, which each
+               project migration arranges for itself. Three of them now:
+               tvhs (0001), uh (0005) and demo (0048). */
             { username: 'admin', role: 'admin', settings: '{}' },   // tvhs
             { username: 'admin', role: 'admin', settings: '{}' },   // uh
+            { username: 'admin', role: 'admin', settings: '{}' },   // demo
             { username: 'north.driver', role: 'courier', settings: '{"route":"northbound"}' },
             { username: 'south.driver', role: 'courier', settings: '{"route":"southbound"}' },
         ]);
