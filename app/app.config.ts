@@ -10,13 +10,27 @@
  * review.
  */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 /* By its real extension, and it must stay that way. Expo transpiles THIS
    file with sucrase and then lets plain Node require whatever it imports, so
    an extensionless import of a .ts file throws at startup. */
 import { resolveApiUrl } from './src/lib/apiUrl.cjs';
+import { resolveIcons } from './src/lib/appIcons.cjs';
 
 export default ({ config }: ConfigContext): ExpoConfig => {
+    /* The app icon, and a refusal when a release build has none.
+     *
+     * Here rather than in app.json because Expo substitutes its own icon when
+     * none is configured: a release build with no artwork does not fail, it
+     * succeeds and ships an app wearing somebody else's logo. Static
+     * configuration cannot say "stop"; this can. See src/lib/appIcons.cjs. */
+    const icons = resolveIcons({
+        profile: process.env['EAS_BUILD_PROFILE'],
+        exists: (p) => existsSync(join(__dirname, p)),
+    });
+
     const apiBaseUrl = resolveApiUrl({
         configured: process.env['EXPO_PUBLIC_API_URL'],
         /* EAS sets this to the profile being built. Absent means somebody is
@@ -28,6 +42,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ...config,
         name: config.name ?? 'Izy Courier',
         slug: config.slug ?? 'izy-courier',
+        ...(icons.icon === undefined ? {} : { icon: icons.icon }),
+        /* Merged, not replaced: app.json carries the package name and the
+           location permissions, and spreading the icon over them would drop
+           both and produce a build that installs and cannot track. */
+        ...(icons.android === undefined ? {} : {
+            android: { ...(config.android ?? {}), ...icons.android },
+        }),
         extra: {
             ...config.extra,
             apiBaseUrl,
