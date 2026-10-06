@@ -168,14 +168,21 @@ Material changes will be notified in the app before they take effect.
 
 ## Contact
 
-**TO BE COMPLETED.** Both stores require contact details that reach a person.
+Questions about this policy, or a request to see, correct or delete what we
+hold about you:
 
 ```
 Izy Global Services LLC
-[postal address]
-[privacy contact email]
-[telephone]
+Houston, TX 77045
+contracts@izyglobalservices.com
++1 (832) 715 8986
 ```
+
+**Outstanding: the street line.** A city, state and ZIP is not a postal
+address, and some state privacy laws expect a mailing address a request can
+actually be sent to. Two ways to close it: supply the street line, or decide
+deliberately to publish only the email and telephone, which is common and
+which neither store forbids. Decide rather than leave it half-written.
 
 ---
 
@@ -184,7 +191,7 @@ Izy Global Services LLC
 | | |
 |---|---|
 | **Retention periods** | Six of seven categories undecided. Needs a decision from Izy with counsel. |
-| **Contact details** | Address, email and telephone that reach a person. |
+| **Contact details** | Telephone and email supplied 6 Oct 2026. Street line still open; see Contact. |
 | **Attorney review** | This is a draft written from the code by an engineer. HIPAA, Texas law and state privacy laws all bear on it. |
 | **Service provider names** | Left generic deliberately. Naming vendors is a decision about disclosure; some organisations name them, some do not. Decide, then be consistent with the Data Safety and privacy nutrition label answers. |
 | **A public URL** | Both stores require one that is reachable without signing in. It must stay reachable for as long as the app is listed. |
