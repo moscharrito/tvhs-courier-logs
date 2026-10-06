@@ -68,27 +68,8 @@ const REQUIRED = [
  * `exists` is injected so the decision is testable without touching a disk,
  * the way apiUrl takes its interface map.
  */
-/* The deliberate way past the refusal, for an internal Android build while
- * the artwork is still being drawn.
- *
- * It exists because the refusal is otherwise too blunt: `preview` is internal
- * distribution to our own drivers, and an Expo default icon on a test APK is
- * a cosmetic oddity rather than a rejection. Blocking that for a week while
- * somebody draws a logo would be the guard getting in the way of the work.
- *
- * An environment variable rather than a config key, so it has to be typed on
- * the command that runs the build. Nobody sets this by accident, nobody sets
- * it in a file and forgets, and it is visible in the build log afterwards.
- *
- * It does NOT help with iOS. App Store Connect rejects a build with a missing
- * or transparent icon during processing, TestFlight included, so an iOS build
- * using this override merely fails later and less clearly. */
-const OVERRIDE = 'IZY_ALLOW_DEFAULT_ICON';
-
-function resolveIcons({ profile, exists, env }) {
-    const release = profile === 'production' || profile === 'preview';
+function resolveIcons({ profile, exists, warn }) {
     const missing = REQUIRED.filter((f) => !exists(f.path));
-    const overridden = String((env ?? process.env)[OVERRIDE] ?? '') === '1';
 
     if (missing.length === 0) {
         return {
@@ -102,15 +83,36 @@ function resolveIcons({ profile, exists, env }) {
         };
     }
 
-    if (release && !overridden) {
-        const list = missing.map((f) => `  ${f.path}\n      ${f.what}: ${f.spec}`).join('\n');
+    const list = () => missing.map((f) => `  ${f.path}\n      ${f.what}: ${f.spec}`).join('\n');
+
+    /* A STORE BUILD STOPS. Nothing reaches Apple or Google wearing Expo's
+       icon, and production is the only profile that goes to either. */
+    if (profile === 'production') {
         throw new AppIconError(
-            `A ${profile} build has no app icon, and Expo would quietly substitute its own.\n`
-            + `Add the artwork before building:\n${list}\n`
-            + 'See app/assets/README.md and docs/app-store-submission.md.\n'
-            + `For an internal Android test build only, ${OVERRIDE}=1 proceeds without one. `
-            + 'It will not help on iOS: App Store Connect rejects a missing icon during '
-            + 'processing, TestFlight included.',
+            'A production build has no app icon, and Expo would quietly substitute its own.\n'
+            + `Add the artwork before building:\n${list()}\n`
+            + 'See app/assets/README.md and docs/app-store-submission.md.',
+        );
+    }
+
+    /* AN INTERNAL BUILD WARNS AND CARRIES ON.
+     *
+     * preview is distribution: internal. It goes to our own drivers by link,
+     * not to a store, and Expo's default icon on a test APK is an oddity
+     * rather than a rejection. Stopping it means nobody can put a build on a
+     * phone until somebody has drawn a logo, which is the guard obstructing
+     * the work it exists to protect.
+     *
+     * THIS REPLACED AN ENVIRONMENT VARIABLE OVERRIDE THAT COULD NOT WORK. It
+     * was read where `expo config` runs, and for a cloud build that is an EAS
+     * worker, which never sees a local shell: setting it before the build
+     * command did nothing at all. A guard whose escape hatch does not open is
+     * worse than one with no hatch, because somebody trusts it and loses a
+     * build to it. Found when exactly that happened. */
+    if (profile === 'preview' && warn) {
+        warn(
+            'This preview build has no app icon and will ship with Expo\'s default.\n'
+            + `Fine for an internal test build; it cannot go to a store.\n${list()}`,
         );
     }
 
@@ -122,5 +124,5 @@ function resolveIcons({ profile, exists, env }) {
 }
 
 module.exports = {
-    AppIconError, ICON, ADAPTIVE_ICON, ADAPTIVE_BACKGROUND, OVERRIDE, REQUIRED, resolveIcons,
+    AppIconError, ICON, ADAPTIVE_ICON, ADAPTIVE_BACKGROUND, REQUIRED, resolveIcons,
 };

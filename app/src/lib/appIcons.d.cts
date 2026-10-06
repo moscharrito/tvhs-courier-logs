@@ -25,16 +25,14 @@ export interface RequiredAsset {
 /** Every file that must exist before a release build. */
 export declare const REQUIRED: RequiredAsset[];
 
-/** The environment variable that proceeds without artwork, deliberately. */
-export declare const OVERRIDE: string;
-
 export interface ResolveIconsInput {
     /** The EAS profile, or undefined when somebody is running expo start. */
     profile: string | undefined;
     /** Whether a path exists. Injected so the decision is testable. */
     exists: (path: string) => boolean;
-    /** Injectable for tests. Defaults to process.env. */
-    env?: Record<string, string | undefined>;
+    /** Called instead of throwing for an internal build with no artwork.
+     *  Absent means say nothing. */
+    warn?: (message: string) => void;
 }
 
 export interface IconConfig {

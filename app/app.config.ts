@@ -29,6 +29,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     const icons = resolveIcons({
         profile: process.env['EAS_BUILD_PROFILE'],
         exists: (p) => existsSync(join(__dirname, p)),
+        /* Printed into the Read app config phase of the build log, which is
+           where somebody looking at an internal build will see it. */
+        warn: (message) => { console.warn(`
+${message}
+`); },
     });
 
     const apiBaseUrl = resolveApiUrl({

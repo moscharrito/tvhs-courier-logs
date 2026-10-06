@@ -8,11 +8,25 @@ assets/icon.png             1024 x 1024    iOS, and both store listings
 assets/adaptive-icon.png    1024 x 1024    Android foreground layer
 ```
 
-Until both are here, `preview` and `production` builds **stop** with a message
-naming what is missing. Development builds run without them. That refusal is
-deliberate: Expo substitutes its own icon when none is configured, so a
-release build with no artwork does not fail, it succeeds and produces an app
-wearing somebody else's logo. See `src/lib/appIcons.cjs`.
+Until both are here:
+
+- a **`production`** build **stops**, naming what is missing. That is the only
+  profile a store ever sees, and Expo substitutes its own icon when none is
+  configured, so without this a store build does not fail: it succeeds and
+  produces an app wearing somebody else's logo.
+- a **`preview`** build **warns and carries on.** It is
+  `distribution: internal`, so it reaches our own drivers by link rather than
+  a store, and blocking it would mean nobody can put a build on a phone until
+  somebody has drawn a logo.
+- a **development** build says nothing.
+
+See `src/lib/appIcons.cjs`.
+
+> An earlier version of this stopped `preview` too, with an
+> `IZY_ALLOW_DEFAULT_ICON=1` escape hatch. That hatch could not work: the
+> config is read on an EAS worker for a cloud build, which never sees a local
+> shell, so setting the variable before the build command did nothing and the
+> build failed anyway. Do not reintroduce it.
 
 ---
 
