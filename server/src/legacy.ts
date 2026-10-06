@@ -43,7 +43,7 @@ import { createDiscrepancyRouter } from './modules/uh/discrepancies';
 import { createGoLiveRouter } from './modules/uh/go-live';
 import { MIGRATIONS_FOLDER } from './db/migrate';
 import { todayIn } from './core/dates';
-import { createHealthRouter } from './core/http/health';
+import { createHealthRouter, type StatisticsState } from './core/http/health';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
 import { createProjectSettingsRouter } from './core/projects/settings-routes';
@@ -166,6 +166,16 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         topicArn: config.mail.snsTopicArn,
     }));
 
+    /* The planner's statistics, as of the last optimise.
+     *
+     * Held in a variable because of an ordering problem worth naming: the
+     * health router is built here and the first optimise runs further down,
+     * so at this moment the honest answer is "unknown" and it stays that way
+     * until the optimise reports. Asking the database inside the handler
+     * instead would put five queries on an endpoint the platform hits every
+     * few seconds, to answer a question whose answer changes twice a day. */
+    let statisticsState: StatisticsState = 'unknown';
+
     legacy.app.use(createHealthRouter({
         client: database.client,
         version: VERSION,
@@ -173,6 +183,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         mailConfigured: mailer.available,
         filesConfigured: fileStorage.available,
         smsConfigured: texter.available,
+        statistics: () => statisticsState,
     }));
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
@@ -229,6 +240,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
      * that does not expose it leaves the planner guessing forever, and
      * without this line that looks exactly like a healthy boot. */
     startOptimize(database.client, (report) => {
+        /* `missing` is the only thing that makes this not ok. A refused
+           pragma with nothing missing is fine: it means every table that
+           needs statistics has them, which is the question being asked. */
+        statisticsState = report.missing.length > 0 ? 'missing' : 'ok';
         logger.info('db.statistics', {
             pragma: report.pragma ? 'ran' : 'refused',
             ...(report.analysed.length > 0 ? { analysed: report.analysed.join(',') } : {}),

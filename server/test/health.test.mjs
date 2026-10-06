@@ -61,6 +61,54 @@ describe('GET /health', () => {
         expect(res.body.files).toBe('configured');
     });
 
+    it('says whether the query planner has the statistics it needs', async () => {
+        /* Those statistics decide whether the order detail page reads four
+           custody rows or walks every event in the project: 0.5 ms against
+           84 ms on a month of volume. PRAGMA optimize is allowed to fail on a
+           hosted database and does so silently, so the only answer to "is the
+           planner guessing?" was one line in a boot log, which is no answer
+           at all to anybody without the dashboard. Same reason sms is here. */
+        const res = await srv.agent().get('/health');
+        expect(['ok', 'missing', 'unknown']).toContain(res.body.statistics);
+    });
+
+    it('reports unknown rather than ok before the first optimise has run', async () => {
+        /* The boot ordering: the health router is built before the first
+           optimise reports, so there is a window with no answer. Saying "ok"
+           in it would be a guess, and a guess is what this field exists to
+           remove. */
+        const app = express();
+        app.use(createHealthRouter({ client: srv.core.client, version: '1.2.3' }));
+        const res = await request(app).get('/health');
+        expect(res.body.statistics).toBe('unknown');
+    });
+
+    it('reports what the last optimise found, not what it hopes', async () => {
+        const app = express();
+        let state = 'ok';
+        app.use(createHealthRouter({
+            client: srv.core.client, version: '1.2.3', statistics: () => state,
+        }));
+        expect((await request(app).get('/health')).body.statistics).toBe('ok');
+        state = 'missing';
+        expect((await request(app).get('/health')).body.statistics).toBe('missing');
+    });
+
+    it('says only the one word, never which tables', async () => {
+        /* The rule at the top of health.ts forbids a count of anything in the
+           database or any word that came from a row. Which tables lack
+           statistics is both: a count, and a map of the schema. The boot log
+           keeps that detail for whoever holds the log. */
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client, version: '1.2.3', statistics: () => 'missing',
+        }));
+        const body = JSON.stringify((await request(app).get('/health')).body);
+        for (const table of ['custody_events', 'run_stops', 'orders', 'packages']) {
+            expect(body).not.toContain(table);
+        }
+    });
+
     it('never puts a hostname, a region or an address on a public endpoint', async () => {
         /* The rule for this endpoint is not "is it secret" but "would I be
            content to see this in a pastebin". A service name plus a region is

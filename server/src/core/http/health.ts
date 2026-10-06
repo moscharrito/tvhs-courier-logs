@@ -22,7 +22,26 @@
    a count of anything in the database, or any word that came from a row. This
    endpoint is unauthenticated and indexed by anyone who looks. The rule is
    not "is this secret" but "would I be content to see this in a pastebin",
-   and a service name plus a region is a map for somebody. */
+   and a service name plus a region is a map for somebody.
+
+   ─────────────────────────────────────────────────────────────────────────
+   WHY `statistics` IS HERE, AND WHY IT IS ONLY ONE WORD.
+
+   Query planner statistics decide whether the order detail page reads four
+   custody rows or walks every event in the project: measured at 0.5 ms
+   against 84 ms on a month of volume. PRAGMA optimize is allowed to fail on
+   a hosted database and does so silently, so db/optimize.ts logs the outcome
+   at boot. That left the same problem the sms field above was added to fix:
+   the only place that answered "is the planner guessing?" was one line in a
+   log, and everyone who is not holding the Render dashboard could not answer
+   it at all.
+
+   ONE WORD, not the detail, because of the rule above. "ok" or "missing" is
+   a fact about this process. Which tables lack statistics is a count and a
+   list of table names, which is a map of the schema for somebody and is
+   exactly what that rule forbids. The boot log keeps the detail for whoever
+   has the log; this endpoint says only whether somebody should go and read
+   it. */
 
 import { Router, type Request, type Response } from 'express';
 import type { Client } from '@libsql/client';
@@ -39,10 +58,22 @@ interface Deps {
     /** Whether patient texting is configured. Not the number it sends from:
      *  a from-number is on the list above of things that never appear here. */
     smsConfigured?: boolean | undefined;
+    /** The planner's statistics, as of the last optimise. A function rather
+     *  than a value because it changes after boot, and because asking the
+     *  database on every health check would add five queries to an endpoint
+     *  a platform hits every few seconds. */
+    statistics?: (() => StatisticsState) | undefined;
 }
+
+/** `unknown` is honest rather than optimistic: the first optimise runs at
+ *  boot and a health check can arrive before it has finished. Reporting "ok"
+ *  in that window would be a guess, and a guess is what this field exists to
+ *  remove. */
+export type StatisticsState = 'ok' | 'missing' | 'unknown';
 
 export function createHealthRouter({
     client, version, sweepIntervalSeconds, mailConfigured, filesConfigured, smsConfigured,
+    statistics,
 }: Deps): Router {
     const router = Router();
     const started = Date.now();
@@ -87,6 +118,10 @@ export function createHealthRouter({
                recorded without its photograph, so this is an operational
                fact somebody needs, not a configuration detail. */
             files: filesConfigured ? 'configured' : 'off',
+            /* "missing" means a table that needs planner statistics has none,
+               and somebody should read the boot log for which. See the note
+               at the top for why this is one word and not the list. */
+            statistics: statistics === undefined ? 'unknown' : statistics(),
         });
     });
 
