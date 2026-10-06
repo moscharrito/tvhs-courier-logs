@@ -245,7 +245,24 @@ export function ClientPortal() {
             <div className="izy-card">
                 <div className="izy-row-between">
                     <h2>{list.from === list.to ? list.from : `${list.from} to ${list.to}`}</h2>
-                    <span className="izy-muted">{rows.length} {rows.length === 1 ? 'delivery' : 'deliveries'}</span>
+                    <span className="izy-muted">
+                        {rows.length} {rows.length === 1 ? 'delivery' : 'deliveries'}
+                        {/* A plain link carrying the same query the list was
+                            built from, so the file is what is on screen. Not a
+                            fetch and a blob: the browser knows how to save a
+                            download, and a blob URL would keep a copy of a
+                            spreadsheet full of patient names alive in the tab
+                            until it was closed. The same reasoning as the
+                            proof-of-delivery PDF below. */}
+                        {rows.length > 0 && (
+                            <>
+                                {' · '}
+                                <a href={`${base}/orders.xlsx${params.toString() ? `?${params}` : ''}`}>
+                                    Export to Excel
+                                </a>
+                            </>
+                        )}
+                    </span>
                 </div>
                 {list.truncated && (
                     <div className="izy-alert warn" role="status">

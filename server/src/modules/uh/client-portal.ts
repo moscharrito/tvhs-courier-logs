@@ -27,6 +27,7 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import ExcelJS from 'exceljs';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
@@ -105,6 +106,10 @@ interface OrderRow {
     assigned_to_username: string | null; service_date: string;
     /** The delivery this one is a second go at, if it is one (drizzle/0036). */
     reattempt_of_order_id: number | null;
+    /** Null is out of area. Not on `present`: a zone is a contract term
+     *  rather than something a pharmacist reads off a row, so it reaches the
+     *  export and not the screen. */
+    zone: number | null;
 }
 
 /** One delivery, as the pharmacy that sent it should see it. */
@@ -338,7 +343,22 @@ export function createClientPortalRouter(
 
     /* --------------------------------------------------------------- list */
 
-    router.get('/orders', viewer, wrap(async (req, res) => {
+    /* ───────────────────────────────────────── the deliveries, once
+     *
+     * The list and the export ask the same question and must get the same
+     * answer. Two copies of this drifted once already in this codebase, in
+     * the proof-of-delivery lookup, where a fixed bug stayed fixed in one
+     * route and not the other for a fortnight.
+     *
+     * It returns null having already answered the request when the range,
+     * the pharmacy or the scope is wrong, so neither caller has to repeat the
+     * refusals and neither can forget one.
+     *
+     * `limit` differs on purpose: the list is a screen and 500 rows is more
+     * than anybody reads, while an export is a file somebody keeps and
+     * truncating it silently would be worse than refusing it.
+     */
+    async function gatherOrders(req: Request, res: Response, limit: number) {
         const project = req.project!;
         const { scope, sites } = await scopedSites(req);
         const q = req.query as Record<string, string | undefined>;
@@ -347,14 +367,17 @@ export function createClientPortalRouter(
         const isDate = (v: string | undefined) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
         const from = isDate(q['from']) ? q['from']! : isDate(q['date']) ? q['date']! : today;
         const to = isDate(q['to']) ? q['to']! : isDate(q['date']) ? q['date']! : from;
-        if (to < from) { res.status(400).json({ error: 'Invalid request', details: ['to: is before from'] }); return; }
+        if (to < from) {
+            res.status(400).json({ error: 'Invalid request', details: ['to: is before from'] });
+            return null;
+        }
         const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
         if (days > MAX_RANGE_DAYS) {
             res.status(400).json({
                 error: `That is ${days} days. Ask for ${MAX_RANGE_DAYS} or fewer at a time.`,
                 code: 'client.rangeTooLong',
             });
-            return;
+            return null;
         }
 
         const filters: string[] = [];
@@ -375,7 +398,7 @@ export function createClientPortalRouter(
             const asked = Number(q['siteId']);
             if (!scope.wholeProject && !sites.some((s) => s.id === asked)) {
                 res.status(403).json({ error: 'That pharmacy is not on this account' });
-                return;
+                return null;
             }
             filters.push('o.site_id = ?');
             args.push(asked);
@@ -393,10 +416,21 @@ export function createClientPortalRouter(
                   WHERE ${filters.join(' AND ')}
                   ORDER BY o.service_date DESC, o.due_at IS NULL, o.due_at, o.id
                   LIMIT ?`,
-            args: [...args, MAX_ROWS],
+            args: [...args, limit],
         });
         const rows = rs.rows as unknown as Array<OrderRow & { site_name: string }>;
         const names = await displayNames(project.id, rows.map((r) => r.assigned_to_username));
+
+        return {
+            project, scope, sites, q, from, to, rows, names,
+            truncated: rows.length === limit,
+        };
+    }
+
+    router.get('/orders', viewer, wrap(async (req, res) => {
+        const got = await gatherOrders(req, res, MAX_ROWS);
+        if (!got) return;
+        const { scope, sites, q, from, to, rows, names, truncated } = got;
 
         await req.audit('client.list', 'order', null, {
             from, to, rows: rows.length, sites: sites.length,
@@ -408,9 +442,159 @@ export function createClientPortalRouter(
             to,
             pharmacies: sites,
             orders: rows.map((r) => present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '')),
-            truncated: rows.length === MAX_ROWS,
+            truncated,
             notes: scopeNote(sites, scope),
         });
+    }));
+
+    /* ────────────────────────────────────────────────────── the export
+     *
+     * Karthik Munnam's people keep their own records, and until this the only
+     * way to get the deliveries out of here was to read a screen and retype
+     * it. That is the manual process this ends, and a retyped record is a
+     * second source of truth that disagrees with the first inside a week.
+     *
+     * EXACTLY WHAT THE SCREEN IS SHOWING. Same query, same filters, same
+     * scope, through gatherOrders. An export that quietly covered a different
+     * range or a different set of pharmacies than the list above it would be
+     * worse than no export, because nobody would check.
+     *
+     * IT CARRIES PATIENT NAMES AND ADDRESSES. A decision taken on 6 October
+     * 2026, not a default. University Health are the covered entity and this
+     * is their own patients' data going back to them, which is the ordinary
+     * and lawful direction for it to travel. It is still PHI leaving this
+     * system as a file we no longer control, so:
+     *
+     *   the audit row records who, when, which range, and HOW MANY ROWS, so
+     *   there is a record of every copy ever taken;
+     *
+     *   the scope comes from the caller's membership and never from the
+     *   query, so a pharmacist at one counter exports one counter;
+     *
+     *   nothing caches it.
+     *
+     * IT REFUSES RATHER THAN TRUNCATES. The list stops at 500 rows because a
+     * screen nobody scrolls past is harmless. A spreadsheet that silently
+     * stopped at 500 of 1,400 deliveries is a record somebody files and later
+     * relies on, so this asks for a narrower range instead.
+     */
+    const EXPORT_MAX_ROWS = 20_000;
+
+    router.get('/orders.xlsx', viewer, wrap(async (req, res) => {
+        const got = await gatherOrders(req, res, EXPORT_MAX_ROWS + 1);
+        if (!got) return;
+        const { project, sites, from, to, rows, names } = got;
+
+        if (rows.length > EXPORT_MAX_ROWS) {
+            res.status(400).json({
+                error: `That is more than ${EXPORT_MAX_ROWS.toLocaleString()} deliveries. `
+                    + 'Ask for a narrower range, so the file you keep is the whole of what you asked for.',
+                code: 'client.exportTooLarge',
+            });
+            return;
+        }
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Izy Global Services LLC';
+        wb.created = new Date();
+
+        const sheet = wb.addWorksheet('Deliveries');
+        sheet.columns = [
+            { header: 'Service date', key: 'serviceDate', width: 13 },
+            { header: 'Pharmacy', key: 'pharmacy', width: 26 },
+            { header: 'Zone', key: 'zone', width: 7 },
+            { header: 'Reference', key: 'reference', width: 16 },
+            { header: 'Service', key: 'serviceType', width: 10 },
+            { header: 'Patient', key: 'patient', width: 24 },
+            { header: 'Address', key: 'address', width: 34 },
+            { header: 'City', key: 'city', width: 16 },
+            { header: 'ZIP', key: 'zip', width: 8 },
+            { header: 'Status', key: 'status', width: 14 },
+            { header: 'Not delivered because', key: 'failureReason', width: 22 },
+            { header: 'On time', key: 'onTime', width: 9 },
+            { header: 'Requested', key: 'receivedAt', width: 22 },
+            { header: 'Due', key: 'dueAt', width: 22 },
+            { header: 'Collected', key: 'pickedUpAt', width: 22 },
+            { header: 'Arrived', key: 'arrivedAt', width: 22 },
+            { header: 'Delivered', key: 'deliveredAt', width: 22 },
+            { header: 'Returned', key: 'returnedAt', width: 22 },
+            { header: 'Received by', key: 'receivedBy', width: 22 },
+            { header: 'No signature because', key: 'noSignatureReason', width: 22 },
+            { header: 'Courier', key: 'courier', width: 14 },
+        ];
+        sheet.getRow(1).font = { bold: true };
+        sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+        for (const r of rows) {
+            const view = present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '');
+            sheet.addRow({
+                serviceDate: view.serviceDate,
+                pharmacy: view.pharmacy,
+                /* Not on `present`, which the screen uses: a zone is a
+                   contract term rather than something a pharmacist reads off
+                   a row, and it belongs here because an export is for
+                   analysis rather than for working a counter. */
+                zone: r.zone === null ? 'out of area' : Number(r.zone),
+                reference: view.reference,
+                serviceType: view.serviceType,
+                patient: view.recipientName,
+                address: view.address,
+                city: view.city,
+                zip: view.zip,
+                status: view.status,
+                failureReason: (view.failureReason ?? '').replace(/_/g, ' '),
+                /* Blank, not "no", while a delivery is still open. A column
+                   of "no" against work in progress reads as failure. */
+                onTime: view.sla.onTime === null ? '' : view.sla.onTime ? 'yes' : 'no',
+                receivedAt: view.receivedAt ?? '',
+                dueAt: view.dueAt ?? '',
+                pickedUpAt: view.pickedUpAt ?? '',
+                arrivedAt: view.arrivedAt ?? '',
+                deliveredAt: view.deliveredAt ?? '',
+                returnedAt: view.returnedAt ?? '',
+                receivedBy: view.receivedBy ?? '',
+                noSignatureReason: view.noSignatureReason ?? '',
+                courier: view.courier,
+            });
+        }
+
+        /* What this file is, on the file itself. A spreadsheet outlives the
+           conversation that produced it, and somebody opening it in six
+           months should be able to tell what range it covers, which
+           pharmacies, and whose clock the times are on. */
+        const about = wb.addWorksheet('About');
+        about.columns = [{ width: 26 }, { width: 76 }];
+        about.addRow(['University Health Pharmacy Courier']).font = { bold: true, size: 14 };
+        about.addRow(['Service dates', `${from} to ${to}`]);
+        about.addRow(['Pharmacies', sites.length === 0 ? 'none on this account' : sites.map((x) => x.name).join(', ')]);
+        about.addRow(['Deliveries', rows.length]);
+        about.addRow(['Times', `${project.timezone}. Timestamps are ISO 8601 with a zone offset.`]);
+        about.addRow(['Produced', new Date().toISOString()]);
+        about.addRow(['By', 'Izy Global Services LLC']);
+        about.addRow([]);
+        about.addRow([
+            'Contains patient data',
+            'Patient names and delivery addresses are in the Deliveries sheet. Handle and store this '
+            + 'file as you would any other record of your patients.',
+        ]).font = { bold: true };
+
+        /* Before the bytes, so a copy that was taken is recorded even if the
+           download is interrupted. The count is the point: this is the record
+           of how much patient data left this system, and when. */
+        await req.audit('client.export', 'order', `${from}..${to}`, {
+            rows: rows.length,
+            sites: sites.length,
+            containedPatientData: true,
+        });
+
+        const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Length', String(buffer.length));
+        res.setHeader('Content-Disposition', `attachment; filename="deliveries-${from}-to-${to}.xlsx"`);
+        /* Patient names and addresses: no proxy and no shared browser keeps a
+           copy of this. */
+        res.setHeader('Cache-Control', 'no-store, private');
+        res.end(buffer);
     }));
 
     /* ---------------------------------------------------------- reports ----

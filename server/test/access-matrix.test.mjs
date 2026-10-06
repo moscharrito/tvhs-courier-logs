@@ -387,6 +387,11 @@ const MATRIX = [
     ['GET', `${UH}/client/reports`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/summary`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders`, UH_CLIENT_VIEW, ''],
+    /* The same reach as the list it mirrors, and that is the point: it is the
+       same query through gatherOrders. It carries patient names and addresses
+       out as a file, deliberately (6 October 2026), so the row that matters
+       is this one being UH_CLIENT_VIEW and not anything wider. */
+    ['GET', `${UH}/client/orders.xlsx`, UH_CLIENT_VIEW, 'the deliveries as a spreadsheet, patient data included'],
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999/pod.pdf`, UH_CLIENT_VIEW, ''],
     /* The doorstep photograph. Same viewers as the delivery it belongs to,
