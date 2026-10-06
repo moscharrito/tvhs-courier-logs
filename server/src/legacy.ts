@@ -44,6 +44,7 @@ import { createGoLiveRouter } from './modules/uh/go-live';
 import { MIGRATIONS_FOLDER } from './db/migrate';
 import { todayIn } from './core/dates';
 import { createHealthRouter, type StatisticsState } from './core/http/health';
+import { createPrivacyRouter } from './core/http/privacy';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
 import { createProjectSettingsRouter } from './core/projects/settings-routes';
@@ -185,6 +186,12 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         smsConfigured: texter.available,
         statistics: () => statisticsState,
     }));
+    /* The privacy policy, rendered from docs/privacy-policy.md. Public and
+       unauthenticated: both app stores require a URL a reviewer can open
+       without an account, and it has to stay reachable for as long as the app
+       is listed. Mounted beside /health because it is the same kind of thing,
+       a public fact about this service rather than a feature of it. */
+    legacy.app.use(createPrivacyRouter());
     legacy.app.use(createCoreAuthRouter({ client: database.client, store }));
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createDevicesRouter({ client: database.client, config, throttles }));

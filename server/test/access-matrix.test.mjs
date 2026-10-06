@@ -173,6 +173,11 @@ const MATRIX = [
     ['GET', '/api/login/projects', EVERYONE, 'project names only'],
     ['GET', '/api/config', EVERYONE, 'timezone and date'],
     ['GET', '/health', EVERYONE, 'liveness'],
+    /* Public on purpose and required to stay that way: both app stores need a
+       privacy policy a reviewer can open without an account, and it has to
+       remain reachable for as long as the app is listed. It serves a document
+       from the repository and reads nothing from the database. */
+    ['GET', '/privacy', EVERYONE, 'the privacy policy, which must not need a session'],
 
     /* --- a caller acting on themselves */
     ['GET', '/api/me/projects', SIGNED_IN, 'my memberships'],
