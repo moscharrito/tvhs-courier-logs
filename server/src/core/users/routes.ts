@@ -51,6 +51,13 @@ const PatchUser = z.object({
 }).refine((o) => Object.keys(o).length > 0, { message: 'nothing to update' });
 
 const SetPassword = z.object({ password: passwordSchema });
+
+/* The current one is required. See the endpoint for why: without it an
+ * unattended signed-in browser is a permanent account takeover. */
+const ChangeOwnPassword = z.object({
+    currentPassword: z.string().min(1, 'is required'),
+    password: passwordSchema,
+});
 const SetPin = z.object({ pin: pinSchema });
 
 const MembershipBody = z.object({
@@ -242,6 +249,91 @@ export function createUsersRouter({ client, store }: Deps): Router {
         const revoked = await store.revokeAllForUser(Number(u.id));
         await req.audit('user.password_reset', 'user', u.username, { revokedSessions: revoked });
         if (req.session.user!.username === u.username) await req.sessions.destroy();
+        res.json({ ok: true, revokedSessions: revoked });
+    }));
+
+    /* ──────────────────────────────────── changing your own password
+     *
+     * Until this there was no way to. The only endpoint that could change a
+     * password was the admin one above, which means every rotation went
+     * through us: an Izy administrator set a University Health user's
+     * credential and then told them what it was.
+     *
+     * That is the wrong shape for an account that reaches patient data under
+     * a business associate agreement. A credential should be known to the
+     * person using it and to nobody else, and until somebody can change it
+     * themselves it never is.
+     *
+     * THE CURRENT PASSWORD IS REQUIRED, and that is not ceremony. Without it
+     * an unattended signed-in browser is a permanent account takeover: anyone
+     * who sits down at it can set a new password and own the account from
+     * their own machine afterwards. With it, the attacker has to know the
+     * thing they are trying to steal.
+     *
+     * EVERY OTHER SESSION ENDS. The usual reason somebody changes a password
+     * is that they think it is known, and a change that left the thief's
+     * session alive would be worse than none because the person would believe
+     * they had fixed it. This one keeps the browser doing the changing: being
+     * signed out of the tab you are typing in reads as a failure, and people
+     * respond by trying again.
+     */
+    router.post('/api/me/password', wrap(async (req, res) => {
+        if (!req.session.user) {
+            res.status(401).json({ error: 'Not authenticated' });
+            return;
+        }
+        const body = parse(ChangeOwnPassword, req.body, res);
+        if (!body) return;
+
+        /* The hash, fetched on its own.
+         *
+         * findUser deliberately does not select it, and UserRow is what this
+         * router hands back to callers: widening that type to carry a
+         * password hash would put one field's worth of carelessness between
+         * here and a response body. It stays local to this handler. */
+        const rs = await run(
+            'SELECT id, username, password FROM users WHERE username = ?',
+            [req.session.user.username.toLowerCase().trim()],
+        );
+        const me = rs.rows[0] as unknown as { id: number; username: string; password: string } | undefined;
+        if (!me) {
+            /* A live session for a user that no longer exists. Ending it is
+               the only honest answer. */
+            await req.sessions.destroy();
+            res.status(401).json({ error: 'Not authenticated' });
+            return;
+        }
+
+        if (!bcrypt.compareSync(body.currentPassword, String(me.password))) {
+            /* Audited: repeated failures here are somebody at a borrowed
+               desk guessing, and that is worth being able to see. Deliberately
+               the same shape of answer as a wrong sign-in. */
+            await req.audit('user.password_change_failed', 'user', me.username, { reason: 'wrong current password' });
+            res.status(403).json({
+                error: 'That is not your current password.',
+                code: 'password.wrongCurrent',
+            });
+            return;
+        }
+
+        if (bcrypt.compareSync(body.password, String(me.password))) {
+            res.status(400).json({
+                error: 'That is the password you already have. Choose a different one.',
+                code: 'password.unchanged',
+            });
+            return;
+        }
+
+        await run('UPDATE users SET password = ? WHERE id = ?', [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(me.id)]);
+        /* Keeping the session doing the changing. Being signed out of the tab
+           you are typing in reads as a failure, and people respond to that by
+           trying again. A session with no id cannot be excepted, so every
+           session goes, which is the safe direction. */
+        const revoked = await store.revokeAllForUser(
+            Number(me.id),
+            ...(req.session.id === null ? [] : [req.session.id] as const),
+        );
+        await req.audit('user.password_changed', 'user', me.username, { revokedSessions: revoked, byThemselves: true });
         res.json({ ok: true, revokedSessions: revoked });
     }));
 

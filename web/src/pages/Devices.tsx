@@ -115,6 +115,8 @@ export function Devices() {
             </p>
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
+            <ChangePassword />
+
             <div className="izy-card">
                 <h2>This phone</h2>
                 {identity === null ? <div className="izy-muted">Loading...</div> : thisPhoneEnrolled ? (
@@ -264,5 +266,96 @@ export function Devices() {
                 </div>
             </div>
         </>
+    );
+}
+
+/* ───────────────────────────────────────────── changing your own password
+ *
+ * There was no way to. The only endpoint that could change a password was
+ * the admin one, so every rotation went through Izy: an administrator set a
+ * University Health user's credential and then told them what it was. For an
+ * account that reaches patient data under a business associate agreement
+ * that is the wrong shape; a credential should be known to the person using
+ * it and to nobody else.
+ *
+ * Here rather than on a page of its own, because this page is already the
+ * one about your own account and sign-in, and the thing most likely to make
+ * somebody change a password is reading the list of sessions below it and
+ * not recognising one.
+ */
+function ChangePassword() {
+    const [current, setCurrent] = useState('');
+    const [next, setNext] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+    const submit = async (e: FormEvent) => {
+        e.preventDefault();
+        setBusy(true);
+        setNote(null);
+        try {
+            const res = await api<{ revokedSessions: number }>('/api/me/password', {
+                method: 'POST', json: { currentPassword: current, password: next },
+            });
+            setCurrent('');
+            setNext('');
+            /* Say what it did to the other devices. A change made because
+               somebody thinks their password is known is only reassuring if
+               the reader can see that the other sessions went. */
+            setNote({
+                kind: 'ok',
+                text: res.revokedSessions === 0
+                    ? 'Password changed. You were not signed in anywhere else.'
+                    : `Password changed, and ${res.revokedSessions} other ${res.revokedSessions === 1 ? 'session was' : 'sessions were'} signed out.`,
+            });
+        } catch (err) {
+            setNote({
+                kind: 'error',
+                text: err instanceof ApiError ? err.message : 'Could not change your password',
+            });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="izy-card">
+            <h2>Your password</h2>
+            <p className="izy-sub">
+                Changing it signs you out everywhere else, which is usually the point.
+                This browser stays signed in.
+            </p>
+            {note && (
+                <div className={`izy-alert ${note.kind}`} role={note.kind === 'error' ? 'alert' : 'status'}>
+                    {note.text}
+                </div>
+            )}
+            <form className="izy-row" onSubmit={(e) => { void submit(e); }}>
+                <label className="izy-field">
+                    Current password
+                    <input
+                        type="password"
+                        autoComplete="current-password"
+                        value={current}
+                        onChange={(e) => setCurrent(e.target.value)}
+                        required
+                    />
+                </label>
+                <label className="izy-field">
+                    New password
+                    <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={next}
+                        onChange={(e) => setNext(e.target.value)}
+                        required
+                        minLength={8}
+                    />
+                </label>
+                <button className="izy-btn" type="submit" disabled={busy || !current || !next}>
+                    {busy ? 'Changing...' : 'Change password'}
+                </button>
+            </form>
+        </div>
     );
 }

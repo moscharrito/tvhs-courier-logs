@@ -182,6 +182,11 @@ const MATRIX = [
     /* --- a caller acting on themselves */
     ['GET', '/api/me/projects', SIGNED_IN, 'my memberships'],
     ['GET', '/api/me/sessions', SIGNED_IN, 'my live devices'],
+    /* Signed in is the whole requirement, and the current password is the
+       real guard: see core/users/routes.ts. Anything narrower would put a
+       client's password rotation back through an Izy administrator, which is
+       the gap this closed. */
+    ['POST', '/api/me/password', SIGNED_IN, 'changing my own password, current one required'],
     /* The one thing an unvetted account may read, and only ever their own:
        the query is keyed on the session's username, so there is no id to
        change. Anybody without an application gets a 404. */
