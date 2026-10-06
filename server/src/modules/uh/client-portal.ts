@@ -106,9 +106,7 @@ interface OrderRow {
     assigned_to_username: string | null; service_date: string;
     /** The delivery this one is a second go at, if it is one (drizzle/0036). */
     reattempt_of_order_id: number | null;
-    /** Null is out of area. Not on `present`: a zone is a contract term
-     *  rather than something a pharmacist reads off a row, so it reaches the
-     *  export and not the screen. */
+    /** Null is out of area. */
     zone: number | null;
 }
 
@@ -120,6 +118,16 @@ function present(o: OrderRow, siteName: string, courierName: string) {
         serviceType: o.service_type,
         serviceDate: o.service_date,
         pharmacy: siteName,
+        /* ON THE SCREEN AS WELL AS IN THE EXPORT, from 6 October 2026.
+         *
+         * I left this off `present` when the export was built, reasoning that
+         * a zone is a contract term rather than something a pharmacist reads
+         * off a row. University Health asked for it on the list: a zone is
+         * how they think about where a delivery is going and how long it
+         * ought to take, which makes it operational rather than commercial.
+         * Null is out of area, which is the value that actually matters to
+         * somebody scanning: it means nobody has agreed a price for it. */
+        zone: o.zone === null ? null : Number(o.zone),
         recipientName: o.recipient_name,
         address: [o.address_line, o.address_line2].filter(Boolean).join(', '),
         city: o.city,
@@ -530,11 +538,10 @@ export function createClientPortalRouter(
             sheet.addRow({
                 serviceDate: view.serviceDate,
                 pharmacy: view.pharmacy,
-                /* Not on `present`, which the screen uses: a zone is a
-                   contract term rather than something a pharmacist reads off
-                   a row, and it belongs here because an export is for
-                   analysis rather than for working a counter. */
-                zone: r.zone === null ? 'out of area' : Number(r.zone),
+                /* The words, not a blank. A spreadsheet column that is
+                   empty for an out-of-area delivery reads as missing data;
+                   "out of area" is the fact. */
+                zone: view.zone === null ? 'out of area' : view.zone,
                 reference: view.reference,
                 serviceType: view.serviceType,
                 patient: view.recipientName,

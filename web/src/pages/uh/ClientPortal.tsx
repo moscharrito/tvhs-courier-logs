@@ -27,6 +27,8 @@ interface Pharmacy { id: number; code: string; name: string }
 interface ClientOrder {
     id: number; reference: string; serviceType: string; serviceDate: string;
     pharmacy: string; recipientName: string; address: string; city: string; zip: string;
+    /** Null is out of area, which is the value worth seeing. */
+    zone: number | null;
     status: string; receivedAt: string; dueAt: string | null; pickedUpAt: string | null;
     arrivedAt: string | null; deliveredAt: string | null; returnedAt: string | null;
     receivedBy: string; noSignatureReason: string; failureReason: string;
@@ -293,7 +295,7 @@ export function ClientPortal() {
                     })
                 ) : (
                     <>
-                        <DeliveryTable rows={pagedRows.rows} clock={clock} open={open} setOpen={setOpen} />
+                        <DeliveryTable rows={pagedRows.rows} clock={clock} open={open} setOpen={setOpen} showPharmacy />
                         <Pager of={pagedRows} noun="deliveries" />
                     </>
                 )}
@@ -324,27 +326,44 @@ const EVENT_LABEL: Record<string, string> = {
 /** The proof of delivery, on screen. The printable document is ticket 3.2. */
 /** One table of deliveries. Extracted so a grouped view and a flat one draw
  *  exactly the same rows rather than two renderings that drift. */
-function DeliveryTable({ rows, clock, open, setOpen }: {
+function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
     rows: ClientOrder[];
     clock: (iso: string | null) => string;
     open: number | null;
     setOpen: (id: number | null) => void;
+    /** Only when the rows are not already under a pharmacy heading. A column
+     *  repeating the heading above it is noise; a table with no pharmacy
+     *  anywhere, which is what a single-pharmacy day used to render, leaves a
+     *  contract manager guessing which counter they filtered to. */
+    showPharmacy?: boolean;
 }) {
     return (
         <table className="izy-table">
             <thead>
                 <tr>
-                    <th>Patient</th><th>Address</th><th>Status</th><th>Times</th><th>Courier</th><th />
+                    {showPharmacy && <th>Pharmacy</th>}
+                    <th>Patient</th><th>Address</th>
+                    {/* Where it is going, in the terms the contract uses. Out
+                        of area is the one worth noticing: nobody has agreed a
+                        price for it. */}
+                    <th>Zone</th>
+                    <th>Status</th><th>Times</th><th>Courier</th><th />
                 </tr>
             </thead>
             <tbody>
                 {rows.map((o) => (
                     <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
+                        {showPharmacy && <td>{o.pharmacy}</td>}
                         <td>
                             {o.recipientName}
                             {o.reference && <><br /><code>{o.reference}</code></>}
                         </td>
                         <td>{o.address}<br /><span className="izy-muted">{o.city} {o.zip}</span></td>
+                        <td>
+                            {o.zone === null
+                                ? <span className="izy-pill warn">out of area</span>
+                                : o.zone}
+                        </td>
                         <td>
                             {STATUS_LABEL[o.status] ?? o.status}
                             {o.status === 'failed' && o.failureReason && (

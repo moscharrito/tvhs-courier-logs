@@ -199,9 +199,30 @@ describe('what reaches the client', () => {
         const uh = await agentFor('uh.pharmacist', 'client-pass-1');
         const res = await uh.get(`${CLIENT}/orders/${order.id}`);
         const blob = JSON.stringify(res.body).toLowerCase();
-        for (const word of ['price', 'total', 'surcharge', 'cents', 'zone']) {
+        for (const word of ['price', 'total', 'surcharge', 'cents']) {
             expect(blob).not.toContain(word);
         }
+    });
+
+    it('does show the zone, which is theirs and is not a price', async () => {
+        /* `zone` WAS ON THE LIST ABOVE AND CAME OFF IT ON 6 OCTOBER 2026.
+         *
+         * It was there as a pricing dimension, which is half right: a zone
+         * decides which rate applies. But the ZIP-to-zone mapping is
+         * University Health's own published Bid Table BT-89AO. Showing it
+         * back to them reveals nothing they did not define, and it is how
+         * they think about where a delivery is going and how long it ought to
+         * take. Operational, not commercial.
+         *
+         * What must still never appear is the RATE, which is what the loop
+         * above is really protecting, and it still passes unchanged. */
+        const order = await delivered();
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get(`${CLIENT}/orders/${order.id}`);
+        expect(res.body).toHaveProperty('zone');
+        /* A number, or null for out of area, which is the value that matters
+           to somebody scanning: nobody has agreed a price for it. */
+        expect(res.body.zone === null || typeof res.body.zone === 'number').toBe(true);
     });
 
     it('names our office as Dispatch, never an individual member of staff', async () => {
