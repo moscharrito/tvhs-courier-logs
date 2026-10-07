@@ -70,7 +70,12 @@ describe('the side rail', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Collapse the menu' }));
 
         const nav = screen.getByRole('navigation', { name: 'Main' });
-        for (const name of ['Home', 'UH Pharmacy Courier', 'This phone']) {
+        /* "Your account" rather than "This phone": dee.dispatch is staff, and
+           the account link is only called This phone for a driver, who is the
+           only role that can put a phone behind a PIN. The name here is
+           incidental to what this test is about; it has to be the one this
+           user actually gets. */
+        for (const name of ['Home', 'UH Pharmacy Courier', 'Your account']) {
             expect(within(nav).getByRole('link', { name })).toBeInTheDocument();
         }
     });

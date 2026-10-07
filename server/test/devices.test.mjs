@@ -357,3 +357,138 @@ describe('an administrator resetting a PIN', () => {
         expect((await anywhere.post('/api/login/pin').send({ route: 'northbound', pin: '5150' })).status).toBe(200);
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * WHO MAY REDUCE THEIR SIGN-IN TO FOUR DIGITS.
+ *
+ * Enrolment had no role check. Any active account that knew its own password
+ * could register a browser and sign in with a PIN afterwards, University
+ * Health's pharmacy staff among them, and a pharmacy account reaches patient
+ * names, addresses and proof-of-delivery photographs.
+ *
+ * The case for four digits is in devices.ts and all of it rests on a phone one
+ * person keeps: a hospital workstation a dispensary shares is not that phone,
+ * so the second factor is not a factor. This is the first thing a hospital
+ * security questionnaire asks about, and the answer has to be that it cannot
+ * be done rather than that it is not offered on screen.
+ *
+ * Hence tests at both ends. Hiding the form while the endpoint still worked
+ * would be the decoration rather than the fix, and signing in has to refuse
+ * too, or a row enrolled before the rule outlives it.
+ */
+describe('a PIN is for courier phones only', () => {
+    beforeAll(async () => {
+        /* A University Health pharmacist: platform role staff, which is what
+           every portal account Karthik's people get will be. */
+        await admin.post('/api/users').send({
+            username: 'uh.counter', name: 'Counter Staff', password: 'counter-pass-1',
+            role: 'staff', mustChangePassword: false,
+        });
+        await admin.put('/api/users/uh.counter/memberships/uh').send({ role: 'pharmacy', settings: {} });
+    });
+
+    it('refuses to enrol a pharmacy account', async () => {
+        /* THE FINDING. This returned 201 and set a four-digit credential to
+           an account that can read a patient's address. */
+        const res = await phone().post('/api/devices/enrol')
+            .send({ username: 'uh.counter', password: 'counter-pass-1', pin: '4321' });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('device.notAllowed');
+    });
+
+    it('refuses an administrator too, not only clients', async () => {
+        /* The rule is about the credential, not about who we trust. Our own
+           account reaching every project is the worst one to put behind four
+           digits, and an exception for ourselves is the exception a reviewer
+           asks about. */
+        const res = await phone().post('/api/devices/enrol')
+            .send({ username: srv.creds.admin.username, password: srv.creds.admin.password, pin: '4321' });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('device.notAllowed');
+    });
+
+    it('writes nothing when it refuses', async () => {
+        /* A half-enrolled row would be a PIN that exists and cannot be seen
+           on the page that lists phones. */
+        await phone().post('/api/devices/enrol')
+            .send({ username: 'uh.counter', password: 'counter-pass-1', pin: '4321' });
+        const rs = await sql(
+            'SELECT COUNT(*) AS n FROM devices d JOIN users u ON u.id = d.user_id WHERE u.username = ?',
+            ['uh.counter'],
+        );
+        expect(Number(rs.rows[0].n)).toBe(0);
+    });
+
+    it('does not sign them in as a side effect', async () => {
+        const agent = phone();
+        await agent.post('/api/devices/enrol')
+            .send({ username: 'uh.counter', password: 'counter-pass-1', pin: '4321' });
+        expect((await agent.get('/api/session')).status).toBe(401);
+    });
+
+    it('checks the password first, so it cannot be used to find the couriers', async () => {
+        /* A refusal that arrived before the password would answer "is this
+           username a courier" to anybody who asked, which is the enumeration
+           this endpoint already avoids by giving one message for every
+           credential failure. */
+        const res = await phone().post('/api/devices/enrol')
+            .send({ username: 'uh.counter', password: 'not-the-password', pin: '4321' });
+        expect(res.status).toBe(401);
+        expect(res.body.code).toBeUndefined();
+    });
+
+    it('still lets a courier enrol, which is the case it was built for', async () => {
+        const res = await enrol(phone(), 'bo.courier', '5678');
+        expect(res.status).toBe(201);
+    });
+
+    it('records the refusal, because somebody trying it is worth seeing', async () => {
+        await phone().post('/api/devices/enrol')
+            .send({ username: 'uh.counter', password: 'counter-pass-1', pin: '4321' });
+        const { events } = (await admin.get('/api/audit?action=device.enrol_refused')).body;
+        expect(events.some((e) => e.entity_id === 'uh.counter')).toBe(true);
+    });
+});
+
+describe('a phone enrolled before the rule existed', () => {
+    it('cannot sign in with its PIN any more', async () => {
+        /* THE REASON THE CHECK IS AT BOTH ENDS. Enrolment refusing does
+           nothing about rows already in the table, and a four-digit
+           credential to patient data that outlives the rule forbidding it is
+           the rule not having happened. Written straight to the table,
+           because the endpoint now refuses to create one. */
+        await admin.post('/api/users').send({
+            username: 'uh.legacy', name: 'Legacy Counter', password: 'counter-pass-2',
+            role: 'staff', mustChangePassword: false,
+        });
+        const user = (await sql('SELECT id FROM users WHERE username = ?', ['uh.legacy'])).rows[0];
+
+        const agent = phone();
+        /* The cookie carries a random token and the row id is its SHA-256,
+           so the two have to be made together. */
+        const token = 'a'.repeat(64);
+        const crypto = await import('node:crypto');
+        const id = crypto.createHash('sha256').update(token).digest('hex');
+        const bcrypt = (await import('bcryptjs')).default;
+        const now = new Date().toISOString();
+        await sql(
+            `INSERT INTO devices (id, user_id, label, user_agent, pin, created_at, last_seen_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [id, Number(user.id), 'Old workstation', 'Device', bcrypt.hashSync('4321', 10), now, now],
+        );
+
+        const res = await agent
+            .post('/api/login/device')
+            .set('Cookie', `izy_did=${token}`)
+            .send({ pin: '4321' });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('device.notAllowed');
+
+        /* And the lock screen does not greet them by name either: it says
+           not enrolled, which sends them to the password box they now have
+           to use rather than to a PIN pad that would refuse them. */
+        const who = await agent.get('/api/login/device').set('Cookie', `izy_did=${token}`);
+        expect(who.body.enrolled).toBe(false);
+        expect(JSON.stringify(who.body)).not.toContain('Legacy Counter');
+    });
+});

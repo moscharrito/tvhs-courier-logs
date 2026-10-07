@@ -110,7 +110,11 @@ export interface DiscrepancySummary {
 export interface SessionSummary {
     id: string;
     device: string;
-    ip: string;
+    /* Absent unless an administrator is reading. The server keeps the address
+     * for the access trail and does not hand it to the account it belongs to:
+     * see the note on /api/me/sessions. Optional rather than always-a-string
+     * so a screen cannot render "undefined" in a column by forgetting. */
+    ip?: string;
     created_at: string;
     last_seen_at: string;
     idle_expires_at: string;

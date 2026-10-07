@@ -141,9 +141,27 @@ describe('trusting a proxy', () => {
         expect(loadConfig(base).trustProxy).toBe(0);
     });
 
-    it('trusts exactly one hop in production, which is what Render puts there', () => {
+    it('trusts two hops in production, because Cloudflare sits in front of Render', () => {
+        /* IT WAS ONE, AND ONE WAS SHORT BY EXACTLY THE HOP THAT MATTERS. The
+           chain is client -> Cloudflare -> Render -> this process, so
+           trusting a single hop stopped at Cloudflare's edge: every session
+           row and every audit entry recorded a Cloudflare address, and the
+           per-address throttle counted everybody arriving through one edge
+           as the same caller. The page that shows somebody where they are
+           signed in said Cloudflare on every line.
+
+           Observed rather than reasoned: a portal session on production
+           recorded 172.71.146.145, which is inside Cloudflare's 172.64.0.0/13.
+
+           The comment above this block still applies in both directions, and
+           the "too high" half is now the live risk: this trusts
+           X-Forwarded-For two deep, so a request that reaches the origin
+           without passing through Cloudflare can choose its own address.
+           Closing that is an infrastructure job (authenticated origin pulls,
+           or a secret header), and TRUST_PROXY exists to correct the count
+           without a deploy if the chain ever changes. */
         const c = loadConfig({ ...base, NODE_ENV: 'production', TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' });
-        expect(c.trustProxy).toBe(1);
+        expect(c.trustProxy).toBe(2);
     });
 
     it('can be set explicitly, and refuses a value that is not a hop count', () => {

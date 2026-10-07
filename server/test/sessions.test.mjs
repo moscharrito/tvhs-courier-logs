@@ -231,3 +231,89 @@ describe('deviceLabel', () => {
         expect(deviceLabel('curl/8.4.0')).toBe('Browser on Other');
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE ADDRESS IS KEPT AND IS NOT HANDED BACK.
+ *
+ * Two separate things, and the portal screen had them the wrong way round.
+ *
+ * KEPT, because the sessions table is what an access review is read from, it
+ * is what answers "where was this account used from" when University Health
+ * ask, and it is the only thing that makes an unfamiliar sign-in identifiable
+ * later. Dropping the column would cost that and buy nothing.
+ *
+ * NOT HANDED BACK, because the account reading its own page does not identify
+ * its own browser by a network address, and a column of them on a pharmacy
+ * staff screen is a field that has to be explained in a security
+ * questionnaire for no gain. An administrator keeps it, through the audited
+ * per-user endpoint.
+ */
+describe('what a session list says about where somebody is', () => {
+    const asPharmacy = async () => {
+        const a = srv.agent();
+        const res = await a.post('/api/login').send({ username: 'uh.counterstaff', password: 'counter-pass-9' });
+        expect(res.status).toBe(200);
+        return a;
+    };
+
+    beforeAll(async () => {
+        const admin = srv.agent();
+        await admin.post('/api/login').send({ username: srv.creds.admin.username, password: srv.creds.admin.password });
+        await admin.post('/api/users').send({
+            username: 'uh.counterstaff', name: 'Counter Staff', password: 'counter-pass-9',
+            role: 'staff', mustChangePassword: false,
+        });
+        await admin.put('/api/users/uh.counterstaff/memberships/uh').send({ role: 'pharmacy', settings: {} });
+    });
+
+    it('still records it, because that is what an access review is read from', async () => {
+        await asPharmacy();
+        const rows = await sessionRows('uh.counterstaff');
+        expect(rows.length).toBeGreaterThan(0);
+        expect(String(rows[rows.length - 1].ip), 'the row should carry an address').not.toBe('');
+    });
+
+    it('does not put it in the response a pharmacy account reads', async () => {
+        /* THE PROPERTY. University Health are strict about what we hold on
+           their staff, and a column of addresses on their own account page is
+           the first thing somebody screenshots into a questionnaire. */
+        const staff = await asPharmacy();
+        const res = await staff.get('/api/me/sessions');
+        expect(res.status).toBe(200);
+        expect(res.body.length).toBeGreaterThan(0);
+        for (const s of res.body) {
+            expect(s.ip, 'no address in a client-facing session list').toBeUndefined();
+        }
+        expect(JSON.stringify(res.body)).not.toMatch(/"ip"/);
+    });
+
+    it('still tells them which device and when, which is what the screen is for', async () => {
+        /* Removing the address must not leave a list nobody can act on: the
+           point of the page is recognising a sign-in, and the device and the
+           times are what somebody actually recognises. */
+        const staff = await asPharmacy();
+        const [first] = (await staff.get('/api/me/sessions')).body;
+        expect(first.device).toBeTruthy();
+        expect(first.created_at).toBeTruthy();
+        expect(first.last_seen_at).toBeTruthy();
+        expect(typeof first.current).toBe('boolean');
+    });
+
+    it('keeps it for an administrator, who is the one reviewing access', async () => {
+        const admin = srv.agent();
+        await admin.post('/api/login').send({ username: srv.creds.admin.username, password: srv.creds.admin.password });
+        const own = await admin.get('/api/me/sessions');
+        expect(own.status).toBe(200);
+        expect(own.body.some((s) => typeof s.ip === 'string')).toBe(true);
+
+        const theirs = await admin.get('/api/users/uh.counterstaff/sessions');
+        expect(theirs.status).toBe(200);
+        expect(theirs.body.length).toBeGreaterThan(0);
+        expect(typeof theirs.body[0].ip).toBe('string');
+    });
+
+    it('does not let a pharmacy account reach the admin list to get around it', async () => {
+        const staff = await asPharmacy();
+        expect((await staff.get('/api/users/uh.counterstaff/sessions')).status).toBe(403);
+    });
+});

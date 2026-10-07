@@ -57,9 +57,27 @@ export function createCoreAuthRouter({ client, store }: Deps): Router {
         return id;
     }
 
+    /* ──────────────────────────────── the IP is kept and is not handed back
+     *
+     * The address stays in the sessions table. It is what an access review
+     * under the HIPAA audit-controls requirement is read from, it is what
+     * answers "where was this account used from" when University Health ask,
+     * and it is the thing that makes an unfamiliar sign-in identifiable at
+     * all. Not recording it would cost that and buy nothing: the row exists
+     * either way.
+     *
+     * It is not in this response, which is the one a client reads. A pharmacy
+     * account opening its own account page is being shown a column of other
+     * people's network addresses, every one of them a field that has to be
+     * explained in a security questionnaire, to answer a question the device
+     * name and the times already answer better. An administrator keeps it,
+     * through /api/users/:username/sessions below, which is an audited call.
+     */
     router.get('/api/me/sessions', requireAuth, wrap(async (req, res) => {
         const userId = await currentUserId(req);
-        res.json(await store.listForUser(userId, req.session.id));
+        const list = await store.listForUser(userId, req.session.id);
+        if (req.session.user!.role === 'admin') { res.json(list); return; }
+        res.json(list.map(({ ip: _ip, ...rest }) => rest));
     }));
 
     router.delete('/api/me/sessions/others', requireAuth, wrap(async (req, res) => {

@@ -115,7 +115,11 @@ export function Layout() {
                         { also: pathname.startsWith(`/projects/${p.code}/`) },
                     ))}
                     <div className="izy-nav-title">Account</div>
-                    {item('/devices', 'This phone')}
+                    {/* "This phone" is a courier's phone. For everybody
+                        else the page is a password and a list of sessions,
+                        and calling that This phone sends a pharmacist looking
+                        for a feature they do not have and should not. */}
+                    {item('/devices', user.role === 'driver' ? 'This phone' : 'Your account')}
                     {user.role === 'admin' && (
                         <>
                             <div className="izy-nav-title">Platform</div>

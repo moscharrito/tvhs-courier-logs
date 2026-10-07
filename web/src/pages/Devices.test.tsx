@@ -182,3 +182,112 @@ describe('a phone that is set up', () => {
         expect(screen.queryByText(/Not authenticated/)).not.toBeInTheDocument();
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE SAME PAGE, SEEN BY SOMEBODY WHO IS NOT A COURIER.
+ *
+ * University Health's pharmacy staff were being offered a form that reduces
+ * their sign-in to four digits, on a workstation a dispensary shares, for an
+ * account that reaches patient names and addresses. The server refuses it now
+ * and these are the other half: not offering what cannot be done, and not
+ * showing them a column of network addresses to answer a question the device
+ * name already answers.
+ *
+ * Written as assertions about what is ABSENT, because that is what the
+ * complaint was about and what a security questionnaire asks.
+ */
+const pharmacyStaff = {
+    id: 11, username: 'uhpharmacy.staff', name: 'UH-Pharmacy Staff', role: 'staff', route: null,
+};
+
+/** The session a client gets: no ip, because the server strips it. */
+const clientSession = {
+    id: 'sess-9', device: 'Chrome on Windows',
+    created_at: '2026-10-07T15:16:21Z', last_seen_at: '2026-10-07T15:17:23Z',
+    idle_expires_at: '2026-10-08T00:00:00Z', absolute_expires_at: '2026-11-06T15:16:21Z', current: true,
+};
+
+function renderAsPharmacy(routes: Record<string, unknown> = {}) {
+    const mocked = mockFetch({
+        'GET /api/session': pharmacyStaff,
+        'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'pharmacy' }],
+        'GET /api/me/sessions': [clientSession],
+        ...routes,
+    });
+    render(
+        <MemoryRouter initialEntries={['/devices']}>
+            <AuthProvider><App /></AuthProvider>
+        </MemoryRouter>,
+    );
+    return mocked;
+}
+
+describe('pharmacy staff on the account page', () => {
+    it('is not offered a PIN', async () => {
+        /* THE COMPLAINT. A four-digit credential to an account holding
+           patient data, offered on a shared hospital desktop. */
+        renderAsPharmacy();
+        await screen.findByRole('heading', { name: 'Your account' });
+        expect(screen.queryByText(/four-digit PIN/i)).toBeNull();
+        expect(screen.queryByLabelText(/Choose a PIN/i)).toBeNull();
+        expect(screen.queryByRole('button', { name: /Set up this phone/i })).toBeNull();
+    });
+
+    it('is not shown a list of phones either, which it would never have', async () => {
+        renderAsPharmacy();
+        await screen.findByRole('heading', { name: 'Your account' });
+        expect(screen.queryByRole('heading', { name: 'This phone' })).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'Your phones' })).toBeNull();
+    });
+
+    it('does not even ask the server about devices', async () => {
+        /* Asking and ignoring the answer would put two requests about a
+           feature they do not have in their own network log. */
+        const mocked = renderAsPharmacy();
+        await screen.findByRole('heading', { name: 'Your account' });
+        expect(mocked.calls.some((c) => c.includes('/api/devices'))).toBe(false);
+        expect(mocked.calls.some((c) => c.includes('/api/login/device'))).toBe(false);
+    });
+
+    it('shows no IP column, because the server sends none', async () => {
+        renderAsPharmacy();
+        await screen.findByRole('heading', { name: 'Signed in' });
+        expect(screen.queryByRole('columnheader', { name: 'IP' })).toBeNull();
+        /* And nothing rendered "undefined" in its place. */
+        expect(screen.queryByText(/undefined/)).toBeNull();
+    });
+
+    it('still says which browser and when, which is what they recognise', async () => {
+        /* Taking the address away must not leave a list nobody can act on. */
+        renderAsPharmacy();
+        expect(await screen.findByText(/Chrome on Windows/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Sign out all other devices/i })).toBeInTheDocument();
+    });
+
+    it('still offers the password change, which is why the page exists for them', async () => {
+        renderAsPharmacy();
+        await screen.findByRole('heading', { name: 'Your account' });
+        expect(screen.getByRole('heading', { name: /password/i })).toBeInTheDocument();
+    });
+
+    it('is called Your account in the sidebar, not This phone', async () => {
+        /* "This phone" sends a pharmacist looking for a feature they do not
+           have and should not. */
+        renderAsPharmacy();
+        await screen.findByRole('heading', { name: 'Your account' });
+        expect(screen.queryByRole('link', { name: 'This phone' })).toBeNull();
+        expect(screen.getByRole('link', { name: 'Your account' })).toBeInTheDocument();
+    });
+});
+
+describe('a courier on the same page', () => {
+    it('keeps everything, because this is the case it was built for', async () => {
+        renderDevices({
+            'GET /api/devices': [],
+            'GET /api/login/device': { enrolled: false },
+        });
+        await screen.findByRole('heading', { name: 'Devices and sign-in' });
+        expect(screen.getByRole('heading', { name: 'This phone' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Your phones' })).toBeInTheDocument();
+    });
+});

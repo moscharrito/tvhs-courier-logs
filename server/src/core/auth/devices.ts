@@ -26,6 +26,28 @@
  * administrator setting a PIN set what somebody's phone would accept. One
  * column per device fixes all four, and users.pin is now the route PIN and
  * nothing else.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * COURIERS ONLY, AND THAT IS A CORRECTION.
+ *
+ * Enrolment had no role check at all. Any active account that knew its own
+ * password could register a browser and reduce itself to four digits,
+ * University Health's pharmacy staff included, and a pharmacy account reaches
+ * patient names, addresses and proof-of-delivery photographs. The paragraph
+ * above is the whole case for accepting four digits and it rests on a phone
+ * one person keeps: a hospital workstation that half a dispensary shares is
+ * not that phone, and the second factor stops being a factor.
+ *
+ * So the reason for the restriction is not that pharmacy staff have no USE
+ * for a PIN. It is that a four-digit credential to PHI, settable by anybody,
+ * is the first thing a hospital security questionnaire asks about and the
+ * right answer is that it cannot be done rather than that it is not offered.
+ * Hiding the form would have left the endpoint, which is what a reviewer
+ * actually tests.
+ *
+ * It is enforced at BOTH ends: enrolling refuses, and signing in with a PIN
+ * refuses too, so any row enrolled before this lands stops working rather
+ * than quietly outliving the rule.
  */
 
 import crypto from 'node:crypto';
@@ -36,6 +58,24 @@ import type { Client } from '@libsql/client';
 import type { Config } from '../../config';
 import { readCookie } from './sessions';
 import { createAuthThrottles, tooManyAttempts, type AuthThrottles } from './throttle';
+
+/**
+ * Who may reduce their sign-in to four digits.
+ *
+ * Platform role, not project role: a site lead is a `driver` here and works
+ * from a phone at a counter exactly as a courier does, which is the case the
+ * device binding was built for. Everybody else, our own administrators
+ * included, signs in with a password.
+ *
+ * Exported so the tests name the rule rather than restating it.
+ */
+export const MAY_USE_DEVICE_PIN = (role: string): boolean => role === 'driver';
+
+/** Said the same way wherever it is refused. */
+export const DEVICE_PIN_DENIED = {
+    error: 'PIN sign-in is for courier phones only. Sign in with your password.',
+    code: 'device.notAllowed',
+} as const;
 
 export const DEVICE_COOKIE = 'izy_did';
 /** A phone stays enrolled for a year unless revoked; the PIN is the gate. */
@@ -168,6 +208,17 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
         }
         sharedThrottles.password.reset(req.ip, username);
 
+        /* AFTER the password, deliberately. Answering "you may not" before
+           knowing the password would tell a stranger which usernames are
+           couriers, and the enumeration this endpoint already avoids with one
+           message for every credential failure would be back by another
+           door. Audited, because somebody trying it is worth seeing. */
+        if (!MAY_USE_DEVICE_PIN(String(user['role']))) {
+            await req.audit('device.enrol_refused', 'user', String(user['username']), { role: String(user['role']) });
+            res.status(403).json(DEVICE_PIN_DENIED);
+            return;
+        }
+
         const token = crypto.randomBytes(32).toString('hex');
         const now = new Date().toISOString();
         const userAgent = describeUserAgent(req.get('user-agent') ?? '');
@@ -208,6 +259,11 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
     router.get('/api/login/device', wrap(async (req, res) => {
         const device = await liveDevice(deviceTokenOf(req));
         if (!device) { res.json({ enrolled: false }); return; }
+        /* A phone whose owner may no longer use a PIN is not a phone this
+           screen should greet by name. Saying "not enrolled" sends them to
+           the password box, which is where they now have to go, instead of
+           to a PIN pad that would refuse them. */
+        if (!MAY_USE_DEVICE_PIN(String(device['role']))) { res.json({ enrolled: false }); return; }
         res.json({
             enrolled: true,
             name: String(device['name']),
@@ -237,6 +293,18 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
 
         if (String(device['status']) !== 'active') {
             res.status(401).json({ error: 'This account is not active.' });
+            return;
+        }
+        /* The same rule as enrolment, checked again here rather than trusted
+           to have been checked then. A device enrolled before the rule
+           existed, or by an account whose role changed afterwards, is exactly
+           the row that would otherwise keep a four-digit credential to
+           patient data alive after the rule said it could not. */
+        if (!MAY_USE_DEVICE_PIN(String(device['role']))) {
+            await req.audit('auth.login_failed', 'user', String(device['username']), {
+                method: 'device_pin', reason: 'role_not_allowed',
+            });
+            res.status(403).json(DEVICE_PIN_DENIED);
             return;
         }
         if (!device['pin'] || !bcrypt.compareSync(body.pin, String(device['pin']))) {

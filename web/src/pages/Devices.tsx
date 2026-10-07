@@ -14,6 +14,34 @@
  *                else in this system
  *   Signed in    live sessions, which is a different list and a different
  *                revocation
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * THE FIRST TWO SECTIONS ARE FOR COURIERS AND NOBODY ELSE.
+ *
+ * University Health's pharmacy staff were being shown a form offering to
+ * reduce their sign-in to four digits, on a workstation a dispensary shares.
+ * The case for a four-digit PIN is in devices.ts and all of it rests on a
+ * phone one person keeps; a shared desktop is not that phone, and the account
+ * behind it reaches patient names, addresses and proof-of-delivery
+ * photographs. It is the first thing a hospital security questionnaire asks
+ * about.
+ *
+ * The server refuses it now, which is the part that matters and the part a
+ * reviewer can test. This is the other half: not offering what cannot be
+ * done. Hiding a form whose endpoint still worked would have been the
+ * decoration, not the fix.
+ *
+ * WHAT IS LEFT IS STILL WORTH A PAGE. Changing your own password and seeing
+ * where you are signed in are the two things any account needs, so for
+ * everybody else this is an account page with those two things and a title
+ * that says so.
+ *
+ * NO IP COLUMN unless an administrator is reading. The address is still
+ * recorded, because an access review is read from it and University Health
+ * will ask for one; the server simply stops handing it to the account it
+ * belongs to. See the note on /api/me/sessions. A pharmacist does not
+ * identify their own browser by its network address, and a column of them is
+ * a field to be explained in a questionnaire for no gain.
  */
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -23,6 +51,10 @@ import { Pager, usePaged } from '../app/Pager';
 
 export function Devices() {
     const { user, signOut } = useAuth();
+    /* Platform role, the same rule the server enforces in
+       MAY_USE_DEVICE_PIN. A site lead is a driver here and works from a phone
+       at a counter exactly as a courier does. */
+    const mayUsePin = user?.role === 'driver';
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
     const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
@@ -36,10 +68,15 @@ export function Devices() {
 
     const load = useCallback(async () => {
         try {
+            /* The device calls are not made for an account that may not use a
+               PIN. Asking and ignoring the answer would put two requests
+               about a feature they do not have into their browser's network
+               log, which is the sort of thing that gets screenshotted into a
+               security questionnaire. */
             const [s, d, i] = await Promise.all([
                 api<SessionSummary[]>('/api/me/sessions'),
-                api<EnrolledDevice[]>('/api/devices'),
-                api<DeviceIdentity>('/api/login/device'),
+                mayUsePin ? api<EnrolledDevice[]>('/api/devices') : Promise.resolve([]),
+                mayUsePin ? api<DeviceIdentity>('/api/login/device') : Promise.resolve({ enrolled: false } as DeviceIdentity),
             ]);
             setSessions(s);
             setDevices(d);
@@ -47,7 +84,7 @@ export function Devices() {
         } catch (err) {
             setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Failed to load' });
         }
-    }, []);
+    }, [mayUsePin]);
     useEffect(() => { void load(); }, [load]);
 
     const revoke = async (url: string, label_: string, endsThisSession = false) => {
@@ -102,21 +139,26 @@ export function Devices() {
     };
 
     const thisPhoneEnrolled = identity?.enrolled === true;
+    /* Whether any row came back with an address on it. The server decides
+       (see /api/me/sessions); this only renders what it was given. */
+    const showIp = (sessions ?? []).some((s) => typeof s.ip === 'string' && s.ip !== '');
 
     const pagedDevices = usePaged(devices ?? []);
     const pagedSessions = usePaged(sessions ?? []);
 
     return (
         <>
-            <h1>Devices and sign-in</h1>
+            <h1>{mayUsePin ? 'Devices and sign-in' : 'Your account'}</h1>
             <p className="izy-sub">
-                Set up this phone so a PIN signs you in, see which phones are set up, and sign out
-                anywhere you do not recognize.
+                {mayUsePin
+                    ? 'Set up this phone so a PIN signs you in, see which phones are set up, and sign out anywhere you do not recognize.'
+                    : 'Change your password, and sign out anywhere you do not recognize.'}
             </p>
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
             <ChangePassword />
 
+            {mayUsePin && (<>
             <div className="izy-card">
                 <h2>This phone</h2>
                 {identity === null ? <div className="izy-muted">Loading...</div> : thisPhoneEnrolled ? (
@@ -218,22 +260,33 @@ export function Devices() {
                     </>
                 )}
             </div>
+            </>)}
 
             <div className="izy-card">
                 <h2>Signed in</h2>
                 <p className="izy-muted">
-                    Every browser or phone where you are signed in right now. Not the same as the list
-                    above: a phone can be set up and not signed in, or signed in without being set up.
+                    {mayUsePin
+                        ? 'Every browser or phone where you are signed in right now. Not the same as the list above: a phone can be set up and not signed in, or signed in without being set up.'
+                        : 'Every browser where you are signed in right now. Sign out any you do not recognize, then change your password.'}
                 </p>
                 {sessions === null ? <div className="izy-muted">Loading...</div> : (
                     <>
                     <table className="izy-table">
-                        <thead><tr><th>Device</th><th>IP</th><th>Signed in</th><th>Last seen</th><th></th></tr></thead>
+                        {/* The IP column only when the server sent one, which
+                            it does for an administrator and not for the
+                            account the row belongs to. Driven by the data
+                            rather than by a second copy of the rule here, so
+                            the two cannot disagree. */}
+                        <thead><tr>
+                            <th>Device</th>
+                            {showIp && <th>IP</th>}
+                            <th>Signed in</th><th>Last seen</th><th></th>
+                        </tr></thead>
                         <tbody>
                             {pagedSessions.rows.map((s) => (
                                 <tr key={s.id}>
                                     <td>{s.device} {s.current && <span className="izy-pill">this device</span>}</td>
-                                    <td><code>{s.ip}</code></td>
+                                    {showIp && <td><code>{s.ip}</code></td>}
                                     <td>{fmtWhen(s.created_at)}</td>
                                     <td>{fmtWhen(s.last_seen_at)}</td>
                                     <td style={{ textAlign: 'right' }}>

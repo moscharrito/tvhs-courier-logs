@@ -19,7 +19,32 @@ export interface Config {
     port: number;
     timezone: string;
     sessionSecret: string;
-    /** Proxy hops to trust for req.ip and req.protocol. One on Render. */
+    /**
+     * Proxy hops to trust for req.ip and req.protocol.
+     *
+     * TWO IN PRODUCTION, AND IT WAS ONE, WHICH WAS WRONG BY EXACTLY ONE HOP.
+     * The chain is client -> Cloudflare -> Render -> this process. Trusting
+     * one hop stops at Cloudflare's edge, so every session row, every audit
+     * entry and every throttle bucket was keyed on a Cloudflare address
+     * instead of on the person. Two things followed:
+     *
+     *   The IP shown to somebody on the sign-in screen said Cloudflare on
+     *   every row, so the one question it exists to answer, "do I recognise
+     *   this", could not be answered.
+     *
+     *   Password and PIN throttling is keyed per IP. Everybody arriving
+     *   through the same Cloudflare edge shared one allowance: a stranger
+     *   guessing could spend the allowance of unrelated people, and spreading
+     *   guesses across edges bought more attempts.
+     *
+     * THE CAVEAT, which belongs to the infrastructure rather than to this
+     * line: trusting hops means trusting X-Forwarded-For, and a request that
+     * reaches the origin WITHOUT going through Cloudflare can put whatever it
+     * likes in that header. Closing it means refusing direct traffic to the
+     * Render URL (authenticated origin pulls, or a shared secret header).
+     * Until that is done this is an improvement on a wrong value rather than
+     * a guarantee of a right one. TRUST_PROXY overrides it without a deploy.
+     */
     trustProxy: number;
     geo: {
         /** Google Maps key. Sites only: see src/core/geo/provider.ts. */
@@ -415,7 +440,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         port: e.PORT,
         timezone: e.APP_TIMEZONE,
         sessionSecret: e.SESSION_SECRET as string,
-        trustProxy: e.TRUST_PROXY ?? (isProduction ? 1 : 0),
+        trustProxy: e.TRUST_PROXY ?? (isProduction ? 2 : 0),
         geo: {
             googleApiKey: e.GOOGLE_MAPS_API_KEY,
             dailyCeiling: e.GEO_DAILY_CEILING ?? 2500,
