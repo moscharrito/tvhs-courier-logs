@@ -52,8 +52,10 @@ squircle or a rounded square depending on the phone.
 - **Keep the mark inside the middle 66 percent**, a 676 x 676 box centred in
   the square. Anything outside that can be cut off by the mask.
 - The background colour is set in code, not here:
-  `ADAPTIVE_BACKGROUND` in `src/lib/appIcons.cjs`, currently `#0B6E4F`.
-  Change it there if the brand green moves.
+  `ADAPTIVE_BACKGROUND` in `src/lib/appIcons.cjs`, currently `#14532d`, the
+  same green as `icon.png` and the splash wordmark. Change it there if the
+  brand green moves, and change `icon.svg` with it or the app wears two
+  different greens depending on the phone.
 
 One file cannot serve both. iOS wants the artwork filling the square with no
 alpha; Android wants it padded with alpha around it. Supplying the same image
@@ -74,6 +76,35 @@ With both files present the output carries `icon` and
 To see the Android icon as a launcher will mask it, build the preview profile
 and install it; the masking is done by the device, so no preview on a desktop
 is authoritative.
+
+---
+
+---
+
+## What is here now, and how it was made
+
+`icon.svg` and `adaptive-icon.svg` are the source; the PNGs beside them are
+what the build reads. Keeping the vector in the repository means the next
+change is a text diff rather than a lost design file.
+
+They are a typographic mark: the TAG wordmark in white on the brand green,
+with the same rule the splash screen draws. That is a deliberate choice rather
+than a placeholder, for the reason at the top of this file, but it is not a
+designed brand identity either. If a designer produces one, replace the two
+PNGs and nothing else has to change.
+
+**`scripts/strip-alpha.mjs` exists because a canvas always emits RGBA.** Apple
+rejects an icon carrying an alpha channel even when every pixel in it is
+opaque, so the iOS square is re-encoded to colour type 2 after rasterising.
+The Android layer keeps its alpha, which it needs. Run it again if icon.png is
+ever regenerated from a browser, a screenshot or most design tools:
+
+```bash
+node scripts/strip-alpha.mjs assets/icon.png
+```
+
+It refuses anything that is not 8-bit RGBA non-interlaced rather than guessing,
+because a tool that silently mangled an icon would be worse than no tool.
 
 ---
 

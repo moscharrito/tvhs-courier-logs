@@ -1,0 +1,30 @@
+<!-- The iOS icon and both store listings, as source.
+
+     The PNG beside this is what the build reads; this is what somebody edits.
+     Keeping the vector in the repository means the next change is a text diff
+     rather than a lost Illustrator file.
+
+     THE RULES THIS OBEYS, from assets/README.md:
+       1024 x 1024, exactly square.
+       No alpha. The square is filled edge to edge; an alpha channel is
+       rejected at submission.
+       No rounded corners. iOS rounds them itself and artwork rounded here
+       gets rounded twice.
+
+     WHY A WORDMARK AND NOT A VAN OR A PILL. The app is called TAG on the
+     splash screen and in the web rail, and three heavy letters are legible at
+     the 60 points a home screen actually renders this at. A drawn symbol
+     would be a second brand nobody has agreed, and a courier looking for the
+     app on a crowded home screen finds the word they were told to look for.
+
+     The rule beneath is the same one the splash screen draws on, so opening
+     the app reads as the icon assembling itself rather than as a handover
+     between two different marks. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#14532d"/>
+  <text x="512" y="512"
+        font-family="Segoe UI, Helvetica Neue, Arial, sans-serif"
+        font-size="330" font-weight="800" letter-spacing="-12"
+        fill="#ffffff" text-anchor="middle" dominant-baseline="central">TAG</text>
+  <rect x="452" y="700" width="120" height="16" rx="8" fill="#16a34a"/>
+</svg>

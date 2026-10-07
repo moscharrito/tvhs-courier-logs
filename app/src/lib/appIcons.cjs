@@ -46,8 +46,13 @@ const ADAPTIVE_ICON = './assets/adaptive-icon.png';
 
 /* The colour behind the Android foreground layer, and the one a launcher
  * shows around a circular mask. Not white: a white-on-white icon vanishes on
- * a light launcher background. This is the green used by the app shell. */
-const ADAPTIVE_BACKGROUND = '#0B6E4F';
+ * a light launcher background.
+ *
+ * THE SAME GREEN AS icon.png, which it was not. This said #0B6E4F while the
+ * iOS square is #14532d, so the same app wore two different greens depending
+ * on the phone it was installed on. #14532d is theme.green, the colour of the
+ * splash wordmark and the web rail, so the three now agree. */
+const ADAPTIVE_BACKGROUND = '#14532d';
 
 const REQUIRED = [
     {

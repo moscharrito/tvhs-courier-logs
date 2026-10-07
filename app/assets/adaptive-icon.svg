@@ -1,0 +1,28 @@
+<!-- The Android foreground layer, as source.
+
+     Android composites this over ADAPTIVE_BACKGROUND (src/lib/appIcons.cjs)
+     and masks the result to whatever shape the launcher uses: a circle, a
+     squircle or a rounded square depending on the phone.
+
+     THE RULES THIS OBEYS, from assets/README.md:
+       1024 x 1024, transparent background.
+       The mark stays inside the middle 66 percent, a 676 x 676 box centred in
+       the square, because anything outside it can be cut off by the mask.
+
+     So this is the same wordmark as icon.svg, smaller, with no fill behind
+     it. The two files cannot be one file: iOS wants the artwork filling the
+     square with no alpha and Android wants it padded with alpha around it,
+     and supplying the same image twice gives either a cropped Android icon or
+     a rejected iOS build.
+
+     The safe box is 174 to 850 on both axes. The wordmark sits on the centre
+     line and the rule below it is inside the box with room to spare, because
+     a circular mask takes the corners first and the rule is the first thing
+     that would lose an end. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <text x="512" y="470"
+        font-family="Segoe UI, Helvetica Neue, Arial, sans-serif"
+        font-size="250" font-weight="800" letter-spacing="-9"
+        fill="#ffffff" text-anchor="middle" dominant-baseline="central">TAG</text>
+  <rect x="467" y="610" width="90" height="13" rx="6.5" fill="#86efac"/>
+</svg>
