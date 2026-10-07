@@ -289,6 +289,7 @@ const MATRIX = [
        everything that names a driver is dispatch's. */
     ['GET', `${UH}/drivers`, UH_STAFF, 'every driver and what they earned'],
     ['GET', `${UH}/drivers/me`, UH_MEMBER, 'a courier reads their own, and only by this route'],
+    ['GET', `${UH}/drivers/export.xlsx`, UH_STAFF, 'the payment run as a file'],
     ['GET', `${UH}/drivers/nobody`, UH_STAFF, 'naming a driver is dispatch only'],
 
     /* --- pharmacies. Addresses and contacts of University Health sites. */

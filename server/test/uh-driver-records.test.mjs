@@ -242,3 +242,107 @@ describe('daily, monthly and yearly', () => {
         expect(res.body.code).toBe('drivers.rangeTooLong');
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE PAYMENT RUN AS A FILE.
+ *
+ * Every export in this system is a disclosure, so the shared helper carries
+ * the five things the first one had to get right: a cap that refuses rather
+ * than truncates, an About sheet saying what the file is, an audit row
+ * written before the bytes, headers that stop a copy being kept, and a
+ * findable filename. These tests are about the two that would be got wrong
+ * silently.
+ */
+describe('the drivers record as a spreadsheet', () => {
+    const binary = (res, cb) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+    };
+
+    const sheetOf = async (res, name) => {
+        const ExcelJS = (await import('exceljs')).default;
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(res.body);
+        const sheet = wb.getWorksheet(name);
+        const rows = [];
+        sheet.eachRow((row) => {
+            rows.push(row.values.slice(1).map((v) => (v === undefined || v === null ? '' : String(v))));
+        });
+        return rows;
+    };
+
+    const download = () => admin
+        .get(`${DRIVERS}/export.xlsx?from=${day}&to=${day}`)
+        .buffer()
+        .parse(binary);
+
+    it('comes back as a spreadsheet nobody caches', async () => {
+        const res = await download();
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/spreadsheetml/);
+        expect(res.headers['content-disposition']).toContain(`drivers-${day}-to-${day}.xlsx`);
+        /* A file of counts is still this contract's business. */
+        expect(String(res.headers['cache-control'])).toMatch(/no-store/);
+        expect(String(res.headers['cache-control'])).toMatch(/private/);
+    });
+
+    it('carries the drivers and what they delivered', async () => {
+        await setRates({ scheduled: 450, stat: 700, adhoc: 500 });
+        const res = await download();
+        const rows = await sheetOf(res, 'Drivers');
+        const flat = rows.flat().join(' | ');
+        expect(flat).toContain('Ada Pay');
+        expect(flat).toContain('Bo Pay');
+    });
+
+    it('names no patient and no address, which is what makes it postable', async () => {
+        /* THE PROPERTY. This is the file that goes to a bookkeeper. */
+        const res = await download();
+        const rows = await sheetOf(res, 'Drivers');
+        const flat = rows.flat().join(' | ');
+        expect(flat).not.toMatch(/Pay Patient/);
+        expect(flat).not.toMatch(/Invented Way/);
+        expect(flat).not.toMatch(/78215/);
+    });
+
+    it('says on the file that it holds no patient data, rather than leaving it assumed', async () => {
+        const res = await download();
+        const about = (await sheetOf(res, 'About')).flat().join(' | ');
+        expect(about).toContain('No patient data');
+        expect(about).toContain('America/Chicago');
+        expect(about).toContain(day);
+    });
+
+    it('leaves the pay column blank rather than zero when a rate is missing', async () => {
+        /* The same rule as the screen, in the one place somebody will sum a
+           column: a nought in a pay cell is an answer and it would be paid. */
+        await setRates({ scheduled: 0, stat: 0, adhoc: 0 });
+        const res = await download();
+        const rows = await sheetOf(res, 'Drivers');
+        const header = rows[0];
+        const payAt = header.findIndex((h) => h.startsWith('Pay'));
+        expect(payAt).toBeGreaterThan(-1);
+        const ada = rows.find((r) => r[0] === 'Ada Pay');
+        expect(ada[payAt]).toBe('');
+        /* And it says why, in its own column, so a blank is not a mystery. */
+        expect(ada.join(' | ')).toMatch(/rate is missing/i);
+        await setRates({ scheduled: 450, stat: 700, adhoc: 500 });
+    });
+
+    it('records that a copy was taken, with how many rows', async () => {
+        /* Written before the bytes, so a download interrupted half way still
+           appears: a copy that was started is a copy that may exist. */
+        await download();
+        const { events } = (await admin.get('/api/audit?action=drivers.export')).body;
+        expect(events.length).toBeGreaterThan(0);
+        const detail = typeof events[0].detail === 'string' ? JSON.parse(events[0].detail) : events[0].detail;
+        expect(detail.rows).toBeGreaterThan(0);
+        expect(detail.containedPatientData).toBe(false);
+    });
+
+    it('is not something a courier may take', async () => {
+        const ada = await agentFor('pay.ada', 'pay-pass-11');
+        expect((await ada.get(`${DRIVERS}/export.xlsx`)).status).toBe(403);
+    });
+});

@@ -138,6 +138,14 @@ export function Drivers() {
                     <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>
                         Refresh
                     </button>
+                    {/* A plain link carrying the same range the table was
+                        built from, so the file is what is on screen. Not a
+                        fetch and a blob: the browser knows how to save a
+                        download, and a blob URL would keep a copy of the
+                        payment run alive in the tab until it was closed. */}
+                    <a className="izy-btn secondary" href={`/api/projects/${code}/uh/drivers/export.xlsx?from=${from}&to=${to}`}>
+                        Export to Excel
+                    </a>
                 </div>
             </div>
 

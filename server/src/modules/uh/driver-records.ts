@@ -47,6 +47,7 @@ import {
     payFor, addTotals, noPay, payBucket, PAY_GROUPINGS,
     type PayGrouping, type PayTotals,
 } from './driver-pay';
+import { sendSpreadsheet, tooManyRows } from '../../core/http/spreadsheet';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -247,6 +248,86 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             rateSet: totals.rateSet,
             drivers,
             totals,
+        });
+    }));
+
+    /* --------------------------------------------------------- as a file */
+
+    /* The list somebody actually disburses from, so it is the one most likely
+       to be exported, mailed to a bookkeeper and opened on a laptop that has
+       nothing to do with University Health. It names no patient and carries
+       no address, which is what makes that safe, and the About sheet says so
+       in as many words rather than leaving it to be assumed.
+       
+       The router is mounted at /uh/drivers, so this is /uh/drivers/export.xlsx
+       rather than /uh/drivers.xlsx, which would have been outside the mount
+       and answered 404 to everybody. Declared before '/:username' or Express
+       reads the filename as a driver's name. */
+    router.get('/export.xlsx', dispatchOnly, wrap(async (req, res) => {
+        const project = req.project!;
+        const window = windowOf(req, res);
+        if (!window) return;
+        const rates = resolveSettings(project.settings).driverPay;
+
+        const [stops, names] = await Promise.all([
+            stopsIn(project.id, window.from, window.to, null),
+            driversOf(project.id),
+        ]);
+
+        const byDriver = new Map<string, StopRow[]>();
+        for (const stop of stops) {
+            const username = String(stop.assigned_to_username);
+            const list = byDriver.get(username);
+            if (list) list.push(stop); else byDriver.set(username, [stop]);
+        }
+        const everyone = new Set([...names.keys(), ...byDriver.keys()]);
+        if (tooManyRows(res, everyone.size, 'drivers')) return;
+
+        /* Money as a decimal, because this file is opened in a spreadsheet
+           and summed there. Cents are how it is held and added; a column of
+           cents would be added up into a number nobody recognises. An unset
+           rate is left BLANK rather than written as zero, for the same reason
+           the screen says "rate not set": a nought in a pay column is an
+           answer somebody would pay. */
+        const rows = [...everyone].map((username) => {
+            const theirs = byDriver.get(username) ?? [];
+            const totals = payFor(payable(theirs), rates);
+            return {
+                driver: names.get(username) ?? `${username} (no longer a courier on this contract)`,
+                username,
+                daysWorked: new Set(theirs.map((s) => s.service_date)).size,
+                delivered: totals.delivered,
+                failed: totals.failed,
+                pay: totals.payCents === null ? '' : totals.payCents / 100,
+                rateSet: totals.rateSet ? 'yes' : 'no, a rate is missing',
+            };
+        }).sort((a, b) => b.delivered - a.delivered || a.driver.localeCompare(b.driver));
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Drivers',
+            columns: [
+                { header: 'Driver', key: 'driver', width: 28 },
+                { header: 'Username', key: 'username', width: 18 },
+                { header: 'Days worked', key: 'daysWorked', width: 12 },
+                { header: 'Delivered', key: 'delivered', width: 11 },
+                { header: 'Not delivered', key: 'failed', width: 14 },
+                { header: `Pay (${rates.currency})`, key: 'pay', width: 14 },
+                { header: 'Every rate set', key: 'rateSet', width: 22 },
+            ],
+            rows,
+            filename: `drivers-${window.from}-to-${window.to}.xlsx`,
+            about: [
+                ['What this is', 'What each driver delivered in the range, and what it comes to.'],
+                ['Service dates', `${window.from} to ${window.to}`],
+                ['Times', `${project.timezone}`],
+                ['Pay', 'Per completed delivery. An attempt that did not complete pays nothing and is counted separately.'],
+                ['Blank pay', 'A rate is not set for a service level that was worked, so no figure is given rather than a short one.'],
+            ],
+            containsPatientData: false,
+            auditAction: 'drivers.export',
+            auditEntity: 'report',
+            auditEntityId: `${window.from}..${window.to}`,
+            auditDetail: { drivers: rows.length },
         });
     }));
 
