@@ -69,6 +69,20 @@ const STATUS_LABEL: Record<string, string> = {
 const needsAttention = (o: ClientOrder) => o.status === 'failed' || o.sla.state === 'overdue';
 
 /**
+ * Which colour a status carries.
+ *
+ * Deliberately not one colour per status. Three outcomes matter to somebody
+ * reading this page: it arrived, it did not, or it is still in the air. A
+ * palette with seven entries is a legend nobody reads.
+ */
+function stateTone(o: ClientOrder): string {
+    if (o.status === 'delivered') return 'good';
+    if (o.status === 'failed') return 'bad';
+    if (o.status === 'cancelled') return 'quiet';
+    return o.sla.state === 'overdue' ? 'bad' : 'warn';
+}
+
+/**
  * One of the four figures at the top, as something you can open.
  *
  * A button rather than a link because it narrows the page it is already on.
@@ -474,7 +488,7 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
             </thead>
             <tbody>
                 {rows.map((o) => (
-                    <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
+                    <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad izy-row-attention' : undefined}>
                         {showPharmacy && <td>{o.pharmacy}</td>}
                         <td>
                             {o.recipientName}
@@ -487,7 +501,15 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                                 : o.zone}
                         </td>
                         <td>
-                            {STATUS_LABEL[o.status] ?? o.status}
+                            {/* A state, shaped like one. As a bare word it
+                                carried the same weight as the address beside
+                                it, so "not delivered" did not stand out from
+                                a street name. The tone is the meaning: a
+                                pharmacist scanning forty rows is looking for
+                                the red ones. */}
+                            <span className={`izy-state ${stateTone(o)}`}>
+                                {STATUS_LABEL[o.status] ?? o.status}
+                            </span>
                             {o.status === 'failed' && o.failureReason && (
                                 <><br /><span className="izy-muted">{o.failureReason.replace(/_/g, ' ')}</span></>
                             )}

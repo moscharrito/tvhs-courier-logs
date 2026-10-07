@@ -340,3 +340,96 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 }
 .izy-pod-photo figcaption { margin-top: 6px; font-size: 13px; }
 
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE TIDY-UP (the owner's words were "tacky and clumsy").
+ *
+ * Everything below EXTENDS the rules above rather than replacing them. A
+ * second design system living beside the first is how a product ends up
+ * looking like two products, which is the complaint rather than the cure.
+ *
+ * Four things were actually wrong, and they are mostly about hierarchy:
+ *
+ *   Every card looked equally important, because a flat white box with a
+ *   one-pixel border is the same weight whether it holds the day's headline
+ *   figures or a filter row.
+ *
+ *   A table of forty rows had no horizontal rhythm, so the eye lost its place
+ *   crossing from a patient to a status.
+ *
+ *   A status was a bare word in a cell, so "delivered" and "not delivered"
+ *   had the same visual weight as the address beside them.
+ *
+ *   Nine pharmacies in a row looked like one long list, which is the
+ *   "distinction between each pharmacy's record" that was asked for.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* A card lifts off the page instead of being outlined on it. The border stays
+   for the case where a shadow does not render. */
+.izy-card {
+    border-color: #eceff1;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+/* The page title carried the same weight as a card heading. */
+.izy-main h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+.izy-main .izy-sub { margin-bottom: 22px; }
+
+/* Rows need rhythm more than they need lines. The last row loses its border
+   so a table does not end in a stray rule above the card's padding. */
+.izy-table tbody tr:nth-child(even) { background: #fafbfa; }
+.izy-table tbody tr:hover { background: var(--izy-green-soft); }
+.izy-table tbody tr:last-child td { border-bottom: 0; }
+.izy-table th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--izy-card);
+    border-bottom: 2px solid var(--izy-line);
+}
+/* Counts and money read as columns when they line up on the right. */
+.izy-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* A status is a state, not a sentence, so it gets the shape of one. */
+.izy-state {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap;
+    background: var(--izy-line); color: #374151;
+}
+.izy-state.good { background: var(--izy-green-soft); color: #14532d; }
+.izy-state.bad { background: var(--izy-danger-soft); color: var(--izy-danger); }
+.izy-state.warn { background: var(--izy-warn-soft); color: #92400e; }
+.izy-state.quiet { background: #f3f4f6; color: var(--izy-muted); }
+
+/* The headline figures were a bare flex row and read as a sentence. Boxed and
+   evenly sized, they read as the summary they are. */
+.izy-stats { gap: 12px; }
+.izy-stats > div {
+    flex: 1 1 140px; min-width: 120px;
+    padding: 12px 14px; border: 1px solid var(--izy-line); border-radius: 10px;
+    background: #fcfdfc;
+}
+.izy-stats b { font-size: 24px; font-variant-numeric: tabular-nums; }
+.izy-stats span { margin-top: 2px; }
+.izy-stats .izy-stat-bad { border-color: #f3c7c7; background: #fffafa; }
+
+/* ONE PHARMACY, ONE BLOCK. A green edge down the left of each folded section
+   is what turns nine lists into nine pharmacies: the eye finds the boundary
+   without reading a heading. */
+.izy-section { border-left: 3px solid var(--izy-green-2); }
+.izy-section.is-folded { border-left-color: var(--izy-line); }
+.izy-section-head { padding-left: 2px; }
+.izy-section-title { font-size: 15px; }
+
+/* A row that needs somebody to do something should be findable while
+   scrolling past it, not only once it is read.
+   
+   ON THE FIRST CELL, NOT ON THE ROW. A box-shadow set on a <tr> is not drawn
+   reliably: the row generates no box of its own in several engines, so the
+   shadow silently does nothing and the marker is simply absent. Checked in a
+   browser rather than assumed, because "it is in the stylesheet" and "it is
+   on the screen" turned out to be different things here. */
+.izy-row-attention > td:first-child { box-shadow: inset 3px 0 0 var(--izy-danger); }
+
+@media (max-width: 760px) {
+    .izy-main { padding: 16px 14px; }
+    .izy-stats > div { flex-basis: 45%; }
+}
