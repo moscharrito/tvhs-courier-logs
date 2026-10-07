@@ -156,7 +156,10 @@ export function Devices() {
             </p>
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
-            <ChangePassword />
+            {/* The forced case is the only reason an account in that state
+                can reach this page at all: Layout sends them here and the
+                server refuses everything else. */}
+            <ChangePassword required={user?.mustChangePassword === true} />
 
             {mayUsePin && (<>
             <div className="izy-card">
@@ -336,7 +339,17 @@ export function Devices() {
  * somebody change a password is reading the list of sessions below it and
  * not recognising one.
  */
-function ChangePassword() {
+/**
+ * Changing your own password.
+ *
+ * `required` is the forced case: an administrator chose this password and the
+ * server is refusing everything else until it is replaced. Somebody in that
+ * state is redirected here from wherever they were going, so the card has to
+ * say why they have arrived somewhere they did not ask for. Landing on a
+ * routine-looking form after being bounced reads as the site being broken,
+ * and the next thing that happens is a telephone call.
+ */
+function ChangePassword({ required = false }: { required?: boolean }) {
     const [current, setCurrent] = useState('');
     const [next, setNext] = useState('');
     const [busy, setBusy] = useState(false);
@@ -373,10 +386,18 @@ function ChangePassword() {
 
     return (
         <div className="izy-card">
-            <h2>Your password</h2>
+            <h2>{required ? 'Choose a password' : 'Your password'}</h2>
+            {required && (
+                <div className="izy-alert warn" role="status">
+                    The password you were given was set for you, and has to be changed before you can go
+                    further. Nothing else on the site will work until it is. Nobody can see what you choose
+                    here, including us.
+                </div>
+            )}
             <p className="izy-sub">
-                Changing it signs you out everywhere else, which is usually the point.
-                This browser stays signed in.
+                {required
+                    ? 'Pick something only you know. Changing it signs you out anywhere else you are signed in.'
+                    : 'Changing it signs you out everywhere else, which is usually the point. This browser stays signed in.'}
             </p>
             {note && (
                 <div className={`izy-alert ${note.kind}`} role={note.kind === 'error' ? 'alert' : 'status'}>

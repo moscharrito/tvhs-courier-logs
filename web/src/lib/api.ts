@@ -1,7 +1,19 @@
 /* Thin JSON client over fetch. Same-origin cookies carry the session. */
 
 export class ApiError extends Error {
-    constructor(public readonly status: number, message: string, public readonly details: string[] = []) {
+    constructor(
+        public readonly status: number,
+        message: string,
+        public readonly details: string[] = [],
+        /* The server's machine-readable reason, which this class used to
+         * throw away. The app's own ApiError has carried it since 7.1 and
+         * this one did not, so every caller here had to match on a sentence.
+         * password.mustChange is the first case that could not be handled any
+         * other way: it is a 403 that means "do this one thing first" rather
+         * than "you may not", and telling those apart from the message is how
+         * a wording change becomes a lockout. */
+        public readonly code?: string,
+    ) {
         super(message);
         this.name = 'ApiError';
     }
@@ -19,8 +31,8 @@ export async function api<T = unknown>(url: string, init: RequestInit & { json?:
     let body: unknown = null;
     try { body = text ? JSON.parse(text) : null; } catch { body = null; }
     if (!res.ok) {
-        const b = (body ?? {}) as { error?: string; details?: string[] };
-        throw new ApiError(res.status, b.error || `Request failed (${res.status})`, b.details ?? []);
+        const b = (body ?? {}) as { error?: string; details?: string[]; code?: string };
+        throw new ApiError(res.status, b.error || `Request failed (${res.status})`, b.details ?? [], b.code);
     }
     return body as T;
 }
