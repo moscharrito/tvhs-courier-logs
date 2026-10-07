@@ -45,6 +45,7 @@ import { Splash } from './screens/Splash';
 import { TvhsSignIn } from './screens/TvhsSignIn';
 import { TvhsShell } from './screens/tvhs/TvhsShell';
 import { WrongContract } from './screens/WrongContract';
+import { ChangePassword } from './screens/ChangePassword';
 import { outcomeFor, type ChoiceOutcome, type Contract } from './lib/contracts';
 
 export function App() {
@@ -83,6 +84,22 @@ export function App() {
     /* Shown on the profile screen. Empty until the session call lands, which
        is fine: that screen is several taps away from a cold start. */
     const [who, setWho] = useState('');
+    /* THE PASSWORD SOMEBODY ELSE CHOSE.
+     *
+     * The server refuses everything but the session read, the logout and the
+     * change itself for an account in this state, so a client that does not
+     * know about it shows a courier a 403 on every screen with no way out.
+     *
+     * False until the session call says otherwise, deliberately: the gate
+     * below must never appear because a request failed. The screens all
+     * handle a dead credential already, and a wrong "no" here costs nothing
+     * because the server is the thing actually refusing.
+     *
+     * Today no courier or lead can be in this state at all: mustChangeFor on
+     * the server exempts platform-role drivers precisely because this screen
+     * did not exist. The exemption comes off once this build is on the
+     * phones, and this is what it will land on. */
+    const [mustChange, setMustChange] = useState(false);
     /* Which van the PIN signed in to. TVHS only: a route is what picks the
        legs, and the UH side has none. */
     const [tvhs, setTvhs] = useState<{ route: string; name: string } | null>(null);
@@ -92,8 +109,12 @@ export function App() {
     useEffect(() => {
         if (token === null || token === undefined || chosen === null) return;
         let live = true;
-        void get<{ username: string }>('/api/session', token)
-            .then((me) => { if (live) setWho(me.username); })
+        void get<{ username: string; mustChangePassword?: boolean }>('/api/session', token)
+            .then((me) => {
+                if (!live) return;
+                setWho(me.username);
+                setMustChange(me.mustChangePassword === true);
+            })
             .catch(() => undefined);
         void get<Array<{ code: string; name: string }>>('/api/me/projects', token)
             .then((mine: Array<{ code: string; name: string }>) => {
@@ -140,6 +161,7 @@ export function App() {
         setApplying(false);
         setMismatch(null);
         setWho('');
+        setMustChange(false);
         setTvhs(null);
         /* The contract choice goes too. The next person to hold this phone
            might drive the other one, and a remembered choice would send them
@@ -208,6 +230,22 @@ export function App() {
                         onSignedIn={onSignedIn}
                         onApply={() => setApplying(true)}
                       />
+            ) : mustChange ? (
+                /* BEFORE THE CONTRACT CHECK AND BEFORE EVERY SHELL, because
+                   the server refuses /api/me/projects to an account in this
+                   state along with everything else. Putting the gate any
+                   later would mean the first thing a courier saw was the
+                   mismatch screen or an empty run, both of them wrong, and
+                   both of them caused by a 403 nobody could read.
+
+                   No back button and no contract switch: there is nothing
+                   else this session can do. Sign out is on the screen. */
+                <ChangePassword
+                    token={token}
+                    required
+                    onChanged={() => setMustChange(false)}
+                    onSignedOut={onSignedOut}
+                />
             ) : mismatch !== null && mismatch.kind === 'wrongContract' ? (
                 <WrongContract
                     outcome={mismatch}

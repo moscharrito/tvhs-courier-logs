@@ -77,6 +77,15 @@ export interface SessionUser {
     name: string;
     role: 'admin' | 'staff' | 'driver';
     route: string | null;
+    /* The password was set by somebody else and the server is refusing
+     * everything but /api/session, /api/logout and /api/me/password until it
+     * is replaced (server/src/core/auth/must-change.ts).
+     *
+     * Optional because an older server does not send it, and because the
+     * absence of the field must read as "no" rather than as a gate nobody can
+     * get through. The server is the thing enforcing it; this is how the app
+     * learns to show the form instead of a wall of 403s. */
+    mustChangePassword?: boolean;
 }
 
 export interface Project {

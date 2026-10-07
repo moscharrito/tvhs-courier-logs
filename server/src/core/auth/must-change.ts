@@ -63,9 +63,14 @@ export function createMustChangeMiddleware(): RequestHandler {
         if (!req.path.startsWith('/api/')) { next(); return; }
         if (isAllowed(req.method, req.path)) { next(); return; }
 
+        /* NOT "open Devices and sign-in", which is what this said while the
+           web shell was the only client that could comply. There is a screen
+           on the phone now, called something else, and a courier sent looking
+           for a page the app does not have reads it as a dead end. The clients
+           key on the code; the sentence has to be true on both of them. */
         res.status(403).json({
             error: 'Your password was set for you and has to be changed before you can go further. '
-                + 'Open Devices and sign-in, and change it there.',
+                + 'Change it on your own account screen.',
             code: MUST_CHANGE_CODE,
         });
     };

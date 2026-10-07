@@ -160,3 +160,119 @@ describe('what it records', () => {
         expect(blob).not.toMatch(/\$2[aby]\$/);
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * FROM A PHONE, WHICH IS A BEARER TOKEN AND NOT A COOKIE.
+ *
+ * Everything above signs in a browser. The courier app holds an opaque token
+ * in the Keychain and sends it as Authorization: Bearer (ticket 7.1), and the
+ * app's change-password screen rests on one property of this endpoint: the
+ * session doing the changing survives it. If a bearer session did not get a
+ * real id from the session middleware it would fall into the "no id to
+ * except" branch, every session would go, and a courier would be signed out
+ * of their own run the moment they changed a password, mid-round, with a
+ * crate in their hands.
+ *
+ * That is exactly the kind of difference between two credentials that nobody
+ * notices until it happens on a Tuesday morning, so it is pinned here.
+ * ───────────────────────────────────────────────────────────────────────── */
+const APP = ['X-Izy-Client', 'app'];
+
+/** A phone: signs in asking for a token, and carries it by header. */
+async function phone(username, password) {
+    const res = await srv.agent().post('/api/login').set(APP[0], APP[1]).send({ username, password });
+    expect(res.status).toBe(200);
+    expect(typeof res.body.token, 'the app asked for a token').toBe('string');
+    const token = res.body.token;
+    return {
+        token,
+        get: (path) => srv.agent().get(path).set('Authorization', `Bearer ${token}`),
+        post: (path, body) => srv.agent().post(path).set('Authorization', `Bearer ${token}`).send(body),
+    };
+}
+
+describe('changing it from the app', () => {
+    it('works over a bearer token at all', async () => {
+        const { username } = await somebody();
+        const app = await phone(username, FIRST);
+        const res = await app.post(ME, { currentPassword: FIRST, password: 'phone-pass-aa-1' });
+        expect(res.status).toBe(200);
+        await expect(agentFor(username, 'phone-pass-aa-1')).resolves.toBeTruthy();
+    });
+
+    it('leaves the phone that did it signed in', async () => {
+        /* THE PROPERTY THE APP SCREEN DEPENDS ON. A courier who changes a
+           password at a red light must not land back on the sign-in box
+           holding a run they can no longer see. */
+
+        /* Created without signing in, unlike somebody(): that helper opens a
+           browser session as well, and a count of 1 would then prove nothing
+           about whose session it was. The phone is the only session here, so
+           a revoked count of 0 says exactly the thing being claimed. */
+        await admin.post('/api/users').send({
+            username: 'uh.lonephone', name: 'Lone Phone', password: FIRST, role: 'staff', mustChangePassword: false,
+        });
+        const app = await phone('uh.lonephone', FIRST);
+
+        const res = await app.post(ME, { currentPassword: FIRST, password: 'phone-pass-bb-2' });
+        expect(res.status).toBe(200);
+        expect(res.body.revokedSessions, 'its own session is not counted').toBe(0);
+
+        expect((await app.get('/api/session')).status).toBe(200);
+        /* And the token still reaches real work, not just the session read:
+           an account left in must-change state would answer 200 here and 403
+           everywhere else. */
+        expect((await app.get('/api/me/projects')).status).toBe(200);
+    });
+
+    it('still ends the other devices, phone or browser', async () => {
+        const { username } = await somebody();
+        const laptop = await agentFor(username, FIRST);
+        const otherPhone = await phone(username, FIRST);
+        const app = await phone(username, FIRST);
+
+        expect((await otherPhone.get('/api/session')).status).toBe(200);
+
+        const res = await app.post(ME, { currentPassword: FIRST, password: 'phone-pass-cc-3' });
+        expect(res.status).toBe(200);
+        expect(res.body.revokedSessions).toBeGreaterThanOrEqual(2);
+
+        expect((await otherPhone.get('/api/session')).status).toBe(401);
+        expect((await laptop.get('/api/session')).status).toBe(401);
+    });
+
+    it('tells the app it is in the must-change state, by that name', async () => {
+        /* The field the app reads to decide whether to show the forced form
+           instead of a shell full of 403s. Spelled mustChangePassword in the
+           session body; renaming it silently would leave the app rendering a
+           run nobody can load. */
+        await admin.post('/api/users').send({
+            username: 'uh.forced', name: 'Forced Staff', password: FIRST, role: 'staff',
+        });
+        const app = await phone('uh.forced', FIRST);
+        const me = await app.get('/api/session');
+        expect(me.status).toBe(200);
+        expect(me.body.mustChangePassword).toBe(true);
+
+        /* And it is gone once they have chosen their own. */
+        expect((await app.post(ME, { currentPassword: FIRST, password: 'forced-pass-dd-4' })).status).toBe(200);
+        const after = await phone('uh.forced', 'forced-pass-dd-4');
+        expect((await after.get('/api/session')).body.mustChangePassword).toBe(false);
+    });
+
+    it('is reachable while the server is refusing everything else', async () => {
+        /* The way out has to stay open for a phone too, not only for the
+           browser the ALLOWED list was written against. */
+        await admin.post('/api/users').send({
+            username: 'uh.forced2', name: 'Forced Staff Two', password: FIRST, role: 'staff',
+        });
+        await admin.put('/api/users/uh.forced2/memberships/uh').send({ role: 'pharmacy', settings: {} });
+        const app = await phone('uh.forced2', FIRST);
+
+        const blocked = await app.get('/api/me/projects');
+        expect(blocked.status).toBe(403);
+        expect(blocked.body.code).toBe('password.mustChange');
+
+        expect((await app.post(ME, { currentPassword: FIRST, password: 'forced-pass-ee-5' })).status).toBe(200);
+    });
+});

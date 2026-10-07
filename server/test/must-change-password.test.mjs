@@ -55,7 +55,18 @@ describe('an account an administrator just created', () => {
         const { agent } = await madeByAdmin();
         const res = await agent.get('/api/me/projects');
         expect(res.body.error).toMatch(/changed before you can go further/i);
-        expect(res.body.error).toMatch(/Devices and sign-in/i);
+        expect(res.body.error).toMatch(/account screen/i);
+    });
+
+    it('does not send anybody to a page only one of the clients has', async () => {
+        /* This named the web shell's Devices and sign-in page while that was
+           the only client with a form. The courier app has one now, under a
+           different name, and a driver sent looking for Devices reads it as a
+           dead end. Both clients key on the code; the sentence has to be true
+           on a phone as well. */
+        const { agent } = await madeByAdmin();
+        const res = await agent.get('/api/me/projects');
+        expect(res.body.error).not.toMatch(/Devices/i);
     });
 
     it('is told about it by the session endpoint, which is how a client finds out', async () => {

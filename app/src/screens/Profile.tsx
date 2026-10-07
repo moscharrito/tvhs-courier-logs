@@ -9,16 +9,25 @@
  * shared phone it is the thing that stops one courier recording deliveries
  * under another's name. It also empties the offline queue, which is why the
  * button says so rather than leaving somebody to wonder.
+ *
+ * THE PASSWORD LIVES HERE, which is the same decision the web made by putting
+ * it on Devices and sign-in: the account screen. It is rendered as a
+ * sub-screen from this file rather than wired into each shell, because a site
+ * lead and a courier both have this tab and neither of them should have to
+ * wait for the other shell to grow the same branch.
  */
 
+import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { CardButton, Chip, Ground, Notice, Panel } from '../ui/Glass';
 import { BackPill } from '../ui/Nav';
 import { ShiftIcon } from '../ui/Icons';
 import { SPACE, TYPE, theme } from '../theme';
 import type { Project } from '../lib/api';
+import { ChangePassword } from './ChangePassword';
 
-export function Profile({ username, project, queued, onBack, onSwitchContract, onSignOut }: {
+export function Profile({ token, username, project, queued, onBack, onSwitchContract, onSignOut }: {
+    token: string;
     username: string;
     project: Project;
     /** How many writes are still waiting to send. */
@@ -27,12 +36,35 @@ export function Profile({ username, project, queued, onBack, onSwitchContract, o
     onSwitchContract: () => void;
     onSignOut: () => void;
 }) {
+    const [changing, setChanging] = useState(false);
+    /* Shown on the way back, because a password screen that simply vanishes
+       leaves somebody unsure whether it took. */
+    const [changed, setChanged] = useState(false);
+
+    if (changing) {
+        return (
+            <ChangePassword
+                token={token}
+                onBack={() => setChanging(false)}
+                onChanged={() => { setChanging(false); setChanged(true); }}
+                onSignedOut={onSignOut}
+            />
+        );
+    }
+
     return (
         <Ground>
             <ScrollView contentContainerStyle={styles.wrap}>
                 <BackPill label="Today" onPress={onBack} />
 
                 <Text style={styles.title}>Your account</Text>
+
+                {changed && (
+                    <Notice
+                        tone="info"
+                        text="Your password is changed. Any other phone signed in as you has been signed out."
+                    />
+                )}
 
                 <Panel style={styles.panel}>
                     <Text style={styles.label}>Signed in as</Text>
@@ -57,6 +89,12 @@ export function Profile({ username, project, queued, onBack, onSwitchContract, o
                 )}
 
                 <Panel style={styles.panel}>
+                    <CardButton
+                        title="Change password"
+                        detail="Needed if somebody else knows it, or watched you type it."
+                        tone="secondary"
+                        onPress={() => { setChanged(false); setChanging(true); }}
+                    />
                     <CardButton
                         title="Switch contract"
                         Icon={ShiftIcon}

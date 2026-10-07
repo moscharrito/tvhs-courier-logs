@@ -78,6 +78,7 @@ export function Driving({ token, project, username, onSignedOut, onBack }: Props
                 )}
                 {tab === 'you' && (
                     <Profile
+                        token={token}
                         username={username}
                         project={project}
                         queued={queued}
