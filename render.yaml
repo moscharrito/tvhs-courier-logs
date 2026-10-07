@@ -82,12 +82,44 @@ services:
       - key: SESSION_SECRET
         generateValue: true            # Render generates a strong random value
 
-      # Render terminates TLS and proxies to this service: exactly one hop.
-      # Without it every audit row records Render's address instead of the
-      # courier's, and the per-address auth throttle counts the whole internet
-      # as one caller. Never `true`, which would trust a header from anyone.
+      # TWO HOPS, AND IT SAID ONE, WHICH WAS WRONG BY THE HOP THAT MATTERS.
+      #
+      # This comment used to read "Render terminates TLS and proxies to this
+      # service: exactly one hop". That was true when it was written and
+      # stopped being true when Cloudflare went in front. The chain is now
+      # client -> Cloudflare -> Render -> this process, so trusting one hop
+      # stops at Cloudflare's edge and the address recorded is Cloudflare's.
+      # Observed on production: a portal session logged 172.71.146.145, which
+      # is inside Cloudflare's 172.64.0.0/13.
+      #
+      # What that cost, and the quiet one is worse:
+      #
+      #   Every session row and every audit entry recorded an edge address
+      #   rather than a person, so the sign-in screen could not answer the one
+      #   question it exists for, "do I recognise this".
+      #
+      #   Password and PIN throttling is keyed per address. Everybody arriving
+      #   through one Cloudflare edge shared a single allowance: a guesser
+      #   could spend unrelated people's attempts, and spreading guesses
+      #   across edges bought more of their own.
+      #
+      # THIS VALUE IS DECLARED HERE AND THEREFORE WINS. A blueprint value is
+      # re-applied on every sync, so changing it in the dashboard is reverted
+      # the next time this file is applied, exactly as the MAIL_ENABLED note
+      # below describes. The code default moved to 2 as well, and that default
+      # is unreachable in production while this line exists: if the hop count
+      # ever needs to change it has to change HERE, in a commit.
+      #
+      # Never `true`, which would trust a header from anyone.
+      #
+      # THE RESIDUAL RISK IS NOT CLOSED BY THIS LINE. Trusting hops means
+      # trusting X-Forwarded-For, and a request that reaches the Render URL
+      # without passing through Cloudflare can set it to whatever it likes.
+      # Closing that is Cloudflare authenticated origin pulls, or a shared
+      # secret header this service checks. Until then this is a wrong value
+      # made right rather than a guaranteed one.
       - key: TRUST_PROXY
-        value: "1"
+        value: "2"
 
       # --- Turso database (create at turso.tech; paste when prompted) ---
       - key: TURSO_DATABASE_URL
