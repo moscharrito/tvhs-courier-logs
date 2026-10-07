@@ -31,6 +31,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { DISCREPANCY_KINDS, DISCREPANCY_SEVERITIES } from '../../db/schema/uh';
+import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -134,6 +135,78 @@ export function createDiscrepancyRouter({ client }: { client: Client }): Router 
                         ? `${totals.open} discrepancies are still open. Each needs either a fix or a written reason it does not need one.`
                         : 'Nothing is open. That is necessary and not sufficient: somebody still has to decide.',
             },
+        });
+    }));
+
+    /* The disputes, as a file. Reconciled against a pharmacy's own record of
+       what they handed over, which is why it is wanted as a spreadsheet.
+       
+       It names no patient: a discrepancy is about a COUNT that disagreed, and
+       the delivery it hangs off is identified by the pharmacy's own
+       reference. Declared before '/:id' or Express reads the filename as an
+       id. */
+    router.get('/export.xlsx', review, wrap(async (req, res) => {
+        const where: string[] = ['d.project_id = ?'];
+        const args: InValue[] = [req.project!.id];
+        const { serviceDate, status, severity } = req.query as Record<string, string | undefined>;
+        if (serviceDate) { where.push('d.service_date = ?'); args.push(serviceDate); }
+        if (status) { where.push('d.status = ?'); args.push(status); }
+        if (severity) { where.push('d.severity = ?'); args.push(severity); }
+
+        const rs = await client.execute({
+            sql: `SELECT d.*, o.external_ref
+                  FROM discrepancies d LEFT JOIN orders o ON o.id = d.order_id
+                  WHERE ${where.join(' AND ')}
+                  ORDER BY d.service_date DESC, d.id DESC
+                  LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            args,
+        });
+        if (tooManyRows(res, rs.rows.length, 'discrepancies')) return;
+
+        const rows = (rs.rows as unknown as Row[]).map(present).map((d) => ({
+            serviceDate: d.serviceDate,
+            reference: d.reference ?? '',
+            kind: String(d.kind).replace(/_/g, ' '),
+            severity: d.severity,
+            status: d.status,
+            expected: d.expected,
+            actual: d.actual,
+            reportedBy: d.reportedBy,
+            reportedAt: d.reportedAt,
+            resolution: d.resolution ?? '',
+            resolvedBy: d.resolvedBy ?? '',
+            resolvedAt: d.resolvedAt ?? '',
+        }));
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Discrepancies',
+            columns: [
+                { header: 'Service date', key: 'serviceDate', width: 13 },
+                { header: 'Reference', key: 'reference', width: 16 },
+                { header: 'What disagreed', key: 'kind', width: 22 },
+                { header: 'Severity', key: 'severity', width: 10 },
+                { header: 'Status', key: 'status', width: 11 },
+                { header: 'Expected', key: 'expected', width: 28 },
+                { header: 'Actual', key: 'actual', width: 28 },
+                { header: 'Reported by', key: 'reportedBy', width: 18 },
+                { header: 'Reported', key: 'reportedAt', width: 22 },
+                { header: 'Resolution', key: 'resolution', width: 34 },
+                { header: 'Resolved by', key: 'resolvedBy', width: 18 },
+                { header: 'Resolved', key: 'resolvedAt', width: 22 },
+            ],
+            rows,
+            filename: `discrepancies-${serviceDate ?? 'all'}.xlsx`,
+            about: [
+                ['What this is', 'Counts and handovers that disagreed, and what was done about each.'],
+                ['Times', req.project!.timezone],
+            ],
+            /* A discrepancy is about a count, and the delivery behind it is
+               named by the pharmacy's own reference rather than by a
+               patient. */
+            containsPatientData: false,
+            auditAction: 'discrepancy.export',
+            auditEntity: 'report',
+            auditEntityId: serviceDate ?? 'all',
         });
     }));
 

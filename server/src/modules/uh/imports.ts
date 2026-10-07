@@ -61,6 +61,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 /* The portal's scope rule, imported rather than restated. Two copies of
    "which pharmacies may this account see" is how one of them ends up wrong. */
 import { scopeFor } from './client-portal';
+import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { todayIn } from '../../core/dates';
 import { custodyEventStatement } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
@@ -617,6 +618,73 @@ export function createImportsRouter({ client }: { client: Client }): Router {
     }));
 
     /* -------------------------------------------------------------- reads */
+
+    /* The uploads as a file: which list arrived when, how many rows it held
+       and how many became orders. Counts and filenames, never the rows
+       inside, so it names no patient; the rows themselves are the orders
+       export, which says plainly that it does.
+       
+       Scoped like the list, so a pharmacy exports its own uploads and not the
+       counter next door's. Declared before '/:id'. */
+    router.get('/export.xlsx', readers, wrap(async (req, res) => {
+        const where: string[] = ['l.project_id = ?'];
+        const args: InValue[] = [req.project!.id];
+
+        const allowed = allowedSiteIds(req);
+        if (allowed !== null) {
+            if (allowed.length === 0) where.push('1 = 0');
+            else { where.push(`l.site_id IN (${allowed.map(() => '?').join(',')})`); args.push(...allowed); }
+        }
+        const on = String(req.query['serviceDate'] ?? '');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(on)) { where.push('l.service_date = ?'); args.push(on); }
+
+        const rs = await client.execute({
+            sql: `SELECT l.*, s.name AS site_name
+                  FROM daily_lists l JOIN sites s ON s.id = l.site_id
+                  WHERE ${where.join(' AND ')}
+                  ORDER BY l.service_date DESC, l.id DESC LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            args,
+        });
+        if (tooManyRows(res, rs.rows.length, 'uploads')) return;
+
+        const rows = rs.rows.map((r) => ({
+            serviceDate: String(r['service_date']),
+            pharmacy: String(r['site_name']),
+            receivedAt: String(r['received_at']),
+            filename: String(r['source_filename']),
+            rowCount: Number(r['row_count']),
+            orderCount: Number(r['order_count']),
+            skippedCount: Number(r['skipped_count']),
+            importedBy: String(r['imported_by']),
+        }));
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Uploads',
+            columns: [
+                { header: 'Service date', key: 'serviceDate', width: 13 },
+                { header: 'Pharmacy', key: 'pharmacy', width: 26 },
+                { header: 'Received', key: 'receivedAt', width: 22 },
+                { header: 'File', key: 'filename', width: 30 },
+                { header: 'Rows in the file', key: 'rowCount', width: 16 },
+                { header: 'Became orders', key: 'orderCount', width: 15 },
+                { header: 'Skipped', key: 'skippedCount', width: 10 },
+                { header: 'Uploaded by', key: 'importedBy', width: 20 },
+            ],
+            rows,
+            filename: `uploads-${/^\d{4}-\d{2}-\d{2}$/.test(on) ? on : 'all'}.xlsx`,
+            about: [
+                ['What this is', 'Which daily list arrived when, and how much of it became deliveries.'],
+                ['Received', 'When the list reached us. Every deadline on its deliveries is measured from here.'],
+                ['Times', req.project!.timezone],
+            ],
+            /* Counts and filenames. The rows inside a list are the orders
+               export, which says plainly that it carries patients. */
+            containsPatientData: false,
+            auditAction: 'list.export',
+            auditEntity: 'report',
+            auditEntityId: on || 'all',
+        });
+    }));
 
     router.get('/', readers, wrap(async (req, res) => {
         const on = String(req.query['serviceDate'] ?? '');

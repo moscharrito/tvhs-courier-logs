@@ -30,6 +30,7 @@ import { resolveSettings } from '../../core/projects/settings';
 import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from './lifecycle';
 import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
+import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -607,6 +608,72 @@ export function createRunsRouter({ client }: { client: Client }): Router {
     }));
 
     /* --------------------------------------------------------------- reads */
+
+    /* The runs as a file: who drove what, on which day, and how it ended.
+       Counts of stops rather than the stops themselves, so it names no
+       patient and carries no address.
+       
+       Scoped the same way the list is, with the courier's own-runs rule last
+       so no parameter reaches past it. Declared before '/mine' and '/:id' or
+       Express reads the filename as one of them. */
+    router.get('/export.xlsx', readers, wrap(async (req, res) => {
+        const q = req.query as Record<string, string | undefined>;
+        const where: string[] = ['r.project_id = ?'];
+        const args: InValue[] = [req.project!.id];
+        if (q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])) { where.push('r.service_date = ?'); args.push(q['serviceDate']); }
+        if (q['status']) { where.push('r.status = ?'); args.push(String(q['status'])); }
+        if (q['courierUsername']) { where.push('r.courier_username = ?'); args.push(String(q['courierUsername'])); }
+        if (isCourier(req)) { where.push('r.courier_username = ?'); args.push(actorOf(req)); }
+
+        const rs = await client.execute({
+            sql: `SELECT r.*, (SELECT COUNT(*) FROM run_stops s WHERE s.run_id = r.id) AS stop_count
+                  FROM runs r WHERE ${where.join(' AND ')}
+                  ORDER BY r.service_date DESC, r.id DESC LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            args,
+        });
+        if (tooManyRows(res, rs.rows.length, 'runs')) return;
+
+        const rows = rs.rows.map((r) => {
+            const run = presentRun(Object.fromEntries(Object.entries(r)) as unknown as RunRow);
+            return {
+                serviceDate: run.serviceDate,
+                courier: run.courierUsername,
+                label: run.label,
+                status: run.status,
+                stops: Number(r['stop_count']),
+                startedAt: run.startedAt ?? '',
+                completedAt: run.completedAt ?? '',
+                createdBy: run.createdBy,
+                notes: run.notes ?? '',
+            };
+        });
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Runs',
+            columns: [
+                { header: 'Service date', key: 'serviceDate', width: 13 },
+                { header: 'Courier', key: 'courier', width: 18 },
+                { header: 'Run', key: 'label', width: 22 },
+                { header: 'Status', key: 'status', width: 12 },
+                { header: 'Stops', key: 'stops', width: 8 },
+                { header: 'Started', key: 'startedAt', width: 22 },
+                { header: 'Completed', key: 'completedAt', width: 22 },
+                { header: 'Created by', key: 'createdBy', width: 18 },
+                { header: 'Notes', key: 'notes', width: 34 },
+            ],
+            rows,
+            filename: `runs-${q['serviceDate'] ?? 'all'}.xlsx`,
+            about: [
+                ['What this is', 'Which courier drove which run, and how it ended.'],
+                ['Stops', 'A count. The stops themselves are not in this file, which is why it names no patient.'],
+                ['Times', req.project!.timezone],
+            ],
+            containsPatientData: false,
+            auditAction: 'run.export',
+            auditEntity: 'report',
+            auditEntityId: q['serviceDate'] ?? 'all',
+        });
+    }));
 
     router.get('/', readers, wrap(async (req, res) => {
         const q = req.query as Record<string, string | undefined>;

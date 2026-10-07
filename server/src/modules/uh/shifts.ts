@@ -43,6 +43,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -198,6 +199,67 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
     }));
 
     /* -------------------------------------------------------------- dispatch */
+
+    /* Shifts as a file. Worth having beside the drivers record: that one
+       counts deliveries and this one counts hours, and whoever is reconciling
+       a payment run will want both in front of them even while pay is per
+       delivery. Hours are given as a number so a spreadsheet can total them.
+       
+       Names nobody but our own couriers. Declared before any '/:id' route. */
+    router.get('/export.xlsx', staff, wrap(async (req, res) => {
+        const q = req.query as Record<string, string | undefined>;
+        /* The SAME default as the list below, not a more useful one. A file
+           that quietly covered a different set than the screen it was taken
+           from is the defect this helper exists to prevent, and "the export
+           is more useful if it includes everything" is exactly how that gets
+           introduced. Pass open=false for all of them, as the screen does. */
+        const openOnly = q['open'] !== 'false';
+        const rs = await run(
+            `SELECT * FROM shifts WHERE project_id = ?${openOnly ? ' AND ended_at IS NULL' : ''}
+             ORDER BY started_at DESC, id DESC LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            [req.project!.id],
+        );
+        if (tooManyRows(res, rs.rows.length, 'shifts')) return;
+
+        const rows = rs.rows.map(present).map((v) => ({
+            courier: v.courierUsername,
+            startedAt: v.startedAt,
+            endedAt: v.endedAt ?? '',
+            /* Blank while a shift is open rather than a running figure: a
+               number that changes every time the file is produced is not a
+               number anybody can reconcile against. */
+            hours: v.endedAt === null
+                ? ''
+                : Math.round(((Date.parse(v.endedAt) - Date.parse(v.startedAt)) / 3_600_000) * 100) / 100,
+            open: v.open ? 'yes' : 'no',
+            endedBy: v.endedBy,
+            endedReason: v.endedReason,
+        }));
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Shifts',
+            columns: [
+                { header: 'Courier', key: 'courier', width: 18 },
+                { header: 'Started', key: 'startedAt', width: 22 },
+                { header: 'Ended', key: 'endedAt', width: 22 },
+                { header: 'Hours', key: 'hours', width: 9 },
+                { header: 'Still open', key: 'open', width: 11 },
+                { header: 'Ended by', key: 'endedBy', width: 18 },
+                { header: 'Ended because', key: 'endedReason', width: 30 },
+            ],
+            rows,
+            filename: `shifts-${openOnly ? 'open' : 'all'}.xlsx`,
+            about: [
+                ['What this is', 'When each courier was on shift.'],
+                ['Hours', 'Blank while a shift is still open, because a figure that changes on every download cannot be reconciled against.'],
+                ['Times', req.project!.timezone],
+            ],
+            containsPatientData: false,
+            auditAction: 'shift.export',
+            auditEntity: 'report',
+            auditEntityId: openOnly ? 'open' : 'all',
+        });
+    }));
 
     router.get('/', staff, wrap(async (req, res) => {
         const q = req.query as Record<string, string | undefined>;

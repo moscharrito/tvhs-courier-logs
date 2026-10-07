@@ -321,6 +321,7 @@ const MATRIX = [
     ['POST', `${UH}/imports/preview`, UH_CLIENT_VIEW, ''],
     ['POST', `${UH}/imports`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/imports`, UH_CLIENT_VIEW, 'reading one discloses what uploading one did'],
+    ['GET', `${UH}/imports/export.xlsx`, UH_CLIENT_VIEW, 'which list arrived when, scoped like the list'],
     ['GET', `${UH}/imports/999999`, UH_CLIENT_VIEW, ''],
     /* The saved mapping stays ours: reading or clearing it is a repair, and a
        pharmacy gets everything it needs from a preview instead. */
@@ -353,6 +354,7 @@ const MATRIX = [
     /* --- runs and the pharmacy counter. */
     ['POST', `${UH}/runs`, UH_STAFF, ''],
     ['GET', `${UH}/runs`, UH_STAFF_AND_COURIER, ''],
+    ['GET', `${UH}/runs/export.xlsx`, UH_STAFF_AND_COURIER, 'a courier exports their own runs, as on screen'],
     ['GET', `${UH}/runs/mine`, UH_STAFF_AND_COURIER, ''],
     /* Delivery History. A courier reads their OWN finished work: the
        username comes from the session and there is no parameter to
@@ -367,6 +369,7 @@ const MATRIX = [
     ['POST', `${UH}/shifts/end`, UH_STAFF_AND_COURIER, 'go off shift'],
     ['GET', `${UH}/shifts/mine`, UH_STAFF_AND_COURIER, 'am I on shift, and what am I still carrying'],
     ['GET', `${UH}/shifts`, UH_STAFF, 'who is out there'],
+    ['GET', `${UH}/shifts/export.xlsx`, UH_STAFF, 'hours, beside the drivers record'],
     ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
 
     /* --- asking for work (tickets 6.4 and 6.5). A courier browses and asks;
@@ -440,6 +443,7 @@ const MATRIX = [
        see at the door; reviewing and closing is a judgement about the
        contract and is not theirs to make. */
     ['POST', `${UH}/discrepancies`, UH_STAFF_AND_COURIER, 'anybody who notices'],
+    ['GET', `${UH}/discrepancies/export.xlsx`, UH_STAFF, 'the disputes, as a file'],
     ['GET', `${UH}/discrepancies`, UH_STAFF, 'the log'],
     ['GET', `${UH}/discrepancies/summary`, UH_STAFF, 'the go-live question'],
     ['PATCH', `${UH}/discrepancies/999999`, UH_STAFF, 'close one'],
