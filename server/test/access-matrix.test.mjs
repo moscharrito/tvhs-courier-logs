@@ -330,6 +330,9 @@ const MATRIX = [
     /* --- orders: patient names and addresses. */
     ['POST', `${UH}/orders`, UH_STAFF, 'a manual order'],
     ['GET', `${UH}/orders`, UH_LEAD_READ, 'couriers narrowed to their own work inside, leads to their own pharmacies'],
+    /* The same list and the same scoping, because it runs the same filterFor:
+       a courier exports their own work and a lead their own pharmacies. */
+    ['GET', `${UH}/orders/export.xlsx`, UH_LEAD_READ, 'the list on screen, as a file, scoped the same way'],
     ['GET', `${UH}/orders/summary`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999`, UH_LEAD_READ, ''],
     ['POST', `${UH}/orders/999999/out-of-area`, UH_STAFF, 'a courier cannot authorise their own long drive'],

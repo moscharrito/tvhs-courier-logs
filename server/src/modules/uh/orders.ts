@@ -30,6 +30,7 @@ import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
 import { zipZoneMap, scheduleOn } from './zones';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
+import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { recordOrderEvent, insertCustodyEvent } from './order-events';
 import { directionsFor, parseOrigin } from './directions';
 import { getConfig } from '../../config';
@@ -512,6 +513,90 @@ export function createOrdersRouter(
 
         return { where, args, applied };
     }
+
+    /* ───────────────────────────────────────────── the same list, as a file
+     *
+     * THE FILTERS ARE filterFor, NOT A SECOND COPY. That function applies the
+     * courier's own-work rule and the lead's own-pharmacies rule LAST, after
+     * everything a caller can set, so no query parameter can reach past them.
+     * An export with its own WHERE clause would be a second place for that
+     * ordering to be got wrong, and the thing it would leak is every patient
+     * address in the contract.
+     *
+     * Paging is deliberately absent. The screen pages because a dispatcher
+     * reads a page at a time; a file is kept and reconciled against, so it is
+     * the whole set or it is refused.
+     *
+     * Declared before '/:id' or Express reads the filename as an order id.
+     */
+    router.get('/export.xlsx', readers, wrap(async (req, res) => {
+        const { where, args, applied } = filterFor(req);
+        const rs = await client.execute({
+            sql: `SELECT o.*, s.name AS site_name FROM orders o
+                  LEFT JOIN sites s ON s.id = o.site_id
+                  WHERE ${where.join(' AND ')}
+                  ORDER BY o.service_date DESC, o.id
+                  LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            args,
+        });
+        if (tooManyRows(res, rs.rows.length, 'orders')) return;
+
+        const rows = (rs.rows as unknown as Array<OrderRow & { site_name: string | null }>).map((o) => ({
+            serviceDate: o.service_date,
+            pharmacy: o.site_name ?? '',
+            reference: o.external_ref,
+            serviceType: o.service_type,
+            status: o.status,
+            patient: o.recipient_name,
+            address: [o.address_line, o.address_line2].filter(Boolean).join(', '),
+            city: o.city,
+            zip: o.zip,
+            /* The words rather than a blank: an empty cell for an
+               out-of-area delivery reads as missing data. */
+            zone: o.zone === null ? 'out of area' : Number(o.zone),
+            courier: o.assigned_to_username ?? '',
+            receivedAt: o.received_at ?? '',
+            dueAt: o.due_at ?? '',
+            pickedUpAt: o.pickup_at ?? '',
+            deliveredAt: o.delivered_at ?? '',
+            failureReason: String(o.failure_reason ?? '').replace(/_/g, ' '),
+        }));
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Orders',
+            columns: [
+                { header: 'Service date', key: 'serviceDate', width: 13 },
+                { header: 'Pharmacy', key: 'pharmacy', width: 26 },
+                { header: 'Reference', key: 'reference', width: 16 },
+                { header: 'Service', key: 'serviceType', width: 10 },
+                { header: 'Status', key: 'status', width: 13 },
+                { header: 'Patient', key: 'patient', width: 24 },
+                { header: 'Address', key: 'address', width: 34 },
+                { header: 'City', key: 'city', width: 16 },
+                { header: 'ZIP', key: 'zip', width: 8 },
+                { header: 'Zone', key: 'zone', width: 10 },
+                { header: 'Courier', key: 'courier', width: 16 },
+                { header: 'Requested', key: 'receivedAt', width: 22 },
+                { header: 'Due', key: 'dueAt', width: 22 },
+                { header: 'Collected', key: 'pickedUpAt', width: 22 },
+                { header: 'Delivered', key: 'deliveredAt', width: 22 },
+                { header: 'Not delivered because', key: 'failureReason', width: 22 },
+            ],
+            rows,
+            filename: `orders-${dateIn(new Date(), req.project!.timezone)}.xlsx`,
+            about: [
+                ['What this is', 'Orders matching the filters that were on screen.'],
+                ['Filters', applied.length === 0 ? 'none; this is every order on the project' : applied.join(', ')],
+                ['Times', req.project!.timezone],
+            ],
+            /* Patient names and home addresses are in the Orders sheet. */
+            containsPatientData: true,
+            auditAction: 'order.export',
+            auditEntity: 'order',
+            auditEntityId: applied.join(',') || 'all',
+            auditDetail: { filters: applied },
+        });
+    }));
 
     router.get('/', readers, wrap(async (req, res) => {
         const { where, args, applied } = filterFor(req);

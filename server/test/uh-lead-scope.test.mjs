@@ -187,3 +187,102 @@ describe('a lead moving a package', () => {
         }
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE SAME NARROWING, IN THE FILE.
+ *
+ * The orders export runs filterFor, the same function the screen runs, and
+ * that function applies the lead's own-pharmacies rule LAST so no query
+ * parameter can reach past it. Writing a second WHERE clause for the export
+ * would have been a second place to get that ordering wrong, and what it
+ * would leak is every patient address in the contract, in a file somebody
+ * then keeps.
+ *
+ * So this asserts the leak directly rather than trusting the shared function:
+ * a file a lead downloads has to be as narrow as the screen they were looking
+ * at, including when they ask it for somebody else's pharmacy by name.
+ */
+describe('a lead exporting the orders list', () => {
+    const binary = (res, cb) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+    };
+
+    const sheetOf = async (res) => {
+        const ExcelJS = (await import('exceljs')).default;
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(res.body);
+        const rows = [];
+        wb.getWorksheet('Orders').eachRow((row) => {
+            rows.push(row.values.slice(1).map((v) => (v === undefined || v === null ? '' : String(v))));
+        });
+        return rows;
+    };
+
+    let atDischarge;
+    let atGreen;
+
+    beforeAll(async () => {
+        const make = async (siteId, name) => {
+            const res = await admin.post(`${UH}/orders`).send({
+                siteId, serviceType: 'stat', recipientName: name,
+                addressLine: '4 Invented Road', zip: '78215',
+            });
+            expect(res.status, JSON.stringify(res.body)).toBe(201);
+            return res.body;
+        };
+        atDischarge = await make(dischargeId, 'Export Scope Discharge');
+        atGreen = await make(greenId, 'Export Scope Green');
+    });
+
+    it('gets their own pharmacy', async () => {
+        const res = await lead.get(`${UH}/orders/export.xlsx`).buffer().parse(binary);
+        expect(res.status).toBe(200);
+        const flat = (await sheetOf(res)).flat().join(' | ');
+        expect(flat).toContain('Export Scope Discharge');
+        expect(atDischarge.id).toBeDefined();
+    });
+
+    it('never gets the pharmacy next door, however they ask', async () => {
+        /* THE PROPERTY. A lead at Wheatley asking for Robert B. Green gets
+           their own sites ANDed with that one, which is nothing. */
+        for (const qs of ['', `?siteId=${greenId}`, '?status=ready', `?siteId=${greenId}&status=ready`]) {
+            const res = await lead.get(`${UH}/orders/export.xlsx${qs}`).buffer().parse(binary);
+            expect(res.status, `with "${qs}"`).toBe(200);
+            const flat = (await sheetOf(res)).flat().join(' | ');
+            expect(flat, `with "${qs}"`).not.toContain('Export Scope Green');
+        }
+        expect(atGreen.id).toBeDefined();
+    });
+
+    it('gives a lead with no pharmacies an empty file rather than everybody', async () => {
+        /* Nothing rather than everything is the direction that matters, and
+           it is the one a half-finished settings form produces. */
+        const res = await unscoped.get(`${UH}/orders/export.xlsx`).buffer().parse(binary);
+        expect(res.status).toBe(200);
+        const rows = await sheetOf(res);
+        /* The header row and nothing else. */
+        expect(rows.length).toBe(1);
+    });
+
+    it('warns on the file that it holds patient data', async () => {
+        /* This one does, unlike the drivers record, and the About sheet has
+           to say which kind of file somebody is holding. */
+        const res = await lead.get(`${UH}/orders/export.xlsx`).buffer().parse(binary);
+        const ExcelJS = (await import('exceljs')).default;
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(res.body);
+        const about = [];
+        wb.getWorksheet('About').eachRow((row) => about.push(row.values.slice(1).join(' ')));
+        expect(about.join(' | ')).toContain('Contains patient data');
+    });
+
+    it('records the copy in the audit trail, patient data flagged', async () => {
+        await lead.get(`${UH}/orders/export.xlsx`).buffer().parse(binary);
+        const { events } = (await admin.get('/api/audit?action=order.export')).body;
+        expect(events.length).toBeGreaterThan(0);
+        const detail = typeof events[0].detail === 'string' ? JSON.parse(events[0].detail) : events[0].detail;
+        expect(detail.containedPatientData).toBe(true);
+    });
+});

@@ -202,6 +202,14 @@ export function Orders() {
                         <span><input type="checkbox" checked={get('overdue') === 'true'} onChange={(e) => set('overdue', e.target.checked ? 'true' : '')} /> past due</span>
                     </label>
                     <button className="izy-btn secondary" type="button" onClick={() => setParams(new URLSearchParams(), { replace: true })}>Clear</button>
+                    {/* Carries the same query the list was built from, so the
+                        file is what is on screen. A plain link rather than a
+                        fetch and a blob: a blob URL would keep a copy of a
+                        spreadsheet full of patient names alive in the tab
+                        until it was closed. */}
+                    <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/export.xlsx${query ? `?${query}` : ''}`}>
+                        Export to Excel
+                    </a>
                     <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>Refresh</button>
                 </div>
                 <p className="izy-muted" style={{ marginTop: 8 }}>
