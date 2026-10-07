@@ -24,7 +24,7 @@ interface Sla {
 interface Settings {
     sla: Sla;
     businessHours: { start: string; end: string; days: number[] };
-    listRelease: { earliest: string; latest: string };
+    listRelease: { earliest: string; latest: string; allowPortalUpload: boolean };
     pricing: { afterHoursStart: string; afterHoursEnd: string; dryRunReplacesBase: boolean };
     /** The number the courier app's call button dials, and what it calls them.
      *  Optional on the wire only so a client older than the server does not
@@ -161,6 +161,10 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                             <tr>
                                 <td>Daily list arrives {mark('listRelease.earliest')}{mark('listRelease.latest')}</td>
                                 <td>{s.listRelease.earliest} to {s.listRelease.latest}</td>
+                            </tr>
+                            <tr>
+                                <td>Pharmacies upload on the portal {mark('listRelease.allowPortalUpload')}</td>
+                                <td>{s.listRelease.allowPortalUpload ? 'yes' : 'no, they email dispatch'}</td>
                                 <td>12:00 to 14:00</td>
                             </tr>
                             <tr>
@@ -240,6 +244,28 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                             <input type="time" value={draft.listRelease.latest} onChange={(e) => setDraft({ ...draft, listRelease: { ...draft.listRelease, latest: e.target.value } })} />
                         </label>
                     </div>
+
+                    {/* How the list reaches us, as opposed to when. Off until
+                        a contract says otherwise: the upload works, and
+                        whether a client uses it instead of emailing a
+                        spreadsheet is their decision rather than ours. */}
+                    <label className="izy-check">
+                        <input
+                            type="checkbox"
+                            checked={draft.listRelease.allowPortalUpload}
+                            onChange={(e) => setDraft({
+                                ...draft,
+                                listRelease: { ...draft.listRelease, allowPortalUpload: e.target.checked },
+                            })}
+                        />
+                        Let the pharmacies upload their daily list on the portal
+                    </label>
+                    <p className="izy-muted">
+                        Off means they email it to dispatch and we import it, which is how this contract
+                        runs today. Switching it on shows a Send a list page to every pharmacy account on
+                        this project, and the server accepts uploads from them for their own counters
+                        only. It changes nothing about how dispatch imports a list.
+                    </p>
 
                     <fieldset className="izy-fieldset">
                         <legend>Days served</legend>

@@ -35,6 +35,7 @@ const FIXTURES = path.join(import.meta.dirname, 'fixtures');
 const CSV = fs.readFileSync(path.join(FIXTURES, 'daily-list.csv'));
 
 const BASE = '/api/projects/uh/uh/imports';
+const CLIENT = '/api/projects/uh/uh/client';
 
 let srv;
 let admin;
@@ -69,6 +70,16 @@ beforeAll(async () => {
     green = sites.find((s) => s.code === 'green');
     today = dayIn(0);
     tomorrow = dayIn(1);
+
+    /* The contract has to have agreed to take lists this way at all. It is
+       off by default (listRelease.allowPortalUpload), which is the point of
+       it: the feature works and whether a client uses it instead of emailing
+       a spreadsheet is their decision. The last block in this file is the one
+       that tests the setting itself; everything before it is about a contract
+       that has said yes. */
+    const on = await admin.patch('/api/projects/uh/settings')
+        .send({ listRelease: { allowPortalUpload: true } });
+    expect(on.status, JSON.stringify(on.body).slice(0, 200)).toBe(200);
 
     /* A pharmacist at one counter. Scoped by membership, which is the only
        thing that decides what they reach. */
@@ -306,5 +317,93 @@ describe('who may not upload at all', () => {
         expect((await upload(courier, BASE, { siteId: discharge.id })).status).toBe(403);
 
         expect((await upload(srv.agent(), BASE, { siteId: discharge.id })).status).toBe(401);
+    });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * WHETHER THE PORTAL TAKES LISTS AT ALL IS THE CONTRACT'S DECISION.
+ *
+ * The upload works. Whether University Health use it instead of emailing a
+ * spreadsheet has been put to them and not answered, and shipping it switched
+ * on would be answering for them: a pharmacist who found the page, used it,
+ * and then heard the contract had settled on email would have sent us a list
+ * nobody was expecting to receive that way.
+ *
+ * So it is listRelease.allowPortalUpload, off by default, and the tests that
+ * matter are that it gates the SERVER rather than a link. A setting that only
+ * took a button off a screen would be a decoration, because the endpoint is
+ * what somebody finds.
+ */
+describe('the portal upload is off until a contract switches it on', () => {
+    const settingsUrl = '/api/projects/uh/settings';
+
+    const setUpload = async (on) => {
+        const res = await admin.patch(settingsUrl).send({ listRelease: { allowPortalUpload: on } });
+        expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(200);
+    };
+
+    afterAll(async () => { await setUpload(true); });
+
+    it('is off by default, so nothing had to be switched off to get here', async () => {
+        /* The default matters more than the toggle: a feature that arrives
+           switched on has already made the client's decision for them. */
+        const fresh = await admin.get(settingsUrl);
+        expect(fresh.status).toBe(200);
+        expect(fresh.body.defaults.listRelease.allowPortalUpload).toBe(false);
+    });
+
+    it('refuses a pharmacy upload while it is off, at the endpoint', async () => {
+        /* THE PROPERTY. Hiding the page would leave this working. */
+        await setUpload(false);
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        const res = await upload(them, BASE, { siteId: discharge.id, serviceDate: ownDay() });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('import.portalUploadOff');
+    });
+
+    it('refuses the preview too, so nothing is learned by trying', async () => {
+        await setUpload(false);
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        const res = await upload(them, `${BASE}/preview`, { siteId: discharge.id });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('import.portalUploadOff');
+    });
+
+    it('says what to do instead, because a refusal nobody can act on is a phone call', async () => {
+        await setUpload(false);
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        const res = await upload(them, BASE, { siteId: discharge.id, serviceDate: ownDay() });
+        expect(res.body.error).toMatch(/email/i);
+    });
+
+    it('never gates dispatch, because importing a list is how the contract runs today', async () => {
+        await setUpload(false);
+        const res = await upload(admin, BASE, { siteId: discharge.id, serviceDate: ownDay() });
+        expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(201);
+    });
+
+    it('still lets a pharmacy read its own past lists while it is off', async () => {
+        /* The setting is about sending us a list, not about seeing what was
+           sent. Taking the reads away would hide what they already gave us. */
+        await setUpload(false);
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        expect((await them.get(BASE)).status).toBe(200);
+    });
+
+    it('lets them upload once it is on', async () => {
+        await setUpload(true);
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        const res = await upload(them, BASE, { siteId: discharge.id, serviceDate: ownDay() });
+        expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(201);
+    });
+
+    it('tells the portal which it is, so the link and the endpoint cannot disagree', async () => {
+        /* The screen reads this rather than deciding for itself. A link to a
+           page the server would refuse is worse than no link. */
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        await setUpload(false);
+        expect((await them.get(`${CLIENT}/summary`)).body.canUploadList).toBe(false);
+        await setUpload(true);
+        expect((await them.get(`${CLIENT}/summary`)).body.canUploadList).toBe(true);
     });
 });

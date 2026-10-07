@@ -31,6 +31,7 @@ import ExcelJS from 'exceljs';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
+import { resolveSettings } from '../../core/projects/settings';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor } from './eta';
@@ -378,6 +379,11 @@ export function createClientPortalRouter(
                cancelled is every order there is. */
             outstanding: OPEN_STATUSES.reduce((n, s) => n + (byStatus[s] ?? 0), 0),
             cancelled: byStatus['cancelled'] ?? 0,
+            /* Whether this contract takes its lists through the portal. The
+               screen reads this rather than deciding for itself, so the link
+               and the endpoint behind it cannot disagree: the same setting
+               refuses the upload in imports.ts. */
+            canUploadList: resolveSettings(project.settings).listRelease.allowPortalUpload,
             delivered: byStatus['delivered'] ?? 0,
             notDelivered: byStatus['failed'] ?? 0,
             notes: scopeNote(sites, scope),

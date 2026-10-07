@@ -55,7 +55,16 @@ describe('contract defaults', () => {
         // "Business Hours: 8am-8pm", and UH runs weekends (227 weekend stops).
         expect(DEFAULT_PROJECT_SETTINGS.businessHours).toEqual({ start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] });
         // "This is typically provided between 12:00-2:00pm."
-        expect(DEFAULT_PROJECT_SETTINGS.listRelease).toEqual({ earliest: '12:00', latest: '14:00' });
+        //
+        // allowPortalUpload is NOT from Addendum 1 and sits here because it is
+        // about the same thing: how and when the day's list reaches us. The
+        // addendum says the pharmacies compile it and communicate it, and is
+        // silent on by what means. False is therefore the only default that
+        // does not invent an answer: today the means is email, and switching
+        // it on is a decision University Health make rather than one that
+        // arrives in a release.
+        expect(DEFAULT_PROJECT_SETTINGS.listRelease)
+            .toEqual({ earliest: '12:00', latest: '14:00', allowPortalUpload: false });
         // "specifically between 8:00 p.m. and 7:00 a.m."
         expect(DEFAULT_PROJECT_SETTINGS.pricing).toEqual({ afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true });
     });
@@ -85,7 +94,7 @@ describe('resolveSettings', () => {
         const r = resolveSettings({ sla: { clockStart: 'pickup' }, listRelease: { latest: '15:00' } });
         expect(r.sla.clockStart).toBe('pickup');
         expect(r.sla.scheduledMinutes).toBe(120);
-        expect(r.listRelease).toEqual({ earliest: '12:00', latest: '15:00' });
+        expect(r.listRelease).toEqual({ earliest: '12:00', latest: '15:00', allowPortalUpload: false });
     });
 
     it('falls back rather than throwing when the blob is the wrong shape', () => {

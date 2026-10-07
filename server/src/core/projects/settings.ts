@@ -72,6 +72,23 @@ export interface ListReleaseSettings {
      */
     earliest: string;
     latest: string;
+    /**
+     * Whether a pharmacy may send its list through the portal itself.
+     *
+     * OFF BY DEFAULT, and that is the whole point of it being a setting. The
+     * upload exists and works; whether University Health want to use it
+     * instead of emailing a spreadsheet is their decision and it has been put
+     * to them and not yet answered. Shipping it switched on would be
+     * answering for them, and a pharmacist who found the page, used it, and
+     * then heard the contract had settled on email would have sent us a list
+     * nobody was expecting to receive that way.
+     *
+     * It gates the SERVER, not only the link. A setting that merely hid a
+     * button would be a decoration: the endpoint is what somebody finds.
+     * Dispatch is unaffected either way, because dispatch importing a list is
+     * how this contract runs today.
+     */
+    allowPortalUpload: boolean;
 }
 
 export interface PricingSection {
@@ -266,7 +283,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     /* Captured now, enforced when the app sends it and UH give a number. */
     dryRun: { requireContactEffort: false, minimumWaitMinutes: 0 },
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
-    listRelease: { earliest: '12:00', latest: '14:00' },
+    listRelease: { earliest: '12:00', latest: '14:00', allowPortalUpload: false },
     pricing: {
         // Addendum 1: "After-Hours Pickup and Delivery is defined as any
         // pickup or delivery service requested and performed outside of
@@ -334,6 +351,7 @@ export const SettingsPatch = z.object({
     listRelease: z.object({
         earliest: hhmm.optional(),
         latest: hhmm.optional(),
+        allowPortalUpload: z.boolean().optional(),
     }).strict().optional(),
     pricing: z.object({
         afterHoursStart: hhmm.optional(),

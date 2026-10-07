@@ -26,6 +26,9 @@ const summary = (over = {}) => ({
     serviceDate: '2026-11-03', timezone: 'America/Chicago',
     pharmacies: [{ id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' }],
     byStatus: {}, total: 0, outstanding: 0, delivered: 0, notDelivered: 0, cancelled: 0,
+    /* A contract that has agreed to take lists this way. The default on the
+       server is the other one, and the last block below is about that. */
+    canUploadList: true,
     notes: [], ...over,
 });
 
@@ -96,6 +99,31 @@ describe('the pharmacy upload page', () => {
 
     it('offers the way back to the deliveries list', async () => {
         renderUpload();
+        expect(await screen.findByRole('link', { name: /Back to deliveries/i })).toBeInTheDocument();
+    });
+});
+
+/* A route with no link to it is still a route somebody can type, and this one
+   is off for every contract until somebody switches it on. The server refuses
+   the upload either way; this is about not showing a form that could not
+   work. */
+describe('a contract that has not switched it on', () => {
+    it('says so instead of offering the form', async () => {
+        renderUpload({ [`GET ${BASE}/client/summary`]: summary({ canUploadList: false }) });
+        expect(await screen.findByText(/by email rather than through the portal/i)).toBeInTheDocument();
+        expect(screen.queryByLabelText(/Pharmacy/)).toBeNull();
+        expect(screen.queryByRole('button', { name: /Review the file/i })).toBeNull();
+    });
+
+    it('treats a server that says nothing as not switched on', async () => {
+        /* The safe direction. An older server that does not send the field
+           has not had the setting turned on. */
+        renderUpload({ [`GET ${BASE}/client/summary`]: summary({ canUploadList: undefined }) });
+        expect(await screen.findByText(/by email rather than through the portal/i)).toBeInTheDocument();
+    });
+
+    it('still lets them back to their deliveries', async () => {
+        renderUpload({ [`GET ${BASE}/client/summary`]: summary({ canUploadList: false }) });
         expect(await screen.findByRole('link', { name: /Back to deliveries/i })).toBeInTheDocument();
     });
 });

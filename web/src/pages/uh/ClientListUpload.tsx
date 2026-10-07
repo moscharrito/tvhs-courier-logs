@@ -45,6 +45,11 @@ interface Summary {
     timezone: string;
     pharmacies: ImportSite[];
     notes: string[];
+    /* listRelease.allowPortalUpload on the project. The server refuses the
+     * upload when it is off; this page is reachable by typing the address,
+     * so it says so plainly rather than offering a form that cannot work.
+     * Absent reads as off. */
+    canUploadList?: boolean;
 }
 
 export function ClientListUpload() {
@@ -72,6 +77,26 @@ export function ClientListUpload() {
         return msg
             ? (<><h1>Send a list</h1><div className="izy-alert error" role="alert">{msg}</div></>)
             : <div className="izy-card"><Loading label="Loading your pharmacies" /></div>;
+    }
+
+    /* A route with no link to it is still a route somebody can type. Saying
+       what the contract agreed is more use than a form that would be refused
+       by the server the moment they pressed the button. */
+    if (summary.canUploadList !== true) {
+        return (
+            <>
+                <h1>Send a list</h1>
+                <div className="izy-alert warn" role="status">
+                    This contract sends its daily lists to Izy dispatch by email rather than through the
+                    portal. Nothing uploaded here would reach us.
+                </div>
+                <p>
+                    <Link className="izy-btn secondary" to={`/projects/${code}/deliveries`}>
+                        Back to deliveries
+                    </Link>
+                </p>
+            </>
+        );
     }
 
     return (

@@ -351,6 +351,27 @@ describe('opening the figures at the top', () => {
     });
 });
 
+describe('the link to sending a list', () => {
+    it('is not offered until the contract has switched it on', async () => {
+        /* Off is the default, and a link to a page the server would refuse is
+           worse than no link: a pharmacist who follows it and is turned away
+           learns that the portal is unreliable. */
+        renderPortal();
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        expect(screen.queryByRole('link', { name: /Send a list/i })).toBeNull();
+    });
+
+    it('appears once it is on', async () => {
+        renderPortal(routes({ [`GET ${BASE}/summary`]: summary({ canUploadList: true }) }));
+        expect(await screen.findByRole('link', { name: /Send a list/i })).toBeInTheDocument();
+    });
+
+    it('never hides performance and reports, which every account gets', async () => {
+        renderPortal();
+        expect(await screen.findByRole('link', { name: /Performance and reports/i })).toBeInTheDocument();
+    });
+});
+
 describe('arriving from the performance page', () => {
     function renderAt(url: string, r = routes()) {
         const mocked = mockFetch(r);

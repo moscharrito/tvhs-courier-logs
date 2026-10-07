@@ -51,6 +51,12 @@ interface SummaryResponse {
      * something was cancelled. Optional only so an older server does not
      * blank the row. */
     cancelled?: number;
+    /* Whether this contract takes its lists through the portal at all. The
+     * server holds it (listRelease.allowPortalUpload) and refuses the upload
+     * when it is off, so this only decides whether to offer the link.
+     * Absent reads as off, which is the safe direction: an older server that
+     * does not send it has not had the setting switched on. */
+    canUploadList?: boolean;
     notes: string[];
 }
 
@@ -220,14 +226,23 @@ export function ClientPortal() {
                 <Link className="izy-btn secondary" to={`/projects/${code}/performance`}>
                     Performance and reports
                 </Link>
-                {' '}
                 {/* The other direction: this page says what happened to the
                     list, and that one is where the next list comes from. A
                     pharmacy that can read its deliveries here and still has
-                    to email tomorrow's spreadsheet is doing the job twice. */}
-                <Link className="izy-btn secondary" to={`/projects/${code}/send-list`}>
-                    Send a list
-                </Link>
+                    to email tomorrow's spreadsheet is doing the job twice.
+
+                    Offered only where the contract has agreed to it. Until
+                    University Health say whether lists come through the
+                    portal or by email, the answer is email, and a link to a
+                    page the server would refuse is worse than no link. */}
+                {summary.canUploadList === true && (
+                    <>
+                        {' '}
+                        <Link className="izy-btn secondary" to={`/projects/${code}/send-list`}>
+                            Send a list
+                        </Link>
+                    </>
+                )}
             </p>
 
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}

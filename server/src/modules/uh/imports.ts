@@ -159,6 +159,33 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         return scope.wholeProject ? null : scope.siteIds;
     }
 
+    /**
+     * Refuses, having answered, when a pharmacy may not upload at all.
+     *
+     * The contract decides whether the list comes through the portal or by
+     * email, and until University Health say, the answer is email and this is
+     * off (listRelease.allowPortalUpload, default false).
+     *
+     * CHECKED ON THE SERVER, not by hiding the page. A setting that only took
+     * a link off a screen would be a decoration: the endpoint is what
+     * somebody finds, and a list uploaded through a route we had decided not
+     * to offer is a list nobody here is expecting.
+     *
+     * Dispatch is never gated by it. Importing a list is how this contract
+     * runs today and the setting is about who else may, not about whether the
+     * feature exists.
+     */
+    function uploadNotOffered(req: Request, res: Response): boolean {
+        if (isOurs(req)) return false;
+        if (resolveSettings(req.project!.settings).listRelease.allowPortalUpload) return false;
+        res.status(403).json({
+            error: 'Sending a list through the portal is not switched on for this contract. '
+                + 'Email it to Izy dispatch as usual.',
+            code: 'import.portalUploadOff',
+        });
+        return true;
+    }
+
     /** Refuses, having answered, when this caller may not touch that site. */
     function outOfScope(req: Request, siteId: number, res: Response): boolean {
         const allowed = allowedSiteIds(req);
@@ -236,6 +263,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
            cannot disagree about what the caller was allowed to ask for. A
            preview run under one clock and a commit under another would show
            somebody green deadlines and then create red ones. */
+        if (uploadNotOffered(req, res)) return null;
         if (outOfScope(req, parsed.data.siteId, res)) return null;
         return clampForClient(req, parsed.data, res);
     }
