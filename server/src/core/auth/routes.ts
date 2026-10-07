@@ -6,6 +6,7 @@
  *   GET    /api/users/:username/sessions         admin: a user's live devices
  *   DELETE /api/users/:username/sessions         admin: revoke all of them
  *   DELETE /api/users/:username/sessions/:id     admin: revoke one
+ *   GET    /api/me/forwarding                    admin: what the proxies said
  *
  * These live outside /api/admin/* on purpose: that prefix is redirected to
  * the tvhs project for one release (ticket 0.5). */
@@ -123,6 +124,55 @@ export function createCoreAuthRouter({ client, store }: Deps): Router {
         await req.audit('session.revoke_all', 'user', username, { revoked });
         if (userId === (await currentUserId(req))) await req.sessions.destroy();
         res.json({ ok: true, revoked });
+    }));
+
+    /* ───────────────────────────────── what the proxies actually said
+     *
+     * THIS EXISTS BECAUSE THE HOP COUNT WAS GUESSED TWICE AND WAS WRONG BOTH
+     * TIMES. Sessions recorded a Cloudflare edge address instead of a person;
+     * trust proxy went from one to two and the recorded address did not
+     * change. There are at least three explanations for that, and they need
+     * different fixes: the environment variable never took, the chain is
+     * deeper than two hops, or Cloudflare is not passing the client along the
+     * header at all. Bumping the number again would be a third guess.
+     *
+     * So: one endpoint that shows the raw chain and what Express made of it.
+     * Nothing is inferred here, which is the point.
+     *
+     * ADMIN ONLY, AND IT IS THE CALLER'S OWN REQUEST. The addresses in the
+     * answer are the ones that carried this request, so an administrator
+     * reading it learns their own address and the addresses of our own
+     * infrastructure. It is not a view of anybody else's traffic and there is
+     * no parameter that would make it one.
+     *
+     * Not on /health: that is public, and the number of hops we trust is a
+     * hint about how deep a forged X-Forwarded-For would have to be. The
+     * residual risk is real until the origin refuses traffic that did not
+     * come through Cloudflare, so there is no reason to publish the depth.
+     */
+    router.get('/api/me/forwarding', requireAdmin, wrap(async (req, res) => {
+        res.json({
+            /* What Express concluded, which is what every session row, audit
+               entry and throttle bucket is keyed on. */
+            reqIp: req.ip ?? null,
+            /* The chain, left to right, as the proxies wrote it. The leftmost
+               is normally the client; each proxy appends the address it
+               received from. */
+            xForwardedFor: req.get('x-forwarded-for') ?? null,
+            /* Cloudflare sets and overwrites this one, so it cannot be forged
+               by anything that actually came through Cloudflare. If this
+               holds the right address and reqIp does not, the fix is to read
+               this rather than to count hops. */
+            cfConnectingIp: req.get('cf-connecting-ip') ?? null,
+            /* Present only when the request really did pass through
+               Cloudflare, which is worth knowing on its own. */
+            cfRay: req.get('cf-ray') ?? null,
+            /* The address the socket came from: the last proxy in front of
+               this process. */
+            socket: req.socket.remoteAddress ?? null,
+            /* How many hops Express was told to trust. The whole question. */
+            trustProxy: req.app.get('trust proxy'),
+        });
     }));
 
     router.delete('/api/users/:username/sessions/:id', requireAdmin, wrap(async (req, res) => {

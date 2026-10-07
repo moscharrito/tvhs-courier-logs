@@ -182,6 +182,10 @@ const MATRIX = [
     /* --- a caller acting on themselves */
     ['GET', '/api/me/projects', SIGNED_IN, 'my memberships'],
     ['GET', '/api/me/sessions', SIGNED_IN, 'my live devices'],
+    /* Shows the addresses that carried the caller's own request, which is how
+       the trusted hop count is diagnosed rather than guessed. Administrators
+       only: it is our infrastructure's shape as much as anybody's address. */
+    ['GET', '/api/me/forwarding', PLATFORM_ADMIN, 'what the proxies in front of us said'],
     /* Signed in is the whole requirement, and the current password is the
        real guard: see core/users/routes.ts. Anything narrower would put a
        client's password rotation back through an Izy administrator, which is

@@ -317,3 +317,81 @@ describe('what a session list says about where somebody is', () => {
         expect((await staff.get('/api/users/uh.counterstaff/sessions')).status).toBe(403);
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * WHAT THE PROXIES IN FRONT OF US SAID.
+ *
+ * The trusted hop count was guessed twice and was wrong twice: sessions
+ * recorded a Cloudflare edge address instead of a person, the count went from
+ * one to two, and the recorded address did not change. Three explanations fit
+ * that and they need different fixes, so this endpoint reports the raw chain
+ * instead of a third guess.
+ *
+ * It is a diagnostic, so the tests are about the two things that make a
+ * diagnostic safe to have: it tells an administrator the truth, and it tells
+ * nobody else anything at all.
+ */
+describe('the forwarding diagnostic', () => {
+    const URL = '/api/me/forwarding';
+
+    /* Its own agent: this file has no module-level admin, and a diagnostic
+       test borrowing one from another block would depend on the order they
+       run in. */
+    let admin;
+    beforeAll(async () => {
+        admin = srv.agent();
+        const res = await admin.post('/api/login')
+            .send({ username: srv.creds.admin.username, password: srv.creds.admin.password });
+        expect(res.status).toBe(200);
+    });
+
+    it('reports what the request actually carried, not what we assume', async () => {
+        const res = await admin.get(URL)
+            .set('X-Forwarded-For', '203.0.113.7, 198.51.100.4')
+            .set('CF-Connecting-IP', '203.0.113.7')
+            .set('CF-Ray', '8e2f0000abcd1234-DFW');
+        expect(res.status).toBe(200);
+        expect(res.body.xForwardedFor).toBe('203.0.113.7, 198.51.100.4');
+        expect(res.body.cfConnectingIp).toBe('203.0.113.7');
+        expect(res.body.cfRay).toBe('8e2f0000abcd1234-DFW');
+    });
+
+    it('says what Express concluded and how many hops it was told to trust', async () => {
+        /* These two together are the whole question: reqIp is what every
+           session row, audit entry and throttle bucket is keyed on, and
+           trustProxy is the setting that decides it. */
+        const res = await admin.get(URL);
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty('reqIp');
+        expect(res.body).toHaveProperty('trustProxy');
+        expect(res.body).toHaveProperty('socket');
+    });
+
+    it('reports the headers as absent rather than inventing them', async () => {
+        /* A request that did not come through Cloudflare has no CF headers,
+           and saying so is the answer rather than a gap: if cfRay is null on
+           production then the request did not pass through Cloudflare, which
+           is a different problem from counting hops wrongly. */
+        const res = await admin.get(URL);
+        expect(res.body.cfConnectingIp).toBeNull();
+        expect(res.body.cfRay).toBeNull();
+    });
+
+    it('is refused to everybody who is not an administrator', async () => {
+        /* It describes the shape of our infrastructure as much as it
+           describes an address. */
+        const them = srv.agent();
+        await them.post('/api/login').send({ username: 'uh.counterstaff', password: 'counter-pass-9' });
+        expect((await them.get(URL)).status).toBe(403);
+        expect((await srv.agent().get(URL)).status).toBe(401);
+    });
+
+    it('takes no parameter that would make it somebody elses request', async () => {
+        /* There is nothing to scope, which is what makes it safe: it can only
+           ever describe the request that called it. */
+        const res = await admin.get(`${URL}?username=uh.counterstaff&ip=1.2.3.4`);
+        expect(res.status).toBe(200);
+        expect(JSON.stringify(res.body)).not.toContain('uh.counterstaff');
+        expect(JSON.stringify(res.body)).not.toContain('1.2.3.4');
+    });
+});
