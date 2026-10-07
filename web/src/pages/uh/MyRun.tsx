@@ -254,6 +254,11 @@ export function MyRun() {
                     a package can sit in a van overnight, and a screen that hides
                     the way to hand it back is how it stays there. */}
                 <Link className="izy-btn secondary" to={`/projects/${code}/returns`}>Take back undelivered</Link>
+                {/* Their own record: what they have delivered by day, month
+                    and year, and what it comes to. A courier is redirected
+                    straight here from the project page, so this screen is the
+                    only place the link can live for them. */}
+                <Link className="izy-btn secondary" to={`/projects/${code}/my-deliveries`}>My deliveries</Link>
             </div>
         </>
     );

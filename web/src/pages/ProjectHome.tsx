@@ -61,6 +61,9 @@ export function ProjectHome() {
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
+                {/* What each driver delivered and what it comes to. Admin
+                    only, which the page and the endpoint both enforce. */}
+                <Link className="izy-btn secondary" to={`/projects/${project.code}/drivers`}>Drivers record</Link>
                 {canManage && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>
                 )}

@@ -19,6 +19,8 @@ import { Returns } from '../pages/uh/Returns';
 import { ClientPortal } from '../pages/uh/ClientPortal';
 import { ClientReports } from '../pages/uh/ClientReports';
 import { ClientListUpload } from '../pages/uh/ClientListUpload';
+import { Drivers } from '../pages/uh/Drivers';
+import { DriverRecord } from '../pages/uh/DriverRecord';
 import { Discrepancies } from '../pages/uh/Discrepancies';
 import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
@@ -51,6 +53,12 @@ export function App() {
                     themselves and scoped to the pharmacies they may see. */}
                 <Route path="/projects/:code/performance" element={<ClientReports />} />
                 <Route path="/projects/:code/send-list" element={<ClientListUpload />} />
+                {/* `mine` comes from the route rather than from a prop a
+                    caller could get wrong: /my-deliveries asks the server for
+                    /drivers/me, which takes the username off the session. */}
+                <Route path="/projects/:code/my-deliveries" element={<DriverRecord mine />} />
+                <Route path="/projects/:code/drivers" element={<Drivers />} />
+                <Route path="/projects/:code/drivers/:username" element={<DriverRecord />} />
                 <Route path="/projects/:code/reports" element={<Reports />} />
                 <Route path="/projects/:code/discrepancies" element={<Discrepancies />} />
                 <Route path="/projects/:code/invoices" element={<Invoices />} />
