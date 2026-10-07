@@ -114,11 +114,15 @@ describe('ClientPortal', () => {
     });
 
     it('says why patient names cannot be searched, rather than silently not working', async () => {
+        /* One box now, matching the reference, the pharmacy, the status, the
+           service level and the zone. The sentence underneath matters as much
+           as the box: a pharmacist who types a patient's name and gets
+           nothing will otherwise assume the portal is broken. */
         renderPortal();
         await screen.findByRole('heading', { name: 'Deliveries' });
-        expect(screen.getByLabelText('Your reference')).toBeInTheDocument();
+        expect(screen.getByLabelText('Search')).toBeInTheDocument();
         expect(screen.queryByLabelText(/patient name/i)).not.toBeInTheDocument();
-        expect(screen.getByText(/Patient names are deliberately not searchable/)).toBeInTheDocument();
+        expect(screen.getByText(/not searchable/)).toBeInTheDocument();
     });
 
     it('shows the proof of delivery for one delivery on request', async () => {
@@ -327,14 +331,14 @@ describe('opening the figures at the top', () => {
         const mocked = renderPortal();
         await screen.findByRole('heading', { name: 'Deliveries' });
 
-        fireEvent.change(screen.getByLabelText(/Your reference/), { target: { value: 'RX-9999' } });
-        await waitFor(() => expect(mocked.calls.some((u) => u.includes('reference=RX-9999'))).toBe(true));
+        fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'RX-9999' } });
+        await waitFor(() => expect(mocked.calls.some((u) => u.includes('q=RX-9999'))).toBe(true));
 
         fireEvent.click(await screen.findByRole('button', { name: /Show the 8 delivered/ }));
         await waitFor(() => {
             const last = [...mocked.calls].reverse().find((u) => u.includes('/orders?'));
             expect(last).toContain('status=delivered');
-            expect(last).not.toContain('reference');
+            expect(last).not.toContain('q=');
         });
     });
 

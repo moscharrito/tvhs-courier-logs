@@ -31,6 +31,7 @@ import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pric
 import { zipZoneMap, scheduleOn } from './zones';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
+import { searchFragment, ORDER_SEARCH_COLUMNS } from './search';
 import { recordOrderEvent, insertCustodyEvent } from './order-events';
 import { directionsFor, parseOrigin } from './directions';
 import { getConfig } from '../../config';
@@ -499,6 +500,27 @@ export function createOrdersRouter(
          * URL, and URLs reach browser history, proxies and referrer headers. */
         if (q['ref']) { where.push('o.external_ref = ?'); args.push(String(q['ref']).trim()); applied.push('ref'); }
 
+        /* The one box. It looks at the pharmacy's reference, the pharmacy
+           name, the status, the service level, the courier and the zone, and
+           at NOTHING ELSE: see modules/uh/search.ts for why a patient name is
+           not on that list and what it would cost to put it there.
+           
+           It ORs within itself and is ANDed into everything else, so it can
+           only ever narrow. It needs the sites join, which the list query
+           below does not do on its own, so the caller adds it. */
+        if (q['q']) {
+            const found = searchFragment(q['q'], ORDER_SEARCH_COLUMNS);
+            if (found) { where.push(found.sql); args.push(...found.args); applied.push('q'); }
+            else {
+                /* A term that matched no column at all, e.g. "out" against a
+                   zone when nothing else could take it. Nothing rather than
+                   everything: a search that silently became "show me all of
+                   it" is how somebody reads a list they did not ask for. */
+                where.push('1 = 0');
+                applied.push('q');
+            }
+        }
+
         // A courier sees their own work and nothing else. Last, so nothing
         // above can widen it.
         if (isCourier(req)) { where.push('o.assigned_to_username = ?'); args.push(req.session.user?.username ?? ''); }
@@ -609,7 +631,8 @@ export function createOrdersRouter(
            a day's eight hundred and said nothing, and a dispatcher reading it
            had no way to know the rest existed. */
         const totalRs = await client.execute({
-            sql: `SELECT COUNT(*) AS n FROM orders o WHERE ${where.join(' AND ')}`,
+            sql: `SELECT COUNT(*) AS n FROM orders o LEFT JOIN sites s ON s.id = o.site_id
+                  WHERE ${where.join(' AND ')}`,
             args,
         });
         const total = Number(totalRs.rows[0]?.['n'] ?? 0);
@@ -630,7 +653,11 @@ export function createOrdersRouter(
         /* One more than asked for, so "is there another page" is answered by
            the database rather than by guessing from a full page. */
         const rs = await client.execute({
-            sql: `SELECT o.* FROM orders o WHERE ${page.join(' AND ')}
+            /* The sites join is for the search box, which looks at the
+               pharmacy name. LEFT, so an order whose site row went missing
+               still appears rather than vanishing from a list. */
+            sql: `SELECT o.* FROM orders o LEFT JOIN sites s ON s.id = o.site_id
+                  WHERE ${page.join(' AND ')}
                   ORDER BY ${DUE_KEY}, o.id LIMIT ${limit + 1}`,
             args: pageArgs,
         });

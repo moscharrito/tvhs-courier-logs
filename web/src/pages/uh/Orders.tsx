@@ -168,6 +168,25 @@ export function Orders() {
             </p>
 
             <div className="izy-card">
+                {/* ONE BOX ABOVE THE DROPDOWNS, not instead of them. Somebody
+                    with a reference or a pharmacy in front of them types it
+                    here and does not have to work out which filter it belongs
+                    to; somebody narrowing a day still wants the dropdowns.
+                    What it may look at is an allow list on the server
+                    (modules/uh/search.ts) and a patient name is not on it. */}
+                <div className="izy-row">
+                    <label className="izy-field" style={{ minWidth: 320 }}>Search
+                        <input
+                            value={get('q')}
+                            onChange={(e) => set('q', e.target.value)}
+                            placeholder="reference, pharmacy, status, courier, zone"
+                        />
+                    </label>
+                </div>
+                <p className="izy-muted">
+                    Patient names and addresses are deliberately not searchable: a name typed into a
+                    search box ends up in the URL, and URLs reach browser history, proxies and logs.
+                </p>
                 <div className="izy-row">
                     <label className="izy-field">Service date
                         <input type="date" value={get('serviceDate')} onChange={(e) => set('serviceDate', e.target.value)} />

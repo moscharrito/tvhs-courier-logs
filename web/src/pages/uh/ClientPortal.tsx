@@ -111,6 +111,9 @@ export function ClientPortal() {
     const to = params.get('to') ?? '';
     const status = params.get('status') ?? '';
     const reference = params.get('reference') ?? '';
+    /* The one box. `reference` stays read for links made before it existed:
+       a bookmark somebody saved should not stop working. */
+    const search = params.get('q') ?? '';
     const siteId = params.get('siteId') ?? '';
     /* Carried so the service-level rows on the performance page can drill in
        here. There is no control for it on this page: it arrives by link, and
@@ -125,6 +128,7 @@ export function ClientPortal() {
     if (reference) query.set('reference', reference);
     if (siteId) query.set('siteId', siteId);
     if (serviceType) query.set('serviceType', serviceType);
+    if (search) query.set('q', search);
     const qs = query.toString();
 
     const load = useCallback(async () => {
@@ -324,11 +328,11 @@ export function ClientPortal() {
                             </select>
                         </label>
                     )}
-                    <label className="izy-field">Your reference
+                    <label className="izy-field">Search
                         <input
-                            value={reference}
-                            onChange={(e) => set('reference', e.target.value)}
-                            placeholder="RX-1234"
+                            value={search}
+                            onChange={(e) => set('q', e.target.value)}
+                            placeholder="RX-1234, a pharmacy, delivered, zone 2"
                         />
                     </label>
                     <button className="izy-btn secondary" type="button" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
@@ -338,8 +342,10 @@ export function ClientPortal() {
                 {/* Said plainly, because a pharmacist will otherwise try it and
                     assume the system is broken when it returns nothing. */}
                 <p className="izy-muted">
-                    Search by your own reference. Patient names are deliberately not searchable:
-                    a name typed into a search box ends up in browser history and server logs.
+                    One box: your own reference, a pharmacy, a status, a service level or a zone.
+                    Patient names and addresses are deliberately not searchable, and that is not an
+                    omission: a name typed into a search box ends up in the URL, and URLs reach
+                    browser history, proxies and server logs.
                 </p>
             </div>
 

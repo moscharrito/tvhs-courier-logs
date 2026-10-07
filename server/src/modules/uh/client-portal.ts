@@ -32,6 +32,7 @@ import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
+import { searchFragment, CLIENT_SEARCH_COLUMNS } from './search';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor } from './eta';
@@ -470,6 +471,20 @@ export function createClientPortalRouter(
          * reference is what a caller reads out anyway. The staff-facing search
          * made the same choice for the same reason (ticket 1.7). */
         if (q['reference']) { filters.push('o.external_ref = ?'); args.push(String(q['reference'])); }
+
+        /* The one box, the same one the staff list has, minus our couriers'
+           usernames: a client sees a courier's first name and has no business
+           searching our roster. Patient names are absent here for the reason
+           written above, and modules/uh/search.ts holds the allow list so
+           there is one place to argue with. */
+        if (q['q']) {
+            const search = searchFragment(q['q'], CLIENT_SEARCH_COLUMNS);
+            /* Nothing rather than everything when a term matches no column:
+               a search that quietly became "all of it" is how somebody reads
+               a list they believe was filtered. */
+            if (search) { filters.push(search.sql); args.push(...search.args); }
+            else filters.push('1 = 0');
+        }
 
         const rs = await client.execute({
             sql: `SELECT o.*, s.name AS site_name FROM orders o
