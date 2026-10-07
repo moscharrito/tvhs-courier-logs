@@ -91,6 +91,37 @@ export interface ListReleaseSettings {
     allowPortalUpload: boolean;
 }
 
+/**
+ * What a courier is paid for a completed delivery.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ZERO MEANS "NOBODY HAS SAID YET", NOT "NOTHING".
+ *
+ * Every rate defaults to 0 and a rate of 0 is reported as unset rather than
+ * as a figure. That distinction is the whole safety of this section: a screen
+ * that renders $0.00 beside a driver's 241 deliveries looks like an answer,
+ * and somebody will either believe it or quote it. Unset looks like what it
+ * is, which is a question for whoever sets the rates.
+ *
+ * PER COMPLETED DELIVERY, by service level. A failed attempt pays nothing
+ * here, which is a decision rather than an oversight: a courier who drove to
+ * a door and found nobody in has done real work, and whether that is paid is
+ * a question nobody has answered. The counts of failed and attempted stops
+ * are reported beside the paid ones so that the question is visible rather
+ * than buried.
+ *
+ * IT IS NOT THE CLIENT RATE CARD. What University Health are billed lives in
+ * the zone schedule and is a different number for a different reason. Keeping
+ * them apart means the two can be compared; merging them would mean a change
+ * to one silently moved the other.
+ */
+export interface DriverPaySettings {
+    /** Minor units, as cents, so no money is held as a float. */
+    perDeliveryCents: { scheduled: number; stat: number; adhoc: number };
+    /** Shown beside the figures so a reader knows what the number is. */
+    currency: string;
+}
+
 export interface PricingSection {
     /** 24-hour HH:MM in the project timezone. */
     afterHoursStart: string;
@@ -267,6 +298,7 @@ export interface ProjectSettings {
     returns: ReturnSettings;
     reporting: ReportingSettings;
     patientSms: PatientSmsSettings;
+    driverPay: DriverPaySettings;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -284,6 +316,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     dryRun: { requireContactEffort: false, minimumWaitMinutes: 0 },
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00', allowPortalUpload: false },
+    /* All zero, i.e. nobody has set them. See DriverPaySettings for why that
+       is reported as unset rather than as nothing. */
+    driverPay: { perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 }, currency: 'USD' },
     pricing: {
         // Addendum 1: "After-Hours Pickup and Delivery is defined as any
         // pickup or delivery service requested and performed outside of
@@ -352,6 +387,17 @@ export const SettingsPatch = z.object({
         earliest: hhmm.optional(),
         latest: hhmm.optional(),
         allowPortalUpload: z.boolean().optional(),
+    }).strict().optional(),
+    driverPay: z.object({
+        perDeliveryCents: z.object({
+            /* Whole cents, never negative, and capped well above any
+               plausible per-stop rate so a slipped decimal point is refused
+               rather than paid. */
+            scheduled: z.number().int().min(0).max(100_000).optional(),
+            stat: z.number().int().min(0).max(100_000).optional(),
+            adhoc: z.number().int().min(0).max(100_000).optional(),
+        }).strict().optional(),
+        currency: z.string().trim().length(3).toUpperCase().optional(),
     }).strict().optional(),
     pricing: z.object({
         afterHoursStart: hhmm.optional(),
@@ -484,6 +530,46 @@ function patientSmsSection(raw: unknown): PatientSmsSettings {
     return { ...flat, stages };
 }
 
+/**
+ * Resolve the driver pay section, which is one level deeper than most.
+ *
+ * The same trap `patientSmsSection` exists for, and worse here. `section`
+ * copies a stored object straight through when the default is also an object,
+ * so a blob naming only the stat rate would replace the whole rate map and
+ * leave `scheduled` and `adhoc` undefined rather than zero. Undefined cents
+ * multiplied by a delivery count is NaN, and a NaN that reaches a payment
+ * figure is worse than a wrong number because it looks like a bug in the
+ * screen rather than in the money.
+ *
+ * So every rate resolves individually, and anything that is not a whole
+ * non-negative number of cents falls back to the default rather than being
+ * trusted: a hand-edited blob must not be able to put a float, a string or a
+ * negative into what somebody is paid.
+ */
+function driverPaySection(raw: unknown): DriverPaySettings {
+    const defaults = DEFAULT_PROJECT_SETTINGS.driverPay;
+    const source = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+    const storedRates = (source['perDeliveryCents'] && typeof source['perDeliveryCents'] === 'object'
+        && !Array.isArray(source['perDeliveryCents'])
+        ? source['perDeliveryCents'] : {}) as Record<string, unknown>;
+
+    const cents = (key: keyof DriverPaySettings['perDeliveryCents']): number => {
+        const value = storedRates[key];
+        return typeof value === 'number' && Number.isInteger(value) && value >= 0
+            ? value
+            : defaults.perDeliveryCents[key];
+    };
+
+    const currency = typeof source['currency'] === 'string' && source['currency'].trim().length === 3
+        ? source['currency'].trim().toUpperCase()
+        : defaults.currency;
+
+    return {
+        perDeliveryCents: { scheduled: cents('scheduled'), stat: cents('stat'), adhoc: cents('adhoc') },
+        currency,
+    };
+}
+
 /** Fill a stored settings blob out to the full shape, using contract defaults. */
 export function resolveSettings(raw: Record<string, unknown> | null | undefined): ProjectSettings {
     const stored = raw ?? {};
@@ -498,6 +584,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),
         reporting: section(stored['reporting'], DEFAULT_PROJECT_SETTINGS.reporting),
         patientSms: patientSmsSection(stored['patientSms']),
+        driverPay: driverPaySection(stored['driverPay']),
     };
 }
 
