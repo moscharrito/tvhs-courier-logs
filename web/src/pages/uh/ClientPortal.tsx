@@ -220,6 +220,14 @@ export function ClientPortal() {
                 <Link className="izy-btn secondary" to={`/projects/${code}/performance`}>
                     Performance and reports
                 </Link>
+                {' '}
+                {/* The other direction: this page says what happened to the
+                    list, and that one is where the next list comes from. A
+                    pharmacy that can read its deliveries here and still has
+                    to email tomorrow's spreadsheet is doing the job twice. */}
+                <Link className="izy-btn secondary" to={`/projects/${code}/send-list`}>
+                    Send a list
+                </Link>
             </p>
 
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}

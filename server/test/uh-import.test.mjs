@@ -513,12 +513,20 @@ describe('access control', () => {
         const north = await srv.login('north');            // tvhs only
         expect((await north.get(BASE)).status).toBe(403);
 
-        /* A client viewer reads nothing here. This asserted 200 until ticket
-           3.1: an import holds the pharmacy's whole list, patients included,
-           so reading one is the same disclosure as uploading one. Their view
-           of their own deliveries is the portal. */
+        /* A client viewer with NO pharmacies named on its membership, which
+           is what memberWith leaves behind and what a half-finished settings
+           form leaves in production.
+           
+           This asserted a flat 403 on all three until a pharmacy could upload
+           its own list. The refusal is now the scope rather than the role: it
+           may call the endpoint and gets nothing from it, and asking for a
+           specific counter is refused because that counter is not on the
+           membership. Nothing-rather-than-everything is the direction that
+           matters, and it is the one pinned here. */
         const viewer = await memberWith('pharmacy', 'import.viewer');
-        expect((await viewer.get(BASE)).status).toBe(403);
+        const theirs = await viewer.get(BASE);
+        expect(theirs.status).toBe(200);
+        expect(theirs.body, 'no counters named, so no lists').toEqual([]);
         expect((await upload(viewer, `${BASE}/preview`, XLSX, { siteId: dischargeId })).status).toBe(403);
         expect((await upload(viewer, BASE, XLSX, { siteId: dischargeId })).status).toBe(403);
 

@@ -398,7 +398,12 @@ describe('what each role may read across the whole module', () => {
         '/api/projects/uh/uh/orders/summary',
         '/api/projects/uh/uh/runs',
         '/api/projects/uh/uh/runs/mine',
-        '/api/projects/uh/uh/imports',
+        /* /imports is NOT on this list any more, and that is a deliberate
+           narrowing rather than a hole. A pharmacy uploads its own daily list
+           now, so the endpoint answers them: what it answers with is their
+           own counters and nothing else, which is asserted on its own below
+           and in uh-client-import.test.mjs. Leaving the row here would have
+           been simpler and would have been a lie. */
         '/api/projects/uh/uh/pricing',
         '/api/projects/uh/uh/pricing/zones',
         '/api/projects/uh/uh/board',
@@ -409,6 +414,27 @@ describe('what each role may read across the whole module', () => {
         for (const path of READS) {
             expect(`${path} -> ${(await uh.get(path)).status}`).toBe(`${path} -> 403`);
         }
+    });
+
+    it('lets a client viewer read imports, and only its own', async () => {
+        /* The row taken out of the table above, written out properly. The
+           endpoint used to refuse them outright; now it answers, so the thing
+           worth pinning is what it leaves out. An import holds a pharmacy's
+           whole list, patients included, so one counter seeing another's is
+           the same disclosure as handing over the spreadsheet. */
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get('/api/projects/uh/uh/imports');
+        expect(res.status).toBe(200);
+        for (const l of res.body) {
+            expect(l.site.id, 'only the counter on their membership').toBe(discharge.id);
+        }
+    });
+
+    it('still shuts a courier out of imports entirely', async () => {
+        /* Widening the role to let a pharmacy in must not have let anybody
+           else in on the way past. */
+        const ada = await agentFor('ada.courier', 'courier-pass-1');
+        expect((await ada.get('/api/projects/uh/uh/imports')).status).toBe(403);
     });
 
     it("shuts a courier out of the rate card, the board and other people's runs", async () => {

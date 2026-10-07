@@ -299,11 +299,18 @@ const MATRIX = [
     ['POST', `${UH}/pricing/quote`, UH_STAFF, ''],
 
     /* --- the daily list. A whole pharmacy run of patients in one file. */
-    ['POST', `${UH}/imports/preview`, UH_STAFF, ''],
-    ['POST', `${UH}/imports`, UH_STAFF, ''],
-    ['GET', `${UH}/imports`, UH_STAFF, 'reading one discloses what uploading one did'],
-    ['GET', `${UH}/imports/999999`, UH_STAFF, ''],
-    ['GET', `${UH}/imports/mappings/999999`, UH_STAFF, ''],
+    /* A pharmacy uploads its own list now, so these four widen from staff to
+       the portal's own set. The row says who may CALL them; which pharmacies
+       they then reach is the scope, and uh-client-import.test.mjs is where
+       that is pinned, because this table cannot express "their own site" with
+       an id that deliberately does not exist. */
+    ['POST', `${UH}/imports/preview`, UH_CLIENT_VIEW, ''],
+    ['POST', `${UH}/imports`, UH_CLIENT_VIEW, ''],
+    ['GET', `${UH}/imports`, UH_CLIENT_VIEW, 'reading one discloses what uploading one did'],
+    ['GET', `${UH}/imports/999999`, UH_CLIENT_VIEW, ''],
+    /* The saved mapping stays ours: reading or clearing it is a repair, and a
+       pharmacy gets everything it needs from a preview instead. */
+    ['GET', `${UH}/imports/mappings/999999`, UH_STAFF, 'the saved mapping is a dispatch repair'],
     ['DELETE', `${UH}/imports/mappings/999999`, UH_STAFF, ''],
 
     /* --- orders: patient names and addresses. */

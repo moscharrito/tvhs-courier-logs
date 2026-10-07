@@ -20,12 +20,47 @@
  * The operator's decisions travel with the commit (`skipRows`,
  * `acceptDuplicateRows`) rather than being remembered by the server, which
  * keeps the endpoint stateless and makes the commit reproducible.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * A PHARMACY CAN NOW UPLOAD ITS OWN LIST, SCOPED THE WAY THE PORTAL IS.
+ *
+ * Until this, a pharmacy emailed a spreadsheet and somebody here retyped or
+ * imported it. That costs a person at each end and it puts a patient list in
+ * an inbox, which is the worst place it could sit: email is the one hop in
+ * this whole system we do not control and cannot show anybody an audit trail
+ * for. A pharmacy uploading its own list removes the inbox.
+ *
+ * IT IS THE SAME CODE PATH, not a second one. These endpoints already read
+ * the file, map it, validate it, resolve zones, find duplicates and write the
+ * orders with their custody events; a client-facing copy of that would drift,
+ * and this codebase has had the same bug fixed in one copy and not the other
+ * before now. What changes is who may call it and what they are allowed to
+ * say, which is three rules applied in one place each:
+ *
+ *   The site has to be on their membership. scopeFor is the portal's own
+ *   rule, imported rather than restated, so a pharmacy cannot import for the
+ *   counter next door and cannot read what that counter uploaded.
+ *
+ *   receivedAt is OURS, never theirs. It is when the list reached us and it
+ *   starts the SLA clock every delivery is then measured against. A client
+ *   who could set it could backdate it and have us miss a deadline that had
+ *   already passed when they pressed the button, or push it forward and buy
+ *   themselves time on our clock. Dispatch keeps the override, because
+ *   dispatch is who answers for a list that arrived by email at seven and was
+ *   imported at nine.
+ *
+ *   serviceDate cannot be in the past. Dispatch can backfill; a pharmacy
+ *   uploading yesterday's list would be asking for deliveries that cannot
+ *   happen, and the SLA clock on them would already be red.
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+/* The portal's scope rule, imported rather than restated. Two copies of
+   "which pharmacies may this account see" is how one of them ends up wrong. */
+import { scopeFor } from './client-portal';
 import { todayIn } from '../../core/dates';
 import { custodyEventStatement } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
@@ -92,10 +127,47 @@ export interface PreviewRow {
 
 export function createImportsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const operate = requireProjectRole('admin');
+    const operate = requireProjectRole('admin', 'pharmacy');
     /* An import holds the pharmacy's whole list, patients included. Reading one
-     * is the same disclosure as uploading one, so it takes the same role. */
+     * is the same disclosure as uploading one, so it takes the same role, and
+     * the scope below then decides WHICH ones either way. */
     const readers = operate;
+    /* THE SAVED COLUMN MAPPING STAYS OURS, and that is a judgement rather than
+     * a restriction that fell out of anything. Reading or clearing it is a
+     * repair: somebody looks at why a layout stopped matching and decides
+     * whether to forget it. A pharmacy never needs the endpoint, because a
+     * preview hands back the mapping it used, where it came from and the
+     * header fingerprint, and an upload may carry an explicit mapping that
+     * takes precedence over the saved one. So they can always get themselves
+     * unstuck without being able to delete a thing the next morning's upload
+     * depends on. */
+    const dispatchOnly = requireProjectRole('admin');
+
+    /** Dispatch, as opposed to a pharmacy uploading for itself. */
+    const isOurs = (req: Request) => scopeFor(req.membership?.role, req.membership?.settings ?? {}).wholeProject;
+
+    /**
+     * The sites this caller may import for, or null for "all of them".
+     *
+     * scopeFor is the portal's rule and gives a pharmacy exactly the sites
+     * its membership names, and an unscoped pharmacy NOTHING rather than
+     * everything. That default is the one that matters: a mistake in a
+     * settings form must not quietly hand one counter the other eight.
+     */
+    function allowedSiteIds(req: Request): number[] | null {
+        const scope = scopeFor(req.membership?.role, req.membership?.settings ?? {});
+        return scope.wholeProject ? null : scope.siteIds;
+    }
+
+    /** Refuses, having answered, when this caller may not touch that site. */
+    function outOfScope(req: Request, siteId: number, res: Response): boolean {
+        const allowed = allowedSiteIds(req);
+        if (allowed === null || allowed.includes(siteId)) return false;
+        /* The same answer as the portal gives, and deliberately not a 404:
+           the pharmacy exists and they know it does. */
+        res.status(403).json({ error: 'That pharmacy is not on this account' });
+        return true;
+    }
 
     async function siteOr404(projectId: number, siteId: number, res: Response): Promise<SiteRow | null> {
         const rs = await client.execute({
@@ -121,6 +193,35 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         } catch { return null; }
     }
 
+    /**
+     * The two fields a pharmacy may not choose for itself.
+     *
+     * receivedAt starts the SLA clock every delivery on the list is then
+     * measured against, so it is ours: a client who could set it could
+     * backdate it and have us miss a deadline that had already gone when they
+     * pressed the button, or push it forward and buy time on our clock.
+     * Dropped rather than refused, because somebody whose browser sends it by
+     * habit should get a working upload and the right clock, not an error
+     * they cannot act on.
+     *
+     * serviceDate in the past is refused rather than dropped, because that
+     * one IS the request: silently moving it to today would create a day of
+     * deliveries nobody asked for.
+     */
+    function clampForClient(req: Request, options: Options, res: Response): Options | null {
+        if (isOurs(req)) return options;
+        const today = todayIn(req.project!.timezone);
+        if (options.serviceDate !== undefined && options.serviceDate < today) {
+            res.status(400).json({
+                error: `That list is for ${options.serviceDate}, which has passed. Upload it for ${today} or later, or ring dispatch.`,
+                code: 'import.dateInPast',
+            });
+            return null;
+        }
+        const { receivedAt: _ignored, ...rest } = options;
+        return rest;
+    }
+
     function readOptions(req: Request, res: Response): Options | null {
         const body: unknown = req.query['options'] ? safeJson(String(req.query['options'])) : null;
         const parsed = Options.safeParse(body ?? {});
@@ -131,7 +232,12 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             });
             return null;
         }
-        return parsed.data;
+        /* Applied here rather than at each call site, so preview and commit
+           cannot disagree about what the caller was allowed to ask for. A
+           preview run under one clock and a commit under another would show
+           somebody green deadlines and then create red ones. */
+        if (outOfScope(req, parsed.data.siteId, res)) return null;
+        return clampForClient(req, parsed.data, res);
     }
 
     function uploadBytes(req: Request, res: Response): Buffer | null {
@@ -488,8 +594,24 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         const on = String(req.query['serviceDate'] ?? '');
         const where: string[] = ['l.project_id = ?'];
         const args: InValue[] = [req.project!.id];
+
+        /* THE SCOPE GOES ON FIRST AND IS NOT A PARAMETER. A pharmacy sees the
+           lists for its own counters; an unscoped one sees nothing, which is
+           what `1 = 0` says. Narrowing afterwards by siteId can only ever
+           reduce this further. */
+        const allowed = allowedSiteIds(req);
+        if (allowed !== null) {
+            if (allowed.length === 0) where.push('1 = 0');
+            else { where.push(`l.site_id IN (${allowed.map(() => '?').join(',')})`); args.push(...allowed); }
+        }
+
         if (/^\d{4}-\d{2}-\d{2}$/.test(on)) { where.push('l.service_date = ?'); args.push(on); }
-        if (req.query['siteId']) { where.push('l.site_id = ?'); args.push(Number(req.query['siteId'])); }
+        if (req.query['siteId']) {
+            const asked = Number(req.query['siteId']);
+            if (outOfScope(req, asked, res)) return;
+            where.push('l.site_id = ?');
+            args.push(asked);
+        }
 
         const rs = await client.execute({
             sql: `SELECT l.*, s.code AS site_code, s.name AS site_name
@@ -513,7 +635,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         })));
     }));
 
-    router.get('/mappings/:siteId', readers, wrap(async (req, res) => {
+    router.get('/mappings/:siteId', dispatchOnly, wrap(async (req, res) => {
         const siteId = Number(req.params['siteId']);
         const site = await siteOr404(req.project!.id, siteId, res);
         if (!site) return;
@@ -521,7 +643,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         res.json({ siteId, mapping: saved?.mapping ?? null, headerFingerprint: saved?.fingerprint ?? null, fields: IMPORT_FIELDS });
     }));
 
-    router.delete('/mappings/:siteId', operate, wrap(async (req, res) => {
+    router.delete('/mappings/:siteId', dispatchOnly, wrap(async (req, res) => {
         const siteId = Number(req.params['siteId']);
         const site = await siteOr404(req.project!.id, siteId, res);
         if (!site) return;
@@ -541,6 +663,15 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         });
         const l = rs.rows[0];
         if (!l) { res.status(404).json({ error: 'Import not found' }); return; }
+        /* A 404 rather than the 403 the site endpoints give: this one is
+           keyed by an import id, and answering "not yours" to a number would
+           let somebody count the lists another pharmacy has uploaded by
+           walking the ids. */
+        const allowed = allowedSiteIds(req);
+        if (allowed !== null && !allowed.includes(Number(l['site_id']))) {
+            res.status(404).json({ error: 'Import not found' });
+            return;
+        }
 
         const orders = await client.execute({
             sql: `SELECT o.*, (SELECT SUM(quantity) FROM packages p WHERE p.order_id = o.id) AS package_qty

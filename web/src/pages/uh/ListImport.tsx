@@ -9,6 +9,27 @@
  * The file is uploaded twice, once to preview and once to commit. That is
  * deliberate: the server stages nothing, so an operator who previews a list
  * and closes the tab leaves no patient data behind.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * THE PHARMACY PORTAL RENDERS THIS SAME COMPONENT.
+ *
+ * A pharmacy uploads its own list now, and the review step is the reason this
+ * is not a second screen: a list that imports silently and wrongly sends
+ * medication to the wrong address, and that is as true at a counter as it is
+ * at a dispatch desk. A client-facing copy of this flow would drift, and this
+ * codebase has fixed the same bug in one copy and not the other before.
+ *
+ * Two things differ, and both arrive as props rather than as a role check in
+ * here. The pharmacy list is INJECTED, because GET /sites carries every UH
+ * site's address and contact and is deliberately closed to the pharmacy role;
+ * the portal passes the pharmacies its own account is scoped to. And the
+ * wording is passed in, because "a pharmacy's delivery list" is the right
+ * phrase at a dispatch desk and the wrong one when the reader is the
+ * pharmacy.
+ *
+ * Nothing here is a permission. The server scopes every call to the sites on
+ * the caller's membership and sets the received time itself; this component
+ * could ask for another counter and be refused.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -69,8 +90,18 @@ const FIELD_LABELS: Record<string, string> = {
 const ALL_FIELDS = Object.keys(FIELD_LABELS);
 const REQUIRED = ['recipientName', 'addressLine', 'zip'];
 
-export function ListImport({ projectCode, timezone, canImport }: {
+/** What this screen needs to know about a pharmacy, and no more. */
+export interface ImportSite { id: number; code: string; name: string; status?: string }
+
+export function ListImport({ projectCode, timezone, canImport, sites: given, title, intro, refusal }: {
     projectCode: string; timezone: string; canImport: boolean;
+    /** Supplied by the pharmacy portal, which may not read GET /sites. When
+     *  absent this loads the full list, which is the dispatch case. */
+    sites?: ImportSite[] | undefined;
+    title?: string | undefined;
+    intro?: string | undefined;
+    /** What to say to somebody who may not import. */
+    refusal?: string | undefined;
 }) {
     const base = `/api/projects/${projectCode}/uh/imports`;
     /* The service date is a contract day and the received time starts the
@@ -79,7 +110,11 @@ export function ListImport({ projectCode, timezone, canImport }: {
     const time = clockFor(timezone);
     const fileRef = useRef<HTMLInputElement>(null);
 
-    const [sites, setSites] = useState<Site[] | null>(null);
+    const [loaded, setLoaded] = useState<ImportSite[] | null>(null);
+    /* Given wins. The portal has already asked the server which pharmacies
+       this account covers and must not ask again through an endpoint that
+       would answer with all nine. */
+    const sites: ImportSite[] | null = given ?? loaded;
     const [recent, setRecent] = useState<ImportSummary[] | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
     const [serviceDate, setServiceDate] = useState(() => todayIn(timezone));
@@ -92,8 +127,9 @@ export function ListImport({ projectCode, timezone, canImport }: {
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
 
     const loadSites = useCallback(async () => {
-        try { setSites(await api<Site[]>(`/api/projects/${projectCode}/uh/sites`)); } catch { setSites([]); }
-    }, [projectCode]);
+        if (given !== undefined) return;
+        try { setLoaded(await api<Site[]>(`/api/projects/${projectCode}/uh/sites`)); } catch { setLoaded([]); }
+    }, [projectCode, given]);
     const loadRecent = useCallback(async () => {
         try { setRecent(await api<ImportSummary[]>(base)); } catch { setRecent([]); }
     }, [base]);
@@ -169,10 +205,10 @@ export function ListImport({ projectCode, timezone, canImport }: {
     return (
         <Section
             id="uh.import"
-            title="Daily list import"
+            title={title ?? 'Daily list import'}
             summary={recent && recent.length > 0 ? `last imported ${recent[0]?.serviceDate ?? ''}` : undefined}
-            intro={"Upload a pharmacy's delivery list as .xlsx or .csv. Nothing is created until you review the "
-                + 'rows below and confirm. The file itself is never stored; it is read in memory and discarded.'}
+            intro={intro ?? ("Upload a pharmacy's delivery list as .xlsx or .csv. Nothing is created until you review the "
+                + 'rows below and confirm. The file itself is never stored; it is read in memory and discarded.')}
         >
 
             {msg && (
@@ -183,14 +219,17 @@ export function ListImport({ projectCode, timezone, canImport }: {
             )}
 
             {!canImport ? (
-                <div className="izy-muted">You need the admin role in this project to import a list.</div>
+                <div className="izy-muted">{refusal ?? 'You need the admin role in this project to import a list.'}</div>
             ) : (
                 <>
                     <div className="izy-row">
                         <label className="izy-field">Pharmacy
                             <select value={siteId} onChange={(e) => { setSiteId(e.target.value === '' ? '' : Number(e.target.value)); reset(); }}>
                                 <option value="">Choose a site</option>
-                                {sites.filter((s) => s.status === 'active').map((s) => (
+                                {/* An injected list carries no status: the portal
+                                    sends the pharmacies this account covers and
+                                    they are all live by definition. */}
+                                {sites.filter((s) => s.status === undefined || s.status === 'active').map((s) => (
                                     <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
                             </select>
