@@ -59,6 +59,37 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 const MAX_RANGE_DAYS = 92;
 const MAX_ROWS = 500;
 
+/* ─────────────────────────────────────────────────── what "still out" means
+ *
+ * Everything that has not reached an outcome. Delivered, failed and cancelled
+ * are outcomes; the other four are medication a pharmacy has handed over and
+ * has not been told the end of.
+ *
+ * THE FIGURES AT THE TOP OF THE PAGE DID NOT ADD UP TO THE TOTAL, and the
+ * missing one was CANCELLED. The page showed sent to us, still out, delivered
+ * and not delivered; a cancelled order is in the total and was in none of the
+ * other three, so on any day something was cancelled a pharmacist adding the
+ * figures up got less than the total and no way to see where the difference
+ * went. Cancelled is now its own figure.
+ *
+ * PENDING is in this list for completeness rather than because it occurs. It
+ * is the column default and a real member of ORDER_STATUSES, and every insert
+ * path in this module sets 'ready' explicitly, so nothing is in it today.
+ * Leaving it out would mean a future import or a backfill that does take the
+ * default quietly falls out of the arithmetic, which is the shape of the bug
+ * above rather than a new one.
+ *
+ * It is one list, used by the count and by the filter behind it, because the
+ * number and the rows it drills into have to be the same question. It also
+ * matches stillOpen in reports.ts, so the figure on the performance page and
+ * the figure on this one agree.
+ */
+const OPEN_STATUSES = ['pending', 'ready', 'assigned', 'picked_up'] as const;
+
+/** The filter value that stands for all of them. Not a status, deliberately:
+ *  a client asking for one real status still gets exactly that one. */
+const OPEN_FILTER = 'open';
+
 /**
  * A courier's first name, and nothing else.
  *
@@ -342,7 +373,11 @@ export function createClientPortalRouter(
             pharmacies: sites,
             byStatus,
             total,
-            outstanding: (byStatus['ready'] ?? 0) + (byStatus['assigned'] ?? 0) + (byStatus['picked_up'] ?? 0),
+            /* See OPEN_STATUSES. The four figures on the page reconcile to
+               the total now: outstanding + delivered + notDelivered +
+               cancelled is every order there is. */
+            outstanding: OPEN_STATUSES.reduce((n, s) => n + (byStatus[s] ?? 0), 0),
+            cancelled: byStatus['cancelled'] ?? 0,
             delivered: byStatus['delivered'] ?? 0,
             notDelivered: byStatus['failed'] ?? 0,
             notes: scopeNote(sites, scope),
@@ -411,7 +446,19 @@ export function createClientPortalRouter(
             filters.push('o.site_id = ?');
             args.push(asked);
         }
-        if (q['status']) { filters.push('o.status = ?'); args.push(String(q['status'])); }
+        /* "open" is the one value that is a group rather than a status, and it
+           exists so the "still out" figure at the top of the page is a link.
+           A count somebody cannot click is a count they ring us about. */
+        if (q['status'] === OPEN_FILTER) {
+            filters.push(`o.status IN (${OPEN_STATUSES.map(() => '?').join(',')})`);
+            args.push(...OPEN_STATUSES);
+        } else if (q['status']) {
+            filters.push('o.status = ?');
+            args.push(String(q['status']));
+        }
+        /* The performance page slices by service level, so that slice has to
+           be able to drill into its own rows like every other one. */
+        if (q['serviceType']) { filters.push('o.service_type = ?'); args.push(String(q['serviceType'])); }
         /* By reference only, never by patient name. A name in a query string
          * reaches browser history, proxies and referrer headers; the pharmacy
          * reference is what a caller reads out anyway. The staff-facing search

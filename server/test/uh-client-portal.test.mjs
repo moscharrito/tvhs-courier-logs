@@ -518,3 +518,173 @@ describe('the reporting Karthik asked for', () => {
         expect((await courier.get(`${CLIENT}/reports`)).status).toBe(403);
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE FIGURES AT THE TOP, AND THE ROWS BEHIND THEM.
+ *
+ * The counts and the list were both right about different questions and did
+ * not add up to each other. The page showed sent to us, still out, delivered
+ * and not delivered, and CANCELLED was in the total and in none of the other
+ * three. On any day something was cancelled, a pharmacist adding the figures
+ * up got less than the total with nothing on the page to explain where the
+ * difference had gone.
+ *
+ * So the tests here are arithmetic: each figure equals the rows you get by
+ * clicking it, and they equal the total between them. That is the property
+ * the drill-down on the portal screen rests on, and the reason the drill-down
+ * was worth having at all: a figure nobody can open is a figure somebody
+ * rings us about.
+ */
+describe('the figures reconcile', () => {
+    /* Its own service date, so the counts belong to this block alone and
+       other tests creating orders cannot move them. */
+    const day = '2026-10-19';
+
+    beforeAll(async () => {
+        /* One still out, one delivered and one cancelled, which is the
+           combination the old four figures could not account for. */
+        await admin.post(ORDERS).send({
+            siteId: discharge.id, serviceType: 'stat', recipientName: 'Waiting Patient',
+            addressLine: '1 Waiting Street', zip: '78215', serviceDate: day, externalRef: 'RX-9001',
+        });
+        await delivered({ serviceDate: day, externalRef: 'RX-9002' });
+
+        const doomed = await admin.post(ORDERS).send({
+            siteId: discharge.id, serviceType: 'stat', recipientName: 'Cancelled Patient',
+            addressLine: '2 Waiting Street', zip: '78215', serviceDate: day, externalRef: 'RX-9003',
+        });
+        expect(doomed.status, JSON.stringify(doomed.body)).toBe(201);
+        const killed = await admin.post(`${ORDERS}/${doomed.body.id}/events`)
+            .send({ type: 'cancelled', reason: 'The pharmacy withdrew it' });
+        expect(killed.status, JSON.stringify(killed.body)).toBe(201);
+    });
+
+    const summaryFor = async (agent) => (await agent.get(`${CLIENT}/summary?date=${day}`)).body;
+
+    it('gives a cancelled delivery a figure of its own', async () => {
+        /* THE BUG. It was in the total and in none of the figures, so the
+           page quietly failed to account for it. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const s = await summaryFor(pharmacist);
+        expect(s.byStatus.cancelled, 'the fixture should leave one cancelled').toBe(1);
+        expect(s.cancelled).toBe(1);
+    });
+
+    it('counts anything without an outcome as still out', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const s = await summaryFor(pharmacist);
+        /* The one created and left alone. Orders are inserted as 'ready', so
+           that is the status this is really asserting about; pending is in
+           OPEN_STATUSES for completeness and nothing produces it. */
+        expect(s.outstanding).toBeGreaterThanOrEqual(1);
+        expect(s.outstanding).toBe(
+            (s.byStatus.pending ?? 0) + (s.byStatus.ready ?? 0)
+            + (s.byStatus.assigned ?? 0) + (s.byStatus.picked_up ?? 0),
+        );
+    });
+
+    it('adds up to the total, which is what a reader will check', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const s = await summaryFor(pharmacist);
+        expect(s.outstanding + s.delivered + s.notDelivered + s.cancelled).toBe(s.total);
+    });
+
+    it('gives the same number of rows when the still out figure is opened', async () => {
+        /* The figure and the list have to be one question. Two numbers that
+           disagree on one screen is how a figure ends up quoted in a contract
+           meeting without the basis it was counted on. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const s = await summaryFor(pharmacist);
+        const open = await pharmacist.get(`${CLIENT}/orders?from=${day}&to=${day}&status=open`);
+        expect(open.status).toBe(200);
+        expect(open.body.orders.length).toBe(s.outstanding);
+    });
+
+    it('gives the same number of rows for delivered and for not delivered', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const s = await summaryFor(pharmacist);
+        for (const [status, figure] of [['delivered', s.delivered], ['failed', s.notDelivered]]) {
+            const res = await pharmacist.get(`${CLIENT}/orders?from=${day}&to=${day}&status=${status}`);
+            expect(res.body.orders.length, `${status} should match its figure`).toBe(figure);
+        }
+    });
+});
+
+describe('the filters the drill-down needs', () => {
+    it('reads open as every status without an outcome', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/orders?status=open`);
+        expect(res.status).toBe(200);
+        for (const o of res.body.orders) {
+            expect(['delivered', 'failed', 'cancelled'], `status ${o.status}`).not.toContain(o.status);
+        }
+    });
+
+    it('still treats a real status as exactly that one', async () => {
+        /* "open" is a group, and adding it must not have turned every status
+           into a fuzzy match. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/orders?status=delivered`);
+        expect(res.body.orders.length).toBeGreaterThan(0);
+        for (const o of res.body.orders) expect(o.status).toBe('delivered');
+    });
+
+    it('filters by service level, for the rows the performance page slices', async () => {
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/orders?serviceType=stat`);
+        expect(res.status).toBe(200);
+        expect(res.body.orders.length).toBeGreaterThan(0);
+        for (const o of res.body.orders) expect(o.serviceType).toBe('stat');
+    });
+
+    it('answers an unknown status with nothing rather than with everything', async () => {
+        /* A typo in a link must not quietly widen the list. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await pharmacist.get(`${CLIENT}/orders?status=nonsense`);
+        expect(res.status).toBe(200);
+        expect(res.body.orders).toHaveLength(0);
+    });
+
+    it('does not let either new filter reach another pharmacy', async () => {
+        /* THE PROPERTY THE WHOLE PORTAL HOLDS. Two new parameters are two new
+           chances to widen a query that is supposed to be narrowed by a
+           membership. The scope is applied before them and neither can
+           undo it. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        await delivered({ siteId: green.id, recipientName: 'Other Counter Patient', externalRef: 'RX-9100' });
+
+        for (const qs of ['status=open', 'status=delivered', 'serviceType=stat', 'status=open&serviceType=stat']) {
+            const res = await pharmacist.get(`${CLIENT}/orders?${qs}`);
+            expect(res.status).toBe(200);
+            const names = res.body.orders.map((o) => o.recipientName).join(' | ');
+            expect(names, `with ${qs}`).not.toContain('Other Counter Patient');
+            for (const o of res.body.orders) {
+                expect(o.pharmacy, `with ${qs}`).not.toBe('Robert B. Green Pharmacy');
+            }
+        }
+    });
+
+    it('carries both filters into the export, which runs the same query', async () => {
+        /* gatherOrders is shared on purpose. A filter that narrowed the
+           screen and not the file would hand somebody a spreadsheet that did
+           not match what they were looking at when they pressed the button. */
+        const pharmacist = await agentFor('uh.pharmacist', 'client-pass-1');
+        const list = await pharmacist.get(`${CLIENT}/orders?status=open&serviceType=stat`);
+        expect(list.status).toBe(200);
+        const file = await pharmacist
+            .get(`${CLIENT}/orders.xlsx?status=open&serviceType=stat`)
+            .buffer()
+            .parse((res, cb) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => cb(null, Buffer.concat(chunks)));
+            });
+        expect(file.status).toBe(200);
+        /* The audited row count is the comparable figure without parsing the
+           workbook again, and uh-client-export.test.mjs already pins that
+           the file is the list. */
+        const audit = (await admin.get('/api/audit?action=client.export')).body.events[0];
+        const detail = typeof audit.detail === 'string' ? JSON.parse(audit.detail) : audit.detail;
+        expect(detail.rows).toBe(list.body.orders.length);
+    });
+});

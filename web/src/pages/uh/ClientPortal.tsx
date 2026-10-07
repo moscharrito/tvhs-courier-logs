@@ -20,6 +20,7 @@ import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { useLive, agoLabel } from '../../app/useLive';
+import { describeFilter } from '../../lib/drilldown';
 import { slaLabel, type Sla } from './Orders';
 
 interface Pharmacy { id: number; code: string; name: string }
@@ -43,7 +44,14 @@ interface ListResponse {
 interface SummaryResponse {
     serviceDate: string; timezone: string; pharmacies: Pharmacy[];
     byStatus: Record<string, number>; total: number;
-    outstanding: number; delivered: number; notDelivered: number; notes: string[];
+    /* Everything without an outcome: see OPEN_STATUSES on the server. */
+    outstanding: number; delivered: number; notDelivered: number;
+    /* Its own figure now. It is in the total and was in none of the other
+     * three, so the numbers at the top of the page did not add up on any day
+     * something was cancelled. Optional only so an older server does not
+     * blank the row. */
+    cancelled?: number;
+    notes: string[];
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -53,6 +61,28 @@ const STATUS_LABEL: Record<string, string> = {
 
 /** Failures first: they are the only rows that need a person to do something. */
 const needsAttention = (o: ClientOrder) => o.status === 'failed' || o.sla.state === 'overdue';
+
+/**
+ * One of the four figures at the top, as something you can open.
+ *
+ * A button rather than a link because it narrows the page it is already on.
+ * Nought is not a link: there is nothing behind it, and a reader who clicks
+ * one and lands on "Nothing for this day" learns only that the page is
+ * unreliable.
+ */
+function Count({ n, label, onPick }: { n: number; label: string; onPick: () => void }) {
+    if (n === 0) return <><b>{n}</b><span>{label}</span></>;
+    return (
+        <>
+            <b>
+                <button type="button" className="izy-link" onClick={onPick} aria-label={`Show the ${n} ${label}`}>
+                    {n}
+                </button>
+            </b>
+            <span>{label}</span>
+        </>
+    );
+}
 
 export function ClientPortal() {
     const { code = '' } = useParams();
@@ -76,6 +106,11 @@ export function ClientPortal() {
     const status = params.get('status') ?? '';
     const reference = params.get('reference') ?? '';
     const siteId = params.get('siteId') ?? '';
+    /* Carried so the service-level rows on the performance page can drill in
+       here. There is no control for it on this page: it arrives by link, and
+       the "showing" line below says it is applied so nobody is left looking
+       at a short list with no visible reason. */
+    const serviceType = params.get('serviceType') ?? '';
 
     const query = new URLSearchParams();
     if (from) query.set('from', from);
@@ -83,6 +118,7 @@ export function ClientPortal() {
     if (status) query.set('status', status);
     if (reference) query.set('reference', reference);
     if (siteId) query.set('siteId', siteId);
+    if (serviceType) query.set('serviceType', serviceType);
     const qs = query.toString();
 
     const load = useCallback(async () => {
@@ -140,6 +176,31 @@ export function ClientPortal() {
         setParams(next, { replace: true });
     };
 
+    /**
+     * Today, narrowed to one status, from a figure at the top of the page.
+     *
+     * The other filters are dropped rather than kept: the counts are for
+     * today across this account, so leaving a pharmacy or a reference in
+     * place would show fewer rows than the number just clicked. A figure that
+     * disagrees with the list underneath it is the one thing this page cannot
+     * afford, because somebody quotes it at us later.
+     */
+    const today = (status: string) => {
+        const next = new URLSearchParams();
+        next.set('from', summary.serviceDate);
+        next.set('to', summary.serviceDate);
+        if (status !== '') next.set('status', status);
+        setParams(next, { replace: true });
+    };
+
+    /* What the list is currently narrowed to, in words, for somebody who
+       arrived here by clicking a number on the performance page and needs to
+       know which number they clicked. */
+    const narrowedTo = describeFilter(
+        { from, to, status, siteId, serviceType, reference },
+        summary.pharmacies.find((p) => String(p.id) === siteId)?.name,
+    );
+
     const detail = rows.find((o) => o.id === open) ?? null;
 
     return (
@@ -191,14 +252,29 @@ export function ClientPortal() {
                         </button>
                     </span>
                 </div>
+                {/* THE COUNTS ARE THE TOP OF THE DRILL-DOWN AND ARE LINKS.
+                    Each one sets the filters below rather than navigating
+                    away, so the rows that appear are the ones the figure
+                    counted, on today, and the reader can see in the filter
+                    boxes exactly what they are now looking at.
+
+                    They are buttons rather than anchors because this changes
+                    the query on the page it is already on. */}
                 <div className="izy-stats">
-                    <div><b>{summary.total}</b><span>sent to us</span></div>
-                    <div><b>{summary.outstanding}</b><span>still out</span></div>
-                    <div><b>{summary.delivered}</b><span>delivered</span></div>
+                    <div><Count n={summary.total} onPick={() => today('')} label="sent to us" /></div>
+                    <div><Count n={summary.outstanding} onPick={() => today('open')} label="still out" /></div>
+                    <div><Count n={summary.delivered} onPick={() => today('delivered')} label="delivered" /></div>
                     <div className={summary.notDelivered > 0 ? 'izy-stat-bad' : undefined}>
-                        <b>{summary.notDelivered}</b><span>not delivered</span>
+                        <Count n={summary.notDelivered} onPick={() => today('failed')} label="not delivered" />
                     </div>
+                    {summary.cancelled !== undefined && summary.cancelled > 0 && (
+                        <div><Count n={summary.cancelled} onPick={() => today('cancelled')} label="cancelled" /></div>
+                    )}
                 </div>
+                <p className="izy-muted">
+                    Any of these opens the deliveries behind it. Still out, delivered, not delivered
+                    and cancelled add up to what was sent to us.
+                </p>
             </div>
 
             <div className="izy-card">
@@ -245,6 +321,23 @@ export function ClientPortal() {
             </div>
 
             <div className="izy-card">
+                {/* WHAT THIS LIST IS, SAID IN WORDS, for somebody who got
+                    here by clicking a figure on the performance page. Without
+                    it they are looking at a short list and a set of filter
+                    boxes they did not fill in, and the most natural reading
+                    of that is that deliveries are missing. */}
+                {narrowedTo !== '' && (
+                    <div className="izy-row-between">
+                        <p className="izy-muted">Showing {narrowedTo}</p>
+                        <button
+                            type="button"
+                            className="izy-btn secondary"
+                            onClick={() => setParams(new URLSearchParams(), { replace: true })}
+                        >
+                            Show everything for today
+                        </button>
+                    </div>
+                )}
                 <div className="izy-row-between">
                     <h2>{list.from === list.to ? list.from : `${list.from} to ${list.to}`}</h2>
                     <span className="izy-muted">

@@ -295,3 +295,110 @@ describe('an account covering several pharmacies', () => {
         expect(screen.queryByRole('button', { name: /University Hospital Discharge Pharmacy/ })).toBeNull();
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE DRILL-DOWN.
+ *
+ * The page had the counts and it had the list and nothing joined them: a
+ * pharmacist reading "1 not delivered" had to work out for themselves that
+ * the row was somewhere below, and a contract manager arriving from the
+ * performance page landed on a filtered list with no statement of what it was
+ * filtered to. The tests that matter are the two that stop a figure and the
+ * rows under it disagreeing.
+ */
+describe('opening the figures at the top', () => {
+    it('asks the server for the deliveries behind a count', async () => {
+        const mocked = renderPortal();
+        const stillOut = await screen.findByRole('button', { name: /Show the 3 still out/ });
+        fireEvent.click(stillOut);
+
+        /* open, not picked_up: the figure includes everything without an
+           outcome, and the server knows that word. Asking for one status
+           would show fewer rows than the number just clicked. */
+        await waitFor(() => {
+            expect(mocked.calls.some((u) => u.includes('status=open'))).toBe(true);
+        });
+    });
+
+    it('drops the other filters, so the rows match the number clicked', async () => {
+        /* The counts are for today across the whole account. Keeping a
+           pharmacy or a reference would show a subset of the figure, and
+           there is no way for the reader to tell which of the two is wrong. */
+        const mocked = renderPortal();
+        await screen.findByRole('heading', { name: 'Deliveries' });
+
+        fireEvent.change(screen.getByLabelText(/Your reference/), { target: { value: 'RX-9999' } });
+        await waitFor(() => expect(mocked.calls.some((u) => u.includes('reference=RX-9999'))).toBe(true));
+
+        fireEvent.click(await screen.findByRole('button', { name: /Show the 8 delivered/ }));
+        await waitFor(() => {
+            const last = [...mocked.calls].reverse().find((u) => u.includes('/orders?'));
+            expect(last).toContain('status=delivered');
+            expect(last).not.toContain('reference');
+        });
+    });
+
+    it('does not offer a nought as something to open', async () => {
+        /* A link to no rows teaches somebody the page is unreliable. */
+        renderPortal(routes({ [`GET ${BASE}/summary`]: summary({ notDelivered: 0 }) }));
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        expect(screen.queryByRole('button', { name: /Show the 0 not delivered/ })).toBeNull();
+    });
+
+    it('says the four figures add up, because they did not before', async () => {
+        renderPortal();
+        expect(await screen.findByText(/add up to what was sent to us/)).toBeInTheDocument();
+    });
+});
+
+describe('arriving from the performance page', () => {
+    function renderAt(url: string, r = routes()) {
+        const mocked = mockFetch(r);
+        render(
+            <MemoryRouter initialEntries={[url]}>
+                <AuthProvider>
+                    <Routes><Route path="/projects/:code/deliveries" element={<ClientPortal />} /></Routes>
+                </AuthProvider>
+            </MemoryRouter>,
+        );
+        return mocked;
+    }
+
+    it('says in words what the list is narrowed to', async () => {
+        /* THE PROPERTY. Without this somebody who clicked "3 not delivered"
+           on the performance page is looking at three rows, a set of filter
+           boxes they did not fill in, and no statement of why. The natural
+           reading of that is that deliveries are missing. */
+        renderAt('/projects/uh/deliveries?from=2026-09-01&to=2026-09-30&status=failed');
+        const showing = await screen.findByText(/Showing/);
+        expect(showing).toHaveTextContent('2026-09-01 to 2026-09-30');
+        expect(showing).toHaveTextContent('failed');
+    });
+
+    it('names the pharmacy rather than showing its id', async () => {
+        renderAt('/projects/uh/deliveries?from=2026-09-14&to=2026-09-14&siteId=7');
+        const showing = await screen.findByText(/Showing/);
+        expect(showing).toHaveTextContent('University Hospital Discharge Pharmacy');
+        expect(showing).not.toHaveTextContent('siteId');
+    });
+
+    it('carries a service level through to the server, though the page has no control for it', async () => {
+        /* It arrives only by link, from the service-level rows on the
+           performance page. Dropping it silently would show a longer list
+           than the figure that was clicked. */
+        const mocked = renderAt('/projects/uh/deliveries?from=2026-09-14&to=2026-09-14&serviceType=stat');
+        await waitFor(() => expect(mocked.calls.some((u) => u.includes('serviceType=stat'))).toBe(true));
+        expect(await screen.findByText(/Showing/)).toHaveTextContent('stat');
+    });
+
+    it('offers a way back to everything, because a filter arrived by link is easy to miss', async () => {
+        renderAt('/projects/uh/deliveries?from=2026-09-01&to=2026-09-30&status=failed');
+        expect(await screen.findByRole('button', { name: /Show everything for today/ })).toBeInTheDocument();
+    });
+
+    it('says nothing about filters when none are applied', async () => {
+        renderPortal();
+        await screen.findByRole('heading', { name: 'Deliveries' });
+        expect(screen.queryByText(/^Showing/)).toBeNull();
+    });
+});

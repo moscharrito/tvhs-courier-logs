@@ -27,12 +27,31 @@
  * NO MONEY. He did not ask for any, and what a delivery cost belongs on an
  * invoice somebody has checked rather than in a screen where a figure could
  * be quoted back at us as a bill.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * EVERY COUNT IS A LINK TO THE DELIVERIES IT COUNTED.
+ *
+ * This page and the deliveries page were both finished and there was no way
+ * down between them. Somebody reading "Robert B. Green: 3 not delivered" knew
+ * three existed and not which three, and getting to them meant reproducing
+ * the question by hand on the other page: the dates, the pharmacy, the
+ * status, and a hope that they had set the same three things. Most people
+ * ring us instead, which is the work the portal was built to remove.
+ *
+ * The range behind each link is CLAMPED to the window this report ran over,
+ * in lib/drilldown.ts, which is where the arithmetic and its tests live. A
+ * calendar month bucket off a report run over half a month would otherwise
+ * link to more rows than the figure above it, and then two numbers disagree
+ * and one of them gets quoted in a contract meeting.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { Section } from '../../app/Section';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
+import {
+    clampToWindow, drillQuery, rangeOfBucket, siteIdOfSliceKey, type Grouping,
+} from '../../lib/drilldown';
 
 interface Slice {
     key: string;
@@ -72,6 +91,12 @@ const mins = (v: number | null) => {
     return m === 0 ? `${h} h` : `${h} h ${m} min`;
 };
 
+/* A headline figure: a link when there is something behind it, the number
+   on its own when there is not. Nought deliveries is not a thing to open. */
+function Stat({ n, to }: { n: number; to: string }) {
+    return n === 0 ? <>{n}</> : <Link to={to}>{n}</Link>;
+}
+
 const GROUPINGS = [
     { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' },
     { value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' },
@@ -109,9 +134,51 @@ export function ClientReports() {
 
     useEffect(() => { void load(); }, [load]);
 
+    const deliveries = `/projects/${code}/client`;
+
+    /* The window every link is narrowed to. Null until the report lands. */
+    const ran: { from: string; to: string } | null = report
+        ? { from: report.from, to: report.to }
+        : null;
+
+    /**
+     * What one slice row drills into, or null when it cannot drill.
+     *
+     * Null is a real answer and is rendered as plain text: a bucket whose key
+     * this version does not recognise, or one that does not overlap the
+     * window, must produce no link rather than a link to the wrong fortnight.
+     */
+    const drillFor = (dimension: 'period' | 'site' | 'serviceType', s: Slice, status?: string): string | null => {
+        if (!ran) return null;
+        if (dimension === 'period') {
+            const bucket = rangeOfBucket(s.key, (report?.grouping ?? 'day') as Grouping);
+            if (!bucket) return null;
+            const window = clampToWindow(bucket, ran);
+            return window ? drillQuery({ window, ...(status === undefined ? {} : { status }) }) : null;
+        }
+        if (dimension === 'site') {
+            const siteId = siteIdOfSliceKey(s.key);
+            if (siteId === null) return null;
+            return drillQuery({ window: ran, siteId, ...(status === undefined ? {} : { status }) });
+        }
+        return drillQuery({ window: ran, serviceType: s.key, ...(status === undefined ? {} : { status }) });
+    };
+
+    /* A count, as a link when there is something to look at and as plain text
+       when there is not. A link to nought rows is a promise the next screen
+       cannot keep, and a zero is not a thing anybody wants to drill into. */
+    const count = (n: number, query: string | null, what: string, label: string) => {
+        if (n === 0 || query === null) return <td>{n}</td>;
+        return (
+            <td>
+                <Link to={`${deliveries}?${query}`} aria-label={`${n} ${what} for ${label}`}>{n}</Link>
+            </td>
+        );
+    };
+
     /* Folded panels say what is inside, so a pharmacist can skip one without
        opening it. The id is the storage key and must stay stable. */
-    const table = (title: string, first: string, slices: Slice[]) => (
+    const table = (title: string, first: string, slices: Slice[], dimension: 'period' | 'site' | 'serviceType') => (
         <Section
             key={title}
             id={`client-report-${first.toLowerCase().replace(/\W+/g, '-')}`}
@@ -119,27 +186,40 @@ export function ClientReports() {
             summary={slices.length === 0 ? 'nothing in this range' : `${slices.length} ${slices.length === 1 ? 'row' : 'rows'}`}
         >
             {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
-                <table className="izy-table">
-                    <thead>
-                        <tr>
-                            <th>{first}</th><th>Deliveries</th><th>Completed</th>
-                            <th>Not delivered</th><th>Still open</th><th>Completion</th><th>On time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {slices.map((s) => (
-                            <tr key={s.key}>
-                                <td>{s.label}</td>
-                                <td>{s.totals.orders}</td>
-                                <td>{s.totals.delivered}</td>
-                                <td>{s.totals.notDelivered}</td>
-                                <td>{s.totals.stillOpen}</td>
-                                <td>{pct(s.rates.completionRate)}</td>
-                                <td>{pct(s.rates.onTimeRate)}</td>
+                <>
+                    <table className="izy-table">
+                        <thead>
+                            <tr>
+                                <th>{first}</th><th>Deliveries</th><th>Completed</th>
+                                <th>Not delivered</th><th>Still open</th><th>Completion</th><th>On time</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            {slices.map((s) => {
+                                const all = drillFor(dimension, s);
+                                return (
+                                    <tr key={s.key}>
+                                        <td>
+                                            {all === null
+                                                ? s.label
+                                                : <Link to={`${deliveries}?${all}`}>{s.label}</Link>}
+                                        </td>
+                                        {count(s.totals.orders, all, 'deliveries', s.label)}
+                                        {count(s.totals.delivered, drillFor(dimension, s, 'delivered'), 'completed', s.label)}
+                                        {count(s.totals.notDelivered, drillFor(dimension, s, 'failed'), 'not delivered', s.label)}
+                                        {count(s.totals.stillOpen, drillFor(dimension, s, 'open'), 'still out', s.label)}
+                                        <td>{pct(s.rates.completionRate)}</td>
+                                        <td>{pct(s.rates.onTimeRate)}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                    <p className="izy-muted">
+                        Any figure in this table opens the deliveries behind it, for the same dates
+                        this report covers.
+                    </p>
+                </>
             )}
         </Section>
     );
@@ -182,17 +262,28 @@ export function ClientReports() {
                 <>
                     <div className="izy-card">
                         <h2>{report.from === report.to ? report.from : `${report.from} to ${report.to}`}</h2>
+                        {/* The whole-range figures, and the three of them that
+                            map onto a status the list can filter by are links.
+                            On time and delayed are not: the list has no
+                            lateness filter, and inventing a link that quietly
+                            showed all the completed ones instead would be
+                            worse than no link. */}
                         <div className="izy-stats">
-                            <div><b>{report.totals.orders}</b><span>deliveries</span></div>
-                            <div><b>{report.totals.delivered}</b><span>completed</span></div>
+                            <div><b><Stat n={report.totals.orders} to={`${deliveries}?${drillQuery({ window: { from: report.from, to: report.to } })}`} /></b><span>deliveries</span></div>
+                            <div><b><Stat n={report.totals.delivered} to={`${deliveries}?${drillQuery({ window: { from: report.from, to: report.to }, status: 'delivered' })}`} /></b><span>completed</span></div>
                             <div><b>{report.totals.onTimeMet}</b><span>on time</span></div>
                             <div className={report.totals.onTimeMissed > 0 ? 'izy-stat-bad' : undefined}>
                                 <b>{report.totals.onTimeMissed}</b><span>delayed</span>
                             </div>
                             <div className={report.totals.notDelivered > 0 ? 'izy-stat-bad' : undefined}>
-                                <b>{report.totals.notDelivered}</b><span>failed</span>
+                                <b><Stat n={report.totals.notDelivered} to={`${deliveries}?${drillQuery({ window: { from: report.from, to: report.to }, status: 'failed' })}`} /></b>
+                                <span>failed</span>
                             </div>
-                            <div><b>{report.totals.cancelled}</b><span>cancelled</span></div>
+                            <div>
+                                <b><Stat n={report.totals.stillOpen} to={`${deliveries}?${drillQuery({ window: { from: report.from, to: report.to }, status: 'open' })}`} /></b>
+                                <span>still out</span>
+                            </div>
+                            <div><b><Stat n={report.totals.cancelled} to={`${deliveries}?${drillQuery({ window: { from: report.from, to: report.to }, status: 'cancelled' })}`} /></b><span>cancelled</span></div>
                         </div>
                         <table className="izy-table">
                             <tbody>
@@ -288,6 +379,20 @@ export function ClientReports() {
                                         Counted per package: three items at one door can fail for three reasons,
                                         and a courier records each.
                                     </p>
+                                    {/* ONE LINK UNDER THE TABLE RATHER THAN
+                                        ONE PER ROW. The list cannot filter by
+                                        failure reason, so a link on each row
+                                        would go to the same place and imply it
+                                        went somewhere different. This one says
+                                        where it goes. */}
+                                    <p>
+                                        <Link
+                                            className="izy-btn secondary"
+                                            to={`${deliveries}?${drillQuery({ window: { from: report.from, to: report.to }, status: 'failed' })}`}
+                                        >
+                                            Open all {report.totals.notDelivered} failed deliveries
+                                        </Link>
+                                    </p>
                                 </>
                             )}
                     </Section>
@@ -309,12 +414,13 @@ export function ClientReports() {
                         </p>
                     </Section>
 
-                    {table('By pharmacy', 'Pharmacy', report.bySite)}
-                    {table('By service level', 'Service level', report.byServiceType)}
+                    {table('By pharmacy', 'Pharmacy', report.bySite, 'site')}
+                    {table('By service level', 'Service level', report.byServiceType, 'serviceType')}
                     {table(
                         report.grouping === 'day' ? 'By day' : `By ${report.grouping}`,
                         report.grouping === 'day' ? 'Service date' : 'Period',
                         report.byPeriod,
+                        'period',
                     )}
 
                     <Section
