@@ -156,10 +156,13 @@ Things that are not, and are not code:
 
 Things blocked on decisions that are open elsewhere:
 
-- [ ] **`RETENTION_LOCATION_TRACE_DAYS`.** Until it is set the server records
-      no location at all, so the app's main feature does nothing and a
-      reviewer would be looking at a banner saying so. This must be decided
-      before the first submission, not after.
+- [x] **`RETENTION_LOCATION_TRACE_DAYS`.** Seven days, declared in
+      `render.yaml` rather than left to somebody to type into the Render
+      dashboard. It sat on this list as an open item for weeks because it was
+      a variable nobody owned; in the blueprint it is a commit, with the
+      argument for the number beside it. Production collects tracks and purges
+      them after a week, so a reviewer sees the feature working rather than a
+      banner saying it is off.
 - [ ] **The BAAs (ticket 0.10).** The app handles PHI. Submitting a medical
       courier app before the business associate agreements exist puts the
       contract, not the review, at risk.

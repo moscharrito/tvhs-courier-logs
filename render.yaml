@@ -151,6 +151,43 @@ services:
       # instances sweeping together is wasted work rather than a double
       # assignment. That is why this is an in-process timer and not a cron
       # service holding a lock.
+      # --- How long a courier's track is kept ---
+      #
+      # SEVEN DAYS, AND IT IS DECLARED HERE RATHER THAN TYPED INTO A DASHBOARD.
+      #
+      # This sat on a checklist for weeks as "somebody must set an environment
+      # variable", which is the wrong shape for a decision about how long an
+      # identified person's movements are retained. A value in a web form has
+      # no diff, no reviewer and no explanation attached to it, and the only
+      # thing holding it was that nobody had typed it. In this file it is a
+      # commit: the number, and the argument for the number, in one place that
+      # a hospital's reviewer can be shown.
+      #
+      # WHY SEVEN AND NOT MORE. The live need is hours: dispatch watches a van
+      # to decide whether a delivery makes its deadline and whether to
+      # reassign it. The evidential need is already met, and met better, by
+      # the custody events and the proof of delivery, which are kept for
+      # years. Nothing in the University Health contract asks for a breadcrumb
+      # trail at all, which is why the period cannot be inherited from the
+      # delivery record.
+      #
+      # Every category in core/retention/policy.ts errs toward keeping things,
+      # because the usual risk is deleting evidence too early. This one runs
+      # the other way: a minute-by-minute trail of an identified driver has
+      # almost no operational value the day after the shift, and every day it
+      # is kept is a day it can be subpoenaed, breached, or used for something
+      # nobody agreed to. Collecting it with no agreed expiry is itself the
+      # harm, which is why the endpoint refused every point until this line
+      # existed.
+      #
+      # Setting it is ONE decision in two places by design: it makes the
+      # period real in the retention table and switches collection on at the
+      # endpoint, so the two can never disagree about whether a track exists
+      # and how long it lives. Raising it is a commit and a conversation, not
+      # a web form.
+      - key: RETENTION_LOCATION_TRACE_DAYS
+        value: "7"
+
       - key: SWEEP_INTERVAL_SECONDS
         value: "120"
 

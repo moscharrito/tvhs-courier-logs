@@ -132,19 +132,26 @@ export const RETENTION: Record<RetentionCategory, RetentionRule> = {
          * RETENTION_LOCATION_TRACE_DAYS is the decision: it makes the period
          * real here and switches tracking on there. Without it, this is
          * undecided AND nothing is collected, so the two can never disagree
-         * about whether a track exists and how long it lives. */
+         * about whether a track exists and how long it lives.
+         *
+         * It is declared in render.yaml rather than left to a dashboard, so
+         * production has a period and the reasoning for it sits beside the
+         * number. A local checkout has neither and collects nothing, which is
+         * the right default for a machine nobody is watching. */
         get days() { return traceDays(); },
         get decided() { return traceDays() !== null; },
         holds: 'Minute-by-minute positions of a courier while they were on shift (ticket 6.6). '
             + 'No patient name, but joined to orders it says which homes were visited and when.',
-        basis: 'UNDECIDED, AND THE MOST IMPORTANT UNDECIDED ONE HERE. Every other category in this '
-            + 'table errs toward keeping things: a delivery record is evidence and the risk is deleting '
-            + 'it too early. This one is the opposite. A breadcrumb trail of an identified employee has '
-            + 'almost no operational value the day after the shift, and every day it is kept is a day it '
-            + 'can be subpoenaed, breached, or used for something nobody agreed to. Days, not years. '
-            + 'Nothing in the contract asks for it at all, which is why it cannot be inherited from the '
-            + 'delivery record. It needs a number from somebody with the authority to set one, and until '
-            + 'then core/tracking refuses to accept a single point.',
+        basis: 'Seven days, set in render.yaml so the number and the argument for it travel together '
+            + 'and a change is a commit rather than a web form. Every other category in this table errs '
+            + 'toward keeping things: a delivery record is evidence and the risk is deleting it too '
+            + 'early. This one is the opposite. A breadcrumb trail of an identified driver has almost no '
+            + 'operational value the day after the shift, and every day it is kept is a day it can be '
+            + 'subpoenaed, breached, or used for something nobody agreed to. The live need is hours, and '
+            + 'the evidential need is met better by the custody events and the proof of delivery, which '
+            + 'are kept for years. Nothing in the contract asks for a track at all, which is why the '
+            + 'period could not be inherited from the delivery record. Unset, which is what a local '
+            + 'checkout is, core/tracking still refuses to accept a single point.',
         purgeable: true,
     },
 };
