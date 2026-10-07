@@ -158,3 +158,99 @@ describe('accounts that already existed', () => {
         expect((await existing.get('/api/me/projects')).status).toBe(200);
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * A PHARMACY PORTAL ACCOUNT, FROM CREATION TO WORKING.
+ *
+ * scripts/create-pharmacy-portals.mjs makes nine of these: eight counters and
+ * a contract manager. Every one of them is created by an administrator
+ * choosing a password, so every one of them starts in the must-change state,
+ * and the first thing all nine will do is this exact sequence.
+ *
+ * The groups above test the refusal. This one tests the WAY OUT, end to end,
+ * because the refusal without a usable way out is a lockout rather than a
+ * control, and that is not a hypothetical: the web shell asked for the
+ * project list before it set the user, the refusal threw, and the one screen
+ * the server would have accepted a request from was the one screen the person
+ * could not reach. The server was right the whole time and the account was
+ * still unusable, which is why this walks the whole path rather than
+ * asserting a status code.
+ */
+describe('a new pharmacy portal account, start to finish', () => {
+    const FIRST = 'chosen-by-an-admin-9';
+    const OWN = 'chosen-by-the-pharmacy-9';
+
+    let username;
+    let them;
+    let siteId;
+
+    beforeAll(async () => {
+        const sites = (await admin.get('/api/projects/uh/uh/sites')).body;
+        siteId = sites.find((s) => s.code === 'discharge').id;
+
+        /* Exactly what the script sends: staff, scoped to one counter, and
+           mustChangePassword deliberately not passed so it takes its default. */
+        username = 'uh.portaltest';
+        const made = await admin.post('/api/users').send({
+            username, name: 'Discharge Pharmacy (portal)', password: FIRST, role: 'staff',
+        });
+        expect(made.status, JSON.stringify(made.body)).toBe(201);
+        await admin.put(`/api/users/${username}/memberships/uh`).send({
+            role: 'pharmacy', settings: { siteIds: [siteId] },
+        });
+        them = await agentFor(username, FIRST);
+    });
+
+    it('starts in the must-change state without anybody asking for it', async () => {
+        /* The default is what makes this safe at nine accounts rather than at
+           one: nobody has to remember to set a flag per pharmacy. */
+        const me = await them.get('/api/session');
+        expect(me.status).toBe(200);
+        expect(me.body.mustChangePassword).toBe(true);
+    });
+
+    it('can read its session and nothing else, which is how a client learns it is stuck', async () => {
+        expect((await them.get('/api/session')).status).toBe(200);
+        const blocked = await them.get('/api/me/projects');
+        expect(blocked.status).toBe(403);
+        expect(blocked.body.code).toBe('password.mustChange');
+        expect((await them.get('/api/projects/uh/uh/client/summary')).status).toBe(403);
+        expect((await them.get('/api/projects/uh/uh/client/orders')).status).toBe(403);
+    });
+
+    it('can take the one action that releases it', async () => {
+        const res = await them.post('/api/me/password').send({ currentPassword: FIRST, password: OWN });
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+    });
+
+    it('is released by that, without signing in again', async () => {
+        /* The session doing the changing survives, so somebody who has just
+           typed a new password is not sent back to a sign-in box: that reads
+           as the change having failed. */
+        const me = await them.get('/api/session');
+        expect(me.status).toBe(200);
+        expect(me.body.mustChangePassword).toBe(false);
+        expect((await them.get('/api/me/projects')).status).toBe(200);
+    });
+
+    it('then sees its own counter, which is the whole point of the account', async () => {
+        const summary = await them.get('/api/projects/uh/uh/client/summary');
+        expect(summary.status).toBe(200);
+        expect(summary.body.pharmacies).toHaveLength(1);
+        expect(summary.body.pharmacies[0].id).toBe(siteId);
+    });
+
+    it('and still cannot reach the counter next door', async () => {
+        /* The password change releases the must-change gate and nothing else.
+           Confusing the two would turn a first sign-in into a promotion. */
+        const sites = (await admin.get('/api/projects/uh/uh/sites')).body;
+        const green = sites.find((s) => s.code === 'green');
+        const res = await them.get(`/api/projects/uh/uh/client/orders?siteId=${green.id}`);
+        expect(res.status).toBe(403);
+    });
+
+    it('cannot use the old password anywhere afterwards', async () => {
+        const stale = await srv.agent().post('/api/login').send({ username, password: FIRST });
+        expect(stale.status).toBe(401);
+    });
+});

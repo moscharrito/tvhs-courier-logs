@@ -30,7 +30,8 @@
     "backup": "tsx scripts/backup-db.mjs",
     "seed:uh-day": "node scripts/seed-uh-day.mjs",
     "dry-run": "node scripts/dry-run.mjs",
-    "seed:demo-uh": "node scripts/seed-demo.mjs"
+    "seed:demo-uh": "node scripts/seed-demo.mjs",
+    "create:portals": "node scripts/create-pharmacy-portals.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
