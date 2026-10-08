@@ -21,7 +21,7 @@ import { theme } from '../../theme';
 import { Panel, Chip, Notice } from '../../ui/Glass';
 import { ScreenHeader } from '../../ui/Screen';
 import { get } from '../../lib/api';
-import { batchesByZone, type BoardData, type ZoneBatch } from '../../lib/lead';
+import { batchesByZone, lostCards, type BoardData, type ZoneBatch } from '../../lib/lead';
 
 interface Props {
     token: string;
@@ -61,6 +61,11 @@ export function Counter({ token, code, onSignedOut, onHandOver }: Props) {
 
     const batches = batchesByZone(board);
     const waiting = batches.reduce((n, b) => n + b.orders.length, 0);
+    /* Packages the board referenced and sent no card for. Normally zero: this
+       app asks for the whole board every time rather than a delta. Shown
+       rather than swallowed, because a counter that is quietly short by three
+       packages is worse than one that says so. */
+    const lost = lostCards(board);
 
     return (
         <ScrollView
@@ -69,11 +74,22 @@ export function Counter({ token, code, onSignedOut, onHandOver }: Props) {
         >
             <ScreenHeader
                 title="Counter"
+                /* summary is read defensively for the same reason the pool is:
+                   a payload that changed shape must not take the whole screen
+                   with it. A missing count is a missing word in a subtitle. */
                 subtitle={`${waiting === 0 ? 'Nothing waiting' : `${waiting} waiting to go out`}`
-                    + `${board.summary.overdue > 0 ? ` · ${board.summary.overdue} late` : ''}`}
+                    + `${(board.summary?.overdue ?? 0) > 0 ? ` · ${board.summary.overdue} late` : ''}`}
             />
 
             {error !== null && <Notice text={error} tone="warn" />}
+
+            {lost > 0 && (
+                <Notice
+                    tone="warn"
+                    text={`${lost} ${lost === 1 ? 'package is' : 'packages are'} on the counter that this `
+                        + 'screen could not read. Pull down to refresh, and tell dispatch if it stays.'}
+                />
+            )}
 
             {batches.length === 0 ? (
                 <Panel>

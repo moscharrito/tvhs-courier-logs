@@ -46,17 +46,72 @@ export interface BoardCourier {
 export interface Lane {
     run: { id: number; courierUsername: string; label: string; status: string };
     courier: BoardCourier | null;
-    stops: Array<{ sequence: number; order: BoardOrder }>;
+    /* By id, like the pool. The card is in `orders` once, however many lanes
+       would otherwise have embedded a copy of it. Nothing in the app reads
+       these yet; the type is corrected anyway, because a type that describes
+       a payload the server stopped sending is how the next person writes the
+       same crash again. */
+    stops: Array<{ sequence: number; orderId: number }>;
+    /** The next stop still to do, which is where the courier is working. */
+    currentStopOrderId?: number | null;
     counts: { total: number; remaining: number; done: number; overdue: number };
 }
 
+/**
+ * The board, as the server sends it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE CARDS ARE A MAP AND THE POOL CARRIES IDS. THIS USED TO BE ONE SHAPE.
+ *
+ * The board was restructured so a poll could send only what moved: a card now
+ * appears ONCE in `orders`, keyed by id, and the pool and the lanes reference
+ * it by id rather than each carrying their own copy. That took the payload
+ * from 361 KB to 6 KB on a poll and is right for the dispatch board, which
+ * holds a day in memory and merges deltas into it.
+ *
+ * THE APP WAS NOT UPDATED WITH IT, AND THE LEAD SCREENS CRASHED ON OPEN.
+ * `pool[].orders` became `pool[].orderIds`, batchesByZone iterated the
+ * undefined, and the counter is the first tab a lead sees. The web board was
+ * updated at the time and this was not, which is what an app with no screen
+ * tests and no human looking at it costs.
+ *
+ * This app does NOT do deltas: it asks without `since` every time, so
+ * `complete` is always true and `orders` always holds every card the board
+ * references. Resolving an id is a lookup, not a merge. If that ever changes,
+ * `complete` is the flag that says so.
+ */
 export interface BoardData {
     serviceDate: string;
     summary: { total: number; unassigned: number; delivered: number; failed: number; overdue: number };
-    pool: Array<{ site: { id: number; code: string; name: string }; orders: BoardOrder[]; overdue: number }>;
+    /** Every card this board references, keyed by id as a string. */
+    orders: Record<string, BoardOrder>;
+    /** True when `orders` holds every card the pool and lanes reference. */
+    complete?: boolean;
+    pool: Array<{ site: { id: number; code: string; name: string }; orderIds: number[]; overdue: number }>;
     lanes: Lane[];
     couriers: BoardCourier[];
     idleCouriers: BoardCourier[];
+}
+
+/**
+ * The card for an id, or null when the board did not send one.
+ *
+ * Null is a real answer rather than a crash. A card can be missing on a delta
+ * this app does not ask for, and a lead whose counter silently dropped one
+ * package is worse off than one whose screen is honest about it: the orders
+ * that resolve are still shown, and lostCards() says how many did not.
+ */
+export function cardFor(board: BoardData, id: number): BoardOrder | null {
+    return board.orders?.[String(id)] ?? null;
+}
+
+/** How many ids the pool references that no card arrived for. */
+export function lostCards(board: BoardData): number {
+    let lost = 0;
+    for (const group of board.pool ?? []) {
+        for (const id of group.orderIds ?? []) if (cardFor(board, id) === null) lost += 1;
+    }
+    return lost;
 }
 
 /* ------------------------------------------------------------ the counter */
@@ -84,8 +139,14 @@ export interface ZoneBatch {
  */
 export function batchesByZone(board: BoardData): ZoneBatch[] {
     const byZone = new Map<number | null, BoardOrder[]>();
-    for (const group of board.pool) {
-        for (const order of group.orders) {
+    /* Defensive on both: a board that arrived without a pool, or a pool entry
+       without ids, is a shape change rather than a day with no work, and a
+       counter that throws tells a lead nothing. */
+    for (const group of board.pool ?? []) {
+        for (const id of group.orderIds ?? []) {
+            const order = cardFor(board, id);
+            /* Skipped rather than thrown. See cardFor. */
+            if (order === null) continue;
             const list = byZone.get(order.zone) ?? [];
             list.push(order);
             byZone.set(order.zone, list);
@@ -145,7 +206,12 @@ export interface DriverLoad {
 export function driverLoads(board: BoardData): DriverLoad[] {
     const byUser = new Map<string, DriverLoad>();
 
-    for (const courier of [...board.couriers, ...board.idleCouriers]) {
+    /* Defensive for the same reason batchesByZone is, and not because this
+       one has broken: it reads couriers and lanes, which did not change when
+       the pool did, which is exactly why the Drivers tab kept working while
+       the Counter crashed. One screen surviving a payload change by luck is
+       not a reason to leave the other one to luck as well. */
+    for (const courier of [...(board.couriers ?? []), ...(board.idleCouriers ?? [])]) {
         if (byUser.has(courier.username)) continue;
         byUser.set(courier.username, {
             username: courier.username,
@@ -159,7 +225,10 @@ export function driverLoads(board: BoardData): DriverLoad[] {
         });
     }
 
-    for (const lane of board.lanes) {
+    for (const lane of board.lanes ?? []) {
+        /* A lane with no run is not a lane. Skipped rather than crashed: the
+           other drivers on the screen are still answerable. */
+        if (!lane?.run?.courierUsername) continue;
         const username = lane.run.courierUsername;
         const existing = byUser.get(username) ?? {
             username,
