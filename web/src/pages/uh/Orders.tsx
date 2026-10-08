@@ -273,8 +273,15 @@ export function Orders() {
                         <tbody>
                             {paged.rows.map((o) => {
                                 const label = slaLabel(o.sla);
+                                /* The same rule the deliveries list uses: a
+                                   row somebody has to do something about is
+                                   findable while scrolling past it, not only
+                                   once it has been read. Late or failed, and
+                                   nothing else: marking half the table marks
+                                   nothing. */
+                                const needsAttention = o.sla.state === 'overdue' || o.status === 'failed';
                                 return (
-                                    <tr key={o.id}>
+                                    <tr key={o.id} className={needsAttention ? 'izy-row-bad' : undefined}>
                                         <td>
                                             {clock(o.dueAt)}
                                             {label.text && <><br /><span className={`izy-pill ${label.tone === 'muted' ? 'muted' : label.tone}`}>{label.text}</span></>}

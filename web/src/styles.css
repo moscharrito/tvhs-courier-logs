@@ -229,7 +229,12 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-table a { color: var(--izy-green); }
 .izy-table code { font-size: 12px; background: var(--izy-bg); padding: 2px 5px; border-radius: 4px; }
 
-.izy-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--izy-green-soft); color: var(--izy-green); }
+/* Weight and a little more room, which is the whole of what the deliveries
+   list needed. Done HERE rather than as a new class, so every screen that
+   already says izy-pill gets it: the board, the order list, the invoices, the
+   applications, the user list. A status set in a bare word carried the same
+   visual weight as the address beside it, and 600 is what separates them. */
+.izy-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap; background: var(--izy-green-soft); color: var(--izy-green); }
 .izy-pill.off { background: var(--izy-danger-soft); color: var(--izy-danger); }
 .izy-pill.warn { background: var(--izy-warn-soft); color: #92400e; }
 .izy-pill.muted { background: var(--izy-line); color: var(--izy-muted); }
@@ -388,16 +393,17 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 /* Counts and money read as columns when they line up on the right. */
 .izy-num { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* A status is a state, not a sentence, so it gets the shape of one. */
-.izy-state {
-    display: inline-block; padding: 2px 9px; border-radius: 999px;
-    font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap;
-    background: var(--izy-line); color: #374151;
-}
-.izy-state.good { background: var(--izy-green-soft); color: #14532d; }
-.izy-state.bad { background: var(--izy-danger-soft); color: var(--izy-danger); }
-.izy-state.warn { background: var(--izy-warn-soft); color: #92400e; }
-.izy-state.quiet { background: #f3f4f6; color: var(--izy-muted); }
+/* THERE IS NO .izy-state, AND THERE WAS FOR ONE COMMIT.
+ *
+ * The deliveries list grew its own status chip with four tones, and the
+ * application already had one: .izy-pill, with the same four, used by the
+ * board, the order list, the invoices, the applications and the user list.
+ * Two chips that look almost the same is the "two products" problem this
+ * section opens by warning about, written by the person warning about it.
+ *
+ * So the improvement went into .izy-pill above and this class is gone. The
+ * tones map straight across: good is the default, bad is .off, warn is .warn,
+ * quiet is .muted. */
 
 /* The headline figures were a bare flex row and read as a sentence. Boxed and
    evenly sized, they read as the summary they are. */
@@ -422,12 +428,17 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 /* A row that needs somebody to do something should be findable while
    scrolling past it, not only once it is read.
    
+   FOLDED INTO .izy-row-bad RATHER THAN A SECOND CLASS BESIDE IT. It was
+   .izy-row-attention for one commit and was never used without .izy-row-bad,
+   which makes it a thing to remember rather than a thing that happens. Any
+   row already marked bad now carries the edge.
+   
    ON THE FIRST CELL, NOT ON THE ROW. A box-shadow set on a <tr> is not drawn
    reliably: the row generates no box of its own in several engines, so the
    shadow silently does nothing and the marker is simply absent. Checked in a
    browser rather than assumed, because "it is in the stylesheet" and "it is
    on the screen" turned out to be different things here. */
-.izy-row-attention > td:first-child { box-shadow: inset 3px 0 0 var(--izy-danger); }
+.izy-row-bad > td:first-child { box-shadow: inset 3px 0 0 var(--izy-danger); }
 
 @media (max-width: 760px) {
     .izy-main { padding: 16px 14px; }

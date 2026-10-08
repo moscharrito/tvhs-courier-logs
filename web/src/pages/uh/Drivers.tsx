@@ -169,9 +169,18 @@ export function Drivers() {
                     <>
                         <table className="izy-table">
                             <thead>
+                                {/* izy-num on everything countable: right
+                                    aligned with tabular figures, so a column
+                                    of numbers reads as a column rather than
+                                    as ragged text. It is the difference
+                                    between a table somebody scans and one
+                                    they have to read. */}
                                 <tr>
-                                    <th>Driver</th><th>Days worked</th><th>Delivered</th>
-                                    <th>Not delivered</th><th>Pay</th>
+                                    <th>Driver</th>
+                                    <th className="izy-num">Days worked</th>
+                                    <th className="izy-num">Delivered</th>
+                                    <th className="izy-num">Not delivered</th>
+                                    <th className="izy-num">Pay</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -185,10 +194,10 @@ export function Drivers() {
                                             </Link>
                                             <div className="izy-muted">{d.username}</div>
                                         </td>
-                                        <td>{d.daysWorked}</td>
-                                        <td>{d.delivered}</td>
-                                        <td className={d.failed > 0 ? 'izy-stat-bad' : undefined}>{d.failed}</td>
-                                        <td>{money(d.payCents, data.currency)}</td>
+                                        <td className="izy-num">{d.daysWorked}</td>
+                                        <td className="izy-num">{d.delivered}</td>
+                                        <td className={`izy-num${d.failed > 0 ? ' izy-stat-bad' : ''}`}>{d.failed}</td>
+                                        <td className="izy-num">{money(d.payCents, data.currency)}</td>
                                     </tr>
                                 ))}
                             </tbody>

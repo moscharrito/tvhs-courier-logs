@@ -69,17 +69,21 @@ const STATUS_LABEL: Record<string, string> = {
 const needsAttention = (o: ClientOrder) => o.status === 'failed' || o.sla.state === 'overdue';
 
 /**
- * Which colour a status carries.
+ * Which tone a status carries.
  *
  * Deliberately not one colour per status. Three outcomes matter to somebody
  * reading this page: it arrived, it did not, or it is still in the air. A
  * palette with seven entries is a legend nobody reads.
+ *
+ * The names are izy-pill's, which the whole application already uses, rather
+ * than a second vocabulary invented here: '' is the green default, 'off' is
+ * the refusal red, 'warn' is amber and 'muted' is grey.
  */
-function stateTone(o: ClientOrder): string {
-    if (o.status === 'delivered') return 'good';
-    if (o.status === 'failed') return 'bad';
-    if (o.status === 'cancelled') return 'quiet';
-    return o.sla.state === 'overdue' ? 'bad' : 'warn';
+function statusTone(o: ClientOrder): string {
+    if (o.status === 'delivered') return '';
+    if (o.status === 'failed') return 'off';
+    if (o.status === 'cancelled') return 'muted';
+    return o.sla.state === 'overdue' ? 'off' : 'warn';
 }
 
 /**
@@ -488,7 +492,7 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
             </thead>
             <tbody>
                 {rows.map((o) => (
-                    <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad izy-row-attention' : undefined}>
+                    <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
                         {showPharmacy && <td>{o.pharmacy}</td>}
                         <td>
                             {o.recipientName}
@@ -507,7 +511,7 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                                 a street name. The tone is the meaning: a
                                 pharmacist scanning forty rows is looking for
                                 the red ones. */}
-                            <span className={`izy-state ${stateTone(o)}`}>
+                            <span className={`izy-pill ${statusTone(o)}`}>
                                 {STATUS_LABEL[o.status] ?? o.status}
                             </span>
                             {o.status === 'failed' && o.failureReason && (

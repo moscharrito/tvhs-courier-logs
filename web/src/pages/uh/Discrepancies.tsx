@@ -237,7 +237,11 @@ export function Discrepancies() {
                     ) : (<>{pagedOpen.rows.map((d) => (
                         <div key={d.id} className="izy-pool-group">
                             <div>
-                                <span className={`izy-pill ${d.severity === 'critical' ? 'izy-stat-bad' : ''}`}>{d.severity}</span>
+                                {/* `off`, not `izy-stat-bad`. The latter is a stat tile modifier and
+                                    is not one of izy-pill's tones, so a critical
+                                    discrepancy was being drawn as red text on the
+                                    green "everything is fine" background. */}
+                                <span className={`izy-pill ${d.severity === 'critical' ? 'off' : d.severity === 'major' ? 'warn' : 'muted'}`}>{d.severity}</span>
                                 {' '}<b>{d.kind}</b>{' · '}{d.serviceDate}
                                 {d.reference && <>{' · '}{d.reference}</>}
                                 <div className="izy-muted">
