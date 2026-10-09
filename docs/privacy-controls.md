@@ -270,6 +270,61 @@ Nothing here is code that can be written to close them except where noted.
 
 ---
 
+## Over-the-air updates, and the decision to revisit at go-live
+
+**Decided 8 October 2026: OTA stays on until go-live, and is reconsidered
+there.** Written down because it is a disclosure to a third party that nobody
+would otherwise find, and because a decision taken for a reason that expires
+needs the expiry recorded with it.
+
+**What happens.** `app.json` configures `expo-updates` with
+`checkAutomatically: "ON_LOAD"`, so every launch of the courier app asks
+`u.expo.dev` whether a newer JavaScript bundle exists for its channel.
+`fallbackToCacheTimeout: 0` means the app does not wait: it starts from the
+bundle it already has and the check happens behind it. No network, or Expo
+down, and the app runs normally.
+
+**What leaves the device.** A request naming the project id and the runtime
+version, from the driver's phone, at each launch. No patient data, no
+credentials, no location. What it does disclose is that an install exists, on
+that device, at that moment, and over time the pattern of when a courier opens
+the app.
+
+**Not covered by any agreement we hold.** Expo is not a business associate and
+has not been asked to be one. The position is that nothing in the request is
+protected health information, which is true, and that the disclosure is
+therefore outside the agreements rather than in breach of them. That is a
+judgement rather than a certainty, and it is the kind of thing a hospital's
+security questionnaire asks directly.
+
+**Why it stays for now.** The ability to push a JavaScript fix to every
+driver's phone in minutes, without a build and without a store review, is
+worth more in the first weeks of a contract than the disclosure costs. That is
+not hypothetical: a crash on the site lead's first screen shipped in an APK on
+7 October and was found only because somebody installed it on a phone.
+
+**Why that reason expires.** It is strongest while the app is changing daily
+and weakest once it is not. Once drivers are carrying real patient data every
+day, "a third party receives a request from the device at every launch" is
+harder to defend than "a fix takes a rebuild", and the rate of fixes should
+have fallen by then anyway.
+
+**What switching it off looks like**, so the decision is cheap to reverse:
+remove the `updates` block from `app.json` and drop the `expo-updates`
+dependency. The cost is that every fix then needs a full build and a reinstall
+on every phone, which for eight leads and a courier roster is a real morning's
+work rather than a deploy.
+
+**The APK itself needs none of this.** It is a standalone Android app: no Expo
+Go, no Expo account, no Expo at runtime beyond the update check above. The
+Expo SDK pieces it uses are native code compiled into it. EAS was the machine
+that built it, not something it talks to.
+
+`app/src/lib/updates.test.ts` pins the configuration, so a silent change to
+either the URL or the automatic check fails rather than passes.
+
+---
+
 ## What must be true before real patient data arrives
 
 Not a summary of the above: a shorter list, and a harder one.
@@ -285,3 +340,7 @@ Not a summary of the above: a shorter list, and a harder one.
    runbook rather than the person who wrote it.
 5. **The program written**, so that this document has something to be checked
    against and 4.7 can actually be completed.
+6. **Over-the-air updates reconsidered.** Decided 8 October to keep them until
+   go-live for the speed of fixes; the reasoning and the cost of reversing it
+   are in the section above. Leaving this undecided at go-live means keeping
+   it by default, which is the one outcome nobody chose.

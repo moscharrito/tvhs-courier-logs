@@ -131,6 +131,15 @@ if (!apply) {
     say('  6. failed the second delivery, returned it, and reattempted it');
     say('  7. read it all back as the pharmacy sees it, and as a report');
     say(`  8. ${mailOn ? 'confirmed a notification was queued for the pharmacy' : 'SKIPPED the notification: mail is not configured'}`);
+    say('  9. created a pharmacy portal account and walked its FIRST SIGN-IN:');
+    say('     refused until it chooses its own password, then released');
+    say(' 10. checked it sees its own counter, cannot reach the next one,');
+    say('     cannot find a patient by name, and can export what it sees');
+    say(' 11. read the drivers record: counts per driver, no patient in it,');
+    say('     and no pay figure invented where no rate is set');
+    say(' 12. downloaded all six spreadsheets');
+    say(' 13. reported whether a courier track has an agreed retention period,');
+    say('     because tracking collects nothing until it does');
 }
 
 /* NO process.exit ON THE WAY OUT OF A PREVIEW. Node on Windows asserts
@@ -351,6 +360,167 @@ if (mailOn) {
     say('  inbox of a pharmacy account scoped to the Discharge Pharmacy.');
 } else {
     step('a notification exists for the completed delivery', 'skip', 'mail is not configured on this server');
+}
+
+/* ────────────────────────────── what was built after this script was
+ *
+ * Everything above walks the delivery journey, which is what this script was
+ * written for. The block below is the work that landed afterwards and would
+ * otherwise be exercised only by its own unit tests. Those prove each piece
+ * does what it was written to do; this is the thing that says the pieces are
+ * still joined to each other.
+ *
+ * Each step is the END of a path a real person takes, so a failure here is
+ * somebody stuck rather than a function returning the wrong shape.
+ */
+
+say('');
+say('── the pharmacy portal, the drivers record and the files ──');
+
+if (!apply) {
+    step('the pharmacy portal, the drivers record and the files', 'skip',
+        'needs --apply: these steps create an account and read real rows');
+} else {
+    as('admin');
+
+    /* A pharmacy account scoped to one counter. The whole portal rests on
+       that membership and nothing else, so what follows is the proof that
+       the scope is real rather than a filter on a screen. */
+    const portalUser = `dry.pharmacy.${today.replace(/-/g, '')}`;
+    const portalPass = `Dry-portal-${Math.random().toString(36).slice(2, 10)}!`;
+
+    const existing = await call(`/api/users/${portalUser}`);
+    if (existing.status === 200) {
+        await call(`/api/users/${portalUser}/password`, {
+            method: 'POST', body: JSON.stringify({ password: portalPass }),
+        });
+    } else {
+        /* mustChangePassword deliberately NOT passed, so it defaults to true
+           for a staff account. The next steps are the proof that a brand new
+           portal account can get through its own first sign-in, which is the
+           thing that was broken and that nine real accounts will hit. */
+        await call('/api/users', {
+            method: 'POST',
+            body: JSON.stringify({
+                username: portalUser, name: 'Dry Run Pharmacy',
+                password: portalPass, role: 'staff',
+            }),
+        });
+    }
+    await call(`/api/users/${portalUser}/memberships/uh`, {
+        method: 'PUT',
+        body: JSON.stringify({ role: 'pharmacy', settings: { siteIds: [discharge.id] } }),
+    });
+
+    cookie = '';
+    const login = await call('/api/login', {
+        method: 'POST', body: JSON.stringify({ username: portalUser, password: portalPass }),
+    });
+    step('a new pharmacy account can sign in', login.status === 200, String(login.status));
+
+    /* THE LOCKOUT, AS A STEP. A password an administrator chose is temporary
+       and the server refuses almost everything until it is replaced. The web
+       shell could not reach the one screen that replaces it, so every new
+       portal account was stuck on a password box that worked. Walked here
+       because no unit test spans the session read, the refusal and the way
+       out. */
+    const blocked = await call('/api/me/projects');
+    step('  and is refused everything until it chooses its own password',
+        blocked.status === 403 && blocked.body?.code === 'password.mustChange',
+        `${blocked.status} ${blocked.body?.code ?? ''}`);
+
+    const chosen = `${portalPass}x`;
+    const changed = await call('/api/me/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: portalPass, password: chosen }),
+    });
+    step('  and the change releases it without a second sign-in', changed.status === 200, String(changed.status));
+    step('  so the portal opens', (await call('/api/me/projects')).status === 200, '');
+    remember('pharmacy');
+
+    const summary = await call(`${UH}/client/summary`);
+    const pharmacies = summary.body?.pharmacies ?? [];
+    step('the portal shows this account its own counter and no other',
+        summary.status === 200 && pharmacies.length === 1,
+        pharmacies.map((x) => x.name).join(', ') || String(summary.status));
+
+    const adds = (summary.body?.outstanding ?? 0) + (summary.body?.delivered ?? 0)
+        + (summary.body?.notDelivered ?? 0) + (summary.body?.cancelled ?? 0);
+    step('  and the figures at the top add up to the total',
+        adds === (summary.body?.total ?? -1),
+        `${adds} against ${summary.body?.total}`);
+
+    const other = sites.find((x) => x.code !== 'discharge');
+    if (other) {
+        const reach = await call(`${UH}/client/orders?siteId=${other.id}`);
+        step('  and cannot reach the counter next door', reach.status === 403, String(reach.status));
+    } else {
+        step('  and cannot reach the counter next door', 'skip', 'this project has one pharmacy');
+    }
+
+    const byName = await call(`${UH}/client/orders?q=${encodeURIComponent('Dry Run Patient')}`);
+    step('  and cannot find a delivery by patient name',
+        byName.status === 200 && (byName.body?.orders ?? []).length === 0,
+        `${(byName.body?.orders ?? []).length} found`);
+
+    step('  and can export what it is looking at',
+        (await call(`${UH}/client/orders.xlsx`)).status === 200, '');
+
+    /* Sending a list on the portal is behind a project setting, off until
+       the contract agrees to it. Reported as what it is rather than failed. */
+    const upload = await call(
+        `${UH}/imports/preview?options=${encodeURIComponent(JSON.stringify({ siteId: discharge.id }))}`,
+        { method: 'POST', body: '', headers: { 'Content-Type': 'application/octet-stream' } },
+    );
+    if (upload.status === 403 && upload.body?.code === 'import.portalUploadOff') {
+        step('  sending a list on the portal is off for this contract', 'skip',
+            'listRelease.allowPortalUpload is false, which is the default');
+    } else {
+        step('  sending a list on the portal is switched on and answers',
+            upload.status !== 403, `${upload.status} ${upload.body?.code ?? ''}`);
+    }
+
+    as('admin');
+
+    const drivers = await call(`${UH}/drivers?from=${today}&to=${today}`);
+    step('the drivers record answers for today', drivers.status === 200,
+        `${(drivers.body?.drivers ?? []).length} drivers`);
+
+    const theirs = (drivers.body?.drivers ?? []).find((d) => d.username === courier);
+    step('  and counts what the rehearsal courier delivered',
+        (theirs?.delivered ?? 0) > 0, `${theirs?.delivered ?? 0} delivered`);
+    step('  and withholds a figure rather than showing nought when no rate is set',
+        theirs === undefined || theirs.payCents !== 0 || theirs.rateSet === true,
+        theirs?.payCents === null ? 'no figure, rate not set' : `pay ${theirs?.payCents}`);
+    step('  and names no patient anywhere in it',
+        !/Dry Run Patient|Rehearsal Way/i.test(JSON.stringify(drivers.body ?? {})),
+        'a pay record goes to a bookkeeper');
+
+    for (const [label, path] of [
+        ['the drivers record', `${UH}/drivers/export.xlsx?from=${today}&to=${today}`],
+        ['the orders list', `${UH}/orders/export.xlsx?serviceDate=${today}`],
+        ['the runs', `${UH}/runs/export.xlsx?serviceDate=${today}`],
+        ['the uploads', `${UH}/imports/export.xlsx`],
+        ['the discrepancies', `${UH}/discrepancies/export.xlsx`],
+        ['the shifts', `${UH}/shifts/export.xlsx`],
+    ]) {
+        const res = await call(path);
+        step(`${label} downloads as a spreadsheet`, res.status === 200, String(res.status));
+    }
+
+    /* Tracking is the app's main feature and it collects nothing until a
+       retention period exists. Reported either way, because a reviewer
+       opening the app to a banner saying tracking is off is a wasted
+       submission. */
+    const retention = await call('/api/retention');
+    const traces = (retention.body?.rules ?? retention.body ?? [])
+        .find?.((r) => r.category === 'location_traces');
+    if (retention.status !== 200) {
+        step('a courier track has an agreed retention period', 'skip', `/api/retention answered ${retention.status}`);
+    } else {
+        step('a courier track has an agreed retention period, so tracking collects',
+            traces?.decided === true, traces?.decided ? `${traces.days} days` : 'undecided: the endpoint refuses every point');
+    }
 }
 
 summarise();
