@@ -19,7 +19,7 @@ let dispatcher;
 beforeAll(async () => {
     srv = await startServer();
     admin = await srv.login('admin');
-    await admin.post('/api/users').send({ username: 'gl.dispatch', name: 'GL', password: 'gl-pass-1122', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username: 'gl.dispatch', name: 'GL', password: 'gl-pass-1122', role: 'staff' });
     await admin.put('/api/users/gl.dispatch/memberships/uh').send({ role: 'admin', settings: {} });
     dispatcher = srv.agent();
     await dispatcher.post('/api/login').send({ username: 'gl.dispatch', password: 'gl-pass-1122' });
@@ -72,7 +72,7 @@ describe('the readiness check', () => {
     });
 
     it('stops failing it once there is a second administrator', async () => {
-        await admin.post('/api/users').send({ username: 'gl.admin2', name: 'GL Two', password: 'gl-pass-3344', role: 'admin', mustChangePassword: false });
+        await admin.post('/api/users').send({ username: 'gl.admin2', name: 'GL Two', password: 'gl-pass-3344', role: 'admin' });
         const res = await admin.get(`${UH}/go-live`);
         expect(check(res.body, 'admins.second').pass).toBe(true);
         expect(res.body.blocking).not.toContain('admins.second');

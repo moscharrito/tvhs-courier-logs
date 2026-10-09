@@ -1,0 +1,40 @@
+-- Retiring the forced password change.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHAT 0049 DID, AND WHY IT IS COMING BACK OUT.
+--
+-- 0049 added this column so that a password an administrator chose could not
+-- be used indefinitely: the server refused almost everything the account
+-- asked for until the person replaced it. The reasoning was sound and is
+-- still written out in 0049, which is left in place as the record of it.
+--
+-- It is removed on the owner's decision of 9 October 2026. The case against
+-- removing it was put once -- that the password we generate and send sits in
+-- a message for ever, and that two parties therefore know the credential to
+-- an account which reads patient names -- and the decision was to remove it
+-- anyway, in favour of recovery rather than compulsion.
+--
+-- WHAT REPLACES IT. The University Health contract manager can set a new
+-- password for any of their own eight counters themselves, audited, without
+-- going through Izy (server/src/modules/uh/portal-reset.ts). That is a
+-- deliberate trade and not an oversight: the control moves from "you must
+-- change this" to "you can change this, and so can your own manager, today".
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHY DROP THE COLUMN RATHER THAN LEAVE IT AT ZERO.
+--
+-- Nothing reads it after this commit. A column that no code consults is read
+-- by the next person as a feature that exists, and the obvious repair -- set
+-- it and expect something to happen -- silently does nothing. The schema
+-- never declared it (0049 was a raw ALTER), so dropping it leaves Drizzle
+-- and the database agreeing rather than diverging.
+--
+-- It carries no index, constraint, trigger or view, which is what SQLite
+-- requires before it will drop a column. Verified against the migration
+-- history: 0049 is the only file that mentions it.
+--
+-- Reversible, if the decision is ever revisited: 0049's ALTER re-adds it with
+-- the same default, and every account comes back as not-forced, which is
+-- exactly where this migration leaves them.
+
+ALTER TABLE `users` DROP COLUMN `must_change_password`;

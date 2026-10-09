@@ -162,7 +162,7 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
            selected by name so u.pin cannot shadow it by accident: that
            collision is what this ticket was about. */
         const rs = await client.execute({
-            sql: `SELECT d.*, u.username, u.name, u.role, u.route, u.status, u.must_change_password
+            sql: `SELECT d.*, u.username, u.name, u.role, u.route, u.status
                   FROM devices d JOIN users u ON u.id = d.user_id
                   WHERE d.id = ? AND d.revoked_at IS NULL`,
             args: [hash(token)],
@@ -243,11 +243,6 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
             id: Number(user['id']), username: String(user['username']), name: String(user['name']),
             role: String(user['role']) as 'admin' | 'staff' | 'driver',
             route: user['route'] === null ? null : String(user['route']),
-            /* Read, not assumed false. This path is a driver enrolling a
-               phone and drivers are exempt today, but a flag that lies about
-               the row is the kind of thing that survives the exemption being
-               lifted and nobody noticing. */
-            mustChangePassword: Number(user['must_change_password'] ?? 0) === 1,
         }, hash(token));
 
         res.status(201).json({ enrolled: true, device: { label: body.label || userAgent, userAgent }, user: req.session.user });
@@ -323,7 +318,6 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
             id: Number(device['user_id']), username: String(device['username']), name: String(device['name']),
             role: String(device['role']) as 'admin' | 'staff' | 'driver',
             route: device['route'] === null ? null : String(device['route']),
-            mustChangePassword: Number(device['must_change_password'] ?? 0) === 1,
         }, deviceId);
         await req.audit('auth.login', 'user', String(device['username']), { method: 'device_pin' });
         res.json(req.session.user);

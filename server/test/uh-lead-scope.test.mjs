@@ -32,7 +32,7 @@ beforeAll(async () => {
     greenId = sites.find((s) => s.code === 'green').id;
 
     const make = async (username, settings) => {
-        await admin.post('/api/users').send({ username, name: username, password: PASS, role: 'staff', mustChangePassword: false });
+        await admin.post('/api/users').send({ username, name: username, password: PASS, role: 'staff' });
         await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'lead', settings });
         const a = srv.agent();
         await a.post('/api/login').send({ username, password: PASS });

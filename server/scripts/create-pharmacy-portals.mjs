@@ -30,13 +30,21 @@
  * about platform role staff grants anything on its own.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * THE PASSWORD WE CHOOSE DOES NOT OUTLIVE THE CONVERSATION.
+ * THE PASSWORD WE CHOOSE IS THE PASSWORD. TREAT THE OUTPUT AS LIVE.
  *
- * mustChangePassword is left at its default, which is true for staff, so the
- * first thing each of these accounts does is replace the password printed
- * below. That is the whole point: a credential to an account that reaches
- * patient names should be known to one person, and until somebody changes it
- * themselves it is known to two.
+ * Until 9 October 2026 each of these accounts was forced to replace the
+ * password printed below before it could do anything. That rule is gone on
+ * the owner's decision, so the generated password keeps working until
+ * somebody chooses to change it, and the message you send a pharmacy stays a
+ * working credential for as long as the account exists. Send each line only
+ * to the pharmacy it belongs to, by a channel you would be comfortable
+ * showing University Health, and delete it afterwards.
+ *
+ * What replaces the old rule is the MANAGER'S RESET: uh.manager is created
+ * with mayResetPortalPasswords, which lets whoever runs the contract set a
+ * new password for any of the eight counters themselves, audited, without
+ * telephoning us. So a credential that has gone astray is a five-minute fix
+ * at their end rather than a support call at ours.
  *
  *   node scripts/create-pharmacy-portals.mjs                      # local
  *   node scripts/create-pharmacy-portals.mjs --i-mean-production  # the live site
@@ -118,7 +126,12 @@ const PORTALS = [
         username: 'uh.manager',
         name: 'UH Contract Manager (portal)',
         sites: COUNTERS.map((c) => c.code),
-        note: 'every counter, for the contract view and the reports',
+        /* THE ONE ACCOUNT THAT MAY RESET THE OTHERS. See the header, and
+           modules/uh/portal-reset.ts for what the capability does and does
+           not reach: the eight counters above and nothing else, never an Izy
+           login, never a courier, and never another manager. */
+        capabilities: { mayResetPortalPasswords: true },
+        note: 'every counter, the contract view, the reports, and resetting the eight passwords',
     },
 ];
 
@@ -206,9 +219,8 @@ for (const portal of wanted) {
         pass = password();
         insist(`create ${portal.username}`, await call('/api/users', {
             method: 'POST',
-            /* mustChangePassword is NOT sent, so it takes its default, which
-               is true for a staff account. The password below is ours until
-               they replace it, and it should stop being ours on first use. */
+            /* The password below is the account's password from here on.
+               Nothing forces a change; see the header for what replaced it. */
             body: JSON.stringify({ username: portal.username, name: portal.name, password: pass, role: 'staff' }),
         }), (s) => s === 201 || s === 200);
     } else if (has('reset')) {
@@ -224,7 +236,10 @@ for (const portal of wanted) {
        database edit. */
     insist(`scope ${portal.username}`, await call(`/api/users/${portal.username}/memberships/${projectCode}`, {
         method: 'PUT',
-        body: JSON.stringify({ role: 'pharmacy', settings: { siteIds } }),
+        /* siteIds is the scope; capabilities is the manager's reset verb and
+           is absent for the eight counters, so re-running this never grants
+           one of them something it did not have. */
+        body: JSON.stringify({ role: 'pharmacy', settings: { siteIds, ...(portal.capabilities ?? {}) } }),
     }));
 
     made.push({ ...portal, pass, existed: existing.status === 200 });
@@ -244,10 +259,14 @@ for (const portal of made) {
     say('');
 }
 
-say('  Each of these is asked to choose its own password on first sign-in, and');
-say('  the server refuses everything else until it does. Send each pharmacy only');
-say('  its own line: the password above stops working the moment they change it,');
-say('  which is the point of it.');
+say('  THESE PASSWORDS DO NOT EXPIRE AND NOTHING FORCES A CHANGE. Each one works');
+say('  until somebody replaces it, so the message you send is a live credential:');
+say('  send each pharmacy only its own line, and delete it once they confirm.');
+say('');
+say('  Each account can change its own password under Your account at any time,');
+say('  and uh.manager can set a new one for any of the eight counters from');
+say('  Pharmacy logins in the portal. That is the recovery path -- a forgotten');
+say('  password does not need us.');
 say('');
 say('  They see their own counter and nothing else: deliveries, proof of delivery,');
 say('  performance, and the spreadsheet export. No other pharmacy, no pricing, no');

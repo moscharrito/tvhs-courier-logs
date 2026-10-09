@@ -132,12 +132,6 @@ app.use(bridge.get('sessionMiddleware'));
 // Audit trail (src/core/audit/audit.ts): req.audit(action, entity, id, detail)
 // records who did what, stamped with actor, project and IP. Append-only.
 app.use(bridge.get('auditMiddleware'));
-// An account whose password was set by an administrator does nothing until it
-// is replaced (src/core/auth/must-change.ts). Here rather than in a client
-// redirect: a valid session that a form merely hides from is not forced to do
-// anything at all.
-app.use(bridge.get('mustChangeMiddleware'));
-
 // Operating timezone — pinned in config so check-in dates don't depend on the host clock.
 // Override with APP_TIMEZONE (e.g. "America/New_York") in the environment / .env if needed.
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Chicago';

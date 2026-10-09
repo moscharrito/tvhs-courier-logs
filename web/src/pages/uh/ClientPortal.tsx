@@ -57,6 +57,9 @@ interface SummaryResponse {
      * Absent reads as off, which is the safe direction: an older server that
      * does not send it has not had the setting switched on. */
     canUploadList?: boolean;
+    /** True for the contract manager: they may reset their own counters'
+     *  passwords. Absent for an ordinary pharmacy. */
+    canResetPortalPasswords?: boolean;
     notes: string[];
 }
 
@@ -262,6 +265,18 @@ export function ClientPortal() {
                         {' '}
                         <Link className="izy-btn secondary" to={`/projects/${code}/send-list`}>
                             Send a list
+                        </Link>
+                    </>
+                )}
+                {/* The contract manager only. Offered on the strength of the
+                    server's own answer rather than the number of pharmacies
+                    on the account, so the link and the endpoint behind it
+                    cannot disagree. */}
+                {summary.canResetPortalPasswords === true && (
+                    <>
+                        {' '}
+                        <Link className="izy-btn secondary" to={`/projects/${code}/pharmacy-logins`}>
+                            Pharmacy logins
                         </Link>
                     </>
                 )}

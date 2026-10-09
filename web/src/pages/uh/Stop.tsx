@@ -110,21 +110,41 @@ export function Stop() {
         }
     }, [base]);
     useEffect(() => { void load(); }, [load]);
+    /* EACH OF THESE THREE GUARDS AGAINST RESOLVING AFTER UNMOUNT, and that
+       is a fix rather than a precaution: the first one was setting state into
+       a torn-down React and taking the whole web suite's exit code with it.
+       An unhandled rejection reading "window is not defined" out of
+       dispatchSetState, intermittent, and attributed to this file while
+       nothing in this file looked wrong -- a courier leaving a stop before
+       the outbox lookup resolves is the same race in the field, where it is
+       a console error nobody sees.
+
+       The idiom is the `live` flag used in app/src/App.tsx. Not AbortSignal:
+       pendingFor reads IndexedDB and does not take one, so the cheap thing
+       that covers all three is to stop writing rather than to stop asking. */
     /* A stop whose outcome is queued must not offer the outcome again: the
        courier would record it twice and see two entries waiting. */
-    useEffect(() => { void pendingFor(Number(orderId)).then(setQueuedHere); }, [orderId]);
     useEffect(() => {
+        let live = true;
+        void pendingFor(Number(orderId)).then((q) => { if (live) setQueuedHere(q); });
+        return () => { live = false; };
+    }, [orderId]);
+    useEffect(() => {
+        let live = true;
         api<{ available: boolean }>(`/api/projects/${code}/uh/files/status/check`)
-            .then((s) => setFilesAvailable(s.available))
-            .catch(() => setFilesAvailable(false));
+            .then((s) => { if (live) setFilesAvailable(s.available); })
+            .catch(() => { if (live) setFilesAvailable(false); });
+        return () => { live = false; };
     }, [code]);
     useEffect(() => {
+        let live = true;
         /* Fails closed. If this cannot be read, assume the stricter contract:
            refusing a doorstep that was allowed is a phone call, and recording
            one that was forbidden is a breach. */
         api<{ settings: { delivery?: { personalHandoverOnly?: boolean } } }>(`/api/projects/${code}/settings`)
-            .then((r) => setHandoverOnly(r.settings.delivery?.personalHandoverOnly !== false))
-            .catch(() => setHandoverOnly(true));
+            .then((r) => { if (live) setHandoverOnly(r.settings.delivery?.personalHandoverOnly !== false); })
+            .catch(() => { if (live) setHandoverOnly(true); });
+        return () => { live = false; };
     }, [code]);
 
     if (order === null) {

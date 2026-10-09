@@ -382,7 +382,7 @@ describe('a PIN is for courier phones only', () => {
            every portal account Karthik's people get will be. */
         await admin.post('/api/users').send({
             username: 'uh.counter', name: 'Counter Staff', password: 'counter-pass-1',
-            role: 'staff', mustChangePassword: false,
+            role: 'staff',
         });
         await admin.put('/api/users/uh.counter/memberships/uh').send({ role: 'pharmacy', settings: {} });
     });
@@ -459,7 +459,7 @@ describe('a phone enrolled before the rule existed', () => {
            because the endpoint now refuses to create one. */
         await admin.post('/api/users').send({
             username: 'uh.legacy', name: 'Legacy Counter', password: 'counter-pass-2',
-            role: 'staff', mustChangePassword: false,
+            role: 'staff',
         });
         const user = (await sql('SELECT id FROM users WHERE username = ?', ['uh.legacy'])).rows[0];
 

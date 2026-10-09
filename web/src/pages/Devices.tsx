@@ -56,10 +56,6 @@ export function Devices() {
        MAY_USE_DEVICE_PIN. A site lead is a driver here and works from a phone
        at a counter exactly as a courier does. */
     const mayUsePin = user?.role === 'driver';
-    /* The server is refusing everything but the password change, so this page
-       is the only one reachable and most of it does not work. See `required`
-       below for what that changes. */
-    const mustChange = user?.mustChangePassword === true;
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
     const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
@@ -78,17 +74,10 @@ export function Devices() {
                about a feature they do not have into their browser's network
                log, which is the sort of thing that gets screenshotted into a
                security questionnaire. */
-            /* NOR THE SESSION LIST, while the password must change. That
-               request is refused like everything else, and asking anyway cost
-               two visible defects: the 403's text leaked into the page as a
-               red error telling somebody to "change it on your own account
-               screen" while they were standing on it, and the Signed in card
-               sat on "Loading..." for ever because the list never resolved.
-               Both from one call that was never going to be answered. */
             const [s, d, i] = await Promise.all([
-                mustChange ? Promise.resolve([]) : api<SessionSummary[]>('/api/me/sessions'),
-                mayUsePin && !mustChange ? api<EnrolledDevice[]>('/api/devices') : Promise.resolve([]),
-                mayUsePin && !mustChange
+                api<SessionSummary[]>('/api/me/sessions'),
+                mayUsePin ? api<EnrolledDevice[]>('/api/devices') : Promise.resolve([]),
+                mayUsePin
                     ? api<DeviceIdentity>('/api/login/device')
                     : Promise.resolve({ enrolled: false } as DeviceIdentity),
             ]);
@@ -98,7 +87,7 @@ export function Devices() {
         } catch (err) {
             setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Failed to load' });
         }
-    }, [mayUsePin, mustChange]);
+    }, [mayUsePin]);
     useEffect(() => { void load(); }, [load]);
 
     const revoke = async (url: string, label_: string, endsThisSession = false) => {
@@ -168,23 +157,9 @@ export function Devices() {
                     ? 'Set up this phone so a PIN signs you in, see which phones are set up, and sign out anywhere you do not recognize.'
                     : 'Change your password, and sign out anywhere you do not recognize.'}
             </p>
-            {/* ONE MESSAGE, and it is this one. The card below used to repeat
-                it in its own words and the two said the same thing twice.
-                Written here rather than let through from the server: the 403's
-                text ends "change it on your own account screen", which is
-                where the reader already is. */}
-            {mustChange && (
-                <div className="izy-alert error" role="alert">
-                    The password you were given was set for you and has to be changed before anything else
-                    on the site will work. Nobody can see what you choose, including us.
-                </div>
-            )}
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
-            {/* The forced case is the only reason an account in that state
-                can reach this page at all: Layout sends them here and the
-                server refuses everything else. */}
-            <ChangePassword required={user?.mustChangePassword === true} />
+            <ChangePassword />
 
             {mayUsePin && (<>
             <div className="izy-card">
@@ -284,10 +259,6 @@ export function Devices() {
             </div>
             </>)}
 
-            {/* Hidden while the password must change, rather than shown
-                empty. The list is refused and so is signing anything out, so
-                every control in it would be a button that cannot work. */}
-            {!mustChange && (
             <div className="izy-card">
                 <h2>Signed in</h2>
                 <p className="izy-muted">
@@ -344,7 +315,6 @@ export function Devices() {
                     </button>
                 </div>
             </div>
-            )}
         </>
     );
 }
@@ -366,14 +336,18 @@ export function Devices() {
 /**
  * Changing your own password.
  *
- * `required` is the forced case: an administrator chose this password and the
- * server is refusing everything else until it is replaced. Somebody in that
- * state is redirected here from wherever they were going, so the card has to
- * say why they have arrived somewhere they did not ask for. Landing on a
- * routine-looking form after being bounced reads as the site being broken,
- * and the next thing that happens is a telephone call.
+ * ONE MODE, VOLUNTARY. There was a second, `required`, for an account whose
+ * password an administrator had chosen: the server refused everything until
+ * it was replaced, Layout redirected here, and this card had to explain why
+ * somebody had arrived somewhere they did not ask for. That rule is gone
+ * (drizzle/0050) and with it the only way to reach this card without meaning
+ * to, so the card no longer apologises for itself.
+ *
+ * A pharmacy that has forgotten its password does not come here at all --
+ * they ring their own contract manager, who can set a new one from the
+ * Pharmacy logins page (pages/PortalLogins.tsx).
  */
-function ChangePassword({ required = false }: { required?: boolean }) {
+function ChangePassword() {
     const [current, setCurrent] = useState('');
     const [next, setNext] = useState('');
     const [busy, setBusy] = useState(false);
@@ -410,12 +384,10 @@ function ChangePassword({ required = false }: { required?: boolean }) {
 
     return (
         <div className="izy-card">
-            {/* No second notice here. The page says it once, at the top. */}
-            <h2>{required ? 'Choose a password' : 'Your password'}</h2>
+            <h2>Your password</h2>
             <p className="izy-sub">
-                {required
-                    ? 'Pick something only you know. Changing it signs you out anywhere else you are signed in.'
-                    : 'Changing it signs you out everywhere else, which is usually the point. This browser stays signed in.'}
+                Changing it signs you out everywhere else, which is usually the point. This browser stays
+                signed in.
             </p>
             {note && (
                 <div className={`izy-alert ${note.kind}`} role={note.kind === 'error' ? 'alert' : 'status'}>

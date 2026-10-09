@@ -44,9 +44,6 @@ export interface SessionUser {
     name: string;
     role: string;
     route: string | null;
-    /** True while the password was set by somebody else and not yet replaced
-     *  (drizzle/0049). The session still exists; what it may reach does not. */
-    mustChangePassword: boolean;
 }
 
 /** What handlers see. `user` is null when no valid session cookie is present. */
@@ -169,8 +166,7 @@ export class SessionStore {
         const now = this.now();
         const rs = await this.run(
             `SELECT s.id, s.last_seen_at, s.idle_expires_at, s.absolute_expires_at, s.revoked_at,
-                    u.id AS user_id, u.username, u.name, u.role, u.route, u.status,
-                    u.must_change_password
+                    u.id AS user_id, u.username, u.name, u.role, u.route, u.status
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.id = ?`,
             [id],
@@ -190,7 +186,6 @@ export class SessionStore {
             name: String(row['name']),
             role: String(row['role']),
             route: row['route'] == null ? null : String(row['route']),
-            mustChangePassword: Number(row['must_change_password'] ?? 0) === 1,
         };
 
         const lastSeen = new Date(String(row['last_seen_at']));
@@ -267,7 +262,6 @@ export function createSessionMiddleware(deps: Deps): { middleware: RequestHandle
                     user: {
                         id: user.id, username: user.username, name: user.name,
                         role: user.role, route: user.route,
-                        mustChangePassword: user.mustChangePassword,
                     },
                 };
                 if (wantsToken(req)) {

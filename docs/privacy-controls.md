@@ -95,6 +95,9 @@ second administrator. **Nobody has done that yet.**
 | Staff authenticate with a username and a password. **There is no second factor**: one was built in ticket 4.3 and removed in 5.10 on the owner's decision, as more friction than the size of this operation warrants. This is a gap against §164.312(d) rather than a control, and it is listed as one below. | `server/server.js` | `server/test/auth.test.mjs` |
 | Couriers authenticate with a PIN that works only from a device enrolled with the full password. The PIN is stored on the device row, so it is not also a credential that works from anywhere, a second phone does not change the first one's, and revoking a phone really does remove it. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
 | A lost phone is revoked, and revoking it revokes its live sessions. | `server/src/core/auth/devices.ts` | `server/test/devices.test.mjs` |
+| Anybody can change their own password, and doing so ends every other session. | `server/src/core/users/routes.ts` | `server/test/own-password.test.mjs` |
+| A password an administrator set is **not** temporary: nothing forces a change, on the owner's decision of 9 October 2026. The replacement control is the next row. This is a gap against §164.308(a)(5)(ii)(D) rather than a control, and it is listed as one below. | `server/drizzle/0050_retire_must_change_password.sql` | `server/test/password-set-by-an-admin.test.mjs` |
+| The University Health contract manager can set a new password for any of their own eight pharmacy counters, without Izy. Never an Izy account, never a courier, never another manager, never a counter outside their own scope; every reset audited as `uh.portal.password_reset` with who reset whom. | `server/src/modules/uh/portal-reset.ts` | `server/test/uh-portal-reset.test.mjs` |
 
 ### Transmission security
 
@@ -260,12 +263,57 @@ Nothing here is code that can be written to close them except where noted.
     throttles, the audit trail and the session lifetimes are what stand in
     for it today.
 
+11. **A decision on password lifetime, made 9 October 2026.** A password an
+    administrator sets now works until somebody chooses to change it. Until
+    that date the account was refused almost everything until it replaced the
+    credential, which meant a password Izy generated could not outlive the
+    conversation it was sent in.
+
+    The case against removing it was put once and is recorded here rather
+    than argued again: the password we generate for a pharmacy portal is sent
+    in an email or a message that stays a working credential for as long as
+    the account exists, so two parties know the credential to an account that
+    reads patient names, addresses and proof-of-delivery photographs, and the
+    audit trail cannot distinguish the pharmacy acting from Izy acting as the
+    pharmacy. §164.308(a)(5)(ii)(D) asks for procedures for creating,
+    changing and safeguarding passwords; "it never has to change" is a thin
+    answer to the middle one.
+
+    The decision was taken knowingly, on the grounds that the forced change
+    had produced three separate lockouts in a fortnight (38e5912, 5915602,
+    9e002e3), each ending with somebody typing a working password at a screen
+    that would not let them past, and that compulsion is not the only way to
+    retire a credential.
+
+    **What stands in for it**, and what an auditor should be pointed at:
+
+    - The contract manager can rotate any of the eight counter passwords
+      themselves, the same afternoon, without involving Izy
+      (`server/src/modules/uh/portal-reset.ts`). A credential that has gone
+      astray is a five-minute fix rather than a support call, which is the
+      practical reason a forced schedule exists.
+    - Every account can change its own password at any time, and doing so
+      ends every other session.
+    - Each reset is audited with the actor, the target and the number of
+      sessions ended, under its own action name so that the client's manager
+      doing it and Izy doing it are distinguishable rows.
+    - The creation script now prints, in the output somebody reads while
+      sending nine passwords out, that the passwords do not expire and the
+      message is a live credential.
+
+    **What is still missing**, and is the honest residue of the decision: a
+    written password policy telling University Health's staff when to rotate,
+    and any technical means of noticing that a portal password is two years
+    old. Neither is code that exists. If University Health's security
+    questionnaire asks about password ageing, this entry is the answer and it
+    is not a comfortable one.
+
 **Documents to write:**
 
-11. The privacy and security program itself.
-12. Breach notification procedure.
-13. Workforce training, sanctions policy, clearance.
-14. A formal risk analysis, and a penetration test by somebody who did not
+12. The privacy and security program itself.
+13. Breach notification procedure.
+14. Workforce training, sanctions policy, clearance.
+15. A formal risk analysis, and a penetration test by somebody who did not
     write this code.
 
 ---

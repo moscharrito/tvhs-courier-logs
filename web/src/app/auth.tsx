@@ -5,12 +5,6 @@ import { api, ApiError, type ProjectMembership, type SessionUser } from '../lib/
 import { clearOutbox, setOutboxUser, startOutbox } from '../lib/outbox';
 import { deviceZone } from '../lib/when';
 
-/* The server's code for "your password was set for you". Spelled once here
-   rather than at each call site; it is MUST_CHANGE_CODE in
-   server/src/core/auth/must-change.ts and the two have to stay the same
-   string. */
-const MUST_CHANGE_CODE = 'password.mustChange';
-
 interface AuthState {
     loading: boolean;
     user: SessionUser | null;
@@ -30,36 +24,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const refresh = useCallback(async () => {
         try {
             const u = await api<SessionUser>('/api/session');
-            /* SET BEFORE THE PROJECT LIST IS ASKED FOR, and that order is the
-               fix rather than a tidy-up.
+            /* SET BEFORE THE PROJECT LIST IS ASKED FOR, and the order is kept
+               deliberately now that the reason for it has gone.
                
-               An account whose password an administrator chose is refused
-               almost everything until it is replaced, and /api/me/projects is
-               refused with the rest: it is a read of what the account can
-               reach, which is exactly what the refusal is for, so it can
-               never join the allowed list.
+               It was the fix for a lockout (38e5912): an account whose
+               password an administrator had chosen was refused
+               /api/me/projects, this function awaited both and set neither
+               until both returned, so the 403 threw, `user` stayed null, and
+               the shell showed the sign-in page to somebody holding a
+               perfectly good session. The forced change is gone
+               (drizzle/0050) and that particular 403 cannot happen.
                
-               This used to await both and set neither until both had
-               returned. So the 403 threw, `user` stayed null, and the shell
-               rendered the sign-in page to somebody holding a perfectly good
-               session. The redirect that takes them to the password form is
-               keyed on user.mustChangePassword, so it could not fire either:
-               the one screen the server would have accepted a request from
-               was the one screen they could not reach. They would have typed
-               a working password repeatedly and then telephoned us. */
+               The ordering stays because it is simply the better shape: who
+               is signed in does not depend on what they are a member of, and
+               any future refusal of the project list should leave a signed-in
+               person looking at an application rather than a login form. */
             setUser(u);
-
-            try {
-                setProjects(await api<ProjectMembership[]>('/api/me/projects'));
-            } catch (err) {
-                /* Matched on the code, not the sentence. A 403 here means
-                   "do this one thing first" rather than "you may not", and
-                   telling those apart by wording is how a copy edit becomes
-                   a lockout. Empty is the truthful answer: they reach no
-                   project until the password is replaced. */
-                if (err instanceof ApiError && err.code === MUST_CHANGE_CODE) setProjects([]);
-                else throw err;
-            }
+            setProjects(await api<ProjectMembership[]>('/api/me/projects'));
         } catch (err) {
             if (err instanceof ApiError && err.status === 401) {
                 setUser(null);

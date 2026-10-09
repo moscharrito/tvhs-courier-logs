@@ -209,7 +209,7 @@ describe('a courier reading their own record', () => {
     it('is refused to a pharmacy account naming a driver', async () => {
         await admin.post('/api/users').send({
             username: 'pay.counter', name: 'Counter', password: 'pay-pass-11',
-            role: 'staff', mustChangePassword: false,
+            role: 'staff',
         });
         await admin.put('/api/users/pay.counter/memberships/uh').send({
             role: 'pharmacy', settings: { siteIds: [discharge.id] },

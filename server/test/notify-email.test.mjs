@@ -27,11 +27,11 @@ beforeAll(async () => {
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
 
     // A pharmacist at Discharge, with an email address.
-    await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'Karthik Pharmacist', email: 'pharmacist@example.invalid', password: 'client-pass-1', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username: 'uh.pharmacist', name: 'Karthik Pharmacist', email: 'pharmacist@example.invalid', password: 'client-pass-1', role: 'staff' });
     await admin.put('/api/users/uh.pharmacist/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 
     // A pharmacist at a different counter, who must not hear about Discharge.
-    await admin.post('/api/users').send({ username: 'uh.other', name: 'Other Counter', email: 'other@example.invalid', password: 'client-pass-2', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username: 'uh.other', name: 'Other Counter', email: 'other@example.invalid', password: 'client-pass-2', role: 'staff' });
     await admin.put('/api/users/uh.other/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [green.id] } });
 });
 afterAll(async () => { await srv.stop(); });
@@ -233,7 +233,7 @@ describe('turning notifications into email', () => {
         /* Marked done and counted, rather than picked up every two minutes
            until somebody notices the log. The in-app notification is still
            there for them. */
-        await admin.post('/api/users').send({ username: 'uh.noemail', name: 'No Email', password: 'client-pass-3', role: 'staff', mustChangePassword: false });
+        await admin.post('/api/users').send({ username: 'uh.noemail', name: 'No Email', password: 'client-pass-3', role: 'staff' });
         await admin.put('/api/users/uh.noemail/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 
         await closeOne('delivered');

@@ -149,7 +149,7 @@ describe('a lead searching', () => {
         const username = 'search.lead';
         await admin.post('/api/users').send({
             username, name: 'Search Lead', password: 'search-pass-1',
-            role: 'staff', mustChangePassword: false,
+            role: 'staff',
         });
         await admin.put(`/api/users/${username}/memberships/uh`).send({
             role: 'lead', settings: { siteIds: [discharge.id] },

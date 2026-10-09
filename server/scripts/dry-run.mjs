@@ -395,10 +395,9 @@ if (!apply) {
             method: 'POST', body: JSON.stringify({ password: portalPass }),
         });
     } else {
-        /* mustChangePassword deliberately NOT passed, so it defaults to true
-           for a staff account. The next steps are the proof that a brand new
-           portal account can get through its own first sign-in, which is the
-           thing that was broken and that nine real accounts will hit. */
+        /* The next steps are the proof that a brand new portal account can
+           get through its own first sign-in and straight into its counter,
+           which is what nine real accounts will do on 1 November. */
         await call('/api/users', {
             method: 'POST',
             body: JSON.stringify({
@@ -418,25 +417,32 @@ if (!apply) {
     });
     step('a new pharmacy account can sign in', login.status === 200, String(login.status));
 
-    /* THE LOCKOUT, AS A STEP. A password an administrator chose is temporary
-       and the server refuses almost everything until it is replaced. The web
-       shell could not reach the one screen that replaces it, so every new
-       portal account was stuck on a password box that worked. Walked here
-       because no unit test spans the session read, the refusal and the way
-       out. */
-    const blocked = await call('/api/me/projects');
-    step('  and is refused everything until it chooses its own password',
-        blocked.status === 403 && blocked.body?.code === 'password.mustChange',
-        `${blocked.status} ${blocked.body?.code ?? ''}`);
+    /* WHAT THE LOCKOUT STEP BECAME. There used to be three steps here: that
+       a new portal account was REFUSED everything, that changing its password
+       released it, and that the portal then opened. Three separate lockouts
+       were shipped against that rule and each one ended with somebody typing
+       a working password at a screen that would not let them past.
 
+       The rule is gone (drizzle/0050), so the thing to walk is the opposite:
+       the account works immediately, with the password we generated, and no
+       403 carrying the old code appears anywhere. Still walked here rather
+       than left to a unit test, because what broke before was always the
+       whole path and never one handler. */
+    const straightIn = await call('/api/me/projects');
+    step('  and reaches its project immediately, with the password we sent',
+        straightIn.status === 200 && straightIn.body?.code !== 'password.mustChange',
+        `${straightIn.status} ${straightIn.body?.code ?? ''}`);
+    remember('pharmacy');
+
+    /* And the form still works for somebody who wants it, which is now the
+       only way a portal password changes other than the manager's reset. */
     const chosen = `${portalPass}x`;
     const changed = await call('/api/me/password', {
         method: 'POST',
         body: JSON.stringify({ currentPassword: portalPass, password: chosen }),
     });
-    step('  and the change releases it without a second sign-in', changed.status === 200, String(changed.status));
-    step('  so the portal opens', (await call('/api/me/projects')).status === 200, '');
-    remember('pharmacy');
+    step('  and can still choose its own password, voluntarily', changed.status === 200, String(changed.status));
+    step('  which leaves the portal open', (await call('/api/me/projects')).status === 200, '');
 
     const summary = await call(`${UH}/client/summary`);
     const pharmacies = summary.body?.pharmacies ?? [];
@@ -479,6 +485,100 @@ if (!apply) {
         step('  sending a list on the portal is switched on and answers',
             upload.status !== 403, `${upload.status} ${upload.body?.code ?? ''}`);
     }
+
+    /* ─────────────────────────── THE RECOVERY PATH, END TO END.
+     *
+     * The forced password change came out on 9 October 2026, which makes this
+     * the only way a pharmacy that has lost its password gets back in without
+     * telephoning us. It is therefore the single most important thing in this
+     * script that was not here last week.
+     *
+     * Walked as the manager would walk it: read the list, reset one counter,
+     * sign in as that counter with the new password. And then the refusals,
+     * because an endpoint a client could point at one of our own logins would
+     * be worse than no endpoint at all. */
+    as('admin');
+    const managerUser = `dry.manager.${today.replace(/-/g, '')}`;
+    const managerPass = `Dry-manager-${Math.random().toString(36).slice(2, 10)}!`;
+    if ((await call(`/api/users/${managerUser}`)).status === 200) {
+        await call(`/api/users/${managerUser}/password`, {
+            method: 'POST', body: JSON.stringify({ password: managerPass }),
+        });
+    } else {
+        await call('/api/users', {
+            method: 'POST',
+            body: JSON.stringify({
+                username: managerUser, name: 'Dry Run Contract Manager',
+                password: managerPass, role: 'staff',
+            }),
+        });
+    }
+    await call(`/api/users/${managerUser}/memberships/uh`, {
+        method: 'PUT',
+        body: JSON.stringify({
+            role: 'pharmacy',
+            settings: { siteIds: sites.map((x) => x.id), mayResetPortalPasswords: true },
+        }),
+    });
+
+    cookie = '';
+    const mgrLogin = await call('/api/login', {
+        method: 'POST', body: JSON.stringify({ username: managerUser, password: managerPass }),
+    });
+    step('the contract manager can sign in', mgrLogin.status === 200, String(mgrLogin.status));
+
+    const listed = await call(`${UH}/portals`);
+    const names = (listed.body ?? []).map((x) => x.username);
+    step('  and is shown the pharmacy logins it may reset',
+        listed.status === 200 && names.includes(portalUser),
+        names.join(', ') || String(listed.status));
+    step('  and is shown no Izy account among them',
+        listed.status === 200 && !names.some((n) => n === 'admin' || n.startsWith('dry.courier')),
+        names.join(', '));
+
+    const rotated = `${portalPass}-rotated-1`;
+    const reset = await call(`${UH}/portals/${portalUser}/password`, {
+        method: 'POST', body: JSON.stringify({ password: rotated }),
+    });
+    step('  and can set a new password for one of its counters',
+        reset.status === 200, `${reset.status} ${reset.body?.error ?? ''}`);
+
+    /* The refusals, from the same session. */
+    const atAdmin = await call(`${UH}/portals/admin/password`, {
+        method: 'POST', body: JSON.stringify({ password: 'should-never-work-1' }),
+    });
+    step('  and cannot point it at an Izy administrator', atAdmin.status === 404, String(atAdmin.status));
+    const atSelf = await call(`${UH}/portals/${managerUser}/password`, {
+        method: 'POST', body: JSON.stringify({ password: 'should-never-work-2' }),
+    });
+    step('  nor at itself', atSelf.status === 404, String(atSelf.status));
+
+    /* And the pharmacy really is on the new password. This is the assertion
+       the whole feature exists for: a pharmacist rings their manager and is
+       back in, with nobody at Izy involved. */
+    cookie = '';
+    const backIn = await call('/api/login', {
+        method: 'POST', body: JSON.stringify({ username: portalUser, password: rotated }),
+    });
+    step('  and the pharmacy is back in on the password the manager chose',
+        backIn.status === 200, String(backIn.status));
+    cookie = '';
+    const staleLogin = await call('/api/login', {
+        method: 'POST', body: JSON.stringify({ username: portalUser, password: chosen }),
+    });
+    step('  while the password it replaced no longer works', staleLogin.status === 401, String(staleLogin.status));
+
+    /* An ordinary counter must not reach any of that. */
+    cookie = '';
+    await call('/api/login', { method: 'POST', body: JSON.stringify({ username: portalUser, password: rotated }) });
+    /* Re-stored, because the reset above revoked the session remembered
+       earlier and a stale cookie under a familiar name is a trap for whoever
+       adds the next step. */
+    remember('pharmacy');
+    const counterTry = await call(`${UH}/portals`);
+    step('  and an ordinary counter is refused the whole page',
+        counterTry.status === 403 && counterTry.body?.code === 'portal.notAManager',
+        `${counterTry.status} ${counterTry.body?.code ?? ''}`);
 
     as('admin');
 

@@ -43,7 +43,7 @@ beforeAll(async () => {
     discharge = (await admin.get('/api/projects/uh/uh/sites')).body.find((s) => s.code === 'discharge');
     await admin.post('/api/users').send({ username: 'ada.courier', name: 'Ada Courier', password: 'courier-pass-1', role: 'driver' });
     await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
-    await admin.post('/api/users').send({ username: 'dee.dispatcher', name: 'Dee Dispatcher', password: 'dispatch-pass-1', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username: 'dee.dispatcher', name: 'Dee Dispatcher', password: 'dispatch-pass-1', role: 'staff' });
     await admin.put('/api/users/dee.dispatcher/memberships/uh').send({ role: 'admin', settings: {} });
 });
 afterAll(async () => { await srv.stop(); });
@@ -395,7 +395,7 @@ describe('who may bill', () => {
         await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
         expect((await ada.get(INVOICES)).status).toBe(403);
 
-        await admin.post('/api/users').send({ username: 'uh.finance', name: 'Finance Person', password: 'client-pass-1', role: 'staff', mustChangePassword: false });
+        await admin.post('/api/users').send({ username: 'uh.finance', name: 'Finance Person', password: 'client-pass-1', role: 'staff' });
         await admin.put('/api/users/uh.finance/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
         const uh = srv.agent();
         await uh.post('/api/login').send({ username: 'uh.finance', password: 'client-pass-1' });

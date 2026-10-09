@@ -23,10 +23,16 @@ app/.env
 # of them have to be sent to nine different people, so the obvious filenames
 # are ignored rather than left as a trap.
 #
-# Ignoring them is the floor, not the fix. Delete the file once the passwords
-# are sent: every one of these accounts is created with mustChangePassword, so
-# what is in it stops working the first time each person signs in, and a stale
-# file of dead credentials is still a file that says who has an account.
+# Ignoring them is the floor, not the fix, AND THE REASON GOT WORSE on
+# 9 October 2026. These accounts used to be forced to replace the printed
+# password on first sign-in, so a stale file held dead credentials. Nothing
+# forces a change now, so every line in such a file is a WORKING credential to
+# an account that reads patient names, for as long as the account exists.
+#
+# Delete the file as soon as the passwords are sent. If one is lost or leaks,
+# the fix is a reset -- the contract manager can do their own eight counters
+# from the portal, or re-run the script with --reset -- not a hope that it
+# expired, because it does not.
 portals.txt
 leads.txt
 credentials.txt

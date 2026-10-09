@@ -85,7 +85,7 @@ beforeAll(async () => {
        thing that decides what they reach. */
     await admin.post('/api/users').send({
         username: 'uh.uploader', name: 'Discharge Pharmacist', password: 'upload-pass-1',
-        role: 'staff', mustChangePassword: false,
+        role: 'staff',
     });
     await admin.put('/api/users/uh.uploader/memberships/uh').send({
         role: 'pharmacy', settings: { siteIds: [discharge.id] },
@@ -95,7 +95,7 @@ beforeAll(async () => {
        settings form leaves behind. */
     await admin.post('/api/users').send({
         username: 'uh.unscoped', name: 'New Starter', password: 'upload-pass-2',
-        role: 'staff', mustChangePassword: false,
+        role: 'staff',
     });
     await admin.put('/api/users/uh.unscoped/memberships/uh').send({ role: 'pharmacy', settings: {} });
 });

@@ -19,6 +19,7 @@ import { Returns } from '../pages/uh/Returns';
 import { ClientPortal } from '../pages/uh/ClientPortal';
 import { ClientReports } from '../pages/uh/ClientReports';
 import { ClientListUpload } from '../pages/uh/ClientListUpload';
+import { PortalLogins } from '../pages/uh/PortalLogins';
 import { Drivers } from '../pages/uh/Drivers';
 import { DriverRecord } from '../pages/uh/DriverRecord';
 import { Discrepancies } from '../pages/uh/Discrepancies';
@@ -53,6 +54,12 @@ export function App() {
                     themselves and scoped to the pharmacies they may see. */}
                 <Route path="/projects/:code/performance" element={<ClientReports />} />
                 <Route path="/projects/:code/send-list" element={<ClientListUpload />} />
+                {/* The contract manager resetting their own counters'
+                    passwords. No route guard: the server refuses anybody
+                    without the capability and the page says so in words, which
+                    is better than a redirect to somewhere they did not ask
+                    for. See pages/uh/PortalLogins.tsx. */}
+                <Route path="/projects/:code/pharmacy-logins" element={<PortalLogins />} />
                 {/* `mine` comes from the route rather than from a prop a
                     caller could get wrong: /my-deliveries asks the server for
                     /drivers/me, which takes the username off the session. */}

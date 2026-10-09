@@ -360,7 +360,7 @@ describe('access control and the record', () => {
         const run = await makeRun([order.id]);
         expect((await srv.agent().get(`${RUNS}/${run.id}/pickup`)).status).toBe(401);
 
-        await admin.post('/api/users').send({ username: 'view.only', name: 'Viewer', password: 'member-pass-12', role: 'staff', mustChangePassword: false });
+        await admin.post('/api/users').send({ username: 'view.only', name: 'Viewer', password: 'member-pass-12', role: 'staff' });
         await admin.put('/api/users/view.only/memberships/uh').send({ role: 'pharmacy', settings: {} });
         const viewer = srv.agent();
         await viewer.post('/api/login').send({ username: 'view.only', password: 'member-pass-12' });

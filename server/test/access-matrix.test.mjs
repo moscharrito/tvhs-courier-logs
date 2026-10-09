@@ -93,7 +93,7 @@ beforeAll(async () => {
         ['matrix.projectadmin', 'admin'],
     ];
     for (const [username, role] of people) {
-        const created = await admin.post('/api/users').send({ username, name: username, password: PASS, role: 'staff', mustChangePassword: false });
+        const created = await admin.post('/api/users').send({ username, name: username, password: PASS, role: 'staff' });
         expect(created.status, created.text).toBe(201);
         const member = await admin.put(`/api/users/${username}/memberships/uh`).send({ role, settings: {} });
         expect(member.status, member.text).toBe(200);
@@ -191,9 +191,6 @@ const MATRIX = [
        client's password rotation back through an Izy administrator, which is
        the gap this closed. */
     ['POST', '/api/me/password', SIGNED_IN, 'changing my own password, current one required'],
-    /* Reachable even by an account that must change its password, which is
-       the point: refusing it would be a locked account whose only remedy is
-       telephoning us. See core/auth/must-change.ts for the whole allowlist. */
     /* The one thing an unvetted account may read, and only ever their own:
        the query is keyed on the session's username, so there is no id to
        change. Anybody without an application gets a 404. */
@@ -438,6 +435,25 @@ const MATRIX = [
        its own audit action: reading a government ID should be a deliberate
        act, not a side effect of opening a delivery. */
     ['GET', `${UH}/client/orders/999999/id-photo`, UH_CLIENT_VIEW, ''],
+
+    /* --- the contract manager resetting their own counters' passwords
+       (modules/uh/portal-reset.ts), which is what replaced the forced
+       password change on 9 October 2026.
+
+       NOBODY IN THIS TABLE MAY CALL THESE, AND THAT IS THE ASSERTION. The
+       authority is a `mayResetPortalPasswords` setting on the caller's own
+       membership, and matrix.pharmacy is created with `settings: {}` like
+       every other principal here. So an empty list is not a gap: it pins
+       that an ordinary pharmacy counter cannot reach the endpoint, which is
+       the regression that would matter, and that project and platform
+       administrators are refused it too -- they have the admin reset
+       endpoint, which is audited as Izy doing it rather than the client.
+
+       The positive case needs a principal this table does not have, and is
+       covered properly in test/uh-portal-reset.test.mjs: who a manager may
+       reset, who they may not, and that an Izy account can never appear. */
+    ['GET', `${UH}/portals`, [], 'the counters a manager may reset; the capability is a membership setting'],
+    ['POST', `${UH}/portals/nobody/password`, [], 'rotating the password of one counter'],
 
     /* --- the shadow week's log (ticket 5.2). A courier can report what they
        see at the door; reviewing and closing is a judgement about the

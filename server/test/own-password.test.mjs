@@ -47,7 +47,7 @@ let seq = 0;
 async function somebody() {
     seq += 1;
     const username = `user.${seq}`;
-    await admin.post('/api/users').send({ username, name: `User ${seq}`, password: FIRST, role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username, name: `User ${seq}`, password: FIRST, role: 'staff' });
     return { username, agent: await agentFor(username, FIRST) };
 }
 
@@ -210,7 +210,7 @@ describe('changing it from the app', () => {
            about whose session it was. The phone is the only session here, so
            a revoked count of 0 says exactly the thing being claimed. */
         await admin.post('/api/users').send({
-            username: 'uh.lonephone', name: 'Lone Phone', password: FIRST, role: 'staff', mustChangePassword: false,
+            username: 'uh.lonephone', name: 'Lone Phone', password: FIRST, role: 'staff',
         });
         const app = await phone('uh.lonephone', FIRST);
 
@@ -219,9 +219,11 @@ describe('changing it from the app', () => {
         expect(res.body.revokedSessions, 'its own session is not counted').toBe(0);
 
         expect((await app.get('/api/session')).status).toBe(200);
-        /* And the token still reaches real work, not just the session read:
-           an account left in must-change state would answer 200 here and 403
-           everywhere else. */
+        /* And the token still reaches real work, not just the session read.
+           This distinguished a released session from one still held by the
+           forced-change rule when that rule existed; it is kept because a
+           bearer token that answers /api/session and nothing else is a real
+           failure mode of its own. */
         expect((await app.get('/api/me/projects')).status).toBe(200);
     });
 
@@ -241,38 +243,29 @@ describe('changing it from the app', () => {
         expect((await laptop.get('/api/session')).status).toBe(401);
     });
 
-    it('tells the app it is in the must-change state, by that name', async () => {
-        /* The field the app reads to decide whether to show the forced form
-           instead of a shell full of 403s. Spelled mustChangePassword in the
-           session body; renaming it silently would leave the app rendering a
-           run nobody can load. */
+    it('is a choice on a phone, not a toll gate', async () => {
+        /* THIS TEST USED TO ASSERT THE OPPOSITE, and the two it replaces are
+           worth knowing about: one checked that /api/session reported a
+           mustChangePassword flag, the other that the server refused
+           /api/me/projects until the password was replaced.
+           
+           Both are gone with the rule (drizzle/0050). What has to stay true
+           is that the screen still works when nothing is forcing it, because
+           a courier who thinks somebody watched them type is the only person
+           who reaches it now. */
         await admin.post('/api/users').send({
-            username: 'uh.forced', name: 'Forced Staff', password: FIRST, role: 'staff',
+            username: 'uh.voluntary', name: 'Voluntary Staff', password: FIRST, role: 'staff',
         });
-        const app = await phone('uh.forced', FIRST);
-        const me = await app.get('/api/session');
-        expect(me.status).toBe(200);
-        expect(me.body.mustChangePassword).toBe(true);
+        await admin.put('/api/users/uh.voluntary/memberships/uh').send({ role: 'pharmacy', settings: {} });
+        const app = await phone('uh.voluntary', FIRST);
 
-        /* And it is gone once they have chosen their own. */
-        expect((await app.post(ME, { currentPassword: FIRST, password: 'forced-pass-dd-4' })).status).toBe(200);
-        const after = await phone('uh.forced', 'forced-pass-dd-4');
-        expect((await after.get('/api/session')).body.mustChangePassword).toBe(false);
-    });
+        /* Working from the first request, with the password an admin chose. */
+        expect((await app.get('/api/session')).status).toBe(200);
+        expect((await app.get('/api/me/projects')).status).toBe(200);
 
-    it('is reachable while the server is refusing everything else', async () => {
-        /* The way out has to stay open for a phone too, not only for the
-           browser the ALLOWED list was written against. */
-        await admin.post('/api/users').send({
-            username: 'uh.forced2', name: 'Forced Staff Two', password: FIRST, role: 'staff',
-        });
-        await admin.put('/api/users/uh.forced2/memberships/uh').send({ role: 'pharmacy', settings: {} });
-        const app = await phone('uh.forced2', FIRST);
-
-        const blocked = await app.get('/api/me/projects');
-        expect(blocked.status).toBe(403);
-        expect(blocked.body.code).toBe('password.mustChange');
-
-        expect((await app.post(ME, { currentPassword: FIRST, password: 'forced-pass-ee-5' })).status).toBe(200);
+        /* And the form still does its job for somebody who wants it. */
+        expect((await app.post(ME, { currentPassword: FIRST, password: 'chosen-pass-dd-4' })).status).toBe(200);
+        const after = await phone('uh.voluntary', 'chosen-pass-dd-4');
+        expect((await after.get('/api/session')).status).toBe(200);
     });
 });

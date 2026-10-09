@@ -83,10 +83,7 @@ describe('create', () => {
     });
 
     it('creates a staff user by default, lowercases the username, and rejects duplicates', async () => {
-        /* mustChangePassword false: this test is about creating an account
-           and signing in to it, not about the forced change, and the default
-           would refuse the two requests at the end of it. */
-        const res = await admin.post('/api/users').send({ username: 'Dispatch.One@izy', name: 'Dispatcher One', email: 'd1@example.com', password: 'dispatch-pass-1', mustChangePassword: false });
+        const res = await admin.post('/api/users').send({ username: 'Dispatch.One@izy', name: 'Dispatcher One', email: 'd1@example.com', password: 'dispatch-pass-1' });
         expect(res.status).toBe(201);
         expect(res.body).toMatchObject({ username: 'dispatch.one@izy', name: 'Dispatcher One', email: 'd1@example.com', role: 'staff', status: 'active', hasPin: false, memberships: [] });
 

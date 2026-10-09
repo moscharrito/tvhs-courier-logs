@@ -351,6 +351,13 @@
       "when": 1789998219935,
       "tag": "0049_must_change_password",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1789998219936,
+      "tag": "0050_retire_must_change_password",
+      "breakpoints": true
     }
   ]
 }

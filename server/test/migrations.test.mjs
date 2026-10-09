@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications', '0034_onboarding_submissions', '0035_signature_capture_method', '0036_reattempt', '0037_mail_suppressions', '0038_paper_form_and_identifiers', '0039_patient_messages', '0040_patient_message_stages', '0041_remove_business_center', '0042_site_lead_role', '0043_facility_transfers', '0044_dry_run_efforts', '0045_out_of_area_authorisation', '0046_zip_rates', '0047_orders_updated_at', '0048_demo_project', '0049_must_change_password'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications', '0034_onboarding_submissions', '0035_signature_capture_method', '0036_reattempt', '0037_mail_suppressions', '0038_paper_form_and_identifiers', '0039_patient_messages', '0040_patient_message_stages', '0041_remove_business_center', '0042_site_lead_role', '0043_facility_transfers', '0044_dry_run_efforts', '0045_out_of_area_authorisation', '0046_zip_rates', '0047_orders_updated_at', '0048_demo_project', '0049_must_change_password', '0050_retire_must_change_password'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -102,25 +102,21 @@ const USERS_COLS_AFTER_0003 = ['id', 'username', 'password', 'pin', 'name', 'ema
 
 /* And what the table looks like once every migration has run.
  *
- * The constants above are named for 0003 and were used to assert the FINAL
- * shape, which held only while nothing touched users again. 0049 does. These
- * are derived from them rather than copied, so a third column added later
- * changes one line and not four.
+ * BACK TO THE 0003 SHAPE, exactly. 0049 appended must_change_password and
+ * 0050 drops it again, and SQLite's DROP COLUMN rewrites the stored CREATE
+ * statement rather than leaving a hole in it -- so after the whole chain the
+ * table is character-for-character what 0003 built, which is why these are
+ * now an alias rather than a derivation.
  *
- * SQLite appends an added column after the last one and before the closing
- * bracket, leaving the newline that followed the last column where it was:
+ * Read off a migrated database rather than reasoned about: SQLite could just
+ * as well have rewritten the text in some other equivalent form, and the
+ * point of this assertion is to notice if a future version does.
  *
- *     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
- *     , `must_change_password` integer DEFAULT 0 NOT NULL)
- *
- * So the bracket is dropped and the column appended, rather than the column
- * being spliced after created_at. That is what SQLite actually wrote, read
- * off a migrated database, not what it looked like it ought to write: the
- * difference is one space, which norm() preserves and an equality check
- * does not forgive. */
-const MUST_CHANGE_COL = '`must_change_password` integer DEFAULT 0 NOT NULL';
-const USERS_SQL_FINAL = `${USERS_SQL_AFTER_0003.slice(0, -1)}, ${MUST_CHANGE_COL})`;
-const USERS_COLS_FINAL = [...USERS_COLS_AFTER_0003, 'must_change_password'];
+ * If something touches users again, derive from AFTER_0003 the way the old
+ * MUST_CHANGE_COL line did (see 0049 in git history for the shape, including
+ * the one-space detail that norm() does not forgive). */
+const USERS_SQL_FINAL = USERS_SQL_AFTER_0003;
+const USERS_COLS_FINAL = USERS_COLS_AFTER_0003;
 
 const norm = (s) => String(s).replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
 

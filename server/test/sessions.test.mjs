@@ -261,7 +261,7 @@ describe('what a session list says about where somebody is', () => {
         await admin.post('/api/login').send({ username: srv.creds.admin.username, password: srv.creds.admin.password });
         await admin.post('/api/users').send({
             username: 'uh.counterstaff', name: 'Counter Staff', password: 'counter-pass-9',
-            role: 'staff', mustChangePassword: false,
+            role: 'staff',
         });
         await admin.put('/api/users/uh.counterstaff/memberships/uh').send({ role: 'pharmacy', settings: {} });
     });

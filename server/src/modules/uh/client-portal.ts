@@ -33,6 +33,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { searchFragment, CLIENT_SEARCH_COLUMNS } from './search';
+import { mayReset } from './portal-capability';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor } from './eta';
@@ -385,6 +386,13 @@ export function createClientPortalRouter(
                and the endpoint behind it cannot disagree: the same setting
                refuses the upload in imports.ts. */
             canUploadList: resolveSettings(project.settings).listRelease.allowPortalUpload,
+            /* Whether this account is the contract manager, which here means
+               exactly one thing: it may set a new password for its own
+               counters (portal-reset.ts). Read from the membership rather
+               than guessed from the number of pharmacies, and reported so the
+               screen and the endpoint cannot disagree -- a link to a page the
+               server would refuse is worse than no link. */
+            canResetPortalPasswords: mayReset(req.membership?.settings ?? {}),
             delivered: byStatus['delivered'] ?? 0,
             notDelivered: byStatus['failed'] ?? 0,
             notes: scopeNote(sites, scope),

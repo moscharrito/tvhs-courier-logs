@@ -45,7 +45,6 @@ import { MIGRATIONS_FOLDER } from './db/migrate';
 import { todayIn } from './core/dates';
 import { createHealthRouter, type StatisticsState } from './core/http/health';
 import { createPrivacyRouter } from './core/http/privacy';
-import { createMustChangeMiddleware } from './core/auth/must-change';
 import { apiNotFound, createErrorHandler } from './core/http/errors';
 import { createRequireProject } from './core/projects/middleware';
 import { createProjectSettingsRouter } from './core/projects/settings-routes';
@@ -69,6 +68,7 @@ import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createBoardRouter } from './modules/uh/board';
 import { createClientPortalRouter } from './modules/uh/client-portal';
+import { createPortalResetRouter } from './modules/uh/portal-reset';
 import { createReportsRouter } from './modules/uh/reports';
 import { createInvoicesRouter } from './modules/uh/invoices';
 
@@ -127,12 +127,6 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     bridge.set('sessionMiddleware', middleware);
     const { middleware: auditMiddleware, log } = createAuditMiddleware({ client: database.client });
     bridge.set('auditMiddleware', auditMiddleware);
-    /* A password somebody else chose does nothing until it is replaced
-       (drizzle/0049). After the session middleware, because it reads the
-       session; before the routes, because refusing on the screen instead of
-       the server would make it a suggestion. */
-    bridge.set('mustChangeMiddleware', createMustChangeMiddleware());
-
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const legacy = require('../server.js') as LegacyServer;
 
@@ -366,6 +360,11 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/returns', requireProject, idempotent, createReturnsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/client', requireProject, createClientPortalRouter({ client: database.client, storage: fileStorage }));
+    /* The contract manager resetting their own counters' passwords. Its own
+       mount rather than a branch inside the client portal, because it is the
+       one thing in there that writes to a user row and the only thing in the
+       project a client account may do to another account. */
+    legacy.app.use('/api/projects/:pid/uh/portals', requireProject, createPortalResetRouter({ client: database.client, store }));
     legacy.app.use('/api/projects/:pid/uh/reports', requireProject, createReportsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/invoices', requireProject, createInvoicesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/files', requireProject, idempotent, createFilesRouter({ client: database.client, storage: fileStorage }));

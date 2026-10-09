@@ -340,7 +340,7 @@ describe('the report endpoint', () => {
         expect((await ada.get(`${REPORTS}/sla`)).status).toBe(403);
         expect((await ada.get(`${REPORTS}/sla.xlsx`)).status).toBe(403);
 
-        await admin.post('/api/users').send({ username: 'uh.quality', name: 'Quality Person', password: 'client-pass-1', role: 'staff', mustChangePassword: false });
+        await admin.post('/api/users').send({ username: 'uh.quality', name: 'Quality Person', password: 'client-pass-1', role: 'staff' });
         await admin.put('/api/users/uh.quality/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
         const uh = srv.agent();
         await uh.post('/api/login').send({ username: 'uh.quality', password: 'client-pass-1' });

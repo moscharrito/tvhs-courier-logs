@@ -31,23 +31,23 @@ interface Deps {
 const TVHS_ROUTES = ['northbound', 'southbound'] as const;
 const BCRYPT_ROUNDS = 10;
 
-/* ─────────────────────────────── whose password is temporary, and whose
+/* ─────────────────────────────── A PASSWORD SET HERE IS THE PASSWORD.
  *
- * A password an administrator chose is temporary: two people know it, and one
- * of them is us. The person must replace it before the account does anything.
+ * There was a rule here: a password an administrator chose was temporary, and
+ * the server refused almost everything the account asked for until the person
+ * replaced it. It is gone, on the owner's decision of 9 October 2026, and the
+ * argument against removing it was made once and is recorded in
+ * docs/privacy-controls.md rather than re-made here.
  *
- * A DRIVER IS EXEMPT, and that is a limitation rather than a judgement. The
- * same API serves the courier app and that app has no screen for changing a
- * password, so forcing it would refuse every request a courier makes with no
- * way for them to comply: somebody standing at a pharmacy counter at seven in
- * the morning, locked out, whose only remedy is telephoning us. Eight leads
- * and every courier would have met that on the first morning.
+ * What replaces it is RECOVERY RATHER THAN COMPULSION: the University Health
+ * contract manager can set a new password for any of their own eight counters
+ * without going through us (modules/uh/portal-reset.ts). So a credential that
+ * has been seen by too many people can be rotated by the client the same
+ * afternoon, instead of being forced out of use on a schedule nobody chose.
  *
- * Leads are platform-role drivers too (scripts/create-leads.mjs), so they are
- * covered by the same exemption for the same reason.
- *
- * When the app grows the screen, this function is the one line to change. */
-const mustChangeFor = (role: string): boolean => role !== 'driver';
+ * The practical consequence, stated so nobody has to rediscover it: the
+ * password in the message we send a new account keeps working until somebody
+ * changes it. Treat that message as live. */
 
 const usernameSchema = z.string().trim().toLowerCase().min(2).max(120).regex(/^[a-z0-9._@+-]+$/, 'letters, digits, . _ @ + - only');
 const passwordSchema = z.string().min(8).max(200);
@@ -59,15 +59,6 @@ const CreateUser = z.object({
     email: z.string().trim().email().max(200).optional(),
     password: passwordSchema,
     role: z.enum(USER_ROLES).default('staff'),
-    /* Default true, because the usual case is an administrator choosing a
-     * password and telling somebody what it is, and that password should not
-     * outlive the conversation.
-     *
-     * False exists for the accounts where it would be wrong: a fixture
-     * standing in for somebody who settled in long ago, or an account being
-     * created with a credential its owner already chose. It has to be asked
-     * for, so nobody gets the weaker behaviour by not thinking about it. */
-    mustChangePassword: z.boolean().optional(),
 });
 
 const PatchUser = z.object({
@@ -217,15 +208,11 @@ export function createUsersRouter({ client, store }: Deps): Router {
             return;
         }
         await run(
-            `INSERT INTO users (username, password, name, email, role, status, must_change_password)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO users (username, password, name, email, role, status)
+             VALUES (?, ?, ?, ?, ?, ?)`,
             [
                 body.username, bcrypt.hashSync(body.password, BCRYPT_ROUNDS), body.name,
                 body.email ?? null, body.role, 'active',
-                /* Somebody else chose this password, so it is temporary,
-                   unless the caller said otherwise. See mustChangeFor for why
-                   a driver is exempt either way. */
-                (body.mustChangePassword ?? true) && mustChangeFor(body.role) ? 1 : 0,
             ],
         );
         const created = await findUser(body.username);
@@ -280,8 +267,8 @@ export function createUsersRouter({ client, store }: Deps): Router {
         const body = parse(SetPassword, req.body, res);
         if (!body) return;
         await run(
-            'UPDATE users SET password = ?, must_change_password = ? WHERE id = ?',
-            [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), mustChangeFor(u.role) ? 1 : 0, Number(u.id)],
+            'UPDATE users SET password = ? WHERE id = ?',
+            [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(u.id)],
         );
         // Every device signs out, including the admin's own if they reset themselves.
         const revoked = await store.revokeAllForUser(Number(u.id));
@@ -362,10 +349,8 @@ export function createUsersRouter({ client, store }: Deps): Router {
             return;
         }
 
-        /* And this is the only thing that clears the flag. A password the
-           person chose themselves is not temporary. */
         await run(
-            'UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?',
+            'UPDATE users SET password = ? WHERE id = ?',
             [bcrypt.hashSync(body.password, BCRYPT_ROUNDS), Number(me.id)],
         );
         /* Keeping the session doing the changing. Being signed out of the tab

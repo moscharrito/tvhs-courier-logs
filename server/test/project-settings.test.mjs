@@ -27,7 +27,7 @@ beforeAll(async () => {
 afterAll(async () => { await srv.stop(); });
 
 async function memberWith(role, username) {
-    await admin.post('/api/users').send({ username, name: `Test ${role}`, password: 'member-pass-12', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username, name: `Test ${role}`, password: 'member-pass-12', role: 'staff' });
     await admin.put(`/api/users/${username}/memberships/uh`).send({ role, settings: {} });
     const a = srv.agent();
     expect((await a.post('/api/login').send({ username, password: 'member-pass-12' })).status).toBe(200);

@@ -70,14 +70,14 @@ beforeAll(async () => {
      * scoped to nothing, deliberately, so "all of them" means listing them.
      * Explicit and safe, and it means adding a tenth pharmacy is also a
      * change to this membership. */
-    await admin.post('/api/users').send({ username: 'uh.manager', name: 'Contract Manager', password: 'manager-pass-1', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username: 'uh.manager', name: 'Contract Manager', password: 'manager-pass-1', role: 'staff' });
     await admin.put('/api/users/uh.manager/memberships/uh').send({
         role: 'pharmacy', settings: { siteIds: sites.map((s) => s.id) },
     });
 
     /* A pharmacist at one counter. The scoping test needs somebody who must
        not be able to export the other counter. */
-    await admin.post('/api/users').send({ username: 'uh.discharge', name: 'Discharge Pharmacist', password: 'client-pass-1', role: 'staff', mustChangePassword: false });
+    await admin.post('/api/users').send({ username: 'uh.discharge', name: 'Discharge Pharmacist', password: 'client-pass-1', role: 'staff' });
     await admin.put('/api/users/uh.discharge/memberships/uh').send({ role: 'pharmacy', settings: { siteIds: [discharge.id] } });
 
     for (const [i, siteId] of [discharge.id, discharge.id, green.id].entries()) {
