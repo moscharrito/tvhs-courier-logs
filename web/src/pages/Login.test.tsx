@@ -73,8 +73,21 @@ describe('Login', () => {
         fireEvent.click(await screen.findByRole('button', { name: /UH Pharmacy Courier/ }));
 
         expect(await screen.findByLabelText(/username/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+        /* Exact, because every password field now carries a show/hide button
+           whose accessible name also contains the word: "Show password" and
+           the field itself both match /password/i. The field is the thing
+           this test is about. */
+        expect(screen.getByLabelText('Password')).toBeInTheDocument();
         expect(screen.queryByText(/who is driving/i)).not.toBeInTheDocument();
+
+        /* And while we are here: it can be revealed. A generated sixteen
+           character password typed blind is how somebody locks themselves
+           out of a portal on their first morning. */
+        const reveal = screen.getByRole('button', { name: /show password/i });
+        expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password');
+        fireEvent.click(reveal);
+        expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text');
+        expect(screen.getByRole('button', { name: /hide password/i })).toBeInTheDocument();
     });
 
     it('lists a courier who has no route, which is every UH courier', async () => {

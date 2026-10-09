@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError, type UserSummary } from '../lib/api';
 import { Pager, usePaged } from '../app/Pager';
 import { useAuth } from '../app/auth';
+import { SecretInput } from '../app/SecretInput';
 
 const ROLE_LABEL: Record<string, string> = { admin: 'Admin', staff: 'Staff', driver: 'Driver' };
 
@@ -136,7 +137,7 @@ export function Users() {
                     <label className="izy-field">Username<input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required /></label>
                     <label className="izy-field">Full name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
                     <label className="izy-field">Email (optional)<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-                    <label className="izy-field">Temporary password<input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} /></label>
+                    <SecretInput label="Temporary password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} />
                     <label className="izy-field">Platform role
                         <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as UserSummary['role'] })}>
                             <option value="staff">Staff</option>

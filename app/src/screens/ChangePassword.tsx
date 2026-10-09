@@ -42,11 +42,12 @@
  */
 
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { GLASS, RADIUS, SPACE, TYPE, theme } from '../theme';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SPACE, TYPE, theme } from '../theme';
 import { CardButton, Ground, Notice, Panel } from '../ui/Glass';
 import { BackPill } from '../ui/Nav';
 import { ScreenHeader } from '../ui/Screen';
+import { SecretField } from '../ui/SecretField';
 import { post } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { hintFor, readyToSend } from '../lib/password';
@@ -113,45 +114,33 @@ export function ChangePassword({ token, required = false, onBack, onChanged, onS
                 {error !== null && <Notice tone="bad" text={error} />}
 
                 <Panel style={styles.panel}>
-                    <Text style={styles.label}>
-                        {required ? 'The password you were given' : 'Your current password'}
-                    </Text>
-                    <TextInput
-                        style={styles.input}
+                    {/* Every one of these can be revealed. A generated
+                        sixteen-character password typed blind with a thumb is
+                        how somebody locks themselves out on the first
+                        morning; see ui/SecretField.tsx. */}
+                    <SecretField
+                        label={required ? 'The password you were given' : 'Your current password'}
                         value={current}
                         onChangeText={setCurrent}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        autoCorrect={false}
                         autoComplete="current-password"
                         editable={!busy}
-                        accessibilityLabel="Current password"
                     />
 
-                    <Text style={styles.label}>Your new password</Text>
-                    <TextInput
-                        style={styles.input}
+                    <SecretField
+                        label="Your new password"
                         value={next}
                         onChangeText={setNext}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        autoCorrect={false}
                         autoComplete="new-password"
                         editable={!busy}
-                        accessibilityLabel="New password"
                     />
 
-                    <Text style={styles.label}>Type it again</Text>
-                    <TextInput
-                        style={[styles.input, hint === '' ? null : styles.inputWrong]}
+                    <SecretField
+                        label="Type it again"
                         value={again}
                         onChangeText={setAgain}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        autoCorrect={false}
                         autoComplete="new-password"
                         editable={!busy}
-                        accessibilityLabel="New password again"
+                        invalid={hint !== ''}
                         onSubmitEditing={() => { if (ready) void submit(); }}
                     />
 
@@ -198,18 +187,6 @@ const styles = StyleSheet.create({
     wrap: { padding: SPACE.lg, paddingTop: 56, paddingBottom: 40 },
     panel: { marginBottom: SPACE.md },
     label: { fontSize: TYPE.meta, color: theme.muted, marginTop: SPACE.md },
-    input: {
-        backgroundColor: 'rgba(255,255,255,0.85)',
-        borderWidth: 1,
-        borderColor: GLASS.borderSubtle,
-        borderRadius: RADIUS.button,
-        paddingHorizontal: SPACE.md,
-        paddingVertical: 14,
-        fontSize: TYPE.body,
-        color: theme.ink,
-        marginTop: SPACE.xs,
-    },
-    inputWrong: { borderColor: theme.danger },
     hint: { fontSize: TYPE.meta, color: theme.danger, marginTop: SPACE.sm },
     escape: { marginTop: SPACE.md },
     footnote: { fontSize: TYPE.meta, color: theme.muted, lineHeight: 21, marginTop: SPACE.lg },

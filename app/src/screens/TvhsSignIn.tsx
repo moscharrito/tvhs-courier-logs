@@ -34,6 +34,7 @@ import { BackPill } from '../ui/Nav';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
 import { get, setPinWithPassword, signInWithPin, type DriverPick } from '../lib/api';
 import { ApiError } from '../lib/http';
+import { SecretField } from '../ui/SecretField';
 
 export function TvhsSignIn({ onSignedIn, onBack }: {
     /** The driver comes back with the token: their route picks the legs. */
@@ -147,16 +148,18 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
 
                         {resetting && (
                             <>
-                                <Text style={styles.label}>Account password</Text>
-                                <TextInput
-                                    style={styles.password}
+                                {/* Revealable. This is the full account
+                                    password, typed once on a cab phone to
+                                    recover a forgotten PIN, and getting it
+                                    wrong is a driver who cannot start.
+                                    
+                                    The PIN below is NOT revealable and that
+                                    is deliberate: see the note on it. */}
+                                <SecretField
+                                    label="Account password"
                                     value={password}
                                     onChangeText={setPassword}
-                                    secureTextEntry
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
                                     editable={!busy}
-                                    accessibilityLabel="Account password"
                                 />
                             </>
                         )}
@@ -167,8 +170,15 @@ export function TvhsSignIn({ onSignedIn, onBack }: {
                             value={pin}
                             onChangeText={(v) => setPin(v.replace(/\D/g, '').slice(0, 6))}
                             keyboardType="number-pad"
-                            /* Not shown as it is typed. A cab phone is held in
-                               front of whoever is standing at the window. */
+                            /* Not shown as it is typed, and NOT revealable
+                               either, unlike every other secret in the app.
+                               A cab phone is held in front of whoever is
+                               standing at the window, and four digits are
+                               read at a glance in a way a sixteen character
+                               password is not. The reason to offer "show" is
+                               that a long generated secret typed blind locks
+                               somebody out; that reason does not apply here
+                               and the shoulder behind the phone does. */
                             secureTextEntry
                             editable={!busy}
                             autoFocus

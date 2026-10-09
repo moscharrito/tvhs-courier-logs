@@ -444,3 +444,20 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
     .izy-main { padding: 16px 14px; }
     .izy-stats > div { flex-basis: 45%; }
 }
+
+/* The show/hide control on a password field (app/SecretInput.tsx).
+   The button sits inside the field's box rather than beside it, so the row
+   does not get wider than every other field in a filter row. */
+.izy-secret-row { position: relative; display: block; }
+.izy-secret-row input { width: 100%; padding-right: 38px; }
+.izy-secret-toggle {
+    position: absolute; right: 1px; top: 1px; bottom: 1px; width: 34px;
+    display: grid; place-items: center;
+    background: none; border: 0; border-radius: 0 8px 8px 0;
+    color: var(--izy-muted); cursor: pointer; padding: 0;
+}
+.izy-secret-toggle:hover { color: var(--izy-ink); }
+.izy-secret-toggle:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: -2px; }
+/* Pressed means the password is visible, which is worth showing: somebody
+   who walked away with it revealed should be able to see that they did. */
+.izy-secret-toggle[aria-pressed="true"] { color: var(--izy-green); }

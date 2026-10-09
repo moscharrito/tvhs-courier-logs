@@ -48,6 +48,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, fmtWhen, type SessionSummary, type EnrolledDevice, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { Pager, usePaged } from '../app/Pager';
+import { SecretInput } from '../app/SecretInput';
 
 export function Devices() {
     const { user, signOut } = useAuth();
@@ -55,6 +56,10 @@ export function Devices() {
        MAY_USE_DEVICE_PIN. A site lead is a driver here and works from a phone
        at a counter exactly as a courier does. */
     const mayUsePin = user?.role === 'driver';
+    /* The server is refusing everything but the password change, so this page
+       is the only one reachable and most of it does not work. See `required`
+       below for what that changes. */
+    const mustChange = user?.mustChangePassword === true;
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
     const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
@@ -73,10 +78,19 @@ export function Devices() {
                about a feature they do not have into their browser's network
                log, which is the sort of thing that gets screenshotted into a
                security questionnaire. */
+            /* NOR THE SESSION LIST, while the password must change. That
+               request is refused like everything else, and asking anyway cost
+               two visible defects: the 403's text leaked into the page as a
+               red error telling somebody to "change it on your own account
+               screen" while they were standing on it, and the Signed in card
+               sat on "Loading..." for ever because the list never resolved.
+               Both from one call that was never going to be answered. */
             const [s, d, i] = await Promise.all([
-                api<SessionSummary[]>('/api/me/sessions'),
-                mayUsePin ? api<EnrolledDevice[]>('/api/devices') : Promise.resolve([]),
-                mayUsePin ? api<DeviceIdentity>('/api/login/device') : Promise.resolve({ enrolled: false } as DeviceIdentity),
+                mustChange ? Promise.resolve([]) : api<SessionSummary[]>('/api/me/sessions'),
+                mayUsePin && !mustChange ? api<EnrolledDevice[]>('/api/devices') : Promise.resolve([]),
+                mayUsePin && !mustChange
+                    ? api<DeviceIdentity>('/api/login/device')
+                    : Promise.resolve({ enrolled: false } as DeviceIdentity),
             ]);
             setSessions(s);
             setDevices(d);
@@ -84,7 +98,7 @@ export function Devices() {
         } catch (err) {
             setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Failed to load' });
         }
-    }, [mayUsePin]);
+    }, [mayUsePin, mustChange]);
     useEffect(() => { void load(); }, [load]);
 
     const revoke = async (url: string, label_: string, endsThisSession = false) => {
@@ -154,6 +168,17 @@ export function Devices() {
                     ? 'Set up this phone so a PIN signs you in, see which phones are set up, and sign out anywhere you do not recognize.'
                     : 'Change your password, and sign out anywhere you do not recognize.'}
             </p>
+            {/* ONE MESSAGE, and it is this one. The card below used to repeat
+                it in its own words and the two said the same thing twice.
+                Written here rather than let through from the server: the 403's
+                text ends "change it on your own account screen", which is
+                where the reader already is. */}
+            {mustChange && (
+                <div className="izy-alert error" role="alert">
+                    The password you were given was set for you and has to be changed before anything else
+                    on the site will work. Nobody can see what you choose, including us.
+                </div>
+            )}
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
             {/* The forced case is the only reason an account in that state
@@ -180,37 +205,31 @@ export function Devices() {
                             it off.
                         </p>
                         <form onSubmit={enrol}>
-                            <label className="izy-field">Your password
-                                <input
-                                    type="password"
-                                    autoComplete="current-password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    required
-                                />
-                            </label>
-                            <label className="izy-field">Choose a PIN (4 to 6 digits)
-                                <input
-                                    type="password"
-                                    inputMode="numeric"
-                                    pattern="\d{4,6}"
-                                    autoComplete="new-password"
-                                    value={pin}
-                                    onChange={(e) => setPin(e.target.value)}
-                                    required
-                                />
-                            </label>
-                            <label className="izy-field">PIN again
-                                <input
-                                    type="password"
-                                    inputMode="numeric"
-                                    pattern="\d{4,6}"
-                                    autoComplete="new-password"
-                                    value={pinAgain}
-                                    onChange={(e) => setPinAgain(e.target.value)}
-                                    required
-                                />
-                            </label>
+                            <SecretInput
+                                label="Your password"
+                                autoComplete="current-password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                            />
+                            <SecretInput
+                                label="Choose a PIN (4 to 6 digits)"
+                                inputMode="numeric"
+                                pattern="\d{4,6}"
+                                autoComplete="new-password"
+                                value={pin}
+                                onChange={(e) => setPin(e.target.value)}
+                                required
+                            />
+                            <SecretInput
+                                label="PIN again"
+                                inputMode="numeric"
+                                pattern="\d{4,6}"
+                                autoComplete="new-password"
+                                value={pinAgain}
+                                onChange={(e) => setPinAgain(e.target.value)}
+                                required
+                            />
                             <label className="izy-field">What to call this phone (optional)
                                 <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Ada's phone" />
                             </label>
@@ -265,6 +284,10 @@ export function Devices() {
             </div>
             </>)}
 
+            {/* Hidden while the password must change, rather than shown
+                empty. The list is refused and so is signing anything out, so
+                every control in it would be a button that cannot work. */}
+            {!mustChange && (
             <div className="izy-card">
                 <h2>Signed in</h2>
                 <p className="izy-muted">
@@ -321,6 +344,7 @@ export function Devices() {
                     </button>
                 </div>
             </div>
+            )}
         </>
     );
 }
@@ -386,14 +410,8 @@ function ChangePassword({ required = false }: { required?: boolean }) {
 
     return (
         <div className="izy-card">
+            {/* No second notice here. The page says it once, at the top. */}
             <h2>{required ? 'Choose a password' : 'Your password'}</h2>
-            {required && (
-                <div className="izy-alert warn" role="status">
-                    The password you were given was set for you, and has to be changed before you can go
-                    further. Nothing else on the site will work until it is. Nobody can see what you choose
-                    here, including us.
-                </div>
-            )}
             <p className="izy-sub">
                 {required
                     ? 'Pick something only you know. Changing it signs you out anywhere else you are signed in.'
@@ -405,27 +423,21 @@ function ChangePassword({ required = false }: { required?: boolean }) {
                 </div>
             )}
             <form className="izy-row" onSubmit={(e) => { void submit(e); }}>
-                <label className="izy-field">
-                    Current password
-                    <input
-                        type="password"
-                        autoComplete="current-password"
-                        value={current}
-                        onChange={(e) => setCurrent(e.target.value)}
-                        required
-                    />
-                </label>
-                <label className="izy-field">
-                    New password
-                    <input
-                        type="password"
-                        autoComplete="new-password"
-                        value={next}
-                        onChange={(e) => setNext(e.target.value)}
-                        required
-                        minLength={8}
-                    />
-                </label>
+                <SecretInput
+                    label="Current password"
+                    autoComplete="current-password"
+                    value={current}
+                    onChange={(e) => setCurrent(e.target.value)}
+                    required
+                />
+                <SecretInput
+                    label="New password"
+                    autoComplete="new-password"
+                    value={next}
+                    onChange={(e) => setNext(e.target.value)}
+                    required
+                    minLength={8}
+                />
                 <button className="izy-btn" type="submit" disabled={busy || !current || !next}>
                     {busy ? 'Changing...' : 'Change password'}
                 </button>

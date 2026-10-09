@@ -82,9 +82,13 @@ describe('a first sign-in with a password somebody else chose', () => {
         renderApp();
         /* By its words rather than by role: the page carries several status
            regions and which one comes first is not the thing under test. */
-        const said = await screen.findByText(/has to be changed before you can go further/i);
+        /* ONE message now, at the top of the page. The card below used to
+           repeat it in its own words, and a reader got the same sentence
+           twice in two colours. */
+        const said = await screen.findByText(/has to be changed before anything else/i);
         expect(said).toHaveTextContent(/set for you/i);
-        expect(said).toHaveTextContent(/nothing else on the site will work/i);
+        expect(said).toHaveTextContent(/Nobody can see what you choose/i);
+        expect(screen.getAllByText(/set for you/i), 'said once, not twice').toHaveLength(1);
     });
 
     it('names the screen for the thing they have to do', async () => {

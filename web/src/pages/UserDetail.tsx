@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, fmtWhen, type ProjectMembership, type SessionSummary, type UserSummary } from '../lib/api';
 import { useAuth } from '../app/auth';
+import { SecretInput } from '../app/SecretInput';
 
 type Msg = { kind: 'ok' | 'error'; text: string; details?: string[] } | null;
 const PROJECT_ROLES: ProjectMembership['role'][] = ['admin', 'courier', 'pharmacy'];
@@ -101,7 +102,7 @@ export function UserDetail() {
             <div className="izy-card">
                 <h2>Credentials</h2>
                 <div className="izy-row">
-                    <label className="izy-field">New password<input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={8} /></label>
+                    <SecretInput label="New password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={8} />
                     <button className="izy-btn secondary" type="button" disabled={password.length < 8} onClick={() => { void run('Password reset, all devices signed out', () => api(`${base}/password`, { method: 'POST', json: { password } })).then(() => setPassword('')); }}>Reset password</button>
                     {u.role === 'driver' && (
                         <>

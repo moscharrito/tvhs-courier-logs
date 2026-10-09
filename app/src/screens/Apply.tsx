@@ -21,6 +21,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { theme } from '../theme';
 import { applyToDrive } from '../lib/api';
 import { ApiError } from '../lib/http';
+import { SecretField } from '../ui/SecretField';
 
 interface Props {
     /** The contract chosen on the first screen. */
@@ -124,6 +125,9 @@ export function Apply({ projectCode, onDone, onCancel }: Props) {
     );
 }
 
+/* A secret delegates to SecretField so an applicant can check the password
+   they are inventing; everything else stays a plain box. One branch rather
+   than two components, because every other property is shared. */
 function Field(props: {
     label: string;
     value: string;
@@ -133,6 +137,17 @@ function Field(props: {
     keyboardType?: 'default' | 'email-address' | 'phone-pad';
     autoComplete?: 'name' | 'email' | 'tel' | 'new-password';
 }) {
+    if (props.secure === true) {
+        return (
+            <SecretField
+                label={props.label}
+                value={props.value}
+                onChangeText={props.onChange}
+                editable={props.editable}
+                autoComplete="new-password"
+            />
+        );
+    }
     return (
         <View>
             <Text style={styles.label}>{props.label}</Text>
@@ -141,7 +156,6 @@ function Field(props: {
                 value={props.value}
                 onChangeText={props.onChange}
                 editable={props.editable}
-                secureTextEntry={props.secure === true}
                 autoCapitalize={props.autoComplete === 'name' ? 'words' : 'none'}
                 autoCorrect={false}
                 keyboardType={props.keyboardType ?? 'default'}

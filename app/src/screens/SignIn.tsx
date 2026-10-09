@@ -13,6 +13,7 @@ import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
 import { CardButton, Ground, Notice, Panel } from '../ui/Glass';
 import { signIn } from '../lib/api';
 import { ApiError } from '../lib/http';
+import { SecretField } from '../ui/SecretField';
 
 interface Props {
     /** Which contract they said they drive for, shown so a wrong tap is
@@ -88,16 +89,15 @@ export function SignIn({ contractName, onBack, onSignedIn, onApply }: Props) {
                 accessibilityLabel="Username"
             />
 
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-                style={styles.input}
+            {/* Revealable: see ui/SecretField.tsx. A courier typing a
+                generated password with a thumb at a pharmacy counter needs
+                to be able to check it before the old one stops working. */}
+            <SecretField
+                label="Password"
                 value={password}
                 onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
                 autoComplete="current-password"
                 editable={!busy}
-                accessibilityLabel="Password"
                 onSubmitEditing={() => { if (ready) void submit(); }}
             />
 

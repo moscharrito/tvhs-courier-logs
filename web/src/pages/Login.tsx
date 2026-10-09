@@ -29,6 +29,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
+import { SecretInput } from '../app/SecretInput';
 import { Loading } from '../app/Loading';
 
 type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'device';
@@ -155,18 +156,16 @@ export function Login() {
                             <span className="izy-avatar">{initials(phone.name)}</span>
                             <span><b>{phone.name}</b><span>{phone.label}</span></span>
                         </div>
-                        <label className="izy-field">PIN
-                            <input
-                                type="password"
-                                inputMode="numeric"
-                                pattern="\d{4,6}"
-                                autoComplete="one-time-code"
-                                value={pin}
-                                onChange={(e) => setPin(e.target.value)}
-                                required
-                                autoFocus
-                            />
-                        </label>
+                        <SecretInput
+                            label="PIN"
+                            inputMode="numeric"
+                            pattern="\d{4,6}"
+                            autoComplete="one-time-code"
+                            value={pin}
+                            onChange={(e) => setPin(e.target.value)}
+                            required
+                            autoFocus
+                        />
                         <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
                         {/* A shared phone, or somebody else's: always a way out. */}
                         <button
@@ -215,13 +214,9 @@ export function Login() {
                             <span><b>{driver.name}</b><span>{routeLabel(driver.route)}</span></span>
                         </div>
                         {mode === 'setup' && (
-                            <label className="izy-field">Your password (first time only)
-                                <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-                            </label>
+                            <SecretInput label="Your password (first time only)" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                         )}
-                        <label className="izy-field">{mode === 'setup' ? 'Create a 4 to 6 digit PIN' : 'PIN'}
-                            <input type="password" inputMode="numeric" pattern="\d{4,6}" autoComplete="one-time-code" value={pin} onChange={(e) => setPin(e.target.value)} required autoFocus />
-                        </label>
+                        <SecretInput label={mode === 'setup' ? 'Create a 4 to 6 digit PIN' : 'PIN'} inputMode="numeric" pattern="\d{4,6}" autoComplete="one-time-code" value={pin} onChange={(e) => setPin(e.target.value)} required autoFocus />
                         <button className="izy-btn" type="submit" disabled={busy}>{mode === 'setup' ? 'Set PIN and sign in' : 'Sign in'}</button>
                         {mode === 'pin' && (
                             <button className="izy-link" type="button" onClick={() => { setMode('setup'); setPin(''); }}>Forgot PIN? Use password</button>
@@ -236,9 +231,7 @@ export function Login() {
                             <span className="izy-avatar">{initials(driver.name)}</span>
                             <span><b>{driver.name}</b><span>{driver.username}</span></span>
                         </div>
-                        <label className="izy-field">Your password
-                            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
-                        </label>
+                        <SecretInput label="Your password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
                         <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
                         {/* Said here rather than discovered later: this is the
                             once-per-phone step, and the next one is four
@@ -255,9 +248,7 @@ export function Login() {
                         <label className="izy-field">Username
                             <input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
                         </label>
-                        <label className="izy-field">Password
-                            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-                        </label>
+                        <SecretInput label="Password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                         <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
                         <div className="izy-muted" style={{ textAlign: 'center' }}>Your projects appear after you sign in.</div>
                     </form>
