@@ -13,3 +13,21 @@ backups/
 
 # Points the app at a server. Local choice, not a shared one.
 app/.env
+
+# Where somebody redirects a credential-printing script.
+#
+# create:portals, create-leads and seed:demo-uh each generate passwords and
+# print them ONCE, to the terminal, deliberately: a credential written to a
+# file is a credential that outlives the conversation it was needed for.
+# Redirecting the output to a file is still the obvious thing to do when nine
+# of them have to be sent to nine different people, so the obvious filenames
+# are ignored rather than left as a trap.
+#
+# Ignoring them is the floor, not the fix. Delete the file once the passwords
+# are sent: every one of these accounts is created with mustChangePassword, so
+# what is in it stops working the first time each person signs in, and a stale
+# file of dead credentials is still a file that says who has an account.
+portals.txt
+leads.txt
+credentials.txt
+*-credentials.txt

@@ -22,8 +22,33 @@
  *   POST /api/me/password   the way out. Refusing this is a locked account.
  *   GET  /api/session       how a client learns it is in this state at all.
  *   POST /api/logout        somebody must always be able to leave.
+ *   the /api/login family   signing in is not "going further".
  *
  * Nothing here reads patient data, which is the test an entry has to pass.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY SIGNING IN IS ON THE LIST, WHICH IT WAS NOT.
+ *
+ * Reported from production: a new pharmacy account typed its password and
+ * got this rule's own message back AS A SIGN-IN ERROR, with the form still in
+ * front of it. Once the first sign-in succeeds the session carries the flag,
+ * and /api/login is an /api/* request like any other, so the SECOND attempt
+ * was refused by the rule rather than by the credentials. The message then
+ * told somebody to open their account screen, which is not reachable from a
+ * sign-in page.
+ *
+ * It is the same shape as the shell lockout fixed in 38e5912 and a separate
+ * instance of it: that one was the client failing to show the form, this one
+ * is the server refusing the request that gets somebody back to it. Both end
+ * with a person typing a working password at a screen that will not let them
+ * past, which is the exact failure this rule is supposed to be worth having.
+ *
+ * Signing in GRANTS NOTHING the session did not already carry. Somebody
+ * holding a must-change session can already do precisely what a fresh one
+ * could, which is almost nothing. So refusing it protects no data and only
+ * ever locks somebody out of the fix. The reads the sign-in page itself makes
+ * are on the list for the same reason: a page that renders an error before
+ * anybody has typed anything is a page nobody can use.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * 403 AND A CODE, NOT A REDIRECT.
@@ -41,6 +66,15 @@ export const ALLOWED: ReadonlyArray<{ method: string; path: string }> = [
     { method: 'POST', path: '/api/me/password' },
     { method: 'GET', path: '/api/session' },
     { method: 'POST', path: '/api/logout' },
+    /* Establishing who somebody is, which grants nothing. See the header. */
+    { method: 'POST', path: '/api/login' },
+    { method: 'POST', path: '/api/login/pin' },
+    { method: 'POST', path: '/api/login/pin/setup' },
+    { method: 'POST', path: '/api/login/device' },
+    /* What the sign-in page reads before anybody types: the project picker
+       and whether this phone is enrolled. */
+    { method: 'GET', path: '/api/login/projects' },
+    { method: 'GET', path: '/api/login/device' },
 ];
 
 export const MUST_CHANGE_CODE = 'password.mustChange';

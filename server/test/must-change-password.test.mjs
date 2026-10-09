@@ -254,3 +254,86 @@ describe('a new pharmacy portal account, start to finish', () => {
         expect(stale.status).toBe(401);
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * SIGNING IN AGAIN, WHILE ALREADY HELD BY THE MUST-CHANGE RULE.
+ *
+ * Reported from production with a screenshot: a brand new pharmacy account
+ * types its password on the sign-in page and gets
+ * "Your password was set for you and has to be changed before you can go
+ * further" back AS A SIGN-IN ERROR, with the form still in front of them.
+ *
+ * The cause is that /api/login is not on the ALLOWED list. Once a session
+ * exists and carries the flag, every later /api/* request is refused and the
+ * login endpoint is an /api/* request like any other. So the second attempt
+ * to sign in is turned away BY THE RULE rather than by the credentials, and
+ * the message tells somebody to go to a screen they cannot reach from a
+ * sign-in page.
+ *
+ * It is the same shape as the web lockout fixed in 38e5912 and a different
+ * instance of it: that one was the shell failing to show the form, this one
+ * is the server refusing the request that would get them back to it. Both
+ * leave a person typing a working password at a screen that will not let
+ * them past.
+ *
+ * SIGNING IN IS NOT "GOING FURTHER". It establishes who somebody is and
+ * grants nothing the session did not already carry; a person holding a
+ * must-change session can already do exactly what a fresh one could. So the
+ * login family belongs on the allowed list, and refusing it only ever locks
+ * somebody out of the fix.
+ */
+describe('signing in again while the password must change', () => {
+    it('is not refused by the rule it is trying to satisfy', async () => {
+        /* THE BUG, as reported. The account signs in once, which leaves a
+           session carrying the flag, and then cannot sign in again. */
+        const { username } = await madeByAdmin();
+        const agent = srv.agent();
+
+        const first = await agent.post('/api/login').send({ username, password: TEMP });
+        expect(first.status, 'the first sign-in works').toBe(200);
+
+        const again = await agent.post('/api/login').send({ username, password: TEMP });
+        expect(again.status, 'and so does the second, from the same browser').toBe(200);
+        expect(again.body?.code).not.toBe('password.mustChange');
+    });
+
+    it('still says what is wrong once they are in', async () => {
+        /* Allowing the sign-in must not have switched the rule off. */
+        const { agent } = await madeByAdmin();
+        const blocked = await agent.get('/api/me/projects');
+        expect(blocked.status).toBe(403);
+        expect(blocked.body.code).toBe('password.mustChange');
+    });
+
+    it('lets a wrong password still be wrong', async () => {
+        /* The login endpoint being reachable does not mean it answers yes. */
+        const { username } = await madeByAdmin();
+        const agent = srv.agent();
+        await agent.post('/api/login').send({ username, password: TEMP });
+        const bad = await agent.post('/api/login').send({ username, password: 'not-the-password' });
+        expect(bad.status).toBe(401);
+    });
+
+    it('lets them read the sign-in page without being turned away', async () => {
+        /* The project picker and the device check are what the sign-in page
+           loads before anybody types anything. Refused, the page renders an
+           error before it has been used. */
+        const { agent } = await madeByAdmin();
+        expect((await agent.get('/api/login/projects')).status).toBe(200);
+        expect((await agent.get('/api/login/device')).status).toBe(200);
+    });
+
+    it('lets them sign out, which was already true and must stay true', async () => {
+        const { agent } = await madeByAdmin();
+        expect((await agent.post('/api/logout')).status).toBe(200);
+    });
+
+    it('does not let the login family reach anything else', async () => {
+        /* Widening the allow list is only safe if it stayed narrow. */
+        const { agent } = await madeByAdmin();
+        for (const path of ['/api/me/projects', '/api/users', '/api/audit']) {
+            const res = await agent.get(path);
+            expect([403], `${path} should still be refused`).toContain(res.status);
+        }
+    });
+});
