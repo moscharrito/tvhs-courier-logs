@@ -613,7 +613,27 @@ function cellRow(page, x, y, w, cols, { h = 15, top = false } = {}) {
     return y - h;
 }
 
-function ticketSheet(page) {
+/* ─── ONE TICKET, THREE PLIES, AND ONLY ONE OF THEM CARRIES MONEY.
+ *
+ * Ticket 5.12 stopped couriers seeing what a delivery bills at: a driver
+ * who knows one address pays $12.50 and another $52.00 works the round by
+ * the rate, and it is commercial terms between Izy and University Health
+ * that no driver signed up to carry to a patient's door.
+ *
+ * Marking the column "office use only" was a note, not a control. The
+ * figures would still have come through the carbon onto the driver's copy
+ * and been handed to a patient on theirs.
+ *
+ * So the charges column is PRINTED ONLY ON THE OFFICE PLY, and the three
+ * plies are three artwork files. The empty area is also where the
+ * carbonless coating is left off, so a written figure does not transfer:
+ * blanking the print without desensitising the paper would still push the
+ * handwriting through.
+ *
+ * The services list stays on every ply. It is the same words as the tick
+ * boxes on the left and tells a driver what kind of job this is, which is
+ * theirs to know. The money beside it is not. */
+function ticketSheet(page, { charges = true, ply = '', paper = '' } = {}) {
     prefix = 'ticket';
 
     /* ── masthead ───────────────────────────────────────────────────── */
@@ -745,22 +765,42 @@ function ticketSheet(page) {
     const rowH = 13;
     const tableH = 12 + rows.length * rowH;
     const colSplit = midR + 8 + rightW * 0.58;
-    page.rect(midR + 8, ry - tableH, rightW, tableH, { grey: RULE });
+    /* The box stops at the column split on a ply that carries no money, so
+       there is no empty ruled column inviting somebody to fill it in. */
+    const tableW = charges ? rightW : colSplit - (midR + 8);
+    page.rect(midR + 8, ry - tableH, tableW, tableH, { grey: RULE });
     page.text('SERVICES', midR + 11, ry - 8, { size: 5, grey: SOFT });
-    page.text('CHARGES', colSplit + 3, ry - 8, { size: 5, grey: SOFT });
-    page.line(midR + 8, ry - 12, midR + 8 + rightW, ry - 12, { width: 0.5, grey: RULE });
-    page.line(colSplit, ry, colSplit, ry - tableH, { width: 0.4, grey: 0.78 });
+    page.line(midR + 8, ry - 12, midR + 8 + tableW, ry - 12, { width: 0.5, grey: RULE });
+    if (charges) {
+        page.text('CHARGES', colSplit + 3, ry - 8, { size: 5, grey: SOFT });
+        page.line(colSplit, ry, colSplit, ry - tableH, { width: 0.4, grey: 0.78 });
+    }
 
     rows.forEach((label, i) => {
         const top = ry - 12 - i * rowH;
         const last = label === 'Total';
-        if (i > 0) page.line(midR + 8, top, midR + 8 + rightW, top, { width: last ? 1 : 0.4, grey: last ? RULE : 0.82 });
+        if (i > 0) page.line(midR + 8, top, midR + 8 + tableW, top, { width: last ? 1 : 0.4, grey: last ? RULE : 0.82 });
         page.text(label, midR + 11, top - 9, { size: 5.6, font: last ? 'Helvetica-Bold' : 'Helvetica', grey: INK });
-        addField('text', 'Charge ' + label, [colSplit + 2, top - rowH + 2, midR + 8 + rightW - 3, top - 2], { size: 7 });
+        if (charges) {
+            addField('text', 'Charge ' + label, [colSplit + 2, top - rowH + 2, midR + 8 + rightW - 3, top - 2], { size: 7 });
+        }
     });
 
-    /* Ticket 5.12: a courier does not see what a delivery bills at. */
-    page.text('IZY OFFICE USE ONLY', midR + 8, ry - tableH - 8, { size: 4.8, grey: SOFT });
+    if (charges) {
+        page.text('IZY OFFICE USE ONLY', midR + 8, ry - tableH - 8, { size: 4.8, grey: SOFT });
+    } else {
+        /* Said on the ply, so a driver holding one knows the blank is
+           deliberate rather than a misprint, and does not go looking for
+           the figures on somebody else's copy. */
+        page.text('CHARGES NOT SHOWN ON THIS COPY', midR + 8, ry - tableH - 8, { size: 4.8, grey: SOFT });
+    }
+
+    /* Which ply this is, the way a multi-part form names its copies so the
+       printer and a courier agree on the colours. */
+    if (ply !== '') {
+        page.textRight(`${paper} — ${ply}`.toUpperCase(), T.right, T.bottom - 4,
+            { size: 5.2, font: 'Helvetica-Bold', grey: SOFT });
+    }
 
     return ry - tableH - 8;
 }
@@ -852,21 +892,31 @@ buildSheet({
 /* The ticket is one frame, not a sheet of tear-off parts, so it does not
    go through buildSheet: there is nothing to measure against a cut line
    and the page itself is a different size. */
-resetFields();
-collecting = true;
-const ticketPage = new Page();
-ticketSheet(ticketPage);
-const ticketPdf = buildPdf([ticketPage], {
-    title: 'Izy Delivery Ticket',
-    subject: "The incumbent's delivery ticket, field for field, in Izy letterhead",
-    size: TICKET,
-}, new Date(), [], FIELDS);
-fs.writeFileSync(OUT_TICKET, ticketPdf);
-console.log('\nIzy Delivery Ticket');
+/* Three artwork files, one per ply. The printer needs them separately,
+   because the charges column is printed on the first and not on the
+   other two; one file would put the money on all three. */
+const PLIES = [
+    { file: 'izy-delivery-ticket-1-office.pdf', ply: 'Izy office', paper: 'White', charges: true },
+    { file: 'izy-delivery-ticket-2-driver.pdf', ply: 'Driver', paper: 'Canary', charges: false },
+    { file: 'izy-delivery-ticket-3-patient.pdf', ply: 'Patient', paper: 'Pink', charges: false },
+];
+
+console.log('\n  Izy Delivery Ticket');
 console.log(`    ${TICKET.width} x ${TICKET.height} points (8.5 x 5.5in landscape)`);
-console.log(`    ${FIELDS.length} fillable fields `
-    + `(${FIELDS.filter((f) => f.kind === 'text').length} text, `
-    + `${FIELDS.filter((f) => f.kind === 'check').length} tick boxes)`);
-console.log(`    ${ticketPdf.length} bytes -> ${OUT_TICKET}`);
+for (const spec of PLIES) {
+    resetFields();
+    collecting = true;
+    const ticketPage = new Page();
+    ticketSheet(ticketPage, spec);
+    const ticketPdf = buildPdf([ticketPage], {
+        title: `Izy Delivery Ticket - ${spec.ply}`,
+        subject: "The incumbent's delivery ticket, field for field, in Izy letterhead",
+        size: TICKET,
+    }, new Date(), [], FIELDS);
+    fs.writeFileSync(path.join(FORMS, spec.file), ticketPdf);
+    console.log(`    ${spec.paper.padEnd(7)} ${spec.ply.padEnd(11)} `
+        + `${(spec.charges ? 'charges' : 'no charges').padEnd(11)} `
+        + `${String(FIELDS.length).padStart(2)} fields  ${ticketPdf.length} bytes  -> ${spec.file}`);
+}
 
 console.log(`\nThe docket and manifest are ${PAGE.width} x ${PAGE.height} points (US Letter).`);

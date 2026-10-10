@@ -23,8 +23,30 @@ all. The docket's first part records the join instead — which manifest it arri
 on and which driver took it — which is what traces one package from a counter to
 a door.
 
-Both are US Letter, blank, fillable, and `npm run make:docket -w server` builds
-the PDFs from the HTML designs.
+There is also a third sheet, `delivery-ticket.html`: the incumbent's own ticket,
+field for field, for pharmacies and drivers who would rather carry on with what
+they know. 8.5 × 5.5in landscape, their shape, because their stock is continuous
+pin-feed carbonless.
+
+**It prints as three separate plies, and only one of them carries money.**
+`make:docket` writes three artwork files:
+
+| File | Paper | Charges column |
+|---|---|---|
+| `izy-delivery-ticket-1-office.pdf` | white | yes |
+| `izy-delivery-ticket-2-driver.pdf` | canary | **no** |
+| `izy-delivery-ticket-3-patient.pdf` | pink | **no** |
+
+Ticket 5.12 deliberately stopped couriers seeing what a delivery bills at, and
+marking the column "office use only" was a note rather than a control — the
+figures would still have come through the carbon onto the driver's copy and been
+handed to a patient on theirs. So the column is not printed on those two plies at
+all, and **the printer must also leave the carbonless coating off that area**:
+blanking the print without desensitising the paper still pushes the handwriting
+through. Both halves are needed.
+
+Everything is blank, fillable, and `npm run make:docket -w server` builds every
+PDF from the HTML designs.
 
 **They are printed blank and filled in by hand.** That is the decision as of
 10 October 2026 and it is the right one for go-live: it needs no app on a
