@@ -33,8 +33,16 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    normalizeSignatureRule, parsePackaging, applyMapping, validateRow, autoMap,
+    normalizeSignatureRule, parsePackaging, applyMapping, validateRow, autoMap, parseRows,
 } from '../src/modules/uh/import-parse.ts';
+
+/* A whole sheet, the way parseRows wants it. */
+function sheet(headers, rows) {
+    return parseRows(
+        { headers, rows, rowNumbers: rows.map((_, i) => i + 2) },
+        autoMap(headers),
+    );
+}
 
 /* Built from a header/value object so each test reads as the sheet it
    describes, with autoMap doing the column guessing the operator would
@@ -174,5 +182,78 @@ describe('how many boxes', () => {
         expect(parsePackaging('2 of 3', '').index).toBe(2);
         const { parsed } = row({ ...BASE, Quantity: '2 of 3' });
         expect(parsed.row).not.toHaveProperty('packageIndex');
+    });
+});
+
+/* ─────────────────────────────────────────── three boxes, one delivery */
+
+describe('a prescription split across boxes', () => {
+    const HEADERS = ['Patient Name', 'Address', 'City', 'State', 'ZIP', 'Rx', 'Pieces', 'Fridge', 'ID Required'];
+    const box = (n, over = {}) => [
+        over.name ?? 'Carmen Villalobos', '330 Rehearsal Way', 'San Antonio', 'TX', '78207',
+        `RX-${7000 + n}`, `${n} of 3`, over.fridge ?? '', over.id ?? 'Y',
+    ];
+
+    it('becomes one delivery, not three', () => {
+        /* WHAT THIS USED TO DO. Three orders, each carrying quantity 3
+           because each label said "of 3": nine packages expected at pickup,
+           three signatures demanded at one door, three deliveries billed,
+           for one patient receiving three boxes. The duplicate check missed
+           it because each box had its own prescription number. */
+        const out = sheet(HEADERS, [box(1), box(2), box(3)]);
+        expect(out).toHaveLength(1);
+        expect(out[0].row.recipientName).toBe('Carmen Villalobos');
+        expect(out[0].row.quantity).toBe(3);
+        expect(out[0].mergedRows).toEqual([3, 4]);
+    });
+
+    it('says so, without naming the patient', () => {
+        /* Issue text reaches logs and the audit trail. The row numbers say
+           which rows without saying who. */
+        const out = sheet(HEADERS, [box(1), box(2), box(3)]);
+        const merged = out[0].issues.find((i) => i.code === 'boxes.merged');
+        expect(merged).toBeTruthy();
+        expect(merged.message).toContain('Rows 2, 3, 4');
+        expect(merged.message).toContain('One visit, one signature');
+        expect(merged.message).not.toContain('Carmen');
+    });
+
+    it('takes the strictest handling of any box in the set', () => {
+        /* A courier carrying three boxes of which one is refrigerated is
+           carrying a refrigerated delivery. Taking the first row's values
+           would make the handling depend on which box the pharmacy listed
+           first. */
+        const out = sheet(HEADERS, [box(1, { fridge: '' }), box(2, { fridge: 'Y' }), box(3)]);
+        expect(out[0].row.refrigerated).toBe(true);
+        expect(out[0].row.idRequired).toBe(true);
+    });
+
+    it('leaves a single labelled row alone', () => {
+        /* One row reading "2 of 3" is one row describing a three-box
+           delivery, which was already right. */
+        const out = sheet(HEADERS, [box(2)]);
+        expect(out).toHaveLength(1);
+        expect(out[0].row.quantity).toBe(3);
+        expect(out[0].mergedRows).toBeUndefined();
+    });
+
+    it('does not merge two patients at the same address', () => {
+        /* A care home, or a couple. Different names, different deliveries. */
+        const out = sheet(HEADERS, [box(1), box(2, { name: 'Marcus Ibarra' })]);
+        expect(out).toHaveLength(2);
+    });
+
+    it('does not merge rows that never numbered a box', () => {
+        /* THE DEFECT THIS GUARDS. A plain quantity of 2 was being read as
+           "box 2", so two genuinely separate deliveries to one address were
+           merged into one. Only "N of M" is a position; a bare number is a
+           count, and two unlabelled rows are the duplicate check's problem,
+           not this function's. */
+        const plain = ['Carmen Villalobos', '330 Rehearsal Way', 'San Antonio', 'TX', '78207', 'RX-1', '2', '', 'Y'];
+        const plain2 = ['Carmen Villalobos', '330 Rehearsal Way', 'San Antonio', 'TX', '78207', 'RX-2', '3', '', 'Y'];
+        const out = sheet(HEADERS, [plain, plain2]);
+        expect(out).toHaveLength(2);
+        expect(out[0].row.quantity).toBe(2);
+        expect(out[1].row.quantity).toBe(3);
     });
 });

@@ -67,6 +67,7 @@ import { custodyEventStatement } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
 import { resolveZone } from './pricing';
 import { zipZoneMap } from './zones';
+import { handlingFlags } from './handling';
 import {
     readSheet, autoMap, parseRows, headerFingerprint, missingRequiredMappings,
     sha256, ImportError, IMPORT_FIELDS,
@@ -117,9 +118,21 @@ export interface PreviewRow {
     deliveryNotes: string;
     externalRef: string;
     signatureRequired: boolean;
+    /* How the pharmacy is handing it over (drizzle/0051). On the PREVIEW,
+       not only in the database: this is the screen where somebody confirms
+       the list, and confirming a Medicare controlled-substance delivery
+       without being shown that is what it is makes the review a formality. */
+    signatureRule: string;
+    authorisedSigners: string;
+    refrigerated: boolean;
+    controlled: boolean;
+    idRequired: boolean;
+    handlingFlags: string[];
     zone: number | null;
     dueAt: string | null;
     issues: Issue[];
+    /** Other sheet rows folded in as boxes of this same delivery. */
+    mergedRows: number[];
     duplicateOfRow: number | null;
     duplicateOfOrderId: number | null;
     /** false when an error blocks it, or the operator skipped it. */
@@ -383,9 +396,26 @@ export function createImportsRouter({ client }: { client: Client }): Router {
                 deliveryNotes: p.row.deliveryNotes,
                 externalRef: p.row.externalRef,
                 signatureRequired: p.row.signatureRequired,
+                signatureRule: p.row.signatureRule,
+                authorisedSigners: p.row.authorisedSigners,
+                refrigerated: p.row.refrigerated,
+                controlled: p.row.controlled,
+                idRequired: p.row.idRequired,
+                /* Through the shared presenter, so the chips a pharmacist
+                   sees before confirming are the same chips they see on the
+                   delivery afterwards. */
+                handlingFlags: handlingFlags({
+                    signatureRequired: p.row.signatureRequired,
+                    signatureRule: p.row.signatureRule,
+                    authorisedSigners: p.row.authorisedSigners,
+                    refrigerated: p.row.refrigerated,
+                    controlled: p.row.controlled,
+                    idRequired: p.row.idRequired,
+                }),
                 zone,
                 dueAt: due.dueAt ? due.dueAt.toISOString() : null,
                 issues,
+                mergedRows: p.mergedRows ?? [],
                 duplicateOfRow: p.duplicateOfRow,
                 duplicateOfOrderId,
                 willImport,

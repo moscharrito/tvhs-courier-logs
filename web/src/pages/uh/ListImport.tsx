@@ -43,6 +43,17 @@ import type { Site } from './Sites';
 interface Issue { row: number; field: string; code: string; severity: 'error' | 'warning'; message: string }
 
 interface PreviewRow {
+    /* How the pharmacy is handing it over (drizzle/0051). Shown on the
+       preview because this is the screen where somebody confirms the list,
+       and confirming a Medicare controlled-substance delivery without being
+       shown that is what it is makes the review a formality.
+    
+       Optional: a page served by a server older than this build still has a
+       preview to render. */
+    handlingFlags?: string[];
+    authorisedSigners?: string;
+    /** Sheet rows folded into this one as other boxes of the same delivery. */
+    mergedRows?: number[];
     row: number;
     recipientName: string; recipientPhone: string; address: string;
     city: string; state: string; zip: string;
@@ -81,11 +92,27 @@ interface ImportSummary {
     importedBy: string;
 }
 
+/* Every column the importer understands, in the pharmacy's own words.
+ *
+ * THIS LIST HAD DRIFTED. The parser has understood `idRequired` under nine
+ * spellings since ticket 0038 and this screen never offered it, so an
+ * operator whose sheet headed the column something the guesser did not
+ * recognise had no way to say which column it was -- the row simply was not
+ * on the page. The handling columns from drizzle/0051 would have joined it.
+ *
+ * The labels are what a pharmacist calls the thing, not what the database
+ * calls it: "Medicare / who signs" rather than "signatureRule", because the
+ * person reading this is matching it against their own spreadsheet. */
 const FIELD_LABELS: Record<string, string> = {
     externalRef: 'Reference', recipientName: 'Recipient name', recipientPhone: 'Phone',
     addressLine: 'Address', addressLine2: 'Address line 2', city: 'City', state: 'State',
-    zip: 'ZIP', serviceType: 'Service type', quantity: 'Quantity', description: 'Description',
+    zip: 'ZIP', serviceType: 'Service type', quantity: 'Packages', description: 'Description',
     deliveryNotes: 'Notes', signatureRequired: 'Signature required',
+    idRequired: 'ID required',
+    signatureRule: 'Medicare / who may sign',
+    authorisedSigners: 'Caregiver who may sign',
+    refrigerated: 'Refrigerated',
+    controlled: 'Controlled substance',
 };
 const ALL_FIELDS = Object.keys(FIELD_LABELS);
 const REQUIRED = ['recipientName', 'addressLine', 'zip'];
@@ -330,7 +357,18 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                                         />
                                                     )}
                                                 </td>
-                                                <td>{r.recipientName}{r.externalRef && <><br /><span className="izy-muted">{r.externalRef}</span></>}</td>
+                                                <td>
+                                                    {r.recipientName}
+                                                    {r.externalRef && <><br /><span className="izy-muted">{r.externalRef}</span></>}
+                                                    {(r.handlingFlags ?? []).length > 0 && (
+                                                        <><br />{(r.handlingFlags ?? []).map((f) => (
+                                                            <span key={f} className={`izy-pill ${f === 'Fridge' ? 'warn' : ''}`}>{f}</span>
+                                                        ))}</>
+                                                    )}
+                                                    {(r.authorisedSigners ?? '') !== '' && (
+                                                        <><br /><span className="izy-muted">Also: {r.authorisedSigners}</span></>
+                                                    )}
+                                                </td>
                                                 <td>{r.address}<br /><span className="izy-muted">{r.city} {r.state} {r.zip}</span></td>
                                                 <td>{r.zone !== null ? r.zone
                                                     : r.issues.some((i) => i.code === 'zone.outOfArea')
@@ -338,7 +376,19 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                                         // A row with no usable ZIP is not out of area, it is unknown.
                                                         : <span className="izy-muted">unknown</span>}</td>
                                                 <td>{r.serviceType}</td>
-                                                <td>{r.quantity}</td>
+                                                <td>
+                                                    {r.quantity}
+                                                    {/* Say that rows were folded together, on the row
+                                                        that absorbed them. Three boxes of one
+                                                        prescription are one visit and one signature,
+                                                        and a reviewer counting rows against their own
+                                                        sheet needs to know why the count dropped. */}
+                                                    {(r.mergedRows ?? []).length > 0 && (
+                                                        <><br /><span className="izy-muted">
+                                                            rows {[r.row, ...(r.mergedRows ?? [])].join(', ')}
+                                                        </span></>
+                                                    )}
+                                                </td>
                                                 <td>{time(r.dueAt)}</td>
                                                 <td>
                                                     {r.issues.length === 0 ? <span className="izy-muted">none</span> : (

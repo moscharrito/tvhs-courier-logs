@@ -84,6 +84,11 @@ export interface ParsedRow {
     authorisedSigners: string;
     refrigerated: boolean;
     controlled: boolean;
+    /** Which box of the set this row's label said it was, when it said so.
+     *  Never stored: a box's number belongs to the box. It is kept here only
+     *  long enough to recognise that several rows are one delivery. See
+     *  collapseBoxSeries. */
+    boxNumber: number | null;
     /** sha256 of the identifying fields; see the header comment. */
     dedupeKey: string;
 }
@@ -392,7 +397,15 @@ export function parsePackaging(indexRaw: string, countRaw: string): { index: num
         if (t === '') return null;
         return /^\d+$/.test(t) ? Number(t) : null;
     };
-    return { index: one(indexRaw), count: one(countRaw) };
+    /* INDEX IS NULL UNLESS THE CELL NUMBERED THE BOX, and the distinction
+       cost a real defect. It used to return the bare number as the index
+       too, so an ordinary quantity of 2 came back as "box 2" -- and
+       collapseBoxSeries, which only acts on rows that named their box, then
+       merged two genuinely separate deliveries to the same address because
+       both happened to be quantities rather than labels.
+    
+       A plain number is a count. Only "2 of 3" is a position. */
+    return { index: null, count: one(indexRaw) ?? one(countRaw) };
 }
 
 /** Digits only, so "(210) 555-0134" and "210-555-0134" compare equal. */
@@ -476,6 +489,7 @@ export function applyMapping(
         signatureRule: normalizeSignatureRule(raw('signatureRule')),
         authorisedSigners: raw('authorisedSigners'),
         refrigerated: normalizeBoolean(raw('refrigerated'), false),
+        boxNumber: labelled.index,
         controlled: normalizeBoolean(raw('controlled'), false),
     };
     return { row: { ...base, dedupeKey: dedupeKeyFor(base) }, serviceTypeRecognised: service.recognised };
@@ -536,6 +550,9 @@ export interface RowResult {
     issues: Issue[];
     /** True when an earlier row in this same file has the same dedupe key. */
     duplicateOfRow: number | null;
+    /** Sheet rows folded into this one because they are other boxes of the
+     *  same delivery. See collapseBoxSeries. */
+    mergedRows?: number[];
 }
 
 /**
@@ -544,9 +561,108 @@ export interface RowResult {
  * Duplicates against orders already in the database are a separate pass in
  * the router, because that needs a query; this keeps the pure part pure.
  */
+/* ───────────────────────────── THREE BOXES ARE ONE DELIVERY ──────────────
+ *
+ * A patient's prescription can be three boxes, labelled "1 of 3", "2 of 3",
+ * "3 of 3", one of them refrigerated, with the paperwork attached to exactly
+ * one of them. The courier makes ONE visit, collects ONE signature and
+ * hands over three boxes:
+ *
+ *   "You only need one set of papers because all the prescription numbers
+ *    are going to be on these three papers."
+ *
+ * Some pharmacies will put that on one spreadsheet row. Some will put it on
+ * three, one per box, because that is how their dispensing system prints.
+ * Nobody was asked which, on the day, and the answer may differ per counter.
+ *
+ * WHAT THREE ROWS USED TO PRODUCE. Three separate orders, each one carrying
+ * quantity 3 because each label said "of 3": nine packages expected at
+ * pickup, three signatures demanded at one door, three deliveries billed,
+ * for one patient receiving three boxes. The duplicate check did not catch
+ * it because each box had its own prescription number, so the dedupe keys
+ * differed.
+ *
+ * So rows that are visibly one delivery split across boxes are collapsed
+ * into one, and the preview says it happened. Collapsing is the conservative
+ * direction: the alternative failure is three deliveries where there is one,
+ * which overbills the client and sends a courier to a door expecting a
+ * signature that was already given.
+ *
+ * WHAT COUNTS AS A SERIES. Same recipient, same street address, same ZIP,
+ * and a label that numbered the box. The numbering is the whole signal: two
+ * ordinary rows for the same patient at the same address are left alone and
+ * handled by the duplicate check as before, because without a box number
+ * there is nothing to say they are not two genuine deliveries.
+ *
+ * WHAT THE SURVIVOR CARRIES. The strictest reading of every box, because a
+ * courier carrying three boxes of which one is refrigerated is carrying a
+ * refrigerated delivery, and one of which needs ID needs ID. Taking the
+ * first row's values would mean the handling of a delivery depending on
+ * which box the pharmacy happened to list first.
+ */
+export function collapseBoxSeries(results: RowResult[]): RowResult[] {
+    const keyOf = (r: ParsedRow) => [
+        r.recipientName.trim().toLowerCase(),
+        r.addressLine.trim().toLowerCase(),
+        r.zip,
+    ].join(' ');
+
+    /* Only rows that named their box, and only where more than one did for
+       the same place. A single "2 of 3" row is one row describing a
+       three-box delivery, which is already right. */
+    const groups = new Map<string, RowResult[]>();
+    for (const r of results) {
+        if (r.row.boxNumber === null) continue;
+        if (hasError(r.issues)) continue;
+        const k = keyOf(r.row);
+        const list = groups.get(k) ?? [];
+        list.push(r);
+        groups.set(k, list);
+    }
+
+    const absorbed = new Set<RowResult>();
+    for (const list of groups.values()) {
+        if (list.length < 2) continue;
+
+        /* The lowest-numbered box survives. Arbitrary but stable, and it is
+           usually the one the pharmacy attached the papers to. */
+        const ordered = [...list].sort((a, b) => (a.row.boxNumber ?? 0) - (b.row.boxNumber ?? 0));
+        const keep = ordered[0]!;
+        const rest = ordered.slice(1);
+        for (const r of rest) absorbed.add(r);
+
+        /* The strictest reading of every box in the set. */
+        keep.row.quantity = Math.max(...list.map((r) => r.row.quantity), list.length);
+        keep.row.refrigerated = list.some((r) => r.row.refrigerated);
+        keep.row.controlled = list.some((r) => r.row.controlled);
+        keep.row.idRequired = list.some((r) => r.row.idRequired);
+        if (list.some((r) => r.row.signatureRule === 'patient_only')) keep.row.signatureRule = 'patient_only';
+        else if (list.some((r) => r.row.signatureRule === 'adult')) keep.row.signatureRule = 'adult';
+        keep.row.authorisedSigners = keep.row.authorisedSigners
+            || (list.find((r) => r.row.authorisedSigners !== '')?.row.authorisedSigners ?? '');
+
+        keep.mergedRows = rest.map((r) => r.row.row);
+        keep.issues.push({
+            row: keep.row.row,
+            field: 'quantity',
+            code: 'boxes.merged',
+            severity: 'warning',
+            /* NO PATIENT NAME. Issue messages travel into logs and the
+               audit trail, and uh-import's own test asserts no row data
+               leaks into one. The row numbers say which rows without
+               saying who. */
+            message: `Rows ${ordered.map((r) => r.row.row).join(', ')} are the same delivery `
+                + `in ${ordered.length} boxes, so they become one delivery of `
+                + `${keep.row.quantity} packages. One visit, one signature.`,
+        });
+    }
+
+    return results.filter((r) => !absorbed.has(r));
+}
+
 export function parseRows(sheet: SheetData, mapping: Mapping, defaultState = 'TX'): RowResult[] {
     const seen = new Map<string, number>();
-    return sheet.rows.map((cells, i) => {
+    const parsed = sheet.rows.map((cells, i) => {
         const { row, serviceTypeRecognised } = applyMapping(
             sheet.headers, cells, mapping, sheet.rowNumbers[i] ?? i + 1, defaultState,
         );
@@ -569,6 +685,11 @@ export function parseRows(sheet: SheetData, mapping: Mapping, defaultState = 'TX
         }
         return { row, issues, duplicateOfRow };
     });
+
+    /* After duplicate detection, not before: a box series has to be
+       recognised as one delivery before anybody asks whether it duplicates
+       something, and the rows it absorbs leave with their duplicate flags. */
+    return collapseBoxSeries(parsed);
 }
 
 /** Which required fields the mapping does not cover. */
