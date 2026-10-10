@@ -337,6 +337,13 @@ export interface DocumentInfo {
     title: string;
     /** Shown in a reader's document properties. No patient data. */
     subject?: string;
+    /** Page size in points. Defaults to PAGE, which is US Letter portrait.
+     *
+     *  Added for the delivery ticket, which is 8.5 x 5.5in landscape --
+     *  the incumbent's shape, because their carbonless stock is continuous
+     *  pin-feed and a ticket is one frame off that roll. Everything else
+     *  this writer produces is Letter and says nothing. */
+    size?: { width: number; height: number };
 }
 
 /**
@@ -398,8 +405,9 @@ export function buildPdf(
         const used = page.imageNames().filter((n) => imageIds.has(n));
         const xobjects = used.length === 0 ? ''
             : `/XObject << ${used.map((n) => `/${n} ${imageIds.get(n)} 0 R`).join(' ')} >> `;
+        const media = info.size ?? PAGE;
         pageIds.push(add(
-            `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE.width} ${PAGE.height}] `
+            `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${round(media.width)} ${round(media.height)}] `
             + `/Resources << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >> ${xobjects}>> `
             + `/Contents ${contentId} 0 R >>`,
         ));

@@ -56,6 +56,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FORMS = process.argv[2] ?? path.resolve(HERE, '..', '..', 'docs', 'forms');
 const OUT_DOCKET = path.join(FORMS, 'izy-delivery-docket.pdf');
 const OUT_MANIFEST = path.join(FORMS, 'izy-collection-manifest.pdf');
+const OUT_TICKET = path.join(FORMS, 'izy-delivery-ticket.pdf');
 
 /* ───────────────────────────────────────────────────────── the page grid */
 
@@ -556,6 +557,214 @@ function manifestLead(page, top) {
     return y + 1;
 }
 
+/* ═══════════════════════════════ THE INCUMBENT'S TICKET ═══════════════
+ *
+ * Quick Courier's delivery ticket, field for field and in the same order,
+ * with Izy's letterhead on it. The goal is that nobody has to learn
+ * anything: a technician who has filled one of these in for years finds
+ * every box where their hand already goes.
+ *
+ * 8.5 x 5.5 INCHES LANDSCAPE, which is the incumbent's shape. The scan
+ * shows pin-feed sprocket holes along the top and bottom edges, so their
+ * stock is continuous carbonless and a ticket is one frame off that roll.
+ *
+ * TWO THINGS ARE NOT COPIED LITERALLY, and both are the owner's call
+ * recorded rather than a silent edit:
+ *
+ *   The service levels are Izy's. Ticking QUICKIE or 2 HOUR on an Izy
+ *   ticket names a service that does not exist and cannot be billed, so
+ *   the five boxes keep their position and become scheduled, stat, after
+ *   hour, re-attempt and return.
+ *
+ *   The charges table is marked IZY OFFICE USE ONLY. Ticket 5.12
+ *   deliberately stopped couriers seeing what a delivery bills at: a
+ *   driver who knows one address pays $12.50 and another $52.00 works the
+ *   round by the rate, and it is commercial terms no driver signed up to
+ *   carry to a patient's door.
+ */
+
+const TICKET = { width: 612, height: 396 };     // 8.5 x 5.5in
+const T = {
+    left: 16,
+    right: TICKET.width - 16,
+    top: TICKET.height - 14,
+    bottom: 14,
+};
+const TICKET_RED = { r: 0.70, g: 0.19, b: 0.10 };
+
+/** A labelled cell with a rule to write on, inside a boxed block. */
+function cell(page, x, y, w, label, { h = 15 } = {}) {
+    page.text(label.toUpperCase(), x + 2.5, y - 5.5, { size: 4.6, grey: SOFT });
+    page.line(x + 2.5, y - h + 2, x + w - 2.5, y - h + 2, { width: 0.4, grey: 0.78 });
+    addField('text', label, [x + 2.5, y - h + 3, x + w - 2.5, y - 6], { size: 7 });
+}
+
+/** A row of cells inside a bordered block, with hairlines between. */
+function cellRow(page, x, y, w, cols, { h = 15, top = false } = {}) {
+    const total = cols.reduce((n, c) => n + c.w, 0);
+    let cx = x;
+    if (top) page.line(x, y, x + w, y, { width: 0.4, grey: 0.78 });
+    cols.forEach((c, i) => {
+        const cw = (w * c.w) / total;
+        cell(page, cx, y, cw, c.label, { h });
+        if (i < cols.length - 1) page.line(cx + cw, y, cx + cw, y - h, { width: 0.4, grey: 0.78 });
+        cx += cw;
+    });
+    return y - h;
+}
+
+function ticketSheet(page) {
+    prefix = 'ticket';
+
+    /* ── masthead ───────────────────────────────────────────────────── */
+    let y = T.top;
+    page.text('IZY GLOBAL SERVICES', T.left, y - 14, { font: 'Helvetica-Bold', size: 17, rgb: IZY_GREEN });
+    page.text('500 Navarro St, 2nd Floor  •  San Antonio, Texas 78205', T.left, y - 23, { size: 6, grey: SOFT });
+    page.text('sales@izyglobalservices.com', T.left, y - 31, { size: 6, grey: SOFT });
+
+    const midX = T.left + 236;
+    page.text('832-715-8986', midX, y - 14, { font: 'Helvetica-Bold', size: 15, grey: INK });
+    const services = ['PHARMACY DELIVERY', 'SCHEDULED ROUTES', 'STAT & AFTER HOURS', 'COLD CHAIN', 'CUSTOM ROUTES'];
+    services.forEach((line, i) => {
+        page.text('◆ ' + line, midX, y - 24 - i * 7.2, { size: 5.4, grey: INK });
+    });
+
+    /* The stub: number in red, then the three times, exactly as theirs. */
+    const stubX = T.right - 150;
+    page.text('No.', stubX, y - 13, { font: 'Helvetica-Bold', size: 13, rgb: TICKET_RED });
+    addField('text', 'Ticket no', [stubX + 22, y - 16, T.right, y - 3], { size: 12 });
+    let sy = y - 22;
+    for (const label of ['Date', 'Pickup time', 'Delivery time']) {
+        page.rect(stubX, sy - 13, T.right - stubX, 13, { grey: RULE });
+        page.text(label.toUpperCase(), stubX + 3, sy - 9, { size: 5, grey: SOFT });
+        addField('text', label, [stubX + 52, sy - 12, T.right - 2, sy - 2], { size: 8 });
+        sy -= 13;
+    }
+
+    y = Math.min(y - 62, sy) - 4;
+    page.line(T.left, y, T.right, y, { width: 1.8, rgb: IZY_GREEN });
+    y -= 10;
+
+    /* ── columns ────────────────────────────────────────────────────── */
+    const levelsW = 62;
+    const rightW = 132;
+    const midL = T.left + levelsW + 8;
+    const midR = T.right - rightW - 8;
+    const midW = midR - midL;
+
+    /* Service ticks down the left, in the incumbent's position. */
+    let ly = y;
+    for (const label of ['Scheduled', 'Stat', 'After hour', 'Re-attempt', 'Return']) {
+        page.rect(T.left, ly - 8, 8, 8, { grey: INK });
+        addField('check', label, [T.left, ly - 8, T.left + 8, ly]);
+        page.text(label.toUpperCase(), T.left + 11, ly - 6.5, { font: 'Helvetica-Bold', size: 5.6, grey: INK });
+        ly -= 15;
+    }
+
+    /* Billing and reference. */
+    let my = y;
+    page.text('BILLING:', midL, my - 6.5, { font: 'Helvetica-Bold', size: 6, grey: INK });
+    let bx = midL + 32;
+    for (const label of ['Shipper', 'Recipient', '3rd party']) {
+        page.rect(bx, my - 8, 7.5, 7.5, { grey: INK });
+        addField('check', 'Billing ' + label, [bx, my - 8, bx + 7.5, my - 0.5]);
+        page.text(label, bx + 10, my - 6.5, { size: 6, grey: INK });
+        bx += 12 + textWidth(label, 'Helvetica', 6) + 10;
+    }
+    page.text('REFERENCE:', bx, my - 6.5, { font: 'Helvetica-Bold', size: 6, grey: INK });
+    const refX = bx + textWidth('REFERENCE:', 'Helvetica-Bold', 6) + 4;
+    page.line(refX, my - 8.5, midR, my - 8.5, { width: 0.5, grey: RULE });
+    addField('text', 'Reference', [refX, my - 8, midR, my - 0.5], { size: 7 });
+    my -= 14;
+
+    /* Shipper and recipient, each a bordered block with a banner. */
+    const parties = [['Shipper', 'Pharmacy contact'], ['Recipient', 'Who may sign']];
+    for (const [who, extra] of parties) {
+        const blockTop = my;
+        const h = 11 + 15 + 15;
+        page.rect(midL, blockTop - h, midW, h, { grey: RULE });
+        page.text(who.toUpperCase(), midL + 3, blockTop - 8, { font: 'Helvetica-Bold', size: 7, grey: INK });
+        page.line(midL, blockTop - 11, midL + midW, blockTop - 11, { width: 0.5, grey: RULE });
+        let ry2 = blockTop - 11;
+        ry2 = cellRow(page, midL, ry2, midW, [
+            { label: who + ' name', w: 2.1 }, { label: 'Address', w: 2.2 },
+            { label: 'City', w: 1 }, { label: 'State / ZIP', w: 1 },
+        ]);
+        cellRow(page, midL, ry2, midW, [
+            { label: who + ' phone (important)', w: 1 }, { label: extra, w: 1 },
+        ], { top: true });
+        my = blockTop - h - 5;
+    }
+
+    /* Pieces, description, weight. */
+    page.rect(midL, my - 15, midW, 15, { grey: RULE });
+    cellRow(page, midL, my, midW, [
+        { label: '# of pieces', w: 0.8 }, { label: 'Description', w: 3 }, { label: 'Weight', w: 0.9 },
+    ]);
+    my -= 20;
+
+    /* Special instructions, the big box. It takes whatever is left above
+       the two signature lines, so the ticket always ends flush. */
+    const notesH = Math.max(26, my - (T.bottom + 36));
+    page.rect(midL, my - notesH, midW, notesH, { grey: RULE });
+    page.text('SPECIAL INSTRUCTIONS', midL + 3, my - 7, { size: 4.8, grey: SOFT });
+    addField('text', 'Special instructions',
+        [midL + 3, my - notesH + 3, midL + midW - 3, my - 9], { size: 7, multiline: true });
+    my -= notesH + 5;
+
+    /* Third-party billing and C.O.D., then the declared value line. */
+    page.rect(midL, my - 15, midW, 15, { grey: RULE });
+    cellRow(page, midL, my, midW, [
+        { label: '3rd party billing', w: 1.7 }, { label: 'C.O.D.', w: 1 },
+    ]);
+    my -= 19;
+    page.text('$50 declared value unless specified, not to exceed $500.00.', midL, my - 4, { size: 4.8, grey: SOFT });
+    my -= 11;
+
+    /* The two signature lines, side by side as theirs are. */
+    const half = (midW - 12) / 2;
+    const signs = [['Received in good order (print)', midL], ['Return (print)', midL + half + 12]];
+    signs.forEach(([label, x]) => {
+        page.text(label.toUpperCase(), x, my - 5, { size: 4.8, grey: SOFT });
+        page.line(x, my - 15, x + half, my - 15, { width: 0.9, grey: RULE });
+        addField('text', label, [x, my - 14, x + half, my - 6], { size: 8 });
+    });
+
+    /* ── right column: driver, then services and charges ────────────── */
+    let ry = y;
+    for (const label of ['Driver name', 'Driver number']) {
+        page.rect(midR + 8, ry - 20, rightW, 20, { grey: RULE });
+        page.text(label.toUpperCase(), midR + 11, ry - 6, { size: 4.8, grey: SOFT });
+        addField('text', label, [midR + 11, ry - 18, midR + 8 + rightW - 3, ry - 8], { size: 8 });
+        ry -= 20;
+    }
+    ry -= 4;
+
+    const rows = ['Scheduled', 'Stat', 'Zone 1-5', '1604 / out of area',
+        'After hour', 'Re-attempt', 'Return', 'Wait time', 'Total'];
+    const rowH = 13;
+    const tableH = 12 + rows.length * rowH;
+    const colSplit = midR + 8 + rightW * 0.58;
+    page.rect(midR + 8, ry - tableH, rightW, tableH, { grey: RULE });
+    page.text('SERVICES', midR + 11, ry - 8, { size: 5, grey: SOFT });
+    page.text('CHARGES', colSplit + 3, ry - 8, { size: 5, grey: SOFT });
+    page.line(midR + 8, ry - 12, midR + 8 + rightW, ry - 12, { width: 0.5, grey: RULE });
+    page.line(colSplit, ry, colSplit, ry - tableH, { width: 0.4, grey: 0.78 });
+
+    rows.forEach((label, i) => {
+        const top = ry - 12 - i * rowH;
+        const last = label === 'Total';
+        if (i > 0) page.line(midR + 8, top, midR + 8 + rightW, top, { width: last ? 1 : 0.4, grey: last ? RULE : 0.82 });
+        page.text(label, midR + 11, top - 9, { size: 5.6, font: last ? 'Helvetica-Bold' : 'Helvetica', grey: INK });
+        addField('text', 'Charge ' + label, [colSplit + 2, top - rowH + 2, midR + 8 + rightW - 3, top - 2], { size: 7 });
+    });
+
+    /* Ticket 5.12: a courier does not see what a delivery bills at. */
+    page.text('IZY OFFICE USE ONLY', midR + 8, ry - tableH - 8, { size: 4.8, grey: SOFT });
+
+    return ry - tableH - 8;
+}
+
 /* ─── MEASURE, THEN PLACE. The parts are not equal thirds.
  *
  * Splitting a sheet evenly put the cut line 3pt inside the driver part's
@@ -640,5 +849,24 @@ buildSheet({
     ],
 });
 
-console.log(`
-  Both sheets are ${PAGE.width} x ${PAGE.height} points (US Letter).`);
+/* The ticket is one frame, not a sheet of tear-off parts, so it does not
+   go through buildSheet: there is nothing to measure against a cut line
+   and the page itself is a different size. */
+resetFields();
+collecting = true;
+const ticketPage = new Page();
+ticketSheet(ticketPage);
+const ticketPdf = buildPdf([ticketPage], {
+    title: 'Izy Delivery Ticket',
+    subject: "The incumbent's delivery ticket, field for field, in Izy letterhead",
+    size: TICKET,
+}, new Date(), [], FIELDS);
+fs.writeFileSync(OUT_TICKET, ticketPdf);
+console.log('\nIzy Delivery Ticket');
+console.log(`    ${TICKET.width} x ${TICKET.height} points (8.5 x 5.5in landscape)`);
+console.log(`    ${FIELDS.length} fillable fields `
+    + `(${FIELDS.filter((f) => f.kind === 'text').length} text, `
+    + `${FIELDS.filter((f) => f.kind === 'check').length} tick boxes)`);
+console.log(`    ${ticketPdf.length} bytes -> ${OUT_TICKET}`);
+
+console.log(`\nThe docket and manifest are ${PAGE.width} x ${PAGE.height} points (US Letter).`);
