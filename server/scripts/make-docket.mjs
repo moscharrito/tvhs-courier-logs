@@ -30,8 +30,17 @@
  * marker. They are two crossed blades and two rings, drawn with the same
  * polyline the signature capture uses.
  *
- *   npx tsx scripts/make-docket.mjs                  # writes to docs/forms/
- *   npx tsx scripts/make-docket.mjs path/to/out.pdf
+ * ─────────────────────────────────────────────────────────────────────────
+ * TWO SHEETS, TWO HANDOVERS.
+ *
+ *   Collection manifest   pharmacy -> site lead, once per pickup window
+ *   Delivery docket       site lead -> driver -> patient, once per delivery
+ *
+ * The pharmacy is not party to the second one: their record is the manifest
+ * and their own list, and the docket starts where the lead takes custody.
+ *
+ *   npx tsx scripts/make-docket.mjs              # writes both to docs/forms/
+ *   npx tsx scripts/make-docket.mjs path/to/dir
  */
 
 import fs from 'node:fs';
@@ -296,9 +305,16 @@ function table(page, top, label, columns, rows, { strong = false } = {}) {
 
 /* ─────────────────────────────────────────────────────────── the parts */
 
-function partPharmacy(page, top) {
+/* THE DOCKET COVERS THE SECOND HANDOVER, not the first.
+ *
+ * Pharmacy to site lead is the collection manifest, signed once for the
+ * whole pickup. This sheet is site lead -> driver -> patient, so its first
+ * part belongs to the LEAD: the pharmacy's record is the manifest plus
+ * their own list, and they are not party to what happens after the lead
+ * walks out of the building. */
+function partLead(page, top) {
     let y = letterhead(page, top, {
-        role: 'For pharmacy staff', band: BAND_PHARMACY,
+        role: 'For site lead', band: BAND_PHARMACY,
         kind: 'Delivery docket', part: 'Part 1 of 3',
     });
 
@@ -319,16 +335,24 @@ function partPharmacy(page, top) {
     }
     y = hTop - 30 - 8;
 
-    y = stage(page, y, 'Collected at the counter', 'Pharmacy keeps this part as proof of handover.');
+    y = stage(page, y, 'Dispatched to a driver', 'The lead keeps this part: what went out, and with whom.');
 
+    /* NO SIGNATURE HERE, ON PURPOSE. Both handovers this part sits between
+       are signed once in bulk -- the pharmacy to the lead on the collection
+       manifest, the lead to the driver in that manifest's driver table.
+       Signing again per delivery is 241 signatures at Robert B. Green
+       inside an 11:00 window, which becomes a blur of initials or nothing.
+       What this records is the join: which manifest it arrived on and which
+       driver took it, which is what lets one package be traced from a
+       counter to a door. */
     y = fields(page, y, [
-        { label: 'Courier name (print)', w: 1.2 },
-        { label: 'Courier signature — I received the packages above', w: 1.6 },
+        { label: 'Manifest no.', w: 1 },
+        { label: 'Driver it was given to (print)', w: 1.8 },
         { label: 'Time', w: 0.7 },
     ]);
 
-    footer(page, y + 1, 'PHARMACY COPY. Keep at the counter.',
-        'Late list or a change before pickup: ring dispatch.');
+    footer(page, y + 1, 'SITE LEAD COPY. Keep until the round is closed.',
+        'A change after collection: ring dispatch.');
     return y + 1;
 }
 
@@ -600,7 +624,7 @@ buildSheet({
     title: 'Izy Delivery Docket',
     subject: 'Three-part delivery docket for the University Health pharmacy contract',
     parts: [
-        { name: 'pharmacy', draw: partPharmacy },
+        { name: 'lead', draw: partLead },
         { name: 'driver', draw: partDriver },
         { name: 'patient', draw: partPatient },
     ],

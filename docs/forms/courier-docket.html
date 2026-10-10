@@ -158,7 +158,7 @@ body {
     margin-top: 3px;
     white-space: nowrap;
 }
-.forwho.pharmacy { background: var(--izy); }
+.forwho.lead { background: var(--izy); }
 .forwho.driver   { background: var(--ink); }
 .forwho.patient  { background: #4a5a52; }
 
@@ -303,10 +303,11 @@ body {
 <div class="wrap">
   <div class="about">
     <h1>Izy Delivery Docket</h1>
-    <p>A blank pad. One sheet per delivery, filled in by hand, cut along the scissor lines in
-      order:</p>
+    <p>A blank pad, one sheet per delivery, covering the second of the two handovers:
+      <strong>site lead to driver to patient</strong>. The first handover, pharmacy to site lead,
+      is the collection manifest. Cut along the scissor lines in order:</p>
     <ul>
-      <li><strong>For pharmacy staff</strong> — stays at the counter when the courier collects.</li>
+      <li><strong>For site lead</strong> — the lead keeps it: what went out, and with whom.</li>
       <li><strong>For driver</strong> — stays in the van and carries the handover record.</li>
       <li><strong>For patient</strong> — left with the medication, or brought back and signed off
         by the pharmacy if the delivery failed.</li>
@@ -330,7 +331,7 @@ body {
         </div>
         <div class="docket">
           <div class="docket-kind">Delivery Docket</div>
-          <div class="forwho pharmacy">For pharmacy staff</div>
+          <div class="forwho lead">For site lead</div>
           <div class="copy-of">Part 1 of 3</div>
         </div>
       </div>
@@ -361,25 +362,29 @@ body {
       </div>
 
       <div class="stage">
-        <span class="stage-what">Collected at the counter</span>
-        <span class="stage-note">Pharmacy keeps this part as proof of handover.</span>
+        <span class="stage-what">Dispatched to a driver</span>
+        <span class="stage-note">The lead keeps this part: what went out, and with whom.</span>
       </div>
 
-      <!-- THE SIGNATURE MOVED TO THE COLLECTION MANIFEST.
-          It was a signature line here, which meant the site lead signing
-          once per delivery -- 241 times at Robert B. Green inside an 11:00
-          window. One manifest covers the whole collection; this records
-          which manifest, so a docket can still be traced back to the
-           handover that brought it. -->
+      <!-- NO SIGNATURE HERE, ON PURPOSE.
+          Both handovers this part sits between are already signed once, in
+          bulk: the pharmacy to the lead on the collection manifest, and the
+          lead to the driver in the manifest's driver table. Signing again
+          per delivery would be 241 signatures at Robert B. Green inside an
+          11:00 window, which becomes a blur of initials or nothing at all.
+          
+          What this records is the join: which manifest it came in on, and
+          which driver took it. That is what lets one package be traced from
+          the counter to a door. -->
       <div class="row r-sig">
-        <div class="f"><span class="lbl">Collected on manifest no.</span><div class="val"></div></div>
-        <div class="f"><span class="lbl">Izy site lead who collected it (print)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Manifest no.</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Driver it was given to (print)</span><div class="val"></div></div>
         <div class="f"><span class="lbl">Time</span><div class="val"></div></div>
       </div>
 
       <div class="foot">
-        <span><strong>Pharmacy copy.</strong> Keep at the counter, with the day's manifest.</span>
-        <span>Late list or a change before pickup: ring dispatch on +1 (832) 715 8986.</span>
+        <span><strong>Site lead copy.</strong> Keep until the round is closed.</span>
+        <span>A change after collection: ring dispatch on +1 (832) 715 8986.</span>
       </div>
     </section>
 

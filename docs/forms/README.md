@@ -1,9 +1,32 @@
-# The delivery docket
+# The paper forms
 
-`courier-docket.html` is the three-part docket: one US Letter sheet, cut along the
-scissor lines into **For pharmacy staff**, **For driver**, **For patient**.
+Two sheets, for the two handovers a package makes between a dispensary shelf and
+a patient's door.
 
-**It is printed blank and filled in by hand.** That is the decision as of
+| | Between | Sheet |
+|---|---|---|
+| 1 | Pharmacy → site lead, once per pickup window | `collection-manifest.html` — pharmacy copy, site lead copy |
+| 2 | Site lead → driver → patient, once per delivery | `courier-docket.html` — site lead, driver, patient |
+
+**The pharmacy is not party to the second one.** Their record is the manifest plus
+their own daily list, and the docket starts where the lead takes custody. That is
+a change from how the incumbent works: today the pharmacy gets a copy of a form
+per package, and one counter described it as *"one's for patient, one's for us,
+and one's for driver"*. If they expect that on 1 November, the lead's part is the
+one to hand over — it carries the same patient, Rx and handling.
+
+**Signatures are taken once, in bulk, never per delivery.** The pharmacy signs the
+manifest for the whole collection; the lead signs each driver out in the
+manifest's driver table. Robert B. Green runs 241 deliveries inside an 11:00
+window, and a signature per package there is a blur of initials or nothing at
+all. The docket's first part records the join instead — which manifest it arrived
+on and which driver took it — which is what traces one package from a counter to
+a door.
+
+Both are US Letter, blank, fillable, and `npm run make:docket -w server` builds
+the PDFs from the HTML designs.
+
+**They are printed blank and filled in by hand.** That is the decision as of
 10 October 2026 and it is the right one for go-live: it needs no app on a
 counter, no printer at a pharmacy, and nothing to go wrong at 11am on
 1 November. What follows is how it would be automated later, written down now
