@@ -1,0 +1,354 @@
+<title>Izy Collection Manifest</title>
+<style>
+/* Layout: one US Letter sheet, two tear-off parts -- the pharmacy keeps one,
+   the lead keeps the other. No patient copy: nobody outside the counter and
+   the van is party to a collection.
+
+   Same visual language as courier-docket.html, deliberately: they are used
+   together at the same counter in the same ten minutes. */
+:root {
+    --paper: #ffffff;
+    --desk: #e7e5e0;
+    --ink: #14160f;
+    --ink-soft: #5c6152;
+    --rule: #6f7563;
+    --rule-faint: #c9cdbe;
+    --izy: #1b5e3f;
+    --alert: #8c2f12;
+    --tint: #f1f3ec;
+
+    --display: 'Archivo', 'Arial Narrow', system-ui, sans-serif;
+    --body: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+    color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    background: var(--desk);
+    color: var(--ink);
+    font-family: var(--body);
+    margin: 0;
+    padding-block: 24px;
+    padding-left: 16px;
+    padding-right: 16px;
+}
+.wrap { max-width: 8.5in; margin: 0 auto; }
+
+.sheet {
+    background: var(--paper);
+    width: 100%;
+    max-width: 8.5in;
+    margin: 0 auto;
+    padding: 0.3in 0.35in;
+    box-shadow: 0 1px 2px rgba(0,0,0,.14), 0 10px 30px rgba(0,0,0,.10);
+    display: flex;
+    flex-direction: column;
+}
+
+.part { padding-block: 6px 8px; }
+.part:first-of-type { padding-top: 0; }
+
+/* The cut line, built from real elements. An <hr> has overflow:hidden in
+   the UA stylesheet, which clips pseudo-element scissors away silently. */
+.tear { display: flex; align-items: center; gap: 7px; margin: 0; }
+.snip {
+    font-family: 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans Symbols 2', sans-serif;
+    font-size: 15px; line-height: 1; color: var(--ink); flex: none;
+}
+.snip.flip { transform: scaleX(-1); }
+.dash { flex: 1; height: 0; border-top: 1.5px dashed var(--rule); min-width: 0; }
+
+/* ─── letterhead ─────────────────────────────────────────────────── */
+
+.head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 12px; border-bottom: 2.5px solid var(--izy); padding-bottom: 3px;
+}
+.wordmark {
+    font-family: var(--display); font-weight: 700; font-size: 14.5px;
+    letter-spacing: .055em; text-transform: uppercase; color: var(--izy); line-height: 1.05;
+}
+.tagline {
+    font-size: 7.5px; color: var(--ink-soft); letter-spacing: .03em;
+    margin-top: 2px; text-transform: uppercase;
+}
+.tagline.contact { color: var(--ink); font-weight: 600; margin-top: 1px; white-space: nowrap; }
+.docket { text-align: right; flex: none; }
+.docket-kind {
+    font-family: var(--display); font-weight: 700; font-size: 11px;
+    letter-spacing: .1em; text-transform: uppercase; line-height: 1.1;
+}
+.forwho {
+    display: inline-block; font-family: var(--display); font-weight: 700;
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: #fff; padding: 3px 9px; margin-top: 3px; white-space: nowrap;
+}
+.forwho.pharmacy { background: var(--izy); }
+.forwho.lead { background: var(--ink); }
+.copy-of {
+    font-size: 8px; color: var(--ink-soft); text-transform: uppercase;
+    letter-spacing: .07em; margin-top: 2px;
+}
+
+/* ─── fields ─────────────────────────────────────────────────────── */
+
+.row { display: grid; gap: 0 14px; margin-top: 5px; }
+.r-4 { grid-template-columns: 1.6fr 1fr 1fr .9fr; }
+.r-3 { grid-template-columns: 1.4fr 1.2fr 1fr; }
+.r-sig { grid-template-columns: 1.4fr 1.6fr .8fr; }
+
+.f { min-width: 0; }
+.lbl {
+    font-size: 7.5px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--ink-soft); font-weight: 600; display: block; margin-bottom: 1px;
+}
+.val { border-bottom: 1px solid var(--rule); min-height: 19px; }
+
+/* ─── the counts, which are the point of the sheet ───────────────── */
+
+.counts {
+    margin-top: 6px; border: 1.5px solid var(--izy); padding: 5px 7px;
+}
+.counts .lbl { color: var(--izy); }
+.count-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 12px; margin-top: 3px;
+}
+.count .n {
+    border-bottom: 1.5px solid var(--rule); min-height: 22px;
+}
+.count .cap {
+    font-size: 7px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--ink-soft); font-weight: 600; margin-top: 2px; display: block;
+}
+.count.key .n { border-bottom-color: var(--alert); border-bottom-width: 2px; }
+.count.key .cap { color: var(--alert); }
+
+/* ─── exceptions ─────────────────────────────────────────────────── */
+
+.exceptions { margin-top: 6px; border: 1.5px solid var(--rule-faint); padding: 4px 6px; }
+.exceptions .lbl { color: var(--ink-soft); }
+table.ex { width: 100%; border-collapse: collapse; margin-top: 3px; }
+table.ex th {
+    font-size: 6.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--ink-soft); font-weight: 600; text-align: left; padding: 0 0 1px;
+}
+table.ex td { border-bottom: 1px solid var(--rule); height: 16px; }
+table.ex td + td { padding-left: 8px; }
+
+/* ─── stage strip and footer ─────────────────────────────────────── */
+
+.stage {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    background: var(--tint); padding: 3px 7px; margin-top: 6px; border-left: 3px solid var(--izy);
+}
+.stage-what {
+    font-family: var(--display); font-size: 9.5px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+}
+.stage-note { font-size: 8.5px; color: var(--ink-soft); text-align: right; }
+
+.foot {
+    margin-top: 4px; font-size: 8px; color: var(--ink-soft);
+    display: flex; justify-content: space-between; gap: 10px;
+}
+.foot strong { color: var(--ink); font-weight: 600; }
+
+/* ─── the note above the sheet, screen only ──────────────────────── */
+
+.about { max-width: 8.5in; margin: 0 auto 18px; font-size: 13px; line-height: 1.5; color: #43483b; }
+.about h1 {
+    font-family: var(--display); font-size: 20px; letter-spacing: -.01em;
+    margin: 0 0 6px; color: var(--ink); text-wrap: balance;
+}
+.about p { margin: 0 0 8px; }
+.about ul { margin: 0 0 8px; padding-left: 18px; }
+.about li { margin-bottom: 3px; }
+
+@media print {
+    body { background: #fff; padding: 0; }
+    .about { display: none; }
+    .sheet { box-shadow: none; max-width: none; padding: 0.3in 0.35in; }
+    @page { size: letter portrait; margin: 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+@media (max-width: 760px) {
+    .r-4, .r-3, .r-sig { grid-template-columns: 1fr 1fr; }
+    .count-grid { grid-template-columns: 1fr 1fr; }
+    .sheet { padding: 14px; }
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<div class="wrap">
+  <div class="about">
+    <h1>Izy Collection Manifest</h1>
+    <p>One sheet per pharmacy per pickup window — so Discharge needs two a day, 11:00 and 13:00.
+      Signed once by the site lead who collects everything, instead of once per delivery.</p>
+    <ul>
+      <li><strong>It does not re-list the deliveries.</strong> The pharmacy's own list already
+        enumerates them, and handwriting 241 Rx references would be worse than 241 signatures.
+        This signs <em>against</em> that list and records the counts.</li>
+      <li><strong>The counted figure is written by the lead, not copied.</strong> Two numbers that
+        must agree, written by two people, is the whole control. A pre-filled count is a count
+        nobody checked.</li>
+      <li><strong>Refrigerated is counted separately</strong>, because the cooler is the thing that
+        gets missed and warm arrivals are a live complaint about the incumbent.</li>
+    </ul>
+    <p>Prints on US Letter. Reads correctly in black and white.</p>
+  </div>
+
+  <div class="sheet">
+
+    <!-- ══════════════════ PART 1 · PHARMACY ══════════════════ -->
+    <section class="part">
+      <div class="head">
+        <div>
+          <div class="wordmark">Izy Global Services LLC</div>
+          <div class="tagline">Pharmacy Delivery Service · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</div>
+          <div class="tagline contact">Dispatch +1 (832) 715 8986 · freights@izymovers.com</div>
+        </div>
+        <div class="docket">
+          <div class="docket-kind">Collection Manifest</div>
+          <div class="forwho pharmacy">For pharmacy staff</div>
+          <div class="copy-of">Part 1 of 2</div>
+        </div>
+      </div>
+
+      <div class="row r-4">
+        <div class="f"><span class="lbl">Pharmacy</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Date</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Pickup window</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Manifest no.</span><div class="val"></div></div>
+      </div>
+
+      <div class="row r-3">
+        <div class="f"><span class="lbl">Izy site lead collecting (print)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Pharmacy list this covers — date and time sent</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Drivers it is split between</span><div class="val"></div></div>
+      </div>
+
+      <div class="counts">
+        <span class="lbl">Counted at the counter — the pharmacy writes the first two, the lead writes the third</span>
+        <div class="count-grid">
+          <div class="count"><div class="n"></div><span class="cap">Deliveries on the list</span></div>
+          <div class="count"><div class="n"></div><span class="cap">Packages expected</span></div>
+          <div class="count key"><div class="n"></div><span class="cap">Packages counted by the lead</span></div>
+          <div class="count key"><div class="n"></div><span class="cap">Of which refrigerated</span></div>
+        </div>
+      </div>
+
+      <div class="exceptions">
+        <span class="lbl">Anything on the list not handed over, or handed over and not on it</span>
+        <table class="ex">
+          <thead><tr>
+            <th style="width:22%">Rx reference</th>
+            <th style="width:18%">Patient initials</th>
+            <th style="width:12%">Packages</th>
+            <th>What happened</th>
+          </tr></thead>
+          <tbody>
+            <tr><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="stage">
+        <span class="stage-what">Handed over at the counter</span>
+        <span class="stage-note">Pharmacy keeps this part. One signature covers the whole collection.</span>
+      </div>
+
+      <div class="row r-sig">
+        <div class="f"><span class="lbl">Izy site lead signature — I collected the packages counted above</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Pharmacy staff signature</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Time</span><div class="val"></div></div>
+      </div>
+
+      <div class="foot">
+        <span><strong>Pharmacy copy.</strong> Keep with the day's list.</span>
+        <span>If the counts disagree, write why above before anything leaves.</span>
+      </div>
+    </section>
+
+    <div class="tear" aria-hidden="true"><span class="snip">&#9986;&#xFE0E;</span><span class="dash"></span><span class="snip flip">&#9986;&#xFE0E;</span></div>
+
+    <!-- ══════════════════ PART 2 · LEAD ══════════════════ -->
+    <section class="part">
+      <div class="head">
+        <div>
+          <div class="wordmark">Izy Global Services LLC</div>
+          <div class="tagline">Pharmacy Delivery Service · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</div>
+          <div class="tagline contact">Dispatch +1 (832) 715 8986 · freights@izymovers.com</div>
+        </div>
+        <div class="docket">
+          <div class="docket-kind">Collection Manifest</div>
+          <div class="forwho lead">For site lead</div>
+          <div class="copy-of">Part 2 of 2</div>
+        </div>
+      </div>
+
+      <div class="row r-4">
+        <div class="f"><span class="lbl">Pharmacy</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Date</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Pickup window</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Manifest no.</span><div class="val"></div></div>
+      </div>
+
+      <div class="row r-3">
+        <div class="f"><span class="lbl">Izy site lead collecting (print)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Pharmacy list this covers — date and time sent</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Drivers it is split between</span><div class="val"></div></div>
+      </div>
+
+      <div class="counts">
+        <span class="lbl">Counted at the counter</span>
+        <div class="count-grid">
+          <div class="count"><div class="n"></div><span class="cap">Deliveries on the list</span></div>
+          <div class="count"><div class="n"></div><span class="cap">Packages expected</span></div>
+          <div class="count key"><div class="n"></div><span class="cap">Packages counted by the lead</span></div>
+          <div class="count key"><div class="n"></div><span class="cap">Of which refrigerated</span></div>
+        </div>
+      </div>
+
+      <div class="exceptions">
+        <span class="lbl">Handed to drivers — who took which part of the round</span>
+        <table class="ex">
+          <thead><tr>
+            <th style="width:34%">Driver (print)</th>
+            <th style="width:16%">Packages</th>
+            <th style="width:20%">ZIPs or zones</th>
+            <th>Driver signature</th>
+          </tr></thead>
+          <tbody>
+            <tr><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="stage">
+        <span class="stage-what">Distributed to the drivers</span>
+        <span class="stage-note">Refrigerated into a cooler before anything else leaves the building.</span>
+      </div>
+
+      <div class="row r-sig">
+        <div class="f"><span class="lbl">Izy site lead signature</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Returned to dispatch — date and time</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Time left site</span><div class="val"></div></div>
+      </div>
+
+      <div class="foot">
+        <span><strong>Site lead copy.</strong> Back to dispatch at the end of the round.</span>
+        <span>Izy Global Services LLC · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</span>
+      </div>
+    </section>
+
+  </div>
+</div>
