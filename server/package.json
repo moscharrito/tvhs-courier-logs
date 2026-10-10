@@ -32,7 +32,8 @@
     "dry-run": "node scripts/dry-run.mjs",
     "seed:demo-uh": "node scripts/seed-demo.mjs",
     "create:portals": "node scripts/create-pharmacy-portals.mjs",
-    "make:docket": "tsx scripts/make-docket.mjs"
+    "make:docket": "tsx scripts/make-docket.mjs",
+    "portal-upload": "node scripts/portal-upload.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
