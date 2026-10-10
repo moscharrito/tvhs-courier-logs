@@ -82,19 +82,35 @@ beforeEach(() => {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
 });
 
+/* WHAT THE HEADING IS NOW.
+ *
+ * The page used to be headed "Deliveries" with the counter's name in grey
+ * underneath. For an account scoped to ONE pharmacy that is the wrong way
+ * round -- a pharmacist opening their own portal should see their pharmacy
+ * first -- so the counter's name is the h1 and "Deliveries for <date>" is the
+ * subtitle. An account with none or several keeps the generic word, because
+ * no single counter is the subject.
+ *
+ * Nearly every test here waits for the page to settle, so the wait goes
+ * through one helper rather than being spelled out thirty times. */
+const COUNTER = 'University Hospital Discharge Pharmacy';
+const settled = (name = COUNTER) => screen.findByRole('heading', { name });
+
 describe('ClientPortal', () => {
     it('leads with today in four numbers', async () => {
         renderPortal();
-        expect(await screen.findByRole('heading', { name: 'Deliveries' })).toBeInTheDocument();
+        expect(await settled()).toBeInTheDocument();
         const today = screen.getByRole('heading', { name: 'Today' }).closest('.izy-card') as HTMLElement;
         expect(within(today).getByText('12')).toBeInTheDocument();
         expect(within(today).getByText('still out')).toBeInTheDocument();
         expect(within(today).getByText('not delivered')).toBeInTheDocument();
     });
 
-    it('names the pharmacy the account is scoped to', async () => {
+    it('names the pharmacy the account is scoped to, as the heading', async () => {
+        /* Stronger than it was: the counter's name is no longer merely
+           somewhere on the page, it is what the page is called. */
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        expect(await settled()).toBeInTheDocument();
         expect(screen.getAllByText(/Discharge Pharmacy/).length).toBeGreaterThan(0);
     });
 
@@ -107,7 +123,7 @@ describe('ClientPortal', () => {
                 ],
             }),
         }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         const names = screen.getAllByRole('row').slice(1).map((r) => r.textContent ?? '');
         expect(names[0]).toContain('Failed Person');
         expect(names[0]).toContain('could not get access'.replace('could not get access', 'no access'));
@@ -119,7 +135,7 @@ describe('ClientPortal', () => {
            as the box: a pharmacist who types a patient's name and gets
            nothing will otherwise assume the portal is broken. */
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         expect(screen.getByLabelText('Search')).toBeInTheDocument();
         expect(screen.queryByLabelText(/patient name/i)).not.toBeInTheDocument();
         expect(screen.getByText(/not searchable/)).toBeInTheDocument();
@@ -127,7 +143,7 @@ describe('ClientPortal', () => {
 
     it('shows the proof of delivery for one delivery on request', async () => {
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
 
         const proof = await screen.findByRole('region', { name: /Proof of delivery for Ines Vargas/ });
@@ -141,7 +157,7 @@ describe('ClientPortal', () => {
 
     it('offers the proof of delivery as a document', async () => {
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
 
         const link = await screen.findByRole('link', { name: 'Open the proof of delivery' });
@@ -157,7 +173,7 @@ describe('ClientPortal', () => {
         renderPortal(routes({
             [`GET ${BASE}/orders/21`]: detail({ photo: { available: true, reason: '' } }),
         }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
 
         const img = await screen.findByRole('img', { name: /delivery location for Ines Vargas/i });
@@ -172,7 +188,7 @@ describe('ClientPortal', () => {
                 photo: { available: false, reason: 'A photograph was taken at the door. File storage is not configured on this server, so it cannot be shown.' },
             }),
         }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
 
         expect(await screen.findByText(/File storage is not configured/i)).toBeInTheDocument();
@@ -185,7 +201,7 @@ describe('ClientPortal', () => {
         const withoutPhoto = detail();
         delete (withoutPhoto as Record<string, unknown>)['photo'];
         renderPortal(routes({ [`GET ${BASE}/orders/21`]: withoutPhoto }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
 
         expect(await screen.findByRole('link', { name: 'Open the proof of delivery' })).toBeInTheDocument();
@@ -196,14 +212,15 @@ describe('ClientPortal', () => {
             [`GET ${BASE}/summary`]: summary({ pharmacies: [], total: 0, outstanding: 0, delivered: 0, notDelivered: 0, notes: ['No pharmacies are assigned to this account yet. Ask Izy dispatch to set them up.'] }),
             [`GET ${BASE}/orders*`]: list({ pharmacies: [], orders: [], notes: ['No pharmacies are assigned to this account yet. Ask Izy dispatch to set them up.'] }),
         }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        /* No counter to name, so the generic heading is the right one. */
+        await settled('Deliveries');
         expect(screen.getByText(/No pharmacies are assigned to this account yet/)).toBeInTheDocument();
         expect(screen.getByText('Nothing for this day.')).toBeInTheDocument();
     });
 
     it('warns when a range was cut short rather than quietly showing part of it', async () => {
         renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ truncated: true }) }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         expect(screen.getByText(/Showing the first 500/)).toBeInTheDocument();
     });
 
@@ -239,7 +256,7 @@ describe('staying current', () => {
 
     it('reloads on demand without waiting for the timer', async () => {
         const { calls } = renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         const before = calls.filter((c) => c.includes('/client/orders')).length;
         fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
         await waitFor(() => {
@@ -295,7 +312,7 @@ describe('an account covering several pharmacies', () => {
         /* A pharmacist at one counter should never see a section header that
            only ever says their own name. */
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         expect(screen.queryByRole('button', { name: /University Hospital Discharge Pharmacy/ })).toBeNull();
     });
 });
@@ -329,7 +346,7 @@ describe('opening the figures at the top', () => {
            pharmacy or a reference would show a subset of the figure, and
            there is no way for the reader to tell which of the two is wrong. */
         const mocked = renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
 
         fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'RX-9999' } });
         await waitFor(() => expect(mocked.calls.some((u) => u.includes('q=RX-9999'))).toBe(true));
@@ -345,7 +362,7 @@ describe('opening the figures at the top', () => {
     it('does not offer a nought as something to open', async () => {
         /* A link to no rows teaches somebody the page is unreliable. */
         renderPortal(routes({ [`GET ${BASE}/summary`]: summary({ notDelivered: 0 }) }));
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         expect(screen.queryByRole('button', { name: /Show the 0 not delivered/ })).toBeNull();
     });
 
@@ -361,7 +378,7 @@ describe('the link to sending a list', () => {
            worse than no link: a pharmacist who follows it and is turned away
            learns that the portal is unreliable. */
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         expect(screen.queryByRole('link', { name: /Send a list/i })).toBeNull();
     });
 
@@ -423,7 +440,7 @@ describe('arriving from the performance page', () => {
 
     it('says nothing about filters when none are applied', async () => {
         renderPortal();
-        await screen.findByRole('heading', { name: 'Deliveries' });
+        await settled();
         expect(screen.queryByText(/^Showing/)).toBeNull();
     });
 });

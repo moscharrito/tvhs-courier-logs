@@ -236,14 +236,36 @@ export function ClientPortal() {
 
     return (
         <>
-            <h1>Deliveries</h1>
-            <p className="izy-sub">
-                {summary.pharmacies.map((p) => p.name).join(', ') || 'No pharmacies assigned'}
-                {' · '}{summary.serviceDate}
-                {/* Named, because every time below it is in this zone and the
-                    reader may not be. */}
-                {' · '}{summary.timezone}
-            </p>
+            {/* THE COUNTER'S NAME IS THE HEADING when there is one counter.
+            
+                It read "Deliveries", with the pharmacy demoted to grey text
+                underneath, which is the right way round for the contract
+                manager looking at eight of them and the wrong way round for
+                Robert B. Green looking at their own. A pharmacist opening
+                their portal should see their pharmacy's name first; it is
+                the difference between their screen and a filtered view of
+                ours. Eight counters keep the generic heading, because no one
+                of them is the subject. */}
+            {summary.pharmacies.length === 1 ? (
+                <>
+                    <h1>{summary.pharmacies[0]!.name}</h1>
+                    <p className="izy-sub">
+                        Deliveries for {summary.serviceDate}
+                        {/* Named, because every time below it is in this zone
+                            and the reader may not be. */}
+                        {' · '}{summary.timezone}
+                    </p>
+                </>
+            ) : (
+                <>
+                    <h1>Deliveries</h1>
+                    <p className="izy-sub">
+                        {summary.pharmacies.map((p) => p.name).join(', ') || 'No pharmacies assigned'}
+                        {' · '}{summary.serviceDate}
+                        {' · '}{summary.timezone}
+                    </p>
+                </>
+            )}
 
             {/* Karthik Munnam's reporting list, one click away rather than a
                 workbook somebody has to email them. */}
@@ -450,7 +472,18 @@ export function ClientPortal() {
                     })
                 ) : (
                     <>
-                        <DeliveryTable rows={pagedRows.rows} clock={clock} open={open} setOpen={setOpen} showPharmacy />
+                        {/* Only for an account that HAS more than one counter.
+                            It was passed unconditionally, so Robert B. Green
+                            got a column repeating "University Health Robert
+                            B. Green Pharmacy" on every row -- the widest
+                            column on the page, carrying the same words as the
+                            heading above it, on the screen they came to read.
+                            The prop's own comment always said this; the call
+                            site did not honour it. */}
+                        <DeliveryTable
+                            rows={pagedRows.rows} clock={clock} open={open} setOpen={setOpen}
+                            showPharmacy={summary.pharmacies.length > 1}
+                        />
                         <Pager of={pagedRows} noun="deliveries" />
                     </>
                 )}

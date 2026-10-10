@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
 import { initials } from '../lib/initials';
+import { counterName, isPharmacyOnly, projectHref } from '../lib/pharmacy';
 import { rememberedFlag, rememberFlag } from '../lib/remember';
 
 /* ROLE_LABEL used to sit here, declared and never read. It was left behind
@@ -37,6 +38,9 @@ export function Layout() {
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const [collapsed, setCollapsed] = useState(() => rememberedFlag(RAIL, false));
+    /* A pharmacy counter gets its own rail. See lib/pharmacy.ts for why this
+       is a shared answer rather than a check made here. */
+    const pharmacy = isPharmacyOnly(projects);
 
     const toggleRail = useCallback(() => {
         setCollapsed((was) => {
@@ -76,7 +80,15 @@ export function Layout() {
         <div className={`izy${collapsed ? ' is-collapsed' : ''}`}>
             <aside className="izy-side">
                 <div className="izy-side-top">
-                    <div className="izy-brand">TAG<small>Izy Global Services LLC</small></div>
+                    {/* Whose screen this is. A pharmacist reading
+                        "Izy Global Services LLC" in the corner of a page
+                        listing their own patients is being told they are a
+                        guest in somebody else's system; their counter's name
+                        tells them it is theirs. Izy is still named, under
+                        Account, as the people who run it. */}
+                    <div className="izy-brand">
+                        TAG<small>{pharmacy && user ? counterName(user.name) : 'Izy Global Services LLC'}</small>
+                    </div>
                     <button
                         type="button"
                         className="izy-rail-toggle"
@@ -90,19 +102,46 @@ export function Layout() {
                     </button>
                 </div>
                 <nav className="izy-nav" aria-label="Main">
-                    {item('/', 'Home', { end: true })}
-                    <div className="izy-nav-title">Projects</div>
-                    {projects.length === 0 && (
-                        <span className="izy-muted izy-nav-empty">No projects yet</span>
+                    {pharmacy && projects[0] ? (
+                        /* THE COUNTER'S OWN RAIL.
+                        
+                           No Home, because the picker it leads to is a
+                           question with one answer. No Projects section,
+                           because a pharmacy has one and does not think of
+                           it as a project. What is left is the three things
+                           they came to do.
+                        
+                           Send a list and Pharmacy logins are deliberately
+                           NOT here. Both depend on answers the rail does not
+                           have -- whether this contract takes lists through
+                           the portal, and whether this account is the
+                           contract manager -- and a rail that guessed would
+                           be offering links the server refuses. They live on
+                           the deliveries page, which already reads both off
+                           the summary. */
+                        <>
+                            {item(`/projects/${projects[0].code}/deliveries`, 'Deliveries')}
+                            {item(`/projects/${projects[0].code}/performance`, 'Performance')}
+                            <div className="izy-nav-title">Account</div>
+                        </>
+                    ) : (
+                        <>
+                            {item('/', 'Home', { end: true })}
+                            <div className="izy-nav-title">Projects</div>
+                            {projects.length === 0 && (
+                                <span className="izy-muted izy-nav-empty">No projects yet</span>
+                            )}
+                            {/* No title attribute: it would override the link
+                                text as the accessible name and announce the
+                                role instead. */}
+                            {projects.map((p) => item(
+                                projectHref(p.code),
+                                p.name,
+                                { also: pathname.startsWith(`/projects/${p.code}/`) },
+                            ))}
+                            <div className="izy-nav-title">Account</div>
+                        </>
                     )}
-                    {/* No title attribute: it would override the link text as
-                        the accessible name and announce the role instead. */}
-                    {projects.map((p) => item(
-                        `/projects/${p.code}/${p.code}`,
-                        p.name,
-                        { also: pathname.startsWith(`/projects/${p.code}/`) },
-                    ))}
-                    <div className="izy-nav-title">Account</div>
                     {/* "This phone" is a courier's phone. For everybody
                         else the page is a password and a list of sessions,
                         and calling that This phone sends a pharmacist looking

@@ -1,15 +1,28 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../app/auth';
+import { isPharmacyOnly, projectHref } from '../lib/pharmacy';
 
 const ROLE_LABEL: Record<string, string> = {
     admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
 };
 
-/* Project picker. Everyone lands here after sign-in, drivers included, and
-   chooses the project to work in. */
+/* Project picker. Almost everyone lands here after sign-in, drivers
+   included, and chooses the project to work in.
+   
+   A PHARMACY NEVER SEES IT. They have one project and will only ever have
+   one, so "choose the project you are working in" is a question with one
+   answer, asked of somebody who does not know what a project is. It was the
+   first screen a pharmacist met and it told them, correctly, that they were
+   using an internal tool that had been pointed at them. See lib/pharmacy.ts.
+   
+   Redirect rather than a different Home, so there is one landing page and
+   one place that decides. */
 export function Home() {
     const { user, projects } = useAuth();
     if (!user) return null;
+    if (isPharmacyOnly(projects)) {
+        return <Navigate to={`/projects/${projects[0]!.code}/deliveries`} replace />;
+    }
     return (
         <>
             <h1>Welcome, {user.name.split(' ')[0]}</h1>
@@ -21,7 +34,7 @@ export function Home() {
                 ) : (
                     <div className="tag-projects">
                         {projects.map((p) => (
-                            <Link key={p.code} className="tag-project" to={`/projects/${p.code}/${p.code}`}>
+                            <Link key={p.code} className="tag-project" to={projectHref(p.code)}>
                                 <b>{p.name}</b>
                                 <span className="izy-muted">{p.code} · {p.timezone}</span>
                                 <span className="izy-pill">{ROLE_LABEL[p.role] ?? p.role}</span>
