@@ -1,0 +1,502 @@
+<title>Izy Delivery Docket</title>
+<style>
+/* Layout: one US Letter sheet, three tear-off parts stacked, each a self-
+   contained record for one stage of the handover. Blank pad -- every field
+   is written by hand, so the ruled lines, not the labels, set the rhythm.
+   Single visual world on purpose: this is printed paper, so it stays white
+   on a desk surround and does not follow the viewer's theme. */
+:root {
+    --paper: #ffffff;
+    --desk: #e7e5e0;
+    --ink: #14160f;
+    --ink-soft: #5c6152;
+    --rule: #6f7563;        /* a line somebody writes on */
+    --rule-faint: #c9cdbe;
+    --izy: #1b5e3f;         /* the green the app already uses */
+    --alert: #8c2f12;       /* handling that changes what the courier does */
+    --tint: #f1f3ec;
+
+    --display: 'Archivo', 'Arial Narrow', system-ui, sans-serif;
+    --body: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+    color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    background: var(--desk);
+    color: var(--ink);
+    font-family: var(--body);
+    margin: 0;
+    padding-block: 24px;
+    padding-left: 16px;
+    padding-right: 16px;
+}
+
+.wrap { max-width: 8.5in; margin: 0 auto; }
+
+/* ─── the sheet ─────────────────────────────────────────────────────── */
+
+.sheet {
+    background: var(--paper);
+    width: 100%;
+    max-width: 8.5in;
+    margin: 0 auto;
+    padding: 0.3in 0.35in;
+    box-shadow: 0 1px 2px rgba(0,0,0,.14), 0 10px 30px rgba(0,0,0,.10);
+    display: flex;
+    flex-direction: column;
+}
+
+/* ─── a tear-off part ───────────────────────────────────────────────── */
+
+.part { padding-block: 8px 10px; }
+.part:first-of-type { padding-top: 0; }
+
+/* The cut line: scissors, dashes, mirrored scissors.
+
+   BUILT FROM REAL ELEMENTS, not pseudo-elements on an <hr>, which is how it
+   was written and why the scissors were invisible. The HTML default
+   stylesheet gives `hr` overflow:hidden, so an absolutely positioned
+   ::before sitting above a zero-height rule is clipped away with no
+   warning -- the line rendered, the symbol did not. A flex row cannot be
+   clipped out of existence by a UA default. */
+.tear {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+}
+.snip {
+    /* Named symbol fonts first: IBM Plex Sans has no Dingbats block, so
+       without these the glyph depends on whatever the browser falls back
+       to. U+FE0E on the character itself forces the monochrome text form
+       rather than a colour emoji, which is what a printed form wants. */
+    font-family: 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans Symbols 2', sans-serif;
+    font-size: 15px;
+    line-height: 1;
+    color: var(--ink);
+    flex: none;
+}
+.snip.flip { transform: scaleX(-1); }
+.dash {
+    flex: 1;
+    height: 0;
+    border-top: 1.5px dashed var(--rule);
+    min-width: 0;
+}
+
+/* ─── letterhead ────────────────────────────────────────────────────── */
+
+.head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    border-bottom: 2.5px solid var(--izy);
+    padding-bottom: 4px;
+}
+.brand { min-width: 0; }
+.wordmark {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 14.5px;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+    color: var(--izy);
+    line-height: 1.05;
+}
+.tagline {
+    font-size: 7.5px;
+    color: var(--ink-soft);
+    letter-spacing: .03em;
+    margin-top: 2px;
+    text-transform: uppercase;
+}
+/* The dispatch line, a shade darker than the address above it. It is the
+   number somebody actually rings -- a pharmacy whose list will be late, a
+   courier stuck at a door -- so it should not read as small print.
+
+   NEVER WRAPPED. A telephone number broken across two lines is read wrong
+   and dialled wrong, and this one was breaking mid-number on the narrower
+   parts. The address above it may wrap instead; the number may not. */
+.tagline.contact {
+    color: var(--ink);
+    font-weight: 600;
+    margin-top: 1px;
+    white-space: nowrap;
+}
+.docket { text-align: right; flex: none; }
+.docket-kind {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    line-height: 1.1;
+}
+/* WHOSE PART THIS IS, as a solid band rather than a caption.
+
+   Once the sheet is torn the three parts land in three different places --
+   a counter tray, a van, a patient's hand -- and somebody sorting a pile of
+   them needs to tell them apart at arm's length. Knocked-out white on a
+   filled band survives a photocopy, which grey small print does not.
+
+   Three tones, not one: they print as three distinguishable greys on a mono
+   laser, so the parts stay sortable without colour. */
+.forwho {
+    display: inline-block;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: #fff;
+    padding: 3px 9px;
+    margin-top: 3px;
+    white-space: nowrap;
+}
+.forwho.pharmacy { background: var(--izy); }
+.forwho.driver   { background: var(--ink); }
+.forwho.patient  { background: #4a5a52; }
+
+.copy-of {
+    font-size: 8px;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin-top: 2px;
+}
+
+/* ─── field grids ───────────────────────────────────────────────────── */
+
+.row {
+    display: grid;
+    gap: 0 14px;
+    margin-top: 6px;
+}
+.r-4 { grid-template-columns: 1.5fr 1fr 1fr .8fr; }
+.r-3 { grid-template-columns: 1.4fr 1fr 1fr; }
+.r-2 { grid-template-columns: 2.2fr 1fr; }
+.r-sig { grid-template-columns: 1.2fr 1.5fr .8fr; }
+
+.f { min-width: 0; }
+.lbl {
+    font-size: 7.5px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--ink-soft);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 1px;
+}
+/* Every value on this form is handwritten, so every one of these is a
+   rule to write on rather than a box holding text. */
+.val {
+    border-bottom: 1px solid var(--rule);
+    min-height: 21px;
+}
+.val.tall { min-height: 30px; }
+
+/* ─── handling ──────────────────────────────────────────────────────── */
+
+.handling {
+    margin-top: 7px;
+    border: 1.5px solid var(--alert);
+    padding: 5px 7px;
+}
+.handling .lbl { color: var(--alert); }
+.handling.quiet { border-color: var(--rule-faint); }
+.handling.quiet .lbl { color: var(--ink-soft); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; }
+.chip {
+    font-family: var(--display);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+/* Ticked by hand at the counter, so the box is big enough for a pen. */
+.box {
+    width: 11px; height: 11px;
+    border: 1.3px solid var(--ink);
+    display: inline-block;
+    flex: none;
+}
+.chip.write-in { font-weight: 600; letter-spacing: .02em; text-transform: none; flex: 1 1 160px; min-width: 0; }
+.chip.write-in .line { flex: 1; border-bottom: 1px solid var(--rule); min-height: 13px; min-width: 40px; }
+
+/* ─── stage instruction strip ───────────────────────────────────────── */
+
+.stage {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    background: var(--tint);
+    padding: 3px 7px;
+    margin-top: 7px;
+    border-left: 3px solid var(--izy);
+}
+.stage-what {
+    font-family: var(--display);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.stage-note { font-size: 8.5px; color: var(--ink-soft); text-align: right; }
+
+.foot {
+    margin-top: 5px;
+    font-size: 8px;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+.foot strong { color: var(--ink); font-weight: 600; }
+
+/* ─── the note above the sheet, screen only ─────────────────────────── */
+
+.about {
+    max-width: 8.5in;
+    margin: 0 auto 18px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #43483b;
+}
+.about h1 {
+    font-family: var(--display);
+    font-size: 20px;
+    letter-spacing: -.01em;
+    margin: 0 0 6px;
+    color: var(--ink);
+    text-wrap: balance;
+}
+.about p { margin: 0 0 8px; }
+.about ul { margin: 0 0 8px; padding-left: 18px; }
+.about li { margin-bottom: 3px; }
+
+@media print {
+    body { background: #fff; padding: 0; }
+    .about { display: none; }
+    .sheet { box-shadow: none; max-width: none; padding: 0.3in 0.35in; }
+    @page { size: letter portrait; margin: 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+@media (max-width: 760px) {
+    .r-4, .r-3, .r-sig { grid-template-columns: 1fr 1fr; }
+    .r-2 { grid-template-columns: 1fr; }
+    .sheet { padding: 14px; }
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<div class="wrap">
+  <div class="about">
+    <h1>Izy Delivery Docket</h1>
+    <p>A blank pad. One sheet per delivery, filled in by hand, cut along the scissor lines in
+      order:</p>
+    <ul>
+      <li><strong>For pharmacy staff</strong> — stays at the counter when the courier collects.</li>
+      <li><strong>For driver</strong> — stays in the van and carries the handover record.</li>
+      <li><strong>For patient</strong> — left with the medication, or brought back and signed off
+        by the pharmacy if the delivery failed.</li>
+    </ul>
+    <p>The Rx reference is written on all three parts. With no docket number printed, that
+      reference is what matches the pharmacy's copy to the patient's once the sheet is torn apart,
+      so it needs to go on every part even when the rest is left blank.</p>
+    <p>Prints on US Letter. Reads correctly in black and white, so it runs on a mono laser or as a
+      carbonless pad.</p>
+  </div>
+
+  <div class="sheet">
+
+    <!-- ══════════════════ PART 1 · PHARMACY ══════════════════ -->
+    <section class="part">
+      <div class="head">
+        <div class="brand">
+          <div class="wordmark">Izy Global Services LLC</div>
+          <div class="tagline">Pharmacy Delivery Service · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</div>
+          <div class="tagline contact">Dispatch +1 (832) 715 8986 · freights@izymovers.com</div>
+        </div>
+        <div class="docket">
+          <div class="docket-kind">Delivery Docket</div>
+          <div class="forwho pharmacy">For pharmacy staff</div>
+          <div class="copy-of">Part 1 of 3</div>
+        </div>
+      </div>
+
+      <div class="row r-4">
+        <div class="f"><span class="lbl">Pharmacy</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Service date</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Pickup time</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Zone</span><div class="val"></div></div>
+      </div>
+
+      <div class="row r-4">
+        <div class="f"><span class="lbl">Patient</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Rx reference</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Packages</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">ZIP</span><div class="val"></div></div>
+      </div>
+
+      <div class="handling">
+        <span class="lbl">Handling — tick every one that applies before the courier leaves</span>
+        <div class="chips">
+          <span class="chip"><span class="box"></span>Refrigerated</span>
+          <span class="chip"><span class="box"></span>Controlled</span>
+          <span class="chip"><span class="box"></span>ID required</span>
+          <span class="chip"><span class="box"></span>Medicare</span>
+          <span class="chip"><span class="box"></span>Multi-box</span>
+        </div>
+      </div>
+
+      <div class="stage">
+        <span class="stage-what">Collected at the counter</span>
+        <span class="stage-note">Pharmacy keeps this part as proof of handover.</span>
+      </div>
+
+      <div class="row r-sig">
+        <div class="f"><span class="lbl">Courier name (print)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Courier signature — I received the packages above</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Time</span><div class="val"></div></div>
+      </div>
+
+      <div class="foot">
+        <span><strong>Pharmacy copy.</strong> Keep at the counter.</span>
+        <span>Late list or a change before pickup: ring dispatch on +1 (832) 715 8986.</span>
+      </div>
+    </section>
+
+    <div class="tear" aria-hidden="true"><span class="snip">✂︎</span><span class="dash"></span><span class="snip flip">✂︎</span></div>
+
+    <!-- ══════════════════ PART 2 · COURIER ══════════════════ -->
+    <section class="part">
+      <div class="head">
+        <div class="brand">
+          <div class="wordmark">Izy Global Services LLC</div>
+          <div class="tagline">Pharmacy Delivery Service · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</div>
+          <div class="tagline contact">Dispatch +1 (832) 715 8986 · freights@izymovers.com</div>
+        </div>
+        <div class="docket">
+          <div class="docket-kind">Delivery Docket</div>
+          <div class="forwho driver">For driver</div>
+          <div class="copy-of">Part 2 of 3</div>
+        </div>
+      </div>
+
+      <div class="row r-3">
+        <div class="f"><span class="lbl">Patient</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Phone</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Rx reference</span><div class="val"></div></div>
+      </div>
+
+      <div class="row r-2">
+        <div class="f"><span class="lbl">Deliver to</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Packages to hand over</span><div class="val"></div></div>
+      </div>
+
+      <div class="handling">
+        <span class="lbl">Who may sign — tick one</span>
+        <div class="chips">
+          <span class="chip"><span class="box"></span>The patient only (Medicare)</span>
+          <span class="chip"><span class="box"></span>Anyone 18 or over</span>
+          <span class="chip"><span class="box"></span>Anyone at the address</span>
+          <span class="chip write-in"><span class="box"></span>Also named by the pharmacy:<span class="line"></span></span>
+        </div>
+        <div class="chips" style="margin-top:4px">
+          <span class="chip"><span class="box"></span>Refrigerated — keep in the cooler</span>
+          <span class="chip"><span class="box"></span>Controlled</span>
+          <span class="chip"><span class="box"></span>Photograph ID on this form</span>
+        </div>
+      </div>
+
+      <div class="row r-2">
+        <div class="f"><span class="lbl">Special instructions — gate code, which door, where to park</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Zone</span><div class="val"></div></div>
+      </div>
+
+      <div class="stage">
+        <span class="stage-what">Handed over at the door</span>
+        <span class="stage-note">No signature, no handover. Take it back to the pharmacy the same day.</span>
+      </div>
+
+      <div class="row r-sig">
+        <div class="f"><span class="lbl">Received by (print)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Signature</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Time</span><div class="val"></div></div>
+      </div>
+
+      <div class="row r-3">
+        <div class="f"><span class="lbl">ID seen — type and last 4</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">If not the patient, why</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Not delivered — reason</span><div class="val"></div></div>
+      </div>
+
+      <div class="foot">
+        <span><strong>Courier copy.</strong> Keep until the run is closed.</span>
+        <span>Returns: back to the pharmacy, or Robert B. Green until 20:00. Ring first.</span>
+      </div>
+    </section>
+
+    <div class="tear" aria-hidden="true"><span class="snip">✂︎</span><span class="dash"></span><span class="snip flip">✂︎</span></div>
+
+    <!-- ══════════════════ PART 3 · PATIENT ══════════════════ -->
+    <section class="part">
+      <div class="head">
+        <div class="brand">
+          <div class="wordmark">Izy Global Services LLC</div>
+          <div class="tagline">Delivering for University Health · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</div>
+          <div class="tagline contact">Dispatch +1 (832) 715 8986 · freights@izymovers.com</div>
+        </div>
+        <div class="docket">
+          <div class="docket-kind">Delivery Receipt</div>
+          <div class="forwho patient">For patient</div>
+          <div class="copy-of">Part 3 of 3</div>
+        </div>
+      </div>
+
+      <div class="row r-4">
+        <div class="f"><span class="lbl">Delivered to</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">From (pharmacy)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Rx reference</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Packages</span><div class="val"></div></div>
+      </div>
+
+      <div class="row r-sig">
+        <div class="f"><span class="lbl">Courier</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Received by (print)</span><div class="val"></div></div>
+        <div class="f"><span class="lbl">Date and time</span><div class="val"></div></div>
+      </div>
+
+      <div class="stage">
+        <span class="stage-what">Your copy — keep it</span>
+        <span class="stage-note">About your medication, call the pharmacy on the label.<br>About the delivery, call Izy dispatch on +1 (832) 715 8986.</span>
+      </div>
+
+      <div class="handling quiet">
+        <span class="lbl">Pharmacy use only — if this delivery was not completed</span>
+        <div class="row r-sig" style="margin-top:2px">
+          <div class="f"><span class="lbl">Returned to</span><div class="val"></div></div>
+          <div class="f"><span class="lbl">Pharmacy staff signature</span><div class="val"></div></div>
+          <div class="f"><span class="lbl">Date and time</span><div class="val"></div></div>
+        </div>
+      </div>
+
+      <div class="foot">
+        <span><strong>Patient copy.</strong> Left with the medication, or returned to the pharmacy unused.</span>
+        <span>Izy Global Services LLC · 500 Navarro St, 2nd Floor, San Antonio, TX 78205</span>
+      </div>
+    </section>
+
+  </div>
+</div>
