@@ -87,7 +87,7 @@ const BAND_PATIENT = 0.52;
 const TINT = 0.94;
 
 const ADDRESS = '500 Navarro St, 2nd Floor, San Antonio, TX 78205';
-const DISPATCH = 'Dispatch +1 (832) 715 8986  ·  freights@izymovers.com';
+const DISPATCH = 'Dispatch +1 (832) 715 8986  ·  sales@izyglobalservices.com';
 
 /* ─────────────────────────────────────────────── the fillable overlay
  *

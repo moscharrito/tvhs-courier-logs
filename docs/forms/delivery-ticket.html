@@ -1,0 +1,332 @@
+<title>Izy Delivery Ticket</title>
+<style>
+/* Layout: Quick Courier's ticket, field for field, in Izy's letterhead.
+   Landscape 8.5 x 5.5in, which is the incumbent's shape -- their stock is
+   continuous pin-feed carbonless and this is one ticket off that roll.
+
+   The point of this sheet is that nobody has to learn anything: a
+   technician who has filled in a Quick Courier ticket for years finds
+   every box where their hand already goes. */
+:root {
+    --paper: #ffffff;
+    --desk: #e7e5e0;
+    --ink: #14160f;
+    --ink-soft: #5c6152;
+    --rule: #4a4f42;
+    --hair: #8d9382;
+    --izy: #1b5e3f;
+    --ticket: #b3301a;        /* the red the incumbent prints its number in */
+    --display: 'Archivo', 'Arial Narrow', system-ui, sans-serif;
+    --body: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    color-scheme: light;
+}
+* { box-sizing: border-box; }
+body {
+    background: var(--desk); color: var(--ink); font-family: var(--body);
+    margin: 0; padding-block: 24px; padding-left: 16px; padding-right: 16px;
+}
+.wrap { max-width: 8.5in; margin: 0 auto; }
+
+/* THE SHELL IS THE CONTAINER, NOT THE TICKET. A container query sizes
+   DESCENDANTS of the container, never the container itself, so
+   `.ticket { container-type }` with `.ticket { font-size: 1cqw }` did
+   nothing and the whole sheet rendered at its 8px fallback. */
+.shell { container-type: inline-size; }
+
+/* ─── the ticket ─────────────────────────────────────────────────── */
+
+.ticket {
+    background: var(--paper);
+    width: 100%; max-width: 8.5in; aspect-ratio: 8.5 / 5.5;
+    margin: 0 auto;
+    padding: 0.18in 0.2in;
+    box-shadow: 0 1px 2px rgba(0,0,0,.14), 0 10px 30px rgba(0,0,0,.10);
+    display: flex; flex-direction: column;
+    /* Everything is sized in em off this, so the ticket reads identically
+       on a phone and on a press sheet. 1cqw is 1% of the shell's width. */
+    font-size: 1.05cqw;
+}
+
+/* ─── masthead ───────────────────────────────────────────────────── */
+
+.mast { display: grid; grid-template-columns: 1.55fr 1.1fr 1fr; gap: 1.4em; align-items: start; }
+.wordmark {
+    font-family: var(--display); font-weight: 700; font-size: 2.5em;
+    letter-spacing: .03em; text-transform: uppercase; color: var(--izy); line-height: 1;
+}
+.mast-sub { font-size: .95em; color: var(--ink-soft); margin-top: .5em; line-height: 1.45; }
+.phone {
+    font-family: var(--display); font-weight: 700; font-size: 2.1em;
+    letter-spacing: .04em; color: var(--ink); line-height: 1; white-space: nowrap;
+}
+.services { font-size: .92em; letter-spacing: .14em; color: var(--ink); line-height: 1.6; margin-top: .5em; }
+.services span { display: block; }
+
+.stub { text-align: right; }
+.ticket-no {
+    font-family: var(--mono); font-weight: 600; font-size: 2.3em;
+    color: var(--ticket); letter-spacing: .02em; line-height: 1;
+}
+.stub table { width: 100%; border-collapse: collapse; margin-top: .5em; }
+.stub th, .stub td { border: .09em solid var(--rule); padding: .2em .3em; }
+.stub th {
+    font-size: .85em; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--ink-soft); text-align: left; white-space: nowrap;
+}
+.stub td { height: 1.7em; }
+
+.mastrule { border: 0; border-top: .22em solid var(--izy); margin: .55em 0 0; }
+
+/* ─── body grid ──────────────────────────────────────────────────── */
+
+/* Columns in em against the ticket's own ~8.5px type, so they scale
+   with it. The first attempt used 4.2em / 9.5em, which is 36px and
+   81px -- the charges table alone needs twice that. */
+.body {
+    display: grid;
+    grid-template-columns: 8.6em 1fr 19em;
+    /* minmax(0,1fr) rather than 1fr: a bare 1fr row still floors at
+       its content height, so the middle column pushed the ticket
+       past 5.5in instead of letting Special instructions shrink. */
+    grid-template-rows: minmax(0, 1fr);
+    gap: .7em; flex: 1; margin-top: .55em; min-height: 0;
+}
+
+/* service ticks, stacked down the left exactly as the incumbent has them */
+.levels { display: flex; flex-direction: column; justify-content: flex-start; gap: .5em; }
+.lv { display: flex; align-items: center; gap: .35em; }
+.lv b {
+    font-family: var(--display); font-weight: 700; font-size: .9em;
+    letter-spacing: .04em; text-transform: uppercase; line-height: 1.05;
+}
+.box { width: 1.15em; height: 1.15em; border: .1em solid var(--ink); flex: none; }
+
+/* middle column */
+.mid { display: flex; flex-direction: column; gap: .3em; min-width: 0; min-height: 0; }
+
+.billing { display: flex; align-items: center; gap: .9em; flex-wrap: wrap; }
+.billing .lab {
+    font-family: var(--display); font-weight: 700; font-size: .95em;
+    letter-spacing: .06em; text-transform: uppercase;
+}
+.opt { display: inline-flex; align-items: center; gap: .3em; font-size: .95em; font-weight: 600; }
+.ref { flex: 1; display: flex; align-items: baseline; gap: .4em; min-width: 7em; }
+.ref .lab { white-space: nowrap; }
+.ref .fill { flex: 1; border-bottom: .09em solid var(--rule); height: 1.3em; }
+
+.party { border: .11em solid var(--rule); }
+.party .hd {
+    font-family: var(--display); font-weight: 700; font-size: 1.05em;
+    letter-spacing: .3em; text-transform: uppercase; padding: .15em .4em;
+    border-bottom: .09em solid var(--rule);
+}
+.grid4 { display: grid; grid-template-columns: 2.1fr 1.2fr .5fr .7fr; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; }
+.cell { border-right: .07em solid var(--hair); padding: .12em .35em .25em; min-width: 0; }
+.cell:last-child { border-right: 0; }
+.cell.t { border-top: .07em solid var(--hair); }
+.cap {
+    font-size: .8em; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-soft); display: block;
+}
+.wr { height: 1.38em; }
+
+.pieces { display: grid; grid-template-columns: .7fr 2.6fr .8fr; border: .11em solid var(--rule); }
+.notes { border: .11em solid var(--rule); flex: 1; display: flex; flex-direction: column; min-height: 3.2em; }
+.notes .cap { padding: .12em .35em 0; }
+
+.cod { display: grid; grid-template-columns: 1.6fr 1fr; border: .11em solid var(--rule); }
+.fine { font-size: .78em; color: var(--ink-soft); line-height: 1.3; padding: .2em .1em 0; }
+
+.signs { display: grid; grid-template-columns: 1fr 1fr; gap: .9em; margin-top: .1em; }
+.sign .cap { font-size: .82em; font-weight: 600; }
+.sign .fill { border-bottom: .11em solid var(--rule); height: 1.7em; }
+
+/* right column: driver, then the services and charges table */
+.right { display: flex; flex-direction: column; gap: .35em; min-width: 0; min-height: 0; }
+.right table { width: 100%; border-collapse: collapse; }
+.right th, .right td { border: .09em solid var(--rule); padding: .1em .3em; }
+.right th {
+    font-size: .82em; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--ink-soft); text-align: left;
+}
+.right td { height: 1.22em; }
+.right td.name { font-size: .88em; font-weight: 600; letter-spacing: .03em; width: 58%; }
+.right tr.total td { border-top: .18em solid var(--rule); font-weight: 700; }
+.office {
+    font-size: .78em; color: var(--ink-soft); text-align: center;
+    letter-spacing: .08em; text-transform: uppercase; margin-top: .1em;
+}
+
+/* ─── the note above the ticket, screen only ─────────────────────── */
+
+.about { max-width: 8.5in; margin: 0 auto 18px; font-size: 13px; line-height: 1.5; color: #43483b; }
+.about h1 {
+    font-family: var(--display); font-size: 20px; margin: 0 0 6px;
+    color: var(--ink); letter-spacing: -.01em; text-wrap: balance;
+}
+.about p { margin: 0 0 8px; }
+.about ul { margin: 0 0 8px; padding-left: 18px; }
+.about li { margin-bottom: 3px; }
+
+@media print {
+    body { background: #fff; padding: 0; }
+    .about { display: none; }
+    .ticket { box-shadow: none; max-width: none; }
+    @page { size: 8.5in 5.5in; margin: 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<div class="wrap">
+  <div class="shell">
+  <div class="about">
+    <h1>Izy Delivery Ticket</h1>
+    <p>Quick Courier's ticket, field for field and in the same order, with Izy's letterhead on it.
+      A technician who has filled one of these in for years finds every box where their hand
+      already goes.</p>
+    <ul>
+      <li><strong>8.5 × 5.5in landscape</strong>, the incumbent's shape — their stock is continuous
+        pin-feed carbonless and this is one ticket off that roll.</li>
+      <li><strong>One impression, three plies</strong> — white, yellow, pink. Written once.</li>
+      <li><strong>Two things could not be copied literally</strong>, and both are noted below the
+        ticket.</li>
+    </ul>
+  </div>
+
+  <div class="ticket">
+
+    <!-- ══════════ masthead ══════════ -->
+    <div class="mast">
+      <div>
+        <div class="wordmark">Izy Global Services</div>
+        <div class="mast-sub">
+          500 Navarro St, 2nd Floor &bull; San Antonio, Texas 78205<br>
+          sales@izyglobalservices.com
+        </div>
+      </div>
+      <div>
+        <div class="phone">832-715-8986</div>
+        <div class="services">
+          <span>&#9830; PHARMACY DELIVERY</span>
+          <span>&#9830; SCHEDULED ROUTES</span>
+          <span>&#9830; STAT &amp; AFTER HOURS</span>
+          <span>&#9830; COLD CHAIN</span>
+          <span>&#9830; CUSTOM ROUTES</span>
+        </div>
+      </div>
+      <div class="stub">
+        <div class="ticket-no">No.</div>
+        <table>
+          <tr><th>Date</th><td></td></tr>
+          <tr><th>Pickup time</th><td></td></tr>
+          <tr><th>Delivery time</th><td></td></tr>
+        </table>
+      </div>
+    </div>
+    <hr class="mastrule">
+
+    <!-- ══════════ body ══════════ -->
+    <div class="body">
+
+      <!-- service levels, down the left -->
+      <div class="levels">
+        <div class="lv"><span class="box"></span><b>Scheduled</b></div>
+        <div class="lv"><span class="box"></span><b>Stat</b></div>
+        <div class="lv"><span class="box"></span><b>After<br>hour</b></div>
+        <div class="lv"><span class="box"></span><b>Re-<br>attempt</b></div>
+        <div class="lv"><span class="box"></span><b>Return</b></div>
+      </div>
+
+      <!-- middle -->
+      <div class="mid">
+        <div class="billing">
+          <span class="lab">Billing:</span>
+          <span class="opt"><span class="box"></span>Shipper</span>
+          <span class="opt"><span class="box"></span>Recipient</span>
+          <span class="opt"><span class="box"></span>3rd party</span>
+          <span class="ref"><span class="lab">Reference:</span><span class="fill"></span></span>
+        </div>
+
+        <div class="party">
+          <div class="hd">Shipper</div>
+          <div class="grid4">
+            <div class="cell"><span class="cap">Name</span><div class="wr"></div></div>
+            <div class="cell"><span class="cap">Address</span><div class="wr"></div></div>
+            <div class="cell"><span class="cap">City</span><div class="wr"></div></div>
+            <div class="cell"><span class="cap">State / ZIP</span><div class="wr"></div></div>
+          </div>
+          <div class="grid2">
+            <div class="cell t"><span class="cap">Phone (important)</span><div class="wr"></div></div>
+            <div class="cell t"><span class="cap">Pharmacy contact</span><div class="wr"></div></div>
+          </div>
+        </div>
+
+        <div class="party">
+          <div class="hd">Recipient</div>
+          <div class="grid4">
+            <div class="cell"><span class="cap">Name</span><div class="wr"></div></div>
+            <div class="cell"><span class="cap">Address</span><div class="wr"></div></div>
+            <div class="cell"><span class="cap">City</span><div class="wr"></div></div>
+            <div class="cell"><span class="cap">State / ZIP</span><div class="wr"></div></div>
+          </div>
+          <div class="grid2">
+            <div class="cell t"><span class="cap">Phone (important)</span><div class="wr"></div></div>
+            <div class="cell t"><span class="cap">Who may sign</span><div class="wr"></div></div>
+          </div>
+        </div>
+
+        <div class="pieces">
+          <div class="cell"><span class="cap"># of pieces</span><div class="wr"></div></div>
+          <div class="cell"><span class="cap">Description</span><div class="wr"></div></div>
+          <div class="cell"><span class="cap">Weight</span><div class="wr"></div></div>
+        </div>
+
+        <div class="notes">
+          <span class="cap">Special instructions</span>
+        </div>
+
+        <div class="cod">
+          <div class="cell"><span class="cap">3rd party billing</span><div class="wr"></div></div>
+          <div class="cell"><span class="cap">C.O.D.</span><div class="wr"></div></div>
+        </div>
+
+        <div class="fine">
+          $50 declared value unless specified, not to exceed $500.00.
+        </div>
+
+        <div class="signs">
+          <div class="sign"><span class="cap">Received in good order (print)</span><div class="fill"></div></div>
+          <div class="sign"><span class="cap">Return (print)</span><div class="fill"></div></div>
+        </div>
+      </div>
+
+      <!-- right: driver and charges -->
+      <div class="right">
+        <table>
+          <tr><th>Driver name</th></tr>
+          <tr><td></td></tr>
+          <tr><th>Driver number</th></tr>
+          <tr><td></td></tr>
+        </table>
+        <table>
+          <tr><th>Services</th><th>Charges</th></tr>
+          <tr><td class="name">Scheduled</td><td></td></tr>
+          <tr><td class="name">Stat</td><td></td></tr>
+          <tr><td class="name">Zone 1&ndash;5</td><td></td></tr>
+          <tr><td class="name">1604 / out of area</td><td></td></tr>
+          <tr><td class="name">After hour</td><td></td></tr>
+          <tr><td class="name">Re-attempt</td><td></td></tr>
+          <tr><td class="name">Return</td><td></td></tr>
+          <tr><td class="name">Wait time</td><td></td></tr>
+          <tr class="total"><td class="name">Total</td><td></td></tr>
+        </table>
+        <div class="office">Izy office use only</div>
+      </div>
+
+    </div>
+    </div>
+  </div>
+</div>
