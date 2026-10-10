@@ -612,3 +612,59 @@ describe('the import is all or nothing', () => {
     });
 });
 
+/* ------------------------------------------------ how it was handed over */
+
+describe('the handling columns', () => {
+    it('writes how the pharmacy handed it over, which it used to drop', async () => {
+        /* THE BUG THIS PINS. id_required was mapped under nine spellings,
+           validated, and shown in the preview -- and then left out of the
+           INSERT's column list, so every order imported from a spreadsheet
+           arrived with ID not required however the pharmacy had stamped it.
+           The ID protocol is the control the counters talked about most on
+           8 October 2026, and a courier was being told nothing about it.
+
+           The handling columns from drizzle/0051 go the same way, so they
+           are asserted in the same place: a field the parser knows and the
+           insert does not is one bug, not five. */
+        await reset();
+        const csv = [
+            'Patient Name,Address,City,State,ZIP,ID Required,Medicare,Caregiver,Fridge,Controlled,Pieces',
+            'Alma Reyes,114 Rehearsal Way,San Antonio,TX,78207,Y,Y,,Y,Y,2 of 3',
+            'Benedict Oyelaran,220 Rehearsal Way,San Antonio,TX,78207,N,,Delphine Okonkwo,,,1',
+        ].join('\n');
+        const res = await upload(admin, BASE, Buffer.from(csv), {
+            siteId: dischargeId, serviceDate: '2026-09-15', receivedAt: '2026-09-15T17:00:00Z',
+        }, 'handling.csv');
+        expect(res.status, res.text).toBe(201);
+
+        const rows = (await sql(`SELECT recipient_name, id_required, signature_rule, authorised_signers,
+                                        refrigerated, controlled
+                                 FROM orders ORDER BY recipient_name`)).rows;
+        expect(rows).toHaveLength(2);
+
+        expect(rows[0]).toMatchObject({
+            recipient_name: 'Alma Reyes',
+            id_required: 1,
+            signature_rule: 'patient_only',
+            refrigerated: 1,
+            controlled: 1,
+        });
+        expect(rows[1]).toMatchObject({
+            recipient_name: 'Benedict Oyelaran',
+            id_required: 0,
+            signature_rule: 'anyone',
+            authorised_signers: 'Delphine Okonkwo',
+            refrigerated: 0,
+            controlled: 0,
+        });
+
+        /* "2 of 3" is three boxes, not twenty-three. The count lands on the
+           packages row, which is what the courier's pickup screen counts
+           against and what refuses a short handover. */
+        const pkgs = (await sql(`SELECT p.quantity FROM packages p
+                                 JOIN orders o ON o.id = p.order_id
+                                 WHERE o.recipient_name = 'Alma Reyes'`)).rows;
+        expect(pkgs[0].quantity).toBe(3);
+    });
+
+});

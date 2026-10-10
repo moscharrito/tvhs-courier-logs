@@ -526,16 +526,31 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             const source = byRow.get(r.row)!;
             const due = dueTimesFor({ serviceType: source.serviceType, receivedAt: a.receivedAt }, a.settings);
             return {
+                /* id_required WAS PARSED AND THEN DROPPED. The importer has
+                   mapped nine spellings of it since ticket 0038, warned about
+                   it, shown it in the preview, and never written it: it was
+                   simply absent from this column list, so every imported
+                   order arrived with the default of false however the sheet
+                   was stamped. The pharmacies' ID protocol is the control
+                   they talked about most on 8 October, and a courier was
+                   being told nothing about it on any order that came from a
+                   spreadsheet. Fixed here with the handling columns, because
+                   they are the same bug: a field the parser knows and the
+                   insert does not. */
                 sql: `INSERT INTO orders
                         (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                          recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                         delivery_notes, zone, signature_required, received_at, due_at, dedupe_key, status)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING id`,
+                         delivery_notes, zone, signature_required, id_required,
+                         signature_rule, authorised_signers, refrigerated, controlled,
+                         received_at, due_at, dedupe_key, status)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING id`,
                 args: [
                     project.id, a.site.id, listId, source.externalRef, source.serviceType, a.serviceDate,
                     source.recipientName, source.recipientPhone, source.addressLine, source.addressLine2,
                     source.city, source.state, source.zip, source.deliveryNotes,
-                    r.zone as InValue, source.signatureRequired ? 1 : 0, receivedIso,
+                    r.zone as InValue, source.signatureRequired ? 1 : 0, source.idRequired ? 1 : 0,
+                    source.signatureRule, source.authorisedSigners, source.refrigerated ? 1 : 0,
+                    source.controlled ? 1 : 0, receivedIso,
                     due.dueAt ? due.dueAt.toISOString() : null, source.dedupeKey,
                 ] as InValue[],
             };

@@ -187,6 +187,19 @@ export const dailyLists = sqliteTable(
     ],
 );
 
+/** Who may sign for a delivery, when a signature is required at all.
+ *
+ *  'anyone'       anybody at the address. The default, and still a
+ *                 signature: "we don't do Amazon".
+ *  'adult'        18 or over. The IV protocol.
+ *  'patient_only' the patient and nobody else. Medicare.
+ *
+ *  Ordered weakest to strictest deliberately: a rule that moves UP the list
+ *  can only ever refuse more people, which is the safe direction for a
+ *  default or a parsing mistake to fall in. */
+export const SIGNATURE_RULES = ['anyone', 'adult', 'patient_only'] as const;
+export type SignatureRule = (typeof SIGNATURE_RULES)[number];
+
 export const orders = sqliteTable(
     'orders',
     {
@@ -232,6 +245,29 @@ export const orders = sqliteTable(
         outOfAreaBasis: text('out_of_area_basis').notNull().default(''),
 
         signatureRequired: integer('signature_required', { mode: 'boolean' }).notNull().default(true),
+
+        /* ─── how the pharmacy handed it over (drizzle/0051)
+         *
+         * From the onsite visits of 8 October 2026. Every counter described
+         * the same rules and the system could represent almost none of them.
+         * The migration carries the quotes; these are the short versions. */
+
+        /** WHO may sign, which is a different question from whether anybody
+         *  must. 'patient_only' is Medicare, 'adult' is the IV protocol's
+         *  18-or-over, 'anyone' is the default and still requires a
+         *  signature. Only consulted when signatureRequired is true. */
+        signatureRule: text('signature_rule', { enum: SIGNATURE_RULES }).notNull().default('anyone'),
+        /** The caregiver the patient nominated by telephone, highlighted on
+         *  the pharmacy's form. Anybody not named here does not get it, even
+         *  if the patient says so at the door. */
+        authorisedSigners: text('authorised_signers').notNull().default(''),
+        /** A cold-chain package. Ice bricks, 32 to 36 hours, and the thing
+         *  that has to be separated first when it comes back. */
+        refrigerated: integer('refrigerated', { mode: 'boolean' }).notNull().default(false),
+        /** Stamped on the form and on the address. Always needs ID, but kept
+         *  apart from idRequired: that is what the courier does at the door,
+         *  this is what the package is. */
+        controlled: integer('controlled', { mode: 'boolean' }).notNull().default(false),
 
         /** The pharmacy's form is stamped ID Required, so a photograph of
          *  the recipient's identification is needed before this can be

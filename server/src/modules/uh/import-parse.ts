@@ -27,6 +27,11 @@ import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 
 export type ServiceType = 'scheduled' | 'stat' | 'adhoc';
+
+/* Re-exported from the schema rather than restated, so the parser and the
+   column it writes into cannot drift apart. */
+export type { SignatureRule } from '../../db/schema/uh';
+import type { SignatureRule } from '../../db/schema/uh';
 export type Severity = 'error' | 'warning';
 
 /** The fields an order needs. Everything else in the sheet is dropped. */
@@ -34,6 +39,10 @@ export const IMPORT_FIELDS = [
     'externalRef', 'recipientName', 'recipientPhone', 'addressLine', 'addressLine2',
     'city', 'state', 'zip', 'serviceType', 'quantity', 'description',
     'deliveryNotes', 'signatureRequired', 'idRequired',
+    /* How the pharmacy handed it over (drizzle/0051), from the onsite visits
+       of 8 October 2026. Every one of these is on the paper form today and
+       was being dropped on the floor by the importer. */
+    'signatureRule', 'authorisedSigners', 'refrigerated', 'controlled',
 ] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 
@@ -69,6 +78,12 @@ export interface ParsedRow {
     signatureRequired: boolean;
     /** The form is stamped ID Required. */
     idRequired: boolean;
+    /** Who may sign. See SIGNATURE_RULES. */
+    signatureRule: SignatureRule;
+    /** The caregiver the patient nominated, as the pharmacy wrote it. */
+    authorisedSigners: string;
+    refrigerated: boolean;
+    controlled: boolean;
     /** sha256 of the identifying fields; see the header comment. */
     dedupeKey: string;
 }
@@ -241,7 +256,13 @@ const SYNONYMS: Record<ImportField, string[]> = {
     state: ['state', 'province', 'stateprovince'],
     zip: ['zip', 'zipcode', 'postalcode', 'postal', 'postcode'],
     serviceType: ['servicetype', 'service', 'deliverytype', 'priority', 'type', 'urgency'],
-    quantity: ['quantity', 'qty', 'packages', 'packagecount', 'numberofpackages', 'items', 'itemcount', 'count', 'bags'],
+    /* How many physical boxes, which is what the courier counts at pickup
+       and what refuses a short handover. The second half of this list comes
+       from the onsite visits and from the incumbent's own ticket, whose
+       field is headed "# OF PIECES" -- a spelling this did not have. */
+    quantity: ['quantity', 'qty', 'packages', 'packagecount', 'numberofpackages', 'items', 'itemcount', 'count', 'bags',
+        'pieces', 'noofpieces', 'numberofpieces', 'piececo'+'unt', 'boxes', 'totalboxes', 'totalpackages',
+        'ofpackages', 'pkgcount', 'pkgs'],
     description: ['description', 'packagedescription', 'item', 'itemdescription', 'contents', 'medication', 'med', 'drug'],
     deliveryNotes: ['notes', 'note', 'comments', 'comment', 'instructions', 'deliveryinstructions', 'specialinstructions', 'remarks'],
     signatureRequired: ['signaturerequired', 'signature', 'sigrequired', 'requiressignature', 'sig'],
@@ -251,6 +272,17 @@ const SYNONYMS: Record<ImportField, string[]> = {
      * ordinary and a courier hands medication to somebody who never showed
      * identification. */
     idRequired: ['idrequired', 'id', 'idreq', 'photoid', 'requiresid', 'idverification', 'idcheck', 'identification', 'idneeded'],
+
+    /* The handling columns. Spellings taken from what the counters said they
+       print and say rather than invented: "Medicare signature required",
+       "ID protocol", "fridge", "1 of 3", "CO". */
+    signatureRule: ['signaturerule', 'signaturetype', 'whocansign', 'whomaysign', 'medicare', 'medicaresignature',
+        'medicaresignaturerequired', 'protocol', 'idprotocol', 'signaturepolicy'],
+    authorisedSigners: ['authorisedsigners', 'authorizedsigners', 'authorisedsigner', 'authorizedsigner',
+        'caregiver', 'careof', 'co', 'alternatesigner', 'designee', 'designatedsigner', 'mayreceive', 'cansignfor'],
+    refrigerated: ['refrigerated', 'fridge', 'refrigerate', 'cold', 'coldchain', 'temperaturecontrolled',
+        'tempcontrolled', 'refrig', 'frozen', 'keeprefrigerated'],
+    controlled: ['controlled', 'controlledsubstance', 'cii', 'ciii', 'narcotic', 'schedule', 'controlledrx'],
 };
 
 /**
@@ -305,6 +337,64 @@ export function normalizeBoolean(raw: string, fallback: boolean): boolean {
     return fallback;
 }
 
+/**
+ * Who may sign, from whatever the pharmacy's sheet calls it.
+ *
+ * TWO SHAPES ARRIVE HERE. A column literally naming the rule
+ * ("patient only", "18+"), and a Medicare column that is a yes/no -- because
+ * on the paper form that is exactly what it is: "We'll put Medicare
+ * signature required." A yes in a Medicare column means patient_only.
+ *
+ * FALLS BACK TO THE STRICTEST READING IT IS SURE OF, never past it. An
+ * unrecognised value gives 'anyone', which is the current behaviour of every
+ * existing row and still demands a signature from somebody. Guessing
+ * 'patient_only' from a word we did not understand would turn a sheet typo
+ * into a courier refusing a legitimate handover at the door; guessing
+ * 'anyone' from a misread Medicare flag is caught by the pharmacy's own
+ * highlighted form, which the courier is also reading. Neither is good, and
+ * the second one fails in the direction somebody can fix on the doorstep.
+ */
+export function normalizeSignatureRule(raw: string, fallback: SignatureRule = 'anyone'): SignatureRule {
+    const v = normalizeHeader(raw);
+    if (v === '') return fallback;
+    if (['patientonly', 'patient', 'medicare', 'medicaresignature', 'medicaresignaturerequired',
+        'patientsignature', 'patientonlysignature'].includes(v)) return 'patient_only';
+    if (['adult', '18', '18plus', 'over18', '18orolder', 'adultsignature', 'iv', 'ivprotocol',
+        'anyadult'].includes(v)) return 'adult';
+    if (['anyone', 'any', 'anybody', 'household', 'standard', 'normal'].includes(v)) return 'anyone';
+    /* A Medicare column holding a plain yes/no, which is the common case. */
+    if (['y', 'yes', 'true', '1', 'required'].includes(v)) return 'patient_only';
+    if (['n', 'no', 'false', '0', 'notrequired'].includes(v)) return fallback;
+    return fallback;
+}
+
+/**
+ * "2 of 3", however the sheet writes it.
+ *
+ * The pharmacies label every box of a multi-box prescription, and a quantity
+ * column is often filled in by copying that label. `count` is the TOTAL --
+ * the number of boxes the courier must leave with -- and is what feeds
+ * packages.quantity.
+ *
+ * `index` is returned for completeness and is not stored: which box this is
+ * belongs to the box, and the courier matches the labels in their hands.
+ *
+ * Returns nulls rather than guessing when it cannot read the cell, so the
+ * caller can fall back to its own parsing rather than being handed a 1 that
+ * means "one box" when the truth was unreadable.
+ */
+export function parsePackaging(indexRaw: string, countRaw: string): { index: number | null; count: number | null } {
+    const combined = /^\s*(\d+)\s*(?:of|\/|-)\s*(\d+)\s*$/i.exec(indexRaw.trim());
+    if (combined) return { index: Number(combined[1]), count: Number(combined[2]) };
+
+    const one = (raw: string): number | null => {
+        const t = raw.trim();
+        if (t === '') return null;
+        return /^\d+$/.test(t) ? Number(t) : null;
+    };
+    return { index: one(indexRaw), count: one(countRaw) };
+}
+
 /** Digits only, so "(210) 555-0134" and "210-555-0134" compare equal. */
 export function normalizePhone(raw: string): string {
     const digits = raw.replace(/\D/g, '');
@@ -354,8 +444,17 @@ export function applyMapping(
     // "two" strips to nothing, which Number() would read as 0 and the
     // validator would then report as "less than one". Keep it NaN so the
     // operator is told the cell is not a number, which is the actual fault.
+    /* "2 OF 3" IS THE LABEL ON THE BOX, and it arrives in this cell.
+    
+       Stripping non-digits turned it into 23, which is not a number anybody
+       would notice being wrong: it is plausible, it passes validation under
+       the 200 ceiling, and it tells a courier to count 23 boxes. The count
+       is the TOTAL, so "2 of 3" is three. See parsePackaging. */
+    const labelled = parsePackaging(quantityRaw, '');
     const quantityDigits = quantityRaw.replace(/[^0-9.-]/g, '');
-    const quantity = quantityRaw === '' ? 1 : (quantityDigits === '' ? NaN : Number(quantityDigits));
+    const quantity = labelled.count !== null
+        ? labelled.count
+        : (quantityRaw === '' ? 1 : (quantityDigits === '' ? NaN : Number(quantityDigits)));
     const state = (raw('state') || defaultState).toUpperCase().slice(0, 2);
 
     const base = {
@@ -374,6 +473,10 @@ export function applyMapping(
         deliveryNotes: raw('deliveryNotes'),
         signatureRequired: normalizeBoolean(raw('signatureRequired'), true),
         idRequired: normalizeBoolean(raw('idRequired'), false),
+        signatureRule: normalizeSignatureRule(raw('signatureRule')),
+        authorisedSigners: raw('authorisedSigners'),
+        refrigerated: normalizeBoolean(raw('refrigerated'), false),
+        controlled: normalizeBoolean(raw('controlled'), false),
     };
     return { row: { ...base, dedupeKey: dedupeKeyFor(base) }, serviceTypeRecognised: service.recognised };
 }
@@ -405,6 +508,21 @@ export function validateRow(row: ParsedRow, serviceTypeRecognised: boolean): Iss
 
     if (!serviceTypeRecognised) add('serviceType', 'unrecognised', 'warning', 'Service type not recognised; treated as scheduled.');
     if (!row.description) add('description', 'missing', 'warning', 'No package description; Scope 1.2.6 requires one on the tracking record.');
+
+    /* ─── the handling columns (drizzle/0051)
+     *
+     * Warnings, not errors. A sheet that says nothing about packaging is the
+     * normal case for a one-box delivery, and refusing the day's list over a
+     * column no pharmacy has sent before would be worse than the problem. */
+
+    /* The one combination that is actively dangerous: a named caregiver on a
+       delivery only the patient may sign for. The pharmacy means one or the
+       other, and a courier reading both will hand a Medicare package to the
+       person named. Flagged for a human rather than silently resolved. */
+    if (row.signatureRule === 'patient_only' && row.authorisedSigners !== '') {
+        add('authorisedSigners', 'conflict', 'warning',
+            'Patient-only signature, but a caregiver is named. The courier will be told patient only.');
+    }
 
     return issues;
 }

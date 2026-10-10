@@ -1,0 +1,122 @@
+-- What the pharmacies actually hand a courier.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHERE THIS COMES FROM.
+--
+-- The onsite visits to the University Health pharmacies on 8 October 2026,
+-- recorded and transcribed. Every counter independently described the same
+-- handling rules, and the system could represent almost none of them: it had
+-- one `signature_required` boolean for a job that distinguishes "anybody at
+-- the address", "anybody over 18", and "the patient, nobody else".
+--
+-- Each column below is a thing a pharmacist said out loud, and a thing a
+-- courier can get wrong at a door in a way that costs a controlled substance
+-- or a refused Medicare claim.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- signature_rule: WHO MAY SIGN, NOT WHETHER ANYBODY MUST.
+--
+-- Three rules, from the counters:
+--
+--   'patient_only'  Medicare. The form says MEDICARE SIGNATURE REQUIRED and
+--                   it has to be the patient. "We'll put, like, for the
+--                   actual patient to be required to sign for the package."
+--   'adult'         IV protocol. "They have to be 18 or older to sign for
+--                   the, if it's IV protocol." Anybody in the home, over 18.
+--   'anyone'        The default everywhere else, and still a signature:
+--                   "All patients require a signature. We don't just drop it
+--                   off at the door and leave it. We don't do Amazon."
+--
+-- `signature_required` stays and keeps its meaning. A delivery can require no
+-- signature at all one day -- BC3 hand-offs to a locker are heading that way
+-- -- and the rule is only consulted when one is required. Two columns because
+-- "is a signature needed" and "from whom" are genuinely different questions,
+-- and collapsing them is what produced the boolean this replaces.
+--
+-- DEFAULT 'anyone', which is what every existing row already means. Nothing
+-- is reinterpreted by this migration.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- authorised_signers: THE NAMED CAREGIVER, AND WHY IT IS NOT A BOOLEAN.
+--
+-- "It'll have a name on there that is able to sign in place of that patient."
+-- The patient telephones the pharmacy in advance and nominates somebody; the
+-- pharmacy highlights the name on the form; that person signs, with ID.
+--
+-- Free text holding names, because that is what the pharmacy writes and the
+-- courier reads. Not a reference to anybody we hold a record of: these are
+-- the patient's relatives and we are not building a directory of them.
+--
+-- And the rule the counters were emphatic about, which this column exists to
+-- make enforceable: anybody NOT named does not get the package. "So if the
+-- secondary party is not home to sign and we call the patient and the patient
+-- is like, hey, just give it to my neighbor. That is not acceptable."
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- refrigerated: BECAUSE IT ALREADY WENT WRONG WITH THE INCUMBENT.
+--
+-- "There was complaints before about packages getting to patients that are
+-- maybe later in that delivery route that were warm."
+--
+-- Packouts are good for 32 hours at Discharge and "36 hours or less"
+-- elsewhere, so the risk is not the day, it is the car. A flag the system
+-- knows about is what lets a refrigerated stop be sequenced early, shown to
+-- the courier as cold, and -- the part the pharmacies care about most --
+-- separated on return rather than sitting in a bag overnight.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- "ONE OF THREE" IS NOT HERE, AND THAT IS THE SECOND ANSWER.
+--
+-- The longest single subject of the visits was multi-box deliveries: three
+-- boxes for one patient, one of them refrigerated, paperwork on exactly one.
+--
+--   "You always want to match up the packages if it's a one of two or a one
+--    of three. So that would be on the driver to make sure that they are
+--    giving the patient the correct information."
+--
+-- I added package_index and package_count here and then took them out. The
+-- count already exists: `packages.quantity`, summed per order, is what the
+-- courier's pickup screen counts against and what refuses a short handover
+-- ("The list says 1 packages and you counted 2"). A second column holding
+-- the same number is two sources of truth for the one figure a courier is
+-- physically checking boxes against, and the first thing it did was collide
+-- with the `AS package_count` alias in pickup.ts -- `o.*` masked the computed
+-- value, so the expected count silently became 1 for every stop. The same
+-- shadowing that `d.*` and `u.pin` hit in core/auth/devices.ts.
+--
+-- So the sheet's "of 3" feeds `packages.quantity`, and the import learned the
+-- spellings (pieces, boxes, total packages, "2 of 3" in one cell) instead.
+--
+-- The INDEX is deliberately not stored at all. "This is box 2" is a property
+-- of a box, not of a delivery, and the courier matches the labels in their
+-- hands. Storing a per-order index would be recording one box's identity
+-- against all three.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- controlled: STAMPED, AND SEPARATE FROM id_required.
+--
+-- "Very important as far as tracking patrol [control] drugs ... are required
+-- to have something in print that says, I handed off to you a controlled
+-- substance", and they are stamped on the form and on the address.
+--
+-- Not folded into id_required even though a controlled substance always needs
+-- one: the two answer different questions. id_required is what the courier
+-- must do at the door. controlled is what the package IS, which governs how
+-- the custody record is read afterwards and whether a missing signature is a
+-- service failure or a reportable one.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHAT IS DELIBERATELY NOT HERE.
+--
+-- A `special_instructions` column. The pharmacies highlight gate codes, "use
+-- the back door" and caregiver names on the form, and `delivery_notes`
+-- already carries free text to the courier's screen. A second free-text field
+-- would mean two places to look and one of them eventually not shown.
+
+ALTER TABLE `orders` ADD COLUMN `signature_rule` text DEFAULT 'anyone' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE `orders` ADD COLUMN `authorised_signers` text DEFAULT '' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE `orders` ADD COLUMN `refrigerated` integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+ALTER TABLE `orders` ADD COLUMN `controlled` integer DEFAULT 0 NOT NULL;
