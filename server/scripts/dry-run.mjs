@@ -132,7 +132,8 @@ if (!apply) {
     say('  7. read it all back as the pharmacy sees it, and as a report');
     say(`  8. ${mailOn ? 'confirmed a notification was queued for the pharmacy' : 'SKIPPED the notification: mail is not configured'}`);
     say('  9. created a pharmacy portal account and walked its FIRST SIGN-IN:');
-    say('     refused until it chooses its own password, then released');
+    say('     straight into its own counter with the password we sent,');
+    say('     and the contract manager resetting one of its passwords');
     say(' 10. checked it sees its own counter, cannot reach the next one,');
     say('     cannot find a patient by name, and can export what it sees');
     say(' 11. read the drivers record: counts per driver, no patient in it,');
@@ -164,7 +165,20 @@ today = cfg.body?.today ?? '';
 const UH = '/api/projects/uh/uh';
 
 const sites = await call(`${UH}/sites`);
-const discharge = (Array.isArray(sites.body) ? sites.body : []).find((s) => s.code === 'discharge');
+/* THE LIST, not the response envelope.
+ *
+ * `sites` is { status, body }. Two later lines read it as though it were
+ * the array -- `sites.find(...)` and `sites.map(...)` -- and the first of
+ * them threw TypeError and killed the run partway through the pharmacy
+ * portal section, taking the drivers record, the six exports, the retention
+ * check and the manager's password reset with it. Those steps have never
+ * been exercised: the script exits 0 on nothing because it never reaches
+ * its own summary.
+ *
+ * Named separately rather than fixed in place at each call site, so the
+ * next person to reach for the list does not have to notice the envelope. */
+const siteList = Array.isArray(sites.body) ? sites.body : [];
+const discharge = siteList.find((s) => s.code === 'discharge');
 step('read the pharmacies', Boolean(discharge), discharge ? discharge.name : 'no site with code "discharge"');
 if (!discharge) process.exit(1);
 
@@ -348,7 +362,17 @@ step('  it carries turnaround times', Boolean(report.body?.turnaround), JSON.str
 step('  and why deliveries failed', Array.isArray(report.body?.failureReasons),
     (report.body?.failureReasons ?? []).map((r) => `${r.label} ${r.packages}`).join(', ') || 'none today');
 step('  and reattempts, returns and what is still in a van', Boolean(report.body?.followUp), JSON.stringify(report.body?.followUp ?? {}));
-step('  against the 95 per cent target', report.body?.target?.completion === 95, String(report.body?.target?.completion));
+/* TWO NUMBERS, AND THIS ASSERTED THE WRONG ONE. 95 is CONTRACT_FLOOR, what
+   Scope 1.2.5 as amended obliges us to and what a dispute would be argued
+   from. What the report measures against is COMPLETION_TARGET, 99.5, which
+   is the number University Health actually run to and said out loud. The
+   step asserted the floor, so it failed against a correct server and would
+   have been "fixed" by lowering the target -- reporting green on a month
+   that fails, which modules/uh/reports.ts says is the worst direction for
+   this figure to be wrong in. */
+step('  against the target University Health measure us by',
+    report.body?.target?.completion === 99.5,
+    `target ${report.body?.target?.completion}, contract floor 95`);
 
 /* ------------------------------------------------ 12. the notification */
 
@@ -456,7 +480,7 @@ if (!apply) {
         adds === (summary.body?.total ?? -1),
         `${adds} against ${summary.body?.total}`);
 
-    const other = sites.find((x) => x.code !== 'discharge');
+    const other = siteList.find((x) => x.code !== 'discharge');
     if (other) {
         const reach = await call(`${UH}/client/orders?siteId=${other.id}`);
         step('  and cannot reach the counter next door', reach.status === 403, String(reach.status));
@@ -517,7 +541,7 @@ if (!apply) {
         method: 'PUT',
         body: JSON.stringify({
             role: 'pharmacy',
-            settings: { siteIds: sites.map((x) => x.id), mayResetPortalPasswords: true },
+            settings: { siteIds: siteList.map((x) => x.id), mayResetPortalPasswords: true },
         }),
     });
 
@@ -612,9 +636,16 @@ if (!apply) {
        retention period exists. Reported either way, because a reviewer
        opening the app to a banner saying tracking is off is a wasted
        submission. */
+    /* `policy`, which is what the endpoint returns. This read `rules`, fell
+       back to the response body, called .find? on an object, got undefined,
+       and reported "undecided: the endpoint refuses every point" -- against
+       a server where location_traces has been decided at 7 days since
+       RETENTION_LOCATION_TRACE_DAYS was set. A step that reports a working
+       control as broken is worse than no step: it sends somebody to fix
+       what is not wrong, on the morning of a go-live review. */
     const retention = await call('/api/retention');
-    const traces = (retention.body?.rules ?? retention.body ?? [])
-        .find?.((r) => r.category === 'location_traces');
+    const traces = (Array.isArray(retention.body?.policy) ? retention.body.policy : [])
+        .find((r) => r.category === 'location_traces');
     if (retention.status !== 200) {
         step('a courier track has an agreed retention period', 'skip', `/api/retention answered ${retention.status}`);
     } else {
