@@ -120,6 +120,26 @@ const pdfString = (text: string): string =>
 
 const round = (n: number): string => (Math.round(n * 100) / 100).toString();
 
+/* ─────────────────────────────────────────────────────────────── colour
+ *
+ * This writer was greyscale because the proof of delivery is: a document
+ * that goes to University Health as evidence has no business carrying
+ * brand colour. The delivery docket does -- it is letterhead, and the
+ * wordmark is green on every other thing Izy sends out.
+ *
+ * `rgb` is therefore opt-in and `grey` stays the default everywhere, so no
+ * existing document changes by accident. Values are 0..1, as PDF wants.
+ */
+export interface Rgb { r: number; g: number; b: number }
+
+/** The fill operator for whichever was asked for. Grey unless told. */
+const fillColour = (grey: number, rgb?: Rgb): string => (rgb
+    ? `${round(rgb.r)} ${round(rgb.g)} ${round(rgb.b)} rg`
+    : `${round(grey)} g`);
+const strokeColour = (grey: number, rgb?: Rgb): string => (rgb
+    ? `${round(rgb.r)} ${round(rgb.g)} ${round(rgb.b)} RG`
+    : `${round(grey)} G`);
+
 export interface Point { x: number; y: number }
 
 /**
@@ -134,13 +154,13 @@ export class Page {
     private readonly ops: string[] = [];
     private readonly names = new Set<string>();
 
-    text(value: string, x: number, y: number, opts: { font?: FontName; size?: number; grey?: number } = {}): void {
-        const { font = 'Helvetica', size = 10, grey = 0 } = opts;
+    text(value: string, x: number, y: number, opts: { font?: FontName; size?: number; grey?: number; rgb?: Rgb } = {}): void {
+        const { font = 'Helvetica', size = 10, grey = 0, rgb } = opts;
         const content = toLatin(value);
         if (content === '') return;
         this.ops.push(
             'BT',
-            `${round(grey)} g`,
+            fillColour(grey, rgb),
             `/${font === 'Helvetica-Bold' ? 'F2' : 'F1'} ${round(size)} Tf`,
             `1 0 0 1 ${round(x)} ${round(y)} Tm`,
             `${pdfString(content)} Tj`,
@@ -150,26 +170,33 @@ export class Page {
     }
 
     /** Right-aligned at x. */
-    textRight(value: string, x: number, y: number, opts: { font?: FontName; size?: number; grey?: number } = {}): void {
+    textRight(value: string, x: number, y: number, opts: { font?: FontName; size?: number; grey?: number; rgb?: Rgb } = {}): void {
         const width = textWidth(value, opts.font ?? 'Helvetica', opts.size ?? 10);
         this.text(value, x - width, y, opts);
     }
 
-    line(x1: number, y1: number, x2: number, y2: number, opts: { width?: number; grey?: number } = {}): void {
+    line(x1: number, y1: number, x2: number, y2: number, opts: { width?: number; grey?: number; rgb?: Rgb } = {}): void {
         this.ops.push(
-            `${round(opts.grey ?? 0.7)} G`,
+            strokeColour(opts.grey ?? 0.7, opts.rgb),
             `${round(opts.width ?? 0.5)} w`,
             `${round(x1)} ${round(y1)} m ${round(x2)} ${round(y2)} l S`,
             '0 G',
         );
     }
 
-    rect(x: number, y: number, width: number, height: number, opts: { grey?: number; fill?: number } = {}): void {
-        if (opts.fill !== undefined) {
-            this.ops.push(`${round(opts.fill)} g`, `${round(x)} ${round(y)} ${round(width)} ${round(height)} re f`, '0 g');
+    rect(
+        x: number, y: number, width: number, height: number,
+        opts: { grey?: number; fill?: number; rgb?: Rgb; fillRgb?: Rgb } = {},
+    ): void {
+        if (opts.fill !== undefined || opts.fillRgb !== undefined) {
+            this.ops.push(
+                fillColour(opts.fill ?? 0, opts.fillRgb),
+                `${round(x)} ${round(y)} ${round(width)} ${round(height)} re f`,
+                '0 g',
+            );
         }
         this.ops.push(
-            `${round(opts.grey ?? 0.7)} G`,
+            strokeColour(opts.grey ?? 0.7, opts.rgb),
             '0.5 w',
             `${round(x)} ${round(y)} ${round(width)} ${round(height)} re S`,
             '0 G',
@@ -275,6 +302,37 @@ export function jpegSize(bytes: Buffer): JpegSize | null {
     return null;
 }
 
+/* ─────────────────────────────────────────── fillable fields (AcroForm)
+ *
+ * Added for the delivery docket, which is printed onto carbonless pads AND
+ * typed into at a desk when dispatch takes a job by telephone. The same
+ * layout has to serve both, so the rules and boxes are drawn in the content
+ * stream as usual and the widgets sit invisibly on top of them.
+ *
+ * BORDERLESS BY DESIGN. The line a person writes on and the box a person
+ * ticks are already drawn; a widget that drew its own border would double
+ * every rule on the printed pad. /BS << /W 0 >> and no /MK border.
+ *
+ * Checkbox appearances are two tiny form XObjects -- an empty one and a
+ * filled square -- rather than the usual ZapfDingbats tick, so the file
+ * needs no extra font and renders the same in every reader. Readers differ
+ * on how much they will synthesise from /NeedAppearances, and a tick that
+ * shows in Acrobat and not in a browser is the kind of difference somebody
+ * discovers after sending a form to a pharmacy.
+ */
+export interface FormField {
+    /** Which page, 0-based. */
+    page: number;
+    /** Unique within the document. Becomes the field name a filled PDF carries. */
+    name: string;
+    kind: 'text' | 'check';
+    /** [x1, y1, x2, y2] in page points, bottom-left origin like everything else. */
+    rect: [number, number, number, number];
+    /** Point size for text. 0 means the reader fits it to the box. */
+    size?: number;
+    multiline?: boolean;
+}
+
 export interface DocumentInfo {
     title: string;
     /** Shown in a reader's document properties. No patient data. */
@@ -293,6 +351,7 @@ export function buildPdf(
     info: DocumentInfo,
     now: Date = new Date(),
     images: EmbeddedImage[] = [],
+    fields: FormField[] = [],
 ): Buffer {
     if (pages.length === 0) throw new Error('A PDF needs at least one page');
 
@@ -346,7 +405,63 @@ export function buildPdf(
         ));
     }
 
-    objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+    /* ─── form fields, if any ───────────────────────────────────────────
+     *
+     * After the pages, because a widget has to name the page it sits on;
+     * the page dictionaries are then rewritten to carry /Annots. Writing
+     * them in one pass would mean knowing the field object numbers before
+     * the fields exist. */
+    const annotsByPage = new Map<number, number[]>();
+    const fieldIds: number[] = [];
+
+    if (fields.length > 0) {
+        /* Shared by every checkbox: off is empty, on is a filled square
+           inset from the drawn box so the printed outline stays visible. */
+        const offAp = add('<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << >> '
+            + '/Length 0 >>\nstream\n\nendstream');
+        const onContent = '0 g 2 2 6 6 re f';
+        const onAp = add('<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << >> '
+            + `/Length ${onContent.length} >>
+stream
+${onContent}
+endstream`);
+
+        for (const field of fields) {
+            const pageId = pageIds[field.page];
+            if (pageId === undefined) continue;
+            const [x1, y1, x2, y2] = field.rect;
+            const rect = `[${round(x1)} ${round(y1)} ${round(x2)} ${round(y2)}]`;
+            /* /F 4 is the Print flag: a widget without it fills on screen and
+               vanishes from the paper, which on this form would be silent. */
+            const common = `/Type /Annot /Subtype /Widget /T ${pdfString(field.name)} `
+                + `/Rect ${rect} /F 4 /P ${pageId} 0 R /BS << /W 0 >> `;
+
+            const id = field.kind === 'check'
+                ? add(`<< ${common}/FT /Btn /V /Off /AS /Off `
+                    + `/AP << /N << /Off ${offAp} 0 R /Yes ${onAp} 0 R >> >> >>`)
+                : add(`<< ${common}/FT /Tx /DA (/F1 ${round(field.size ?? 9)} Tf 0 g) `
+                    + `${field.multiline ? '/Ff 4096 ' : ''}>>`);
+
+            fieldIds.push(id);
+            const list = annotsByPage.get(field.page) ?? [];
+            list.push(id);
+            annotsByPage.set(field.page, list);
+        }
+
+        for (const [pageIndex, ids] of annotsByPage) {
+            const pageId = pageIds[pageIndex];
+            if (pageId === undefined) continue;
+            const dict = objects[pageId - 1]!;
+            objects[pageId - 1] = `${dict.slice(0, -2)}/Annots [${ids.map((i) => `${i} 0 R`).join(' ')}] >>`;
+        }
+    }
+
+    const acroForm = fieldIds.length === 0 ? '' :
+        `/AcroForm << /Fields [${fieldIds.map((i) => `${i} 0 R`).join(' ')}] `
+        + `/DA (/F1 9 Tf 0 g) /DR << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >> >> `
+        + '/NeedAppearances true >> ';
+
+    objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R ${acroForm}>>`;
     objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
     objects[fontRegularId - 1] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
     objects[fontBoldId - 1] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';

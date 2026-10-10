@@ -39,6 +39,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPdf, Page, PAGE, textWidth } from '../src/core/pdf/writer.ts';
 
+/* The wordmark green. Same Helvetica-Bold treatment as the Standard
+   Carrier Packet, which sets it in near-black; only the colour differs. */
+const IZY_GREEN = { r: 0.106, g: 0.369, b: 0.247 };
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.argv[2]
     ?? path.resolve(HERE, '..', '..', 'docs', 'forms', 'izy-delivery-docket.pdf');
@@ -53,7 +57,13 @@ const TOP = PAGE.height - 30;
 const BOTTOM = 26;
 
 /* Three parts share what is left after the two cut lines. */
-const CUT_SPACE = 16;
+/* Clearance either side of a cut line. It was 16 and the capitals of the
+   next part's wordmark rose into the scissors, because a part's `top` was
+   being used as the wordmark's BASELINE -- so 11pt of ascender sat above
+   the number the layout was reasoning about. letterhead() now treats the
+   value it is given as the top of the ink, and this is honest white space
+   on top of that. */
+const CUT_SPACE = 30;
 const PART_H = (TOP - BOTTOM - CUT_SPACE * 2) / 3;
 
 /* Grey levels, named so the intent survives a later tweak. */
@@ -61,13 +71,42 @@ const INK = 0;
 const SOFT = 0.42;
 const RULE = 0.35;        // a line somebody writes on
 const FAINT = 0.72;
-const BAND_PHARMACY = 0.30;
+const BAND_PHARMACY = 0.30;   // drawn in green; the grey is its mono fallback
 const BAND_DRIVER = 0.08;
 const BAND_PATIENT = 0.52;
 const TINT = 0.94;
 
 const ADDRESS = '500 Navarro St, 2nd Floor, San Antonio, TX 78205';
 const DISPATCH = 'Dispatch +1 (832) 715 8986  ·  freights@izymovers.com';
+
+/* ─────────────────────────────────────────────── the fillable overlay
+ *
+ * The same sheet is printed onto carbonless pads AND typed into at a desk
+ * when dispatch takes a job by telephone, so every rule and every box
+ * carries an invisible widget over it (core/pdf/writer.ts, FormField).
+ *
+ * COLLECTED ONLY ON THE REAL PASS. The layout is measured by rendering
+ * each part once against a throwaway page, and registering fields during
+ * that pass would put two widgets on every rule -- which a reader shows as
+ * a field that will not take a second character.
+ */
+const FIELDS = [];
+let collecting = false;
+let prefix = '';
+const seen = new Map();
+
+/** A stable, unique, readable field name. */
+function fieldName(label) {
+    const base = `${prefix}.${label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base}_${n}`;
+}
+
+function addField(kind, label, rect, extra = {}) {
+    if (!collecting) return;
+    FIELDS.push({ page: 0, kind, name: fieldName(label), rect, ...extra });
+}
 
 /* ────────────────────────────────────────────────────────────── drawing */
 
@@ -80,6 +119,8 @@ function fields(page, y, cols, { gap = 12, lineH = 17 } = {}) {
         const w = (free * (c.w ?? 1)) / total;
         page.text(c.label.toUpperCase(), x, y, { size: 5.4, grey: SOFT });
         page.line(x, y - lineH, x + w, y - lineH, { width: 0.7, grey: RULE });
+        /* The writable zone is between the label and the rule it sits on. */
+        addField('text', c.label, [x, y - lineH + 1, x + w, y - 1], { size: 8 });
         x += w + gap;
     }
     return y - lineH - 7;
@@ -89,6 +130,7 @@ function fields(page, y, cols, { gap = 12, lineH = 17 } = {}) {
 function tick(page, x, y, label, { size = 7 } = {}) {
     const box = 8;
     page.rect(x, y - 1.5, box, box, { grey: INK });
+    addField('check', label, [x, y - 1.5, x + box, y - 1.5 + box]);
     page.text(label, x + box + 3.5, y, { size, grey: INK, font: 'Helvetica-Bold' });
     return x + box + 5 + textWidth(label, 'Helvetica-Bold', size) + 12;
 }
@@ -126,8 +168,13 @@ function cutLine(page, y) {
 }
 
 /** Letterhead plus the band saying whose part this is. */
-function letterhead(page, y, { role, band, kind, part }) {
-    page.text('IZY GLOBAL SERVICES LLC', LEFT, y, { font: 'Helvetica-Bold', size: 11, grey: INK });
+function letterhead(page, top, { role, band, kind, part }) {
+    /* `top` is the top of the ink, not a baseline. Helvetica-Bold at 11pt
+       ascends about 11pt above its baseline, and treating the two as the
+       same put the wordmark through the cut line above it. */
+    const y = top - 11;
+
+    page.text('IZY GLOBAL SERVICES LLC', LEFT, y, { font: 'Helvetica-Bold', size: 11, rgb: IZY_GREEN });
     page.text(ADDRESS, LEFT, y - 9.5, { size: 5.8, grey: SOFT });
     page.text(DISPATCH, LEFT, y - 18, { size: 6.4, grey: INK, font: 'Helvetica-Bold' });
 
@@ -142,13 +189,19 @@ function letterhead(page, y, { role, band, kind, part }) {
     const h = 12;
     const bx = RIGHT - w;
     const by = y - 11 - h + 3;
-    page.rect(bx, by, w, h, { fill: band, grey: band });
+    /* Green for the pharmacy band, grey for the other two. Three tones
+       either way, so the parts stay sortable when this is run off on a
+       mono laser. */
+    const bandRgb = band === BAND_PHARMACY ? IZY_GREEN : undefined;
+    page.rect(bx, by, w, h, bandRgb
+        ? { fillRgb: bandRgb, rgb: bandRgb }
+        : { fill: band, grey: band });
     page.text(label, bx + padX, by + 3.6, { font: 'Helvetica-Bold', size, grey: 1 });
 
     page.textRight(part, RIGHT, by - 8, { size: 5.6, grey: SOFT });
 
     const ruleY = by - 13;
-    page.line(LEFT, ruleY, RIGHT, ruleY, { width: 1.6, grey: 0.25 });
+    page.line(LEFT, ruleY, RIGHT, ruleY, { width: 1.6, rgb: IZY_GREEN });
     return ruleY - 11;
 }
 
@@ -163,7 +216,7 @@ function block(page, y, h, label, { strong = true } = {}) {
 function stage(page, y, what, note) {
     const h = 13;
     page.rect(LEFT, y - h, WIDTH, h, { fill: TINT, grey: TINT });
-    page.rect(LEFT, y - h, 2.5, h, { fill: 0.25, grey: 0.25 });
+    page.rect(LEFT, y - h, 2.5, h, { fillRgb: IZY_GREEN, rgb: IZY_GREEN });
     page.text(what.toUpperCase(), LEFT + 7, y - 9.2, { font: 'Helvetica-Bold', size: 7, grey: INK });
     page.textRight(note, RIGHT - 5, y - 9, { size: 5.8, grey: SOFT });
     return y - h - 8;
@@ -234,6 +287,7 @@ function partDriver(page, top) {
     /* The named caregiver is written in, so it gets a rule rather than a box. */
     const nx = tick(page, LEFT + 6, inner - 27, 'Also named by the pharmacy:');
     page.line(nx - 6, inner - 29.5, LEFT + WIDTH * 0.52, inner - 29.5, { width: 0.7, grey: RULE });
+    addField('text', 'Named caregiver', [nx - 6, inner - 28.5, LEFT + WIDTH * 0.52, inner - 17], { size: 8 });
     let x2 = LEFT + WIDTH * 0.56;
     for (const t of ['Refrigerated', 'Controlled', 'Photograph ID']) {
         x2 = tick(page, x2, inner - 27, t);
@@ -295,6 +349,7 @@ function partPatient(page, top) {
         const w = ((innerW - gap * (cols.length - 1)) * c.w) / total;
         page.text(c.label.toUpperCase(), cx, inner - 13, { size: 5.4, grey: SOFT });
         page.line(cx, inner - 25, cx + w, inner - 25, { width: 0.7, grey: RULE });
+        addField('text', c.label, [cx, inner - 24, cx + w, inner - 14], { size: 8 });
         cx += w + gap;
     }
     y = hTop - 34 - 8;
@@ -350,8 +405,10 @@ The three parts need ${content.toFixed(1)}pt and the sheet has ${available.toFix
 }
 
 const page = new Page();
+collecting = true;
 let y = TOP;
 PARTS.forEach((part, i) => {
+    prefix = part.name;
     part.draw(page, y);
     y -= heights[i] + pad;
     if (i < PARTS.length - 1) {
@@ -363,7 +420,11 @@ PARTS.forEach((part, i) => {
 const pdf = buildPdf([page], {
     title: 'Izy Delivery Docket',
     subject: 'Three-part delivery docket for the University Health pharmacy contract',
-});
+}, new Date(), [], FIELDS);
+
+console.log(`  ${FIELDS.length} fillable fields `
+    + `(${FIELDS.filter((f) => f.kind === 'text').length} text, `
+    + `${FIELDS.filter((f) => f.kind === 'check').length} tick boxes)`);
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, pdf);
