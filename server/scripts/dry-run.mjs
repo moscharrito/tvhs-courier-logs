@@ -278,7 +278,22 @@ async function photograph(orderId, kind) {
     const ticket = await call(`${UH}/files`, { method: 'POST', body: JSON.stringify({ kind, contentType: 'image/jpeg', bytes: jpeg.length, orderId }) });
     if (ticket.status !== 201) return { ok: false, detail: `ticket ${ticket.status} ${JSON.stringify(ticket.body).slice(0, 90)}` };
     const put = await fetch(ticket.body.upload.url, { method: ticket.body.upload.method, headers: ticket.body.upload.headers, body: jpeg });
-    if (!put.ok) return { ok: false, detail: `S3 refused the write: ${put.status}` };
+    if (!put.ok) {
+        /* S3 ANSWERS WITH XML NAMING THE FAULT, and this used to report only
+           the status. 403 alone cannot tell apart a missing bucket policy, a
+           KMS key whose own key policy does not grant this principal, and a
+           signature that did not match -- which are three different jobs for
+           whoever is fixing it. The <Code> element is the answer and it costs
+           one read of the body. */
+        const xml = await put.text().catch(() => '');
+        const code = /<Code>([^<]+)<\/Code>/.exec(xml)?.[1] ?? '';
+        const message = /<Message>([^<]+)<\/Message>/.exec(xml)?.[1] ?? '';
+        return {
+            ok: false,
+            detail: `S3 refused the write: ${put.status}`
+                + `${code ? ` ${code}` : ''}${message ? ` - ${message.slice(0, 120)}` : ''}`,
+        };
+    }
     const stored = await call(`${UH}/files/${ticket.body.id}/stored`, { method: 'POST', body: JSON.stringify({ bytes: jpeg.length }) });
     return { ok: stored.status === 200, fileId: ticket.body.id, detail: `file #${ticket.body.id}` };
 }
