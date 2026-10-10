@@ -31,7 +31,8 @@
     "seed:uh-day": "node scripts/seed-uh-day.mjs",
     "dry-run": "node scripts/dry-run.mjs",
     "seed:demo-uh": "node scripts/seed-demo.mjs",
-    "create:portals": "node scripts/create-pharmacy-portals.mjs"
+    "create:portals": "node scripts/create-pharmacy-portals.mjs",
+    "make:docket": "tsx scripts/make-docket.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
