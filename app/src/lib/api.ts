@@ -104,6 +104,20 @@ export interface Stop {
     /** The form is stamped ID Required: this delivery cannot be recorded
      *  without a photograph of the recipient's identification. */
     idRequired: boolean;
+    /* How the pharmacy handed it over (drizzle/0051). Optional because a
+       phone runs a build older or newer than the server it talks to, and a
+       missing field here must read as "nothing special about this one"
+       rather than stranding a courier. */
+    /** Already in words: "Alma Reyes must sign. Nobody else." Phrased on the
+     *  server so this screen and the proof of delivery cannot disagree. */
+    signingInstruction?: string;
+    /** Short chips for the run list: Fridge, Controlled, ID, Patient only. */
+    handlingFlags?: string[];
+    signatureRequired?: boolean;
+    signatureRule?: 'anyone' | 'adult' | 'patient_only';
+    authorisedSigners?: string;
+    refrigerated?: boolean;
+    controlled?: boolean;
     zone: number | null;
     status: string;
     dueAt: string | null;

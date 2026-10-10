@@ -207,6 +207,43 @@ describe('times on the document', () => {
 /* ----------------------------------------------------------- the document */
 
 describe('the proof of delivery', () => {
+    it('says how the pharmacy sent it, beside what happened', async () => {
+        /* A proof of delivery is read when somebody is asking whether the
+           right thing happened, and the outcome alone cannot answer that:
+           "signed by Delphine Okonkwo" is correct or seriously wrong
+           depending on whether this was a Medicare package.
+           
+           Same words as the courier was given at the door, from
+           modules/uh/handling.ts, because a document that phrases the rule
+           differently from the screen is not proof of the rule. */
+        const order = await deliveredOrder({
+            recipientName: 'Alma Reyes',
+            signatureRule: 'patient_only',
+            refrigerated: true,
+            controlled: true,
+            idRequired: true,
+        });
+        const res = await admin.get(`${ORDERS}/${order.id}/pod.pdf`);
+        expect(res.status).toBe(200);
+        const text = pdfText(Buffer.from(res.body));
+
+        expect(text).toMatch(/HOW THE PHARMACY SENT IT/i);
+        expect(text).toContain('Fridge');
+        expect(text).toContain('Controlled');
+        expect(text).toContain('Alma Reyes must sign');
+        expect(text).toContain('Nobody else');
+    });
+
+    it('does not grow the line on an ordinary delivery', async () => {
+        /* Most deliveries have nothing special about them, and a document
+           that says "Anyone at this address may sign." on every one of them
+           is a document people stop reading. */
+        const order = await deliveredOrder({});
+        const res = await admin.get(`${ORDERS}/${order.id}/pod.pdf`);
+        const text = pdfText(Buffer.from(res.body));
+        expect(text).not.toMatch(/HOW THE PHARMACY SENT IT/i);
+    });
+
     it('carries the five things Scope 1.2.8 names', async () => {
         const order = await deliveredOrder({ recipientName: 'Ines Vargas' });
         const res = await admin.get(`${ORDERS}/${order.id}/pod.pdf`);

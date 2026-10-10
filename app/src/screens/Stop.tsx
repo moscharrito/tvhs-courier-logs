@@ -37,6 +37,7 @@ import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/p
 import { SignatureMark } from './SignatureMark';
 import { handwrittenInitials } from '../lib/handwriting';
 import { readablePhone } from '../lib/phone';
+import { needsSignerExplanation } from '../lib/handling';
 
 /** Addendum 1's own list, in its own terms. */
 const REASONS: Array<{ code: string; label: string }> = [
@@ -91,6 +92,9 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
      * ───────────────────────────────────────────────────────────────── */
     const [reason, setReason] = useState(REASONS[0]!.code);
     const [note, setNote] = useState('');
+    /* Why somebody other than the patient took a Medicare delivery. Only
+       ever asked for, and only ever sent, when that is what happened. */
+    const [signerReason, setSignerReason] = useState('');
     const [busy, setBusy] = useState(false);
     /* Proof of delivery. Undefined until the server has been asked; the step
        is not drawn at all while storage is off, so no camera is ever opened
@@ -236,6 +240,7 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                 captureMethod: 'initials',
                 noSignatureReason: '',
                 note: note.trim(),
+                ...(signerReason.trim() === '' ? {} : { signerNotPatientReason: signerReason.trim() }),
                 ...(courierFormFileId !== undefined ? { courierFormFileId } : {}),
                 ...(patientIdFileId !== undefined ? { patientIdFileId } : {}),
                 identifiersChecked: checked,
@@ -277,11 +282,24 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
      * which is the truthful record. */
     const canPhotograph = podOn === true;
     const needsId = stop.idRequired;
+    /* ASKED AT THE DOOR, NOT REFUSED AFTERWARDS. This app queues, so a
+       server refusal arrives when the courier is three streets away and the
+       medication has already changed hands. See lib/handling.ts. */
+    const mustExplainSigner = needsSignerExplanation(
+        {
+            signatureRequired: stop.signatureRequired ?? true,
+            signatureRule: stop.signatureRule,
+            authorisedSigners: stop.authorisedSigners,
+            recipientName: stop.recipientName,
+        },
+        signedName,
+    );
+    const signerExplained = !mustExplainSigner || signerReason.trim().length > 2;
     const idSatisfied = !needsId || idPhoto !== null;
     const proofSatisfied = canPhotograph ? formPhoto !== null : auto.length > 0;
     const blockedByStorage = needsId && !canPhotograph;
     const canDeliver = signedName.trim().length > 1 && proofSatisfied && idSatisfied
-        && !blockedByStorage && !busy;
+        && signerExplained && !blockedByStorage && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
     const knowsPackages = (detail?.packages.length ?? 0) > 0;
@@ -293,6 +311,28 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
             <Text style={styles.title}>{stop.recipientName}</Text>
             <Text style={styles.address}>{stop.address}</Text>
             <Text style={styles.address}>{stop.city} {stop.zip}</Text>
+
+            {/* HOW THE PHARMACY SENT IT, above everything else on the screen.
+            
+                A courier reads this before knocking or not at all. Putting it
+                beside the signature box would be putting it after the moment
+                it changes what they do: whether to go back to the van for the
+                cooler, and whether the person opening the door is allowed to
+                take this at all.
+            
+                The words come from the server already phrased, so this screen
+                and the proof of delivery cannot describe the same delivery
+                differently. */}
+            {(stop.handlingFlags ?? []).length > 0 && (
+                <View style={styles.flags}>
+                    {(stop.handlingFlags ?? []).map((f) => (
+                        <Text key={f} style={styles.flag}>{f}</Text>
+                    ))}
+                </View>
+            )}
+            {stop.signingInstruction !== undefined && stop.signingInstruction !== '' && (
+                <Text style={styles.instruction}>{stop.signingInstruction}</Text>
+            )}
 
             {said !== null && (
                 <View style={styles.said} accessibilityLiveRegion="polite">
@@ -340,6 +380,39 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                         editable={!busy}
                         accessibilityLabel="Printed name of whoever took it"
                     />
+
+                    {/* Appears the moment the typed name is neither the
+                        patient nor anybody the pharmacy named, and only for
+                        a Medicare delivery.
+                    
+                        A REASON, NOT A REFUSAL. The courier is looking at a
+                        highlighted paper form, a person and their ID; we are
+                        comparing two strings. Married names, nicknames and
+                        the pharmacy's own transcription would all fail an
+                        exact match at a door at seven in the morning with
+                        the medication already in hand. What must not happen
+                        is the handover being recorded SILENTLY as though the
+                        patient took it. */}
+                    {mustExplainSigner && (
+                        <View style={styles.warnBox}>
+                            <Text style={styles.warnTitle}>
+                                {signedName.trim()} is not {stop.recipientName}
+                            </Text>
+                            <Text style={styles.warnBody}>
+                                This one is Medicare. If they are not the patient and the pharmacy did not
+                                name them, take it back. If you are handing it over anyway, say why.
+                            </Text>
+                            <TextInput
+                                style={styles.input}
+                                value={signerReason}
+                                onChangeText={setSignerReason}
+                                editable={!busy}
+                                multiline
+                                placeholder="e.g. Patient bedbound, daughter showed the patient ID"
+                                accessibilityLabel="Why somebody other than the patient is taking this"
+                            />
+                        </View>
+                    )}
 
                     {/* THE THREE IDENTIFIERS, checked against the person at
                         the door. University Health asks for name, address and
@@ -607,4 +680,23 @@ const styles = StyleSheet.create({
     said: { backgroundColor: 'rgba(22,163,74,0.12)', borderRadius: 18, padding: 14, marginTop: 14 },
     saidText: { color: theme.green, fontSize: 16, lineHeight: 21 },
     footnote: { fontSize: 15, color: theme.muted, lineHeight: 19, marginTop: 14 },
+
+    /* How the pharmacy sent it, at the top of the screen. Sized to be read
+       at arm's length in a van, not to be elegant. */
+    flags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+    flag: {
+        fontSize: 13, fontWeight: '700', color: theme.ink,
+        backgroundColor: 'rgba(255,255,255,0.85)',
+        borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, overflow: 'hidden',
+    },
+    instruction: { fontSize: 16, fontWeight: '600', color: theme.ink, lineHeight: 22, marginTop: 10 },
+
+    /* The Medicare mismatch. Loud on purpose: it is the one thing on this
+       screen that means "stop and think about whether to hand this over". */
+    warnBox: {
+        borderWidth: 1, borderColor: theme.danger, borderRadius: 12,
+        padding: 12, marginTop: 12, backgroundColor: 'rgba(255,255,255,0.7)',
+    },
+    warnTitle: { fontSize: 16, fontWeight: '700', color: theme.danger },
+    warnBody: { fontSize: 15, color: theme.ink, lineHeight: 20, marginTop: 4, marginBottom: 8 },
 });

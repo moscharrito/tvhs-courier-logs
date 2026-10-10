@@ -34,6 +34,7 @@ import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { searchFragment, CLIENT_SEARCH_COLUMNS } from './search';
 import { mayReset } from './portal-capability';
+import { presentHandling, handlingFlags } from './handling';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor } from './eta';
@@ -137,6 +138,9 @@ interface OrderRow {
     status: string; received_at: string; due_at: string | null; pickup_at: string | null;
     arrived_at: string | null; delivered_at: string | null; returned_at: string | null;
     received_by: string; no_signature_reason: string; failure_reason: string;
+    /* How the pharmacy handed it over (drizzle/0051). */
+    signature_required: number; signature_rule: string; authorised_signers: string;
+    refrigerated: number; controlled: number; id_required: number;
     assigned_to_username: string | null; service_date: string;
     /** The delivery this one is a second go at, if it is one (drizzle/0036). */
     reattempt_of_order_id: number | null;
@@ -177,6 +181,16 @@ function present(o: OrderRow, siteName: string, courierName: string) {
         receivedBy: o.received_by,
         noSignatureReason: o.no_signature_reason,
         failureReason: o.failure_reason,
+        /* How THEY handed it over, read back to them (drizzle/0051).
+        
+           A pharmacy checking a delivery is checking their own instruction
+           was followed: they stamped it ID Required, they marked it fridge,
+           they said Medicare. Showing the rule beside the outcome is what
+           makes the row answer "did you do what we asked" rather than only
+           "did it arrive". Through the shared presenter so this says the
+           same thing as the courier's screen and the proof of delivery. */
+        ...presentHandling(o),
+        handlingFlags: handlingFlags(presentHandling(o)),
         /* A first name. See the header. */
         courier: courierName,
         sla: evaluateSla({

@@ -31,6 +31,7 @@ import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from './lifecycle';
 import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
+import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -213,11 +214,27 @@ export function createRunsRouter({ client }: { client: Client }): Router {
              * app must show as "not provided" rather than as a blank field:
              * those are different facts and only one of them is our problem. */
             recipientPhone: String(o['recipient_phone'] ?? ''),
-            /* The pharmacy stamped the form. The courier cannot record this
-             * delivery without photographing identification, so they need to
-             * know before they knock rather than at the moment they are
-             * refused. */
-            idRequired: Boolean(o['id_required']),
+            /* How the pharmacy handed it over (drizzle/0051),
+               through the shared presenter so this manifest, the door screen
+               and the proof of delivery cannot describe it differently.
+               
+               idRequired comes through here now rather than on its own
+               line, and the reason it was called out separately still
+               holds for all of them: the courier cannot record a delivery
+               without photographing identification, so they need to know
+               before they knock rather than at the moment they are refused.
+               
+               The same is true of the rest. A courier plans the run off
+               this list: the cold ones decide what goes in the cooler and
+               in what order, and "patient only" decides which doors cannot
+               be left to whoever answers. Both are decisions made before
+               leaving the counter, so they belong on the manifest rather
+               than only at the door. */
+            ...presentHandling(o as unknown as HandlingRow),
+            signingInstruction: signingInstruction(
+                presentHandling(o as unknown as HandlingRow), String(o['recipient_name'] ?? ''),
+            ),
+            handlingFlags: handlingFlags(presentHandling(o as unknown as HandlingRow)),
             zone: o['zone'] === null ? null : Number(o['zone']),
             status: String(o['status']),
             dueAt: o['due_at'] === null ? null : String(o['due_at']),

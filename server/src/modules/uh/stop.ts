@@ -37,6 +37,7 @@ import { recordOrderEvent, insertCustodyEvent, type OrderStateRow } from './orde
 import { TransitionError } from './lifecycle';
 import { DRY_RUN_REASONS } from '../../db/schema/uh';
 import type { FileStorage } from '../../core/files/storage';
+import { presentHandling, isNamedSigner, matchesName } from './handling';
 
 const Point = z.object({
     x: z.number().min(0).max(1),
@@ -77,6 +78,11 @@ const Deliver = z.object({
     /** Required when strokes are empty. Checked in the handler. */
     noSignatureReason: z.string().trim().max(300).default(''),
     note: z.string().trim().max(300).default(''),
+
+    /* Required when a patient-only delivery was signed for by somebody the
+     * pharmacy did not name. Checked in the handler; see the refusal there
+     * for why this is a reason rather than a refusal. */
+    signerNotPatientReason: z.string().trim().max(300).default(''),
 
     /* ───────────────────────── University Health, 29 September 2026 ───────
      *
@@ -157,6 +163,12 @@ interface OrderRow extends OrderStateRow {
     /** The pharmacy stamped the form ID Required (drizzle/0038), so this
      *  delivery cannot be recorded without a photograph of identification. */
     id_required: number;
+    /** Who may sign, and who the pharmacy named (drizzle/0051). */
+    signature_rule: string;
+    authorised_signers: string;
+    refrigerated: number;
+    controlled: number;
+    recipient_name: string;
 }
 
 export function createStopRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
@@ -339,6 +351,55 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             return;
         }
 
+        /* ── Medicare: the patient, and nobody else ─────────────────────
+         *
+         * "We'll put Medicare signature required ... for the actual patient
+         * to be required to sign for the package", and the counters were
+         * emphatic that a neighbour is not acceptable even when the patient
+         * says so on the telephone.
+         *
+         * A REASON, NOT A REFUSAL, and the distinction is deliberate. The
+         * courier is looking at a highlighted paper form, a human being and
+         * their identification; we are looking at two strings. Married
+         * names, nicknames, transcription from the pharmacy's system and a
+         * patient who introduces themselves as Alma when the list says
+         * Alma-Rose would all make an exact match fail at a door at seven in
+         * the morning, with the medication in the courier's hand and nobody
+         * to appeal to.
+         *
+         * So the system refuses the SILENT case: recording a patient-only
+         * handover to an unnamed person with nothing said about it. Saying
+         * why takes a sentence, and that sentence is what the pharmacy reads
+         * when they ask who signed. The same shape as the package count
+         * mismatch at pickup, which also asks for a note rather than
+         * stopping the round.
+         *
+         * A named caregiver passes without comment: the pharmacy already
+         * decided that, in advance, with the patient. */
+        const handling = presentHandling(order);
+        const deliveryReason = [
+            body.signerNotPatientReason === ''
+                ? ''
+                : `Signed by ${body.signedName}, not the patient: ${body.signerNotPatientReason}`,
+            body.note,
+        ].filter((x) => x !== '').join(' — ');
+
+        if (handling.signatureRequired
+            && handling.signatureRule === 'patient_only'
+            && body.signerNotPatientReason === ''
+            && !matchesName(body.signedName, order.recipient_name)
+            && !isNamedSigner(handling, body.signedName)) {
+            res.status(400).json({
+                error: `This delivery is Medicare: only ${order.recipient_name} may sign for it. `
+                    + `${body.signedName} is not the patient and is not named by the pharmacy. `
+                    + 'Say why before recording it, or take it back.',
+                code: 'deliver.notThePatient',
+                patient: order.recipient_name,
+                signedName: body.signedName,
+            });
+            return;
+        }
+
         /* Every file named has to exist, belong to this project and this
            order, and have finished uploading. Without this a courier could
            pass any integer and the row would claim a photograph that is not
@@ -382,7 +443,12 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                     signatureKey: `local:signature:${Number(sig.rows[0]!['id'])}`,
                     ...(body.lat !== undefined ? { lat: body.lat } : {}),
                     ...(body.lng !== undefined ? { lng: body.lng } : {}),
-                    ...(body.note ? { reason: body.note } : {}),
+                    /* The signer explanation rides on the custody chain
+                       rather than only in the audit trail: custody_events is
+                       append-only and is what the proof of delivery prints,
+                       so "who signed, and why it was not the patient" is
+                       answered by the document the pharmacy already reads. */
+                    ...(deliveryReason ? { reason: deliveryReason } : {}),
                 },
             });
         } catch (err) {
@@ -429,6 +495,13 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             courierForm: body.courierFormFileId !== undefined,
             patientId: body.patientIdFileId !== undefined,
             idRequired: Boolean(order.id_required),
+            /* The handling rules as they stood, and whether the courier had
+               to explain the signer. A proof of delivery read six months
+               from now has to say what the rule WAS, not what it is now. */
+            signatureRule: handling.signatureRule,
+            refrigerated: handling.refrigerated,
+            controlled: handling.controlled,
+            signerNotPatient: body.signerNotPatientReason !== '',
         });
         res.status(201).json({
             ...(await reload(projectId, Number(order.id))),

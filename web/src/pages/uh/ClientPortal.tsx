@@ -34,6 +34,15 @@ interface ClientOrder {
     arrivedAt: string | null; deliveredAt: string | null; returnedAt: string | null;
     receivedBy: string; noSignatureReason: string; failureReason: string;
     courier: string; sla: Sla;
+    /* How the pharmacy sent it (drizzle/0051). Optional so a page served by
+       an older server renders rather than throwing: these are new fields on
+       an endpoint the portal already had. */
+    handlingFlags?: string[];
+    signatureRule?: 'anyone' | 'adult' | 'patient_only';
+    authorisedSigners?: string;
+    refrigerated?: boolean;
+    controlled?: boolean;
+    idRequired?: boolean;
 }
 
 interface ListResponse {
@@ -545,6 +554,19 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                         <td>
                             {o.recipientName}
                             {o.reference && <><br /><code>{o.reference}</code></>}
+                            {/* HOW THEY SENT IT, against the patient it was
+                                sent for. A pharmacy checking a delivery is
+                                checking their own instruction was followed,
+                                and the instruction belongs beside the name
+                                rather than in a column of its own: most rows
+                                have none of these, and an empty column on
+                                every ordinary delivery is worse than a chip
+                                on the few that matter. */}
+                            {(o.handlingFlags ?? []).length > 0 && (
+                                <><br />{(o.handlingFlags ?? []).map((f) => (
+                                    <span key={f} className={`izy-pill ${f === 'Fridge' ? 'warn' : ''}`}>{f}</span>
+                                ))}</>
+                            )}
                         </td>
                         <td>{o.address}<br /><span className="izy-muted">{o.city} {o.zip}</span></td>
                         <td>

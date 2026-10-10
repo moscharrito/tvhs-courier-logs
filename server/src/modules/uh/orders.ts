@@ -25,6 +25,8 @@ import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
 import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
+import { presentHandling, signingInstruction, handlingFlags } from './handling';
+import { SIGNATURE_RULES } from '../../db/schema/uh';
 import { dateIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
@@ -121,6 +123,13 @@ const CreateOrder = z.object({
      * most deliveries are not stamped, and defaulting the other way would
      * block every ordinary handover on a photograph nobody asked for. */
     idRequired: z.boolean().default(false),
+    /* How the pharmacy is handing it over (drizzle/0051). All optional with
+       the column defaults, because an order typed in by a dispatcher taking
+       a telephone call is the one case where nobody is reading a form. */
+    signatureRule: z.enum(SIGNATURE_RULES).default('anyone'),
+    authorisedSigners: z.string().trim().max(300).default(''),
+    refrigerated: z.boolean().default(false),
+    controlled: z.boolean().default(false),
     externalRef: z.string().trim().max(80).default(''),
     /** When the request actually came in. The SLA clock starts here. */
     requestedAt: z.string().datetime({ offset: true }).optional(),
@@ -174,6 +183,9 @@ interface OrderRow {
     zone: number | null; out_of_area_miles: number | null; signature_required: number;
     /** The pharmacy stamped the form ID Required (drizzle/0038). */
     id_required: number;
+    /** How it was handed over (drizzle/0051). See modules/uh/handling.ts. */
+    signature_rule: string; authorised_signers: string;
+    refrigerated: number; controlled: number;
     delivery_kind: string;
     out_of_area_authorised_by: string;
     out_of_area_authorised_at: string | null;
@@ -205,8 +217,12 @@ const present = (o: OrderRow) => ({
     zone: o.zone === null ? null : Number(o.zone),
     outOfAreaMiles: o.out_of_area_miles === null ? null : Number(o.out_of_area_miles),
     geocodeStatus: o.geocode_status,
-    signatureRequired: Boolean(o.signature_required),
-    idRequired: Boolean(o.id_required),
+    /* Through the shared presenter, which also carries signatureRequired
+       and idRequired, so the dispatcher's page cannot describe a handover
+       differently from the courier's screen or the proof of delivery. */
+    ...presentHandling(o),
+    signingInstruction: signingInstruction(presentHandling(o), o.recipient_name),
+    handlingFlags: handlingFlags(presentHandling(o)),
     deliveryKind: String(o.delivery_kind ?? 'patient'),
     /* Addendum 2 clause 9. A destination outside every zone is a zone of
        null, and it may not be driven or billed until University Health have
@@ -323,9 +339,11 @@ export function createOrdersRouter(
             sql: `INSERT INTO orders
                     (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                      recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                     delivery_notes, zone, signature_required, id_required, received_at, due_at, dedupe_key,
+                     delivery_notes, zone, signature_required, id_required,
+                     signature_rule, authorised_signers, refrigerated, controlled,
+                     received_at, due_at, dedupe_key,
                      delivery_kind, status)
-                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
+                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
             args: [
                 project.id, Number(site['id']), body.externalRef, body.serviceType, serviceDate,
                 body.recipientName, normalizePhone(body.recipientPhone), body.addressLine, body.addressLine2,
@@ -336,6 +354,12 @@ export function createOrdersRouter(
                    flag arrives from a pharmacy's own list and rejecting their
                    file over it would stop the day. */
                 body.deliveryKind === 'facility' ? 0 : (body.idRequired ? 1 : 0),
+                /* Same reasoning as the ID flag above for a facility
+                   transfer: there is no patient at a goods-in desk, so
+                   "only the patient may sign" cannot be satisfied and is
+                   forced back to the ordinary rule rather than refused. */
+                body.deliveryKind === 'facility' ? 'anyone' : body.signatureRule,
+                body.authorisedSigners, body.refrigerated ? 1 : 0, body.controlled ? 1 : 0,
                 receivedAt.toISOString(),
                 due.dueAt ? due.dueAt.toISOString() : null, dedupeKey,
                 body.deliveryKind,

@@ -34,6 +34,7 @@ import {
     buildPdf, jpegSize, Page, PAGE, textWidth, toLatin, wrap,
     type EmbeddedImage, type Point,
 } from '../../core/pdf/writer';
+import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
 
 const MARGIN = 54;
 const CONTENT_WIDTH = PAGE.width - MARGIN * 2;
@@ -85,6 +86,15 @@ export interface PodData {
     receivedBy: string;
     noSignatureReason: string;
     failureReason: string;
+    /** How the pharmacy asked for it to be handed over (drizzle/0051), in
+     *  the same words the courier was given at the door.
+     *
+     *  OPTIONAL, for the same reason the photograph is tolerated missing:
+     *  this module's rule is that a document with a gap in it is worth
+     *  printing and an exception is not. A caller built before this field
+     *  existed should produce a proof of delivery without the line, not a
+     *  500 where a legal record should be. */
+    handling?: { instruction: string; flags: string[] } | undefined;
     packages: PodPackage[];
     events: PodEvent[];
     pickupSignature: PodSignature | null;
@@ -202,6 +212,28 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         rightX, y, half,
     );
     y = Math.min(pickupBottom, deliveryBottom) - 6;
+
+    /* HOW THE PHARMACY ASKED FOR IT, printed above the outcome rather than
+     * below it.
+     *
+     * A proof of delivery is read when somebody is asking whether the right
+     * thing happened, and that question cannot be answered by the outcome
+     * alone: "signed by Delphine Okonkwo" is correct or seriously wrong
+     * depending on whether this was a Medicare package. The instruction and
+     * the signature have to be on the same page, in the same words the
+     * courier was given at the door -- which is why both come out of
+     * modules/uh/handling.ts rather than being phrased here.
+     *
+     * Omitted entirely when there is nothing to say, so an ordinary delivery
+     * does not grow a line reading "Anyone at this address may sign." */
+    const handling = data.handling ?? { instruction: '', flags: [] };
+    if (handling.instruction !== '' || handling.flags.length > 0) {
+        const parts = [
+            handling.flags.length > 0 ? handling.flags.join('  ·  ') : '',
+            handling.instruction,
+        ].filter((x) => x !== '');
+        y = field('How the pharmacy sent it', parts.join('  —  '), leftX, y, PAGE.width - MARGIN * 2) - 6;
+    }
 
     /* Description and quantity, one row per package, because a dry run is
      * billed per item and a part-delivered order has to show which part. */
@@ -495,10 +527,31 @@ const hasPhoto = opts.hasPhoto ?? events.rows.some(
     (e) => String(e['type']) === 'delivered' && String(e['signed_name']) === 'Left at the door',
 );
 
+    /* Built from the row the same way every other surface builds it, so the
+       document and the screen cannot disagree about what was asked for.
+    
+       NOTHING IS PRINTED FOR AN ORDINARY DELIVERY. signingInstruction always
+       returns a sentence -- "Anyone at this address may sign." is true and
+       is what the courier's screen shows -- but a line saying it on every
+       proof of delivery is a line people stop reading, and then do not read
+       on the one that says Medicare. So the judgement about whether there is
+       anything worth printing is made here, where the row is, rather than by
+       the renderer inspecting a sentence.
+    
+       A named caregiver counts even with no flags: "the pharmacy also named
+       Delphine Okonkwo" is exactly the fact somebody checks a proof of
+       delivery to find. */
+    const handling = presentHandling(o as unknown as HandlingRow);
+    const flags = handlingFlags(handling);
+    const notable = flags.length > 0 || handling.authorisedSigners.trim() !== '';
+
     return {
         orderId: Number(o['id']),
         reference: String(o['external_ref'] ?? ''),
         serviceType: String(o['service_type']),
+        handling: notable
+            ? { instruction: signingInstruction(handling, String(o['recipient_name'] ?? '')), flags }
+            : { instruction: '', flags: [] },
         serviceDate: String(o['service_date']),
         timezone: opts.timezone,
         pickupLocation: String(o['site_name']),

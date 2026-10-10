@@ -43,6 +43,11 @@ interface Detail extends OrderRow {
     state: string;
     deliveryNotes: string;
     signatureRequired: boolean;
+    /* How the pharmacy handed it over (drizzle/0051), already phrased by the
+       server so dispatch reads the same sentence the courier was given. */
+    signingInstruction?: string;
+    handlingFlags?: string[];
+    authorisedSigners?: string;
     geocodeStatus: string;
     receivedAt: string;
     pickupDueAt: string | null;
@@ -117,6 +122,30 @@ export function OrderDetail() {
                 {order.externalRef && <> · <code>{order.externalRef}</code></>}
                 {order.dailyListId !== null && <> · from list {order.dailyListId}</>}
             </p>
+
+            {/* HOW THE PHARMACY SENT IT, before the proof-of-delivery link.
+            
+                A dispatcher answering "why was this one refused at the door"
+                or "can we re-deliver to the son" needs the rule before the
+                outcome, and in the same words the courier had. Rendered from
+                the server's phrasing rather than rebuilt here: three
+                codebases describing one rule is how they end up disagreeing.
+            
+                Hidden entirely on an ordinary delivery, which is most of
+                them, so the page does not grow a line reading "Anyone at
+                this address may sign." */}
+            {((order.handlingFlags ?? []).length > 0
+                || (order.authorisedSigners ?? '') !== '') && (
+                <div className="izy-card">
+                    <h2>How the pharmacy sent it</h2>
+                    <p>
+                        {(order.handlingFlags ?? []).map((f) => (
+                            <span key={f} className={`izy-pill ${f === 'Fridge' ? 'warn' : ''}`}>{f}</span>
+                        ))}
+                    </p>
+                    {order.signingInstruction && <p>{order.signingInstruction}</p>}
+                </div>
+            )}
 
             {/* Our copy of the proof of delivery: the same document the client
                 gets, with our couriers named in full. A plain link, because the
