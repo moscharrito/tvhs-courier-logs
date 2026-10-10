@@ -44,8 +44,9 @@ import { buildPdf, Page, PAGE, textWidth } from '../src/core/pdf/writer.ts';
 const IZY_GREEN = { r: 0.106, g: 0.369, b: 0.247 };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OUT = process.argv[2]
-    ?? path.resolve(HERE, '..', '..', 'docs', 'forms', 'izy-delivery-docket.pdf');
+const FORMS = process.argv[2] ?? path.resolve(HERE, '..', '..', 'docs', 'forms');
+const OUT_DOCKET = path.join(FORMS, 'izy-delivery-docket.pdf');
+const OUT_MANIFEST = path.join(FORMS, 'izy-collection-manifest.pdf');
 
 /* ───────────────────────────────────────────────────────── the page grid */
 
@@ -90,10 +91,18 @@ const DISPATCH = 'Dispatch +1 (832) 715 8986  ·  freights@izymovers.com';
  * that pass would put two widgets on every rule -- which a reader shows as
  * a field that will not take a second character.
  */
-const FIELDS = [];
+let FIELDS = [];
 let collecting = false;
 let prefix = '';
-const seen = new Map();
+let seen = new Map();
+
+/** Start a fresh document. Two sheets are built per run and a field name
+ *  has to be unique within its own file, not across both. */
+function resetFields() {
+    FIELDS = [];
+    seen = new Map();
+    collecting = false;
+}
 
 /** A stable, unique, readable field name. */
 function fieldName(label) {
@@ -225,6 +234,64 @@ function stage(page, y, what, note) {
 function footer(page, y, left, right) {
     page.text(left, LEFT, y, { size: 5.6, grey: SOFT });
     page.textRight(right, RIGHT, y, { size: 5.6, grey: SOFT });
+}
+
+/** The counts block: a few big rules with captions under them.
+ *
+ *  Wide and short on purpose. These are the four numbers the whole sheet
+ *  exists to capture, and a number written into a cramped box beside a
+ *  dozen other fields is a number nobody checks. */
+function counts(page, top, label, items, { accent = true } = {}) {
+    const h = 44;
+    page.rect(LEFT, top - h, WIDTH, h, accent ? { rgb: IZY_GREEN } : { grey: FAINT });
+    page.text(label.toUpperCase(), LEFT + 6, top - 9,
+        { size: 5.4, font: 'Helvetica-Bold', rgb: accent ? IZY_GREEN : undefined, grey: accent ? undefined : SOFT });
+
+    const gap = 12;
+    const inner = WIDTH - 12;
+    const w = (inner - gap * (items.length - 1)) / items.length;
+    let x = LEFT + 6;
+    for (const item of items) {
+        const ruleY = top - 33;
+        /* The two figures somebody has to write and compare are ruled
+           heavier, so the eye lands on them before the ones copied off the
+           pharmacy's own list. */
+        page.line(x, ruleY, x + w, ruleY, { width: item.key ? 1.4 : 0.9, grey: item.key ? INK : RULE });
+        addField('text', item.label, [x, ruleY + 1, x + w, ruleY + 16], { size: 11 });
+        page.text(item.label.toUpperCase(), x, top - 40, { size: 5.2, grey: SOFT });
+        x += w + gap;
+    }
+    return top - h - 8;
+}
+
+/** A small ruled table inside a bordered block. */
+function table(page, top, label, columns, rows, { strong = false } = {}) {
+    const rowH = 15;
+    const h = 9 + 9 + rows * rowH + 4;
+    page.rect(LEFT, top - h, WIDTH, h, strong ? { grey: 0.1 } : { grey: FAINT });
+    page.text(label.toUpperCase(), LEFT + 6, top - 9, { size: 5.4, grey: SOFT, font: 'Helvetica-Bold' });
+
+    const gap = 8;
+    const inner = WIDTH - 12;
+    const total = columns.reduce((n, c) => n + c.w, 0);
+    const widths = columns.map((c) => ((inner - gap * (columns.length - 1)) * c.w) / total);
+
+    let x = LEFT + 6;
+    columns.forEach((c, i) => {
+        page.text(c.label.toUpperCase(), x, top - 18, { size: 5, grey: SOFT });
+        x += widths[i] + gap;
+    });
+
+    for (let r = 0; r < rows; r += 1) {
+        const ruleY = top - 22 - (r + 1) * rowH + 3;
+        let cx = LEFT + 6;
+        columns.forEach((c, i) => {
+            page.line(cx, ruleY, cx + widths[i], ruleY, { width: 0.6, grey: RULE });
+            addField('text', `${c.label} ${r + 1}`, [cx, ruleY + 1, cx + widths[i], ruleY + 11], { size: 8 });
+            cx += widths[i] + gap;
+        });
+    }
+    return top - h - 8;
 }
 
 /* ─────────────────────────────────────────────────────────── the parts */
@@ -361,72 +428,193 @@ function partPatient(page, top) {
 
 /* ──────────────────────────────────────────────────────────────── build */
 
+/* ───────────────────────────────────────────── the collection manifest
+ *
+ * One sheet per pharmacy per pickup window, signed once by the site lead
+ * who collects everything, instead of once per delivery. Robert B. Green
+ * runs 241 deliveries a day inside an 11:00 window; 241 signatures at a
+ * counter is a blur of initials or nothing at all.
+ *
+ * IT DOES NOT RE-LIST THE DELIVERIES, and that is the decision worth
+ * knowing. Enumerating every Rx reference is the obvious shape and the
+ * wrong one: handwriting 241 of them is worse than signing 241 times. The
+ * pharmacy already produces the enumerated list -- it is the thing they
+ * email by noon -- so this signs AGAINST that list, names it, and spends
+ * its space on the counts and the exceptions.
+ *
+ * One signature over a list both parties hold is as strong as per-delivery
+ * signatures. One signature over a bare number is not.
+ */
+
+const MANIFEST_COUNTS = [
+    { label: 'Deliveries on the list' },
+    { label: 'Packages expected' },
+    /* Written by the lead rather than copied from the figure beside it.
+       Two numbers that must agree, written by two people, is the control --
+       the same check modules/uh/pickup.ts makes when it refuses a
+       collection whose counted total does not match the list. */
+    { label: 'Packages counted by the lead', key: true },
+    { label: 'Of which refrigerated', key: true },
+];
+
+function manifestHeader(page, top, { role, band, part }) {
+    let y = letterhead(page, top, { role, band, kind: 'Collection manifest', part });
+    y = fields(page, y, [
+        { label: 'Pharmacy', w: 1.6 }, { label: 'Date', w: 1 },
+        { label: 'Pickup window', w: 1 }, { label: 'Manifest no.', w: 0.9 },
+    ]);
+    y = fields(page, y, [
+        { label: 'Izy site lead collecting (print)', w: 1.4 },
+        { label: 'Pharmacy list this covers - date and time sent', w: 1.5 },
+        { label: 'Drivers it is split between', w: 1 },
+    ]);
+    return y;
+}
+
+function manifestPharmacy(page, top) {
+    let y = manifestHeader(page, top, {
+        role: 'For pharmacy staff', band: BAND_PHARMACY, part: 'Part 1 of 2',
+    });
+
+    y = counts(page, y - 2,
+        'Counted at the counter - the pharmacy writes the first two, the lead writes the third',
+        MANIFEST_COUNTS);
+
+    y = table(page, y, 'Anything on the list not handed over, or handed over and not on it', [
+        { label: 'Rx reference', w: 1.1 },
+        { label: 'Patient initials', w: 0.9 },
+        { label: 'Packages', w: 0.6 },
+        { label: 'What happened', w: 2.4 },
+    ], 3);
+
+    y = stage(page, y, 'Handed over at the counter',
+        'Pharmacy keeps this part. One signature covers the whole collection.');
+
+    y = fields(page, y, [
+        { label: 'Izy site lead signature - I collected the packages counted above', w: 1.6 },
+        { label: 'Pharmacy staff signature', w: 1.4 },
+        { label: 'Time', w: 0.7 },
+    ]);
+
+    footer(page, y + 1, "PHARMACY COPY. Keep with the day's list.",
+        'If the counts disagree, write why above before anything leaves.');
+    return y + 1;
+}
+
+function manifestLead(page, top) {
+    let y = manifestHeader(page, top, {
+        role: 'For site lead', band: BAND_DRIVER, part: 'Part 2 of 2',
+    });
+
+    y = counts(page, y - 2, 'Counted at the counter', MANIFEST_COUNTS);
+
+    /* The second handover, which nothing recorded until now: one lead
+       collects and several drivers take it away. The counters described
+       exactly this and one of them had four drivers on the day we visited. */
+    y = table(page, y, 'Handed to drivers - who took which part of the round', [
+        { label: 'Driver (print)', w: 1.6 },
+        { label: 'Packages', w: 0.7 },
+        { label: 'ZIPs or zones', w: 1 },
+        { label: 'Driver signature', w: 1.7 },
+    ], 4);
+
+    y = stage(page, y, 'Distributed to the drivers',
+        'Refrigerated into a cooler before anything else leaves the building.');
+
+    y = fields(page, y, [
+        { label: 'Izy site lead signature', w: 1.4 },
+        { label: 'Returned to dispatch - date and time', w: 1.6 },
+        { label: 'Time left site', w: 0.8 },
+    ]);
+
+    footer(page, y + 1, 'SITE LEAD COPY. Back to dispatch at the end of the round.',
+        'Izy Global Services LLC');
+    return y + 1;
+}
+
 /* ─── MEASURE, THEN PLACE. The parts are not equal thirds.
  *
- * Splitting the sheet in three put the cut line 3pt inside the driver's
- * footer while the patient part sat above 79pt of white space -- because
- * the driver part carries roughly half as much again as the other two: the
- * full address, the four signing rules, the special instructions, and two
- * signature rows instead of one.
+ * Splitting a sheet evenly put the cut line 3pt inside the driver part's
+ * footer while the patient part sat above 79pt of white space, because the
+ * driver part carries roughly half as much again as the others.
  *
  * So each part is rendered once against a throwaway page to learn its
  * height, and the cut lines are then placed where the content actually
- * ends. The part functions take a top and return where they finished, so
- * the height is the same wherever they are drawn.
+ * ends. A part takes a top and returns where it finished, so its height is
+ * the same wherever it is drawn.
  *
- * The leftover space is shared equally as breathing room below each part,
- * rather than given to whichever part is longest: a cut line hard against
- * a footer is unpleasant to tear even when it technically fits.
+ * The leftover is shared equally as breathing room below each part, rather
+ * than given to the longest: a cut line hard against a footer is unpleasant
+ * to tear even when it technically fits.
  */
-const PARTS = [
-    { name: 'pharmacy', draw: partPharmacy },
-    { name: 'driver', draw: partDriver },
-    { name: 'patient', draw: partPatient },
-];
+function buildSheet({ file, title, subject, parts }) {
+    resetFields();
 
-const scratch = new Page();
-const heights = PARTS.map((p) => -p.draw(scratch, 0));
+    const scratch = new Page();
+    const heights = parts.map((part) => -part.draw(scratch, 0));
 
-const available = TOP - BOTTOM - CUT_SPACE * (PARTS.length - 1);
-const content = heights.reduce((a, b) => a + b, 0);
-const pad = (available - content) / PARTS.length;
+    const available = TOP - BOTTOM - CUT_SPACE * (parts.length - 1);
+    const content = heights.reduce((a, b) => a + b, 0);
+    const pad = (available - content) / parts.length;
 
-heights.forEach((h, i) => {
-    console.log(`  ${PARTS[i].name.padEnd(9)} ${h.toFixed(1)}pt + ${pad.toFixed(1)}pt breathing room`);
-});
+    console.log(`
+  ${title}`);
+    heights.forEach((h, i) => {
+        console.log(`    ${parts[i].name.padEnd(9)} ${h.toFixed(1)}pt + ${pad.toFixed(1)}pt breathing room`);
+    });
 
-if (pad < 4) {
-    console.error(
-        `
-The three parts need ${content.toFixed(1)}pt and the sheet has ${available.toFixed(1)}pt. `
-        + 'Tighten the rows before printing a pad.',
-    );
-    process.exit(1);
+    if (pad < 4) {
+        console.error(
+            `    ${parts.length} parts need ${content.toFixed(1)}pt and the sheet has `
+            + `${available.toFixed(1)}pt. Tighten the rows before printing a pad.`,
+        );
+        process.exitCode = 1;
+        return;
+    }
+
+    const page = new Page();
+    collecting = true;
+    let y = TOP;
+    parts.forEach((part, i) => {
+        prefix = part.name;
+        part.draw(page, y);
+        y -= heights[i] + pad;
+        if (i < parts.length - 1) {
+            cutLine(page, y - CUT_SPACE / 2);
+            y -= CUT_SPACE;
+        }
+    });
+
+    const pdf = buildPdf([page], { title, subject }, new Date(), [], FIELDS);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, pdf);
+
+    const text = FIELDS.filter((f) => f.kind === 'text').length;
+    const checks = FIELDS.length - text;
+    console.log(`    ${FIELDS.length} fillable fields (${text} text, ${checks} tick boxes)`);
+    console.log(`    ${pdf.length} bytes -> ${file}`);
 }
 
-const page = new Page();
-collecting = true;
-let y = TOP;
-PARTS.forEach((part, i) => {
-    prefix = part.name;
-    part.draw(page, y);
-    y -= heights[i] + pad;
-    if (i < PARTS.length - 1) {
-        cutLine(page, y - CUT_SPACE / 2);
-        y -= CUT_SPACE;
-    }
-});
-
-const pdf = buildPdf([page], {
+buildSheet({
+    file: OUT_DOCKET,
     title: 'Izy Delivery Docket',
     subject: 'Three-part delivery docket for the University Health pharmacy contract',
-}, new Date(), [], FIELDS);
+    parts: [
+        { name: 'pharmacy', draw: partPharmacy },
+        { name: 'driver', draw: partDriver },
+        { name: 'patient', draw: partPatient },
+    ],
+});
 
-console.log(`  ${FIELDS.length} fillable fields `
-    + `(${FIELDS.filter((f) => f.kind === 'text').length} text, `
-    + `${FIELDS.filter((f) => f.kind === 'check').length} tick boxes)`);
+buildSheet({
+    file: OUT_MANIFEST,
+    title: 'Izy Collection Manifest',
+    subject: 'Two-part collection manifest for a pharmacy pickup window',
+    parts: [
+        { name: 'pharmacy', draw: manifestPharmacy },
+        { name: 'lead', draw: manifestLead },
+    ],
+});
 
-fs.mkdirSync(path.dirname(OUT), { recursive: true });
-fs.writeFileSync(OUT, pdf);
-console.log(`Wrote ${OUT}`);
-console.log(`${pdf.length} bytes, ${PAGE.width} x ${PAGE.height} points (US Letter).`);
+console.log(`
+  Both sheets are ${PAGE.width} x ${PAGE.height} points (US Letter).`);
