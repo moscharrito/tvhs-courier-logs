@@ -66,6 +66,7 @@ import { createTrackingRouter } from './modules/uh/tracking';
 import { createNotificationsRouter, createPushDevicesRouter } from './core/notify/routes';
 import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
+import { createFilesProbe } from './core/files/probe';
 import { createBoardRouter } from './modules/uh/board';
 import { createClientPortalRouter } from './modules/uh/client-portal';
 import { createPortalResetRouter } from './modules/uh/portal-reset';
@@ -141,6 +142,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        instance, so what /health says and what the stop screen does cannot
        disagree. */
     const fileStorage = createFileStorage(config);
+    const filesProbe = createFilesProbe(fileStorage);
 
     /* Bounces and complaints from SES. Public by necessity and verified in
        code: see core/notify/sns.ts. Mounted beside health, before any
@@ -184,6 +186,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         sweepIntervalSeconds: config.sweepIntervalSeconds,
         mailConfigured: mailer.available,
         filesConfigured: fileStorage.available,
+        /* The probe starts here, so a bucket that refuses writes is in the
+           boot log and on /health rather than waiting for somebody to run
+           a dry run against production. */
+        filesHealth: filesProbe.state,
         smsConfigured: texter.available,
         statistics: () => statisticsState,
     }));

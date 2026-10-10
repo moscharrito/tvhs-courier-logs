@@ -43,8 +43,9 @@ const value = (name, fallback) => {
 
 const on = has('on');
 const off = has('off');
-if (on === off) {
-    console.error('Say which: --on or --off.');
+const show = has('show');
+if (!show && on === off) {
+    console.error('Say which: --on, --off, or --show to read it without changing anything.');
     process.exit(1);
 }
 
@@ -53,7 +54,10 @@ const project = value('project', 'uh');
 const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(base);
 
 /* The same two guards every other script here has, for the same reasons. */
-if (!isLocal && !has('i-mean-production')) {
+/* --show changes nothing, so it needs no production flag. Reading the
+   setting is exactly what somebody does when they are not sure which
+   server they changed. */
+if (!show && !isLocal && !has('i-mean-production')) {
     console.error(`Refusing to change settings on ${base} without --i-mean-production.`);
     process.exit(1);
 }
@@ -125,7 +129,15 @@ async function main() {
         return;
     }
 
-    console.log(`\n${base}  project ${project}`);
+    /* THE SERVER, LOUDLY, AND ON ITS OWN LINE.
+
+       The default base is localhost. Leaving --base off silently reads and
+       writes a developer's own database, and the script then reports a
+       cheerful success for a change that never reached production -- which
+       is exactly the confusion this line exists to end. */
+    console.log(`\n  SERVER   ${base}`);
+    console.log(`  PROJECT  ${project}`);
+    console.log(`  ${isLocal ? '** LOCAL server, not production **' : 'Remote server.'}`);
 
     const login = await call('/api/login', {
         method: 'POST',
@@ -145,8 +157,16 @@ async function main() {
         return;
     }
     const was = readUpload(before.body);
-    const want = on;
     console.log(`  letting the pharmacies upload their daily list: ${was === true ? 'ON' : 'OFF'}`);
+
+    if (show) {
+        console.log(was === true
+            ? '\n  The pharmacies see "Send a list" on their deliveries page.'
+            : '\n  The pharmacies do NOT see "Send a list". Run the same command with --on.');
+        return;
+    }
+
+    const want = on;
 
     if (was === want) {
         console.log(`  already ${want ? 'ON' : 'OFF'}. Nothing to change.`);

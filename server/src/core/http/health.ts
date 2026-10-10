@@ -45,6 +45,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import type { Client } from '@libsql/client';
+import type { FilesHealth } from '../files/probe';
 
 interface Deps {
     client: Client;
@@ -53,8 +54,16 @@ interface Deps {
     sweepIntervalSeconds?: number | undefined;
     /** Whether outbound email is configured. Not where it goes. */
     mailConfigured?: boolean | undefined;
-    /** Whether proof-of-delivery storage is usable. Not which bucket. */
+    /** Whether proof-of-delivery storage is usable. Not which bucket.
+     *
+     *  SUPERSEDED BY filesHealth where that is supplied, and kept for the
+     *  callers that have not got a probe: it reports that the values are
+     *  filled in, which is a weaker fact than it reads as. */
     filesConfigured?: boolean | undefined;
+    /** The cached result of actually writing to the bucket and deleting it
+     *  again. See core/files/probe.ts for why S3 is proved when mail and
+     *  SMS are only reported. A function because it changes after boot. */
+    filesHealth?: (() => FilesHealth) | undefined;
     /** Whether patient texting is configured. Not the number it sends from:
      *  a from-number is on the list above of things that never appear here. */
     smsConfigured?: boolean | undefined;
@@ -73,7 +82,7 @@ export type StatisticsState = 'ok' | 'missing' | 'unknown';
 
 export function createHealthRouter({
     client, version, sweepIntervalSeconds, mailConfigured, filesConfigured, smsConfigured,
-    statistics,
+    statistics, filesHealth,
 }: Deps): Router {
     const router = Router();
     const started = Date.now();
@@ -116,8 +125,17 @@ export function createHealthRouter({
             },
             /* Off means a doorstep delivery is refused outright rather than
                recorded without its photograph, so this is an operational
-               fact somebody needs, not a configuration detail. */
-            files: filesConfigured ? 'configured' : 'off',
+               fact somebody needs, not a configuration detail.
+            
+               "configured" USED TO BE THE WHOLE ANSWER AND IT WAS NOT ONE.
+               It meant the five S3 values were present; nothing had ever
+               contacted AWS. The field read green for weeks against a
+               bucket that refused every upload, and what found that was a
+               production dry run three weeks before go-live rather than
+               this endpoint. Where a probe is supplied this now says
+               whether the bucket actually took a write -- ok, checking, or
+               unreachable with S3's own error code. See files/probe.ts. */
+            files: filesHealth ? filesHealth() : (filesConfigured ? 'configured' : 'off'),
             /* "missing" means a table that needs planner statistics has none,
                and somebody should read the boot log for which. See the note
                at the top for why this is one word and not the list. */
