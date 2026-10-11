@@ -316,9 +316,35 @@ async function main() {
     say('  performance, and the spreadsheet export. No other pharmacy, no pricing, no');
     say('  invoices, no dispatch board.');
     say('');
-    say('  Sending the daily list on the portal is OFF until the contract agrees to');
-    say('  it. Switch it on in the project settings, under letting the pharmacies');
-    say('  upload their daily list, once University Health have answered that.');
+    /* READ, NOT REMEMBERED.
+
+       This used to be three fixed lines saying the upload was off until the
+       contract agreed to it. That was true when it was written and stopped
+       being true the day it was switched on, and the script went on saying
+       it -- to the person who had just switched it on. A script that states
+       a setting it did not look at is a script that will eventually tell
+       somebody the opposite of what their server is doing.
+
+       Not fatal if it cannot be read: the accounts are already made by this
+       point, and failing the run over a closing paragraph would be worse
+       than saying nothing. */
+    const settings = await call(`/api/projects/${projectCode}/settings`);
+    const upload = settings.status === 200
+        ? (settings.body?.settings ?? settings.body)?.listRelease?.allowPortalUpload
+        : undefined;
+
+    if (upload === true) {
+        say('  Sending the daily list on the portal is ON. Each of these accounts');
+        say('  sees "Send a list" on their deliveries page and can upload their own');
+        say('  day without going through us.');
+    } else if (upload === false) {
+        say('  Sending the daily list on the portal is OFF, so these accounts can');
+        say('  read their day but not send one. Switch it on with');
+        say('  `npm run portal-upload -w server -- --on`, once UH have agreed to it.');
+    } else {
+        say('  Could not read whether the portal upload is on. Check it with');
+        say('  `npm run portal-upload -w server -- --show`.');
+    }
 
 }
 
