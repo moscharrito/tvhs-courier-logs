@@ -37,6 +37,9 @@
  * the day out again by project and date.
  */
 
+import readline from 'node:readline';
+import { Writable } from 'node:stream';
+
 const args = process.argv.slice(2);
 const has = (f) => args.includes(`--${f}`);
 const arg = (name, fallback = '') => {
@@ -58,10 +61,37 @@ if (!isLocal && !/^https:/i.test(base)) {
     process.exit(1);
 }
 
+/** Ask for the password with the echo off. Never stored, never printed.
+ *
+ *  Requiring SEED_ADMIN_PASS in the environment was the only way to run this
+ *  against production, and an exported admin password stays live for every
+ *  later command in that shell -- including the clear:work this script
+ *  prints at the end. Asking is better. The environment still wins when it
+ *  is already set, so the documented invocation keeps working. */
+function askSecret(prompt) {
+    return new Promise((resolve) => {
+        let muted = false;
+        const out = new Writable({
+            write(chunk, _enc, cb) {
+                if (!muted) process.stdout.write(chunk);
+                cb();
+            },
+        });
+        const rl = readline.createInterface({ input: process.stdin, output: out, terminal: true });
+        rl.question(prompt, (answer) => {
+            rl.close();
+            process.stdout.write('\n');
+            resolve(answer);
+        });
+        muted = true;
+    });
+}
+
 const adminUser = process.env['SEED_ADMIN_USER'] ?? 'admin';
-const adminPass = process.env['SEED_ADMIN_PASS'] ?? '';
+const adminPass = process.env['SEED_ADMIN_PASS']
+    ?? (isLocal ? '' : await askSecret(`Password for ${adminUser} on ${base}: `));
 if (!isLocal && adminPass === '') {
-    console.error('Set SEED_ADMIN_PASS for a remote server. It is read from the environment and never printed.');
+    console.error('No password given.');
     process.exit(1);
 }
 
@@ -107,8 +137,13 @@ const say = (s) => console.log(s);
 /* ------------------------------------------------------------- the run */
 
 say('');
-say(`Server   ${base}`);
-say(`Mode     ${apply ? 'APPLY' : 'dry run only. Pass --apply to create anything.'}`);
+/* WHICH SERVER, AND WHETHER THIS WRITES. Both were already here and both
+   were too quiet. The base defaults to localhost, so a run meant for
+   production reports a cheerful pass for a server nobody shipped; and
+   --apply is what leaves invented patients in the live database beside the
+   TVHS logs. Each is one flag, and neither said which way it had gone. */
+say(`Server   ${base}  ${isLocal ? '** LOCAL, not production **' : '(remote)'}`);
+say(`Mode     ${apply ? '** APPLY -- this writes rows **' : 'dry run only. Pass --apply to create anything.'}`);
 
 const health = await call('/health');
 if (health.status !== 200) {
