@@ -690,6 +690,35 @@ function summarise() {
     say(`${passed} passed, ${failed} failed, ${skipped} skipped.`);
     say('');
     if (skipped > 0) say('Skipped steps were NOT run. They are not passes.');
+    /* THE CLEANUP COMMAND, IN THE FORM THAT ACTUALLY WORKS FROM HERE.
+
+       This used to print the local command with --i-mean-production bolted
+       on for a remote run, which is a command clear:work refuses: it talks
+       to the database directly rather than through the API, takes its target
+       from TURSO_DATABASE_URL, and a shell without those gets the laptop
+       whatever is typed on the line. It refuses loudly and says so -- that
+       guard exists because of 30 September, when the same command cleaned a
+       laptop, printed "Done", and left the production rows in place.
+
+       Being refused is the right outcome and a bad moment for it: the rows
+       this run just wrote are sitting in the live database next to the TVHS
+       logs while the operator works out what the real command is. So print
+       the real one. */
     say('To take this day out again:');
-    say(`  npm run clear:work -w server -- --from ${today} --project uh${isLocal ? '' : ' --i-mean-production'} --apply`);
+    if (isLocal) {
+        say(`  npm run clear:work -w server -- --from ${today} --project uh --apply`);
+    } else {
+        say('  Take the two Turso values from the Render dashboard, then, in bash:');
+        say('');
+        say('    ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... \\');
+        say(`      node scripts/clear-test-work.mjs --from ${today} --project uh --i-mean-production --apply`);
+        say('');
+        say('  or, in PowerShell, which has no inline environment prefix:');
+        say('');
+        say('    $env:ALLOW_TURSO_OUTSIDE_PRODUCTION="true"; $env:TURSO_DATABASE_URL="..."; $env:TURSO_AUTH_TOKEN="..."');
+        say(`    node scripts/clear-test-work.mjs --from ${today} --project uh --i-mean-production --apply`);
+        say('');
+        say('  Run it from the server directory. Without those values it lands on');
+        say('  this laptop, which is what the refusal in clear:work is there to catch.');
+    }
 }
