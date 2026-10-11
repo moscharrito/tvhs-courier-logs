@@ -1,4 +1,4 @@
-/* Pages of six (ticket 5.15).
+/* Pages of eight (ticket 5.15, resized in 7.8).
  *
  * The interesting cases are not "does Next work". They are what happens when
  * the list moves under the reader, which every list here does: the board
@@ -38,43 +38,43 @@ const next = () => screen.getByRole('button', { name: 'Next' });
 const prev = () => screen.getByRole('button', { name: 'Previous' });
 
 describe('paging', () => {
-    it('shows six and no more', () => {
-        expect(PAGE_SIZE).toBe(6);
+    it('shows eight and no more', () => {
+        expect(PAGE_SIZE).toBe(8);
         render(<List items={rows(23)} />);
-        expect(screen.getAllByRole('listitem')).toHaveLength(6);
+        expect(screen.getAllByRole('listitem')).toHaveLength(8);
         expect(screen.getByText('row 1')).toBeInTheDocument();
-        expect(screen.queryByText('row 7')).not.toBeInTheDocument();
+        expect(screen.queryByText('row 9')).not.toBeInTheDocument();
     });
 
     it('says how many there are, which is the whole point', () => {
-        /* A page of six with no total reads exactly like a list of six, and a
-           dispatcher who thinks they have seen every open discrepancy when
-           they have seen the first six is worse off than before it was paged. */
+        /* A page of eight with no total reads exactly like a list of eight,
+           and a dispatcher who thinks they have seen every open discrepancy
+           when they have seen the first eight is worse off than before. */
         render(<List items={rows(23)} />);
-        expect(screen.getByText('Showing 1 to 6 of 23 rows')).toBeInTheDocument();
+        expect(screen.getByText('Showing 1 to 8 of 23 rows')).toBeInTheDocument();
     });
 
     it('walks forward and back, and stops at both ends', () => {
-        render(<List items={rows(14)} />);
+        render(<List items={rows(18)} />);
         expect(prev()).toBeDisabled();
 
         fireEvent.click(next());
-        expect(screen.getByText('row 7')).toBeInTheDocument();
-        expect(screen.getByText('Showing 7 to 12 of 14 rows')).toBeInTheDocument();
+        expect(screen.getByText('row 9')).toBeInTheDocument();
+        expect(screen.getByText('Showing 9 to 16 of 18 rows')).toBeInTheDocument();
 
         fireEvent.click(next());
         // A last page that is not full says so rather than padding.
-        expect(screen.getByText('Showing 13 to 14 of 14 rows')).toBeInTheDocument();
+        expect(screen.getByText('Showing 17 to 18 of 18 rows')).toBeInTheDocument();
         expect(screen.getAllByRole('listitem')).toHaveLength(2);
         expect(next()).toBeDisabled();
 
         fireEvent.click(prev());
-        expect(screen.getByText('Showing 7 to 12 of 14 rows')).toBeInTheDocument();
+        expect(screen.getByText('Showing 9 to 16 of 18 rows')).toBeInTheDocument();
     });
 
     it('hides itself when there is nothing to page', () => {
         // A pager under a two-row table is the clutter this was to remove.
-        render(<List items={rows(6)} />);
+        render(<List items={rows(8)} />);
         expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
         expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
     });
@@ -86,7 +86,7 @@ describe('paging', () => {
         render(<Shrinkable />);
         fireEvent.click(next());
         fireEvent.click(next());
-        expect(screen.getByText('Showing 13 to 18 of 23 rows')).toBeInTheDocument();
+        expect(screen.getByText('Showing 17 to 23 of 23 rows')).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
         expect(screen.getAllByRole('listitem')).toHaveLength(4);
@@ -104,7 +104,7 @@ describe('paging', () => {
     it('announces the count politely, not as an interruption', () => {
         // It changes on every page turn; that is a fact to read, not an alarm.
         render(<List items={rows(23)} />);
-        expect(screen.getByText(/Showing 1 to 6/)).toHaveAttribute('aria-live', 'polite');
+        expect(screen.getByText(/Showing 1 to 8/)).toHaveAttribute('aria-live', 'polite');
     });
 
     it('carries a note even when there is only one page', () => {

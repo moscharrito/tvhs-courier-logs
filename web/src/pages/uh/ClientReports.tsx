@@ -46,6 +46,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
@@ -115,6 +116,15 @@ export function ClientReports() {
     const [to, setTo] = useState(isoDay(0));
     const [groupBy, setGroupBy] = useState('day');
     const [report, setReport] = useState<Report | null>(null);
+    /* The glossary too, which 5.15 left whole as "a reference rather than a
+       list of records". Ten measures is two pages, so the argument against
+       was never strong; the count line says there are ten either way, and
+       a quality team reading one definition is not reading all ten. */
+    const pagedDefs = usePaged(report?.definitions ?? []);
+    /* Six codes in the contract, so this control stays hidden. It is here
+       because an addendum adding reasons should not also be the thing that
+       discovers this table was never paged. */
+    const pagedReasons = usePaged(report?.failureReasons ?? []);
     const [msg, setMsg] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -164,65 +174,6 @@ export function ClientReports() {
         return drillQuery({ window: ran, serviceType: s.key, ...(status === undefined ? {} : { status }) });
     };
 
-    /* A count, as a link when there is something to look at and as plain text
-       when there is not. A link to nought rows is a promise the next screen
-       cannot keep, and a zero is not a thing anybody wants to drill into. */
-    const count = (n: number, query: string | null, what: string, label: string) => {
-        if (n === 0 || query === null) return <td>{n}</td>;
-        return (
-            <td>
-                <Link to={`${deliveries}?${query}`} aria-label={`${n} ${what} for ${label}`}>{n}</Link>
-            </td>
-        );
-    };
-
-    /* Folded panels say what is inside, so a pharmacist can skip one without
-       opening it. The id is the storage key and must stay stable. */
-    const table = (title: string, first: string, slices: Slice[], dimension: 'period' | 'site' | 'serviceType') => (
-        <Section
-            key={title}
-            id={`client-report-${first.toLowerCase().replace(/\W+/g, '-')}`}
-            title={title}
-            summary={slices.length === 0 ? 'nothing in this range' : `${slices.length} ${slices.length === 1 ? 'row' : 'rows'}`}
-        >
-            {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
-                <>
-                    <table className="izy-table">
-                        <thead>
-                            <tr>
-                                <th>{first}</th><th>Deliveries</th><th>Completed</th>
-                                <th>Not delivered</th><th>Still open</th><th>Completion</th><th>On time</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {slices.map((s) => {
-                                const all = drillFor(dimension, s);
-                                return (
-                                    <tr key={s.key}>
-                                        <td>
-                                            {all === null
-                                                ? s.label
-                                                : <Link to={`${deliveries}?${all}`}>{s.label}</Link>}
-                                        </td>
-                                        {count(s.totals.orders, all, 'deliveries', s.label)}
-                                        {count(s.totals.delivered, drillFor(dimension, s, 'delivered'), 'completed', s.label)}
-                                        {count(s.totals.notDelivered, drillFor(dimension, s, 'failed'), 'not delivered', s.label)}
-                                        {count(s.totals.stillOpen, drillFor(dimension, s, 'open'), 'still out', s.label)}
-                                        <td>{pct(s.rates.completionRate)}</td>
-                                        <td>{pct(s.rates.onTimeRate)}</td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                    <p className="izy-muted">
-                        Any figure in this table opens the deliveries behind it, for the same dates
-                        this report covers.
-                    </p>
-                </>
-            )}
-        </Section>
-    );
 
     return (
         <>
@@ -368,13 +319,14 @@ export function ClientReports() {
                                     <table className="izy-table">
                                         <thead><tr><th>Reason</th><th>Packages</th><th>Deliveries affected</th></tr></thead>
                                         <tbody>
-                                            {report.failureReasons.map((r) => (
+                                            {pagedReasons.rows.map((r) => (
                                                 <tr key={r.code}>
                                                     <td>{r.label}</td><td>{r.packages}</td><td>{r.orders}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
+                                    <Pager of={pagedReasons} noun="reasons" />
                                     <p className="izy-muted">
                                         Counted per package: three items at one door can fail for three reasons,
                                         and a courier records each.
@@ -414,14 +366,20 @@ export function ClientReports() {
                         </p>
                     </Section>
 
-                    {table('By pharmacy', 'Pharmacy', report.bySite, 'site')}
-                    {table('By service level', 'Service level', report.byServiceType, 'serviceType')}
-                    {table(
-                        report.grouping === 'day' ? 'By day' : `By ${report.grouping}`,
-                        report.grouping === 'day' ? 'Service date' : 'Period',
-                        report.byPeriod,
-                        'period',
-                    )}
+                    <SliceTable
+                        title="By pharmacy" first="Pharmacy" slices={report.bySite}
+                        dimension="site" deliveries={deliveries} drillFor={drillFor}
+                    />
+                    <SliceTable
+                        title="By service level" first="Service level" slices={report.byServiceType}
+                        dimension="serviceType" deliveries={deliveries} drillFor={drillFor}
+                    />
+                    <SliceTable
+                        title={report.grouping === 'day' ? 'By day' : `By ${report.grouping}`}
+                        first={report.grouping === 'day' ? 'Service date' : 'Period'}
+                        slices={report.byPeriod}
+                        dimension="period" deliveries={deliveries} drillFor={drillFor}
+                    />
 
                     <Section
                         id="client-report-glossary"
@@ -432,7 +390,7 @@ export function ClientReports() {
                         <table className="izy-table">
                             <thead><tr><th>Measure</th><th>Definition</th><th>Note</th></tr></thead>
                             <tbody>
-                                {report.definitions.map((d) => (
+                                {pagedDefs.rows.map((d) => (
                                     <tr key={d.measure}>
                                         <td>{d.measure}</td>
                                         <td>{d.definition}</td>
@@ -441,9 +399,92 @@ export function ClientReports() {
                                 ))}
                             </tbody>
                         </table>
+                        <Pager of={pagedDefs} noun="measures" />
                     </Section>
                 </>
             )}
         </>
+    );
+}
+
+/* One dimension's table, paged.
+ *
+ * It is a component rather than the inline helper it used to be because it
+ * has to hold a page number, and three calls to one helper would have shared
+ * one. Paging "by pharmacy" is not meant to page "by day" with it.
+ *
+ * The same shape as SliceTable in the dispatcher's Reports, deliberately: a
+ * pharmacist comparing their figures with ours should be reading the same
+ * table, and the two drifting apart is how a disagreement about the numbers
+ * turns into a disagreement about which screen is right.
+ */
+function SliceTable({ title, first, slices, dimension, deliveries, drillFor }: {
+    title: string;
+    first: string;
+    slices: Slice[];
+    dimension: 'period' | 'site' | 'serviceType';
+    deliveries: string;
+    drillFor: (dimension: 'period' | 'site' | 'serviceType', s: Slice, status?: string) => string | null;
+}) {
+    const paged = usePaged(slices);
+
+    /* A count, as a link when there is something to look at and as plain text
+       when there is not. A link to nought rows is a promise the next screen
+       cannot keep, and a zero is not a thing anybody wants to drill into. */
+    const count = (n: number, query: string | null, what: string, label: string) => {
+        if (n === 0 || query === null) return <td>{n}</td>;
+        return (
+            <td>
+                <Link to={`${deliveries}?${query}`} aria-label={`${n} ${what} for ${label}`}>{n}</Link>
+            </td>
+        );
+    };
+
+    /* Folded panels say what is inside, so a pharmacist can skip one without
+       opening it. The id is the storage key and must stay stable. */
+    return (
+        <Section
+            id={`client-report-${first.toLowerCase().replace(/\W+/g, '-')}`}
+            title={title}
+            summary={slices.length === 0 ? 'nothing in this range' : `${slices.length} ${slices.length === 1 ? 'row' : 'rows'}`}
+        >
+            {slices.length === 0 ? <p className="izy-muted">Nothing in this range.</p> : (
+                <>
+                    <table className="izy-table">
+                        <thead>
+                            <tr>
+                                <th>{first}</th><th>Deliveries</th><th>Completed</th>
+                                <th>Not delivered</th><th>Still open</th><th>Completion</th><th>On time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {paged.rows.map((s) => {
+                                const all = drillFor(dimension, s);
+                                return (
+                                    <tr key={s.key}>
+                                        <td>
+                                            {all === null
+                                                ? s.label
+                                                : <Link to={`${deliveries}?${all}`}>{s.label}</Link>}
+                                        </td>
+                                        {count(s.totals.orders, all, 'deliveries', s.label)}
+                                        {count(s.totals.delivered, drillFor(dimension, s, 'delivered'), 'completed', s.label)}
+                                        {count(s.totals.notDelivered, drillFor(dimension, s, 'failed'), 'not delivered', s.label)}
+                                        {count(s.totals.stillOpen, drillFor(dimension, s, 'open'), 'still out', s.label)}
+                                        <td>{pct(s.rates.completionRate)}</td>
+                                        <td>{pct(s.rates.onTimeRate)}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                    <Pager of={paged} noun="rows" />
+                    <p className="izy-muted">
+                        Any figure in this table opens the deliveries behind it, for the same dates
+                        this report covers.
+                    </p>
+                </>
+            )}
+        </Section>
     );
 }

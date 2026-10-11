@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, fmtWhen, type ProjectMembership, type SessionSummary, type UserSummary } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { SecretInput } from '../app/SecretInput';
+import { Pager, usePaged } from '../app/Pager';
 
 type Msg = { kind: 'ok' | 'error'; text: string; details?: string[] } | null;
 const PROJECT_ROLES: ProjectMembership['role'][] = ['admin', 'courier', 'pharmacy'];
@@ -19,6 +20,11 @@ export function UserDetail() {
     const { user: me, projects: myProjects } = useAuth();
     const [u, setU] = useState<UserSummary | null>(null);
     const [sessions, setSessions] = useState<SessionSummary[]>([]);
+    /* Both tables carry a Remove or a Sign out, so what is not on screen
+       is a thing somebody might think they have already dealt with. The
+       count under each one is the part that matters here. */
+    const pagedMemberships = usePaged(u?.memberships ?? []);
+    const pagedSessions = usePaged(sessions);
     const [msg, setMsg] = useState<Msg>(null);
     const [edit, setEdit] = useState({ name: '', email: '', role: 'staff' as UserSummary['role'] });
     const [password, setPassword] = useState('');
@@ -120,7 +126,7 @@ export function UserDetail() {
                     <table className="izy-table">
                         <thead><tr><th>Project</th><th>Role</th><th>Settings</th><th></th></tr></thead>
                         <tbody>
-                            {u.memberships.map((m) => (
+                            {pagedMemberships.rows.map((m) => (
                                 <tr key={m.code}>
                                     <td>{m.project_name} <code>{m.code}</code></td>
                                     <td>{m.role}</td>
@@ -131,6 +137,7 @@ export function UserDetail() {
                         </tbody>
                     </table>
                 )}
+                <Pager of={pagedMemberships} noun="projects" />
                 <form className="izy-row" style={{ marginTop: 12 }} onSubmit={(e) => {
                     e.preventDefault();
                     const settings = member.project === 'tvhs' && member.role === 'courier'
@@ -192,12 +199,13 @@ export function UserDetail() {
                     <table className="izy-table">
                         <thead><tr><th>Device</th><th>IP</th><th>Last seen</th><th>Expires</th></tr></thead>
                         <tbody>
-                            {sessions.map((s) => (
+                            {pagedSessions.rows.map((s) => (
                                 <tr key={s.id}><td>{s.device}</td><td><code>{s.ip}</code></td><td>{fmtWhen(s.last_seen_at)}</td><td>{fmtWhen(s.absolute_expires_at)}</td></tr>
                             ))}
                         </tbody>
                     </table>
                 )}
+                <Pager of={pagedSessions} noun="devices" />
                 <div style={{ marginTop: 12 }}>
                     <button className="izy-btn danger" type="button" disabled={sessions.length === 0} onClick={() => { void run('All devices signed out', () => api(`${base}/sessions`, { method: 'DELETE' })); }}>Sign out all devices</button>
                     <Link className="izy-btn secondary" style={{ marginLeft: 8 }} to={`/audit?username=${encodeURIComponent(u.username)}`}>Audit history</Link>

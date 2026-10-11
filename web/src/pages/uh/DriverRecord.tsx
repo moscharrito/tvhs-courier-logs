@@ -25,6 +25,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
+import { Pager, usePaged } from '../../app/Pager';
 import { useAuth } from '../../app/auth';
 import { money } from './Drivers';
 
@@ -75,6 +76,10 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
     const groupBy = params.get('groupBy') ?? 'day';
 
     const [data, setData] = useState<Record_ | null>(null);
+    /* Grouped by day over a quarter this is ninety panels. The totals
+       above it are the whole range whatever page you are on, so the
+       figure a driver came to check is never the thing that got paged. */
+    const periods = usePaged(data?.periods ?? []);
     const [msg, setMsg] = useState<string | null>(null);
 
     /* The route is the authorization, so it is built here from which page
@@ -166,7 +171,7 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
 
             {data.periods.length === 0 ? (
                 <div className="izy-card"><p className="izy-muted">Nothing delivered in this range.</p></div>
-            ) : data.periods.map((p) => (
+            ) : periods.rows.map((p) => (
                 <Section
                     key={p.period}
                     id={`driver-period-${p.period}`}
@@ -202,6 +207,7 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                     )}
                 </Section>
             ))}
+            <Pager of={periods} noun={groupBy === 'day' ? 'days' : `${groupBy}s`} />
         </>
     );
 }

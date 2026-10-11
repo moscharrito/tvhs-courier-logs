@@ -77,6 +77,11 @@ export function Reports() {
     const project = projects.find((p) => p.code === code);
     const [params, setParams] = useSearchParams();
     const [report, setReport] = useState<Report | null>(null);
+    /* The glossary too, which 5.15 left whole as "a reference rather than a
+       list of records". Ten measures is two pages, so the argument against
+       was never strong; the count line says there are ten either way, and
+       a quality team reading one definition is not reading all ten. */
+    const pagedDefs = usePaged(report?.definitions ?? []);
     const [msg, setMsg] = useState<string | null>(null);
 
     const fallback = defaultRange(30, useProjectTimezone(code));
@@ -257,7 +262,7 @@ export function Reports() {
                 <table className="izy-table">
                     <thead><tr><th>Measure</th><th>Definition</th><th>Note</th></tr></thead>
                     <tbody>
-                        {report.definitions.map((d) => (
+                        {pagedDefs.rows.map((d) => (
                             <tr key={d.measure}>
                                 <td><b>{d.measure}</b></td>
                                 <td>{d.definition}</td>
@@ -266,6 +271,7 @@ export function Reports() {
                         ))}
                     </tbody>
                 </table>
+                <Pager of={pagedDefs} noun="measures" />
                 {report.rates.literalScopeRatio !== null && (
                     <p className="izy-muted">
                         Scope 1.2.5 as literally written (attempts divided by successful deliveries) gives{' '}

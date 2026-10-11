@@ -183,12 +183,10 @@ export function ClientPortal() {
     const live = useLive(load, 20);
 
 
-    /* Sorted here rather than below the early returns, because the pager
-       holds state and a hook cannot live after a conditional return.
-       Attention first: a pharmacist opening this wants the ones that went
-       wrong, and those must not be on page 4. */
+    /* Attention first: a pharmacist opening this wants the ones that went
+       wrong, and those must not be on page 4. The paging itself moved into
+       DeliveryTable, which is the only thing that renders these. */
     const rows = [...(list?.orders ?? [])].sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)));
-    const pagedRows = usePaged(rows);
 
     /* By pharmacy, preserving the attention-first order inside each. Built
        from the rows actually returned rather than from the account's
@@ -490,10 +488,9 @@ export function ClientPortal() {
                             The prop's own comment always said this; the call
                             site did not honour it. */}
                         <DeliveryTable
-                            rows={pagedRows.rows} clock={clock} open={open} setOpen={setOpen}
+                            rows={rows} clock={clock} open={open} setOpen={setOpen}
                             showPharmacy={summary.pharmacies.length > 1}
                         />
-                        <Pager of={pagedRows} noun="deliveries" />
                     </>
                 )}
             </div>
@@ -534,7 +531,16 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
      *  contract manager guessing which counter they filtered to. */
     showPharmacy?: boolean;
 }) {
+    /* Paged here rather than at the two call sites, because there are two.
+       Grouped by pharmacy, each counter's table was rendered whole: a
+       contract manager opening Robert B. Green got 241 rows in one panel
+       while the single-pharmacy view beside it paged at eight. One pager
+       inside the table is also one page number per table, which is what
+       grouped mode needs -- nine pharmacies sharing one would all turn to
+       page 2 together. */
+    const paged = usePaged(rows);
     return (
+        <>
         <table className="izy-table">
             <thead>
                 <tr>
@@ -548,7 +554,7 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                 </tr>
             </thead>
             <tbody>
-                {rows.map((o) => (
+                {paged.rows.map((o) => (
                     <tr key={o.id} className={needsAttention(o) ? 'izy-row-bad' : undefined}>
                         {showPharmacy && <td>{o.pharmacy}</td>}
                         <td>
@@ -607,6 +613,8 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                 ))}
             </tbody>
         </table>
+        <Pager of={paged} noun="deliveries" />
+        </>
     );
 }
 
@@ -616,6 +624,11 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
     const clock = clockFor(useProjectTimezone(code));
     const [detail, setDetail] = useState<DetailResponse | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
+    /* The same two lists the dispatcher's order page pages, paged the same
+       way. A pharmacist comparing this panel with what we see should not
+       find one of them showing more than the other. */
+    const pagedPackages = usePaged(detail?.packages ?? []);
+    const pagedTimeline = usePaged(detail?.timeline ?? []);
 
     useEffect(() => {
         setDetail(null);
@@ -650,8 +663,8 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
 
                     <h3>What was sent</h3>
                     <ul className="izy-plain-list">
-                        {detail.packages.map((p, i) => (
-                            <li key={i}>
+                        {pagedPackages.rows.map((p, i) => (
+                            <li key={pagedPackages.from + i}>
                                 {p.quantity} × {p.description}
                                 {p.signatureRequired && <> · signature required</>}
                                 {p.outcome === 'failed' && p.failureReason && (
@@ -662,11 +675,12 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                             </li>
                         ))}
                     </ul>
+                    <Pager of={pagedPackages} noun="items" />
 
                     <h3>What happened</h3>
                     <ol className="izy-feed">
-                        {detail.timeline.map((e, i) => (
-                            <li key={i}>
+                        {pagedTimeline.rows.map((e, i) => (
+                            <li key={pagedTimeline.from + i}>
                                 <span className="izy-feed-when">{clock(e.at)}</span>
                                 <span>
                                     {EVENT_LABEL[e.type] ?? e.type}
@@ -677,6 +691,7 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                             </li>
                         ))}
                     </ol>
+                    <Pager of={pagedTimeline} noun="events" />
 
                     <div className="izy-row">
                         {/* A plain link, not a fetch and a blob: the browser

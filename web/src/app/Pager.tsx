@@ -1,8 +1,9 @@
-/* Pages of six (ticket 5.15).
+/* Pages of eight (ticket 5.15, resized in 7.8).
  *
  * One hook and one control, used by every list, rather than a page counter
- * invented per screen. The size is one constant so "six" stays six
- * everywhere and changing it is one edit.
+ * invented per screen. The size is one constant so eight stays eight
+ * everywhere and changing it is one edit -- which is what 7.8 was: six
+ * became eight in the line below and nowhere else.
  *
  * THE PAGE IS DERIVED, NOT STORED. Lists here move under the reader: the
  * board refreshes every fifteen seconds, the order search refilters on every
@@ -12,19 +13,19 @@
  * the search was broken. The page is clamped to what exists every render, so
  * the list shrinking under you lands you on the last real page.
  *
- * IT SAYS WHAT IS NOT ON SCREEN. "Showing 1 to 6 of 23" is the whole point:
- * without a total, a page of six is indistinguishable from a list of six, and
- * a dispatcher who thinks they have seen every open discrepancy when they
- * have seen the first six is worse off than before the list was paged.
+ * IT SAYS WHAT IS NOT ON SCREEN. "Showing 1 to 8 of 23" is the whole point:
+ * without a total, a page of eight is indistinguishable from a list of eight,
+ * and a dispatcher who thinks they have seen every open discrepancy when they
+ * have seen the first eight is worse off than before the list was paged.
  *
- * IT DISAPPEARS WHEN IT HAS NOTHING TO DO. Six or fewer rows, no control: a
+ * IT DISAPPEARS WHEN IT HAS NOTHING TO DO. Eight or fewer rows, no control: a
  * pager under a two-row table is the clutter this was supposed to remove.
  */
 
 import { useState, type ReactNode } from 'react';
 
-/** Six, everywhere. */
-export const PAGE_SIZE = 6;
+/** Eight, everywhere. */
+export const PAGE_SIZE = 8;
 
 export interface Paged<T> {
     /** The rows to render for the current page. */
@@ -77,7 +78,14 @@ export function Pager<T>({ of, noun, note }: Props<T>) {
         return note === undefined ? null : <p className="izy-pager-note">{note}</p>;
     }
 
+    /* The shell exists only to be measured. A container cannot style itself,
+       and this control now sits in a 280px board lane as well as under a
+       full-width table: the count and the two buttons do not fit on one line
+       in the narrow case, and left to flex-wrap it orphaned Next on a line of
+       its own. The query below puts the buttons at the two ends and drops the
+       count underneath them instead. */
     return (
+        <div className="izy-pager-shell">
         <nav className="izy-pager" aria-label={`${noun} pages`}>
             <button
                 className="izy-btn secondary small"
@@ -102,5 +110,6 @@ export function Pager<T>({ of, noun, note }: Props<T>) {
                 Next
             </button>
         </nav>
+        </div>
     );
 }

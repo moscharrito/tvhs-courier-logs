@@ -129,7 +129,17 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 /* Pages of six (ticket 5.15). The count sits between the two buttons because
    it is the part that matters: a page of six with no total reads exactly like
    a list of six. */
+.izy-pager-shell { container-type: inline-size; }
 .izy-pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+/* Narrow enough that Previous, the count and Next cannot share a line: a
+   board lane, a pool column, a phone. The buttons go to the two ends and the
+   count takes the line below, which keeps both targets where a thumb expects
+   them. Visual order only -- the DOM order, and so the reading order, is
+   unchanged. */
+@container (max-width: 360px) {
+    .izy-pager { justify-content: space-between; gap: 8px; }
+    .izy-pager-count { order: 3; flex-basis: 100%; }
+}
 .izy-pager-count { font-size: 13px; color: var(--izy-muted); }
 .izy-pager-note { font-size: 13px; color: var(--izy-muted); margin: 10px 0 0; }
 .izy-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }

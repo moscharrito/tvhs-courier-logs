@@ -308,6 +308,36 @@ describe('an account covering several pharmacies', () => {
         expect(screen.getByText('Marcus Ibarra')).toBeInTheDocument();
     });
 
+    it('pages each pharmacy on its own, grouped (7.8)', async () => {
+        /* The gap 7.8 closed: the grouped view rendered every counter whole
+           while the single-pharmacy view beside it paged at eight, so a
+           contract manager opening Robert B Green got all 241 rows in one
+           panel. One page number per table, because nine pharmacies sharing
+           one would all turn to page 2 together. */
+        const pile = (pharmacy: string, base: number, n: number) => Array.from({ length: n }, (_, i) => order({
+            id: base + i, pharmacy, recipientName: `Patient ${base + i}`, reference: `RX-${base + i}`,
+        }));
+        renderPortal(routes({
+            [`GET ${BASE}/orders*`]: list({
+                orders: [...pile('Robert B Green Pharmacy', 100, 12), ...pile('University Hospital Discharge Pharmacy', 200, 12)],
+            }),
+        }));
+        await screen.findByRole('button', { name: /Robert B Green Pharmacy/ });
+
+        const pagers = screen.getAllByRole('navigation', { name: 'deliveries pages' });
+        const green = pagers[0]!;
+        const discharge = pagers[1]!;
+        expect(within(green).getByText('Showing 1 to 8 of 12 deliveries')).toBeInTheDocument();
+        expect(screen.getByText('Patient 100')).toBeInTheDocument();
+        expect(screen.queryByText('Patient 108')).toBeNull();
+
+        fireEvent.click(within(green).getByRole('button', { name: 'Next' }));
+        expect(screen.getByText('Patient 108')).toBeInTheDocument();
+        /* The other counter did not move with it. */
+        expect(within(discharge).getByText('Showing 1 to 8 of 12 deliveries')).toBeInTheDocument();
+        expect(screen.getByText('Patient 200')).toBeInTheDocument();
+    });
+
     it('does not group when the account covers one pharmacy', async () => {
         /* A pharmacist at one counter should never see a section header that
            only ever says their own name. */

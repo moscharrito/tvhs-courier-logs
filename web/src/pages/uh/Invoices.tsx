@@ -106,6 +106,12 @@ export function Invoices() {
 
     const pagedPeriods = usePaged(list ?? []);
     const pagedLines = usePaged(open?.lines ?? []);
+    /* The unpriced ones and the adjustments. Both are safe to page because
+       the count above each is stated whole and does not come from the pager:
+       the alert says how many deliveries cannot be priced whichever page you
+       are on, which is the number somebody has to act on. */
+    const pagedExceptions = usePaged(open?.exceptions ?? []);
+    const pagedAdjustments = usePaged(open?.adjustments ?? []);
 
     if (!project) return (<><h1>Not available</h1><Link className="izy-btn secondary" to="/">Back</Link></>);
     if (list === null) {
@@ -231,12 +237,13 @@ export function Invoices() {
                         <div className="izy-alert error" role="alert">
                             <b>{open.exceptions.length} {open.exceptions.length === 1 ? 'delivery cannot' : 'deliveries cannot'} be priced and {open.exceptions.length === 1 ? 'is' : 'are'} not in this total.</b>
                             <ul className="izy-plain-list">
-                                {open.exceptions.map((e) => (
+                                {pagedExceptions.rows.map((e) => (
                                     <li key={e.orderId}>
                                         {e.serviceDate} · {e.reference || `#${e.orderId}`}: {e.reason}
                                     </li>
                                 ))}
                             </ul>
+                            <Pager of={pagedExceptions} noun="unpriced deliveries" />
                         </div>
                     )}
                     {open.excludedCount > 0 && !open.recomputes && (
@@ -325,7 +332,7 @@ export function Invoices() {
                     <h3>Adjustments</h3>
                     {open.adjustments.length === 0 ? <p className="izy-muted">None.</p> : (
                         <ul className="izy-plain-list">
-                            {open.adjustments.map((a) => (
+                            {pagedAdjustments.rows.map((a) => (
                                 <li key={a.id}>
                                     {money(a.amount)} · {a.description} · <span className="izy-muted">{a.reason}</span>
                                     {open.status === 'draft' && (
@@ -341,6 +348,7 @@ export function Invoices() {
                             ))}
                         </ul>
                     )}
+                    <Pager of={pagedAdjustments} noun="adjustments" />
 
                     {open.status !== 'paid' && open.status !== 'void' && (
                         <Section

@@ -280,6 +280,107 @@ describe('Board', () => {
         expect(screen.getByText('12 min late')).toBeInTheDocument();
     });
 
+    /* ───────────────────────────────── the pool and the lanes, paged (7.8)
+     *
+     * Ticket 5.15 left both whole because a dispatcher drags between them.
+     * 7.8 pages them at eight, which is only safe while two things hold: the
+     * full count is still stated, and everything you could do by dragging is
+     * still reachable on whatever page you are on. Both are tested here
+     * rather than left to the reader of the component.
+     */
+    it('pages a pharmacy pile at eight and still says how big it is', async () => {
+        const many = Array.from({ length: 20 }, (_, i) => order({ id: 100 + i, externalRef: `RX-${100 + i}` }));
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: many, overdue: 0 }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pool = screen.getByLabelText('Unassigned pool');
+        /* The heading carries the whole number. A dispatcher must never be
+           able to read a page of eight as the whole of what is waiting. */
+        expect(within(pool).getByRole('heading', { name: /Discharge Pharmacy \(20\)/ })).toBeInTheDocument();
+        expect(within(pool).getByText('Showing 1 to 8 of 20 waiting')).toBeInTheDocument();
+        expect(within(pool).getByLabelText('Assign order 100 to')).toBeInTheDocument();
+        expect(within(pool).queryByLabelText('Assign order 108 to')).not.toBeInTheDocument();
+    });
+
+    it('can assign a card from a later page, which is what paging has to keep', async () => {
+        /* The one capability paging could have taken away. You cannot drag a
+           card from page 2, so the select on every card is the whole reason
+           the pool was safe to page at all. */
+        const many = Array.from({ length: 20 }, (_, i) => order({ id: 100 + i, externalRef: `RX-${100 + i}` }));
+        const { calls } = renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: many, overdue: 0 }],
+            }),
+            'POST /api/projects/uh/uh/runs/10/stops': { added: [109], rejected: [] },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pool = screen.getByLabelText('Unassigned pool');
+        fireEvent.click(within(pool).getByRole('button', { name: 'Next' }));
+        fireEvent.change(within(pool).getByLabelText('Assign order 109 to'), { target: { value: '10' } });
+
+        await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs/10/stops'));
+    });
+
+    it('pages a long lane but keeps the overdue count in its header', async () => {
+        /* 5.15's objection was that hiding stops nine and up hides who is
+           late. The lane header answers it on every page, so what is off
+           screen is stated rather than concealed. */
+        const stops = Array.from({ length: 14 }, (_, i) => ({
+            sequence: i + 1,
+            order: order({ id: 200 + i, status: 'assigned', assignedTo: 'ada.courier', recipientName: `Patient ${i + 1}` }),
+        }));
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                lanes: [{
+                    run: { id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14', label: 'Noon wave', status: 'planned', startedAt: null },
+                    courier: courier(),
+                    stops,
+                    currentStop: stops[0]!,
+                    counts: { total: 14, remaining: 14, done: 0, overdue: 3 },
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const lane = screen.getByLabelText('Noon wave for Ada Courier');
+        expect(within(lane).getByText('Showing 1 to 8 of 14 stops')).toBeInTheDocument();
+        expect(within(lane).getByText(/3 overdue/)).toBeInTheDocument();
+        expect(within(lane).getByText(/0 of 14 done/)).toBeInTheDocument();
+        expect(within(lane).getByText('Patient 1')).toBeInTheDocument();
+        expect(within(lane).queryByText('Patient 9')).not.toBeInTheDocument();
+
+        fireEvent.click(within(lane).getByRole('button', { name: 'Next' }));
+        expect(within(lane).getByText('Patient 9')).toBeInTheDocument();
+    });
+
+    it('gives each pharmacy its own page number', async () => {
+        /* One page number shared across nine pharmacies would turn them all
+           to page 2 together, which is why PoolGroup is a component. */
+        const pile = (base: number, n: number) =>
+            Array.from({ length: n }, (_, i) => order({ id: base + i, externalRef: `RX-${base + i}` }));
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [
+                    { site: { id: 1, code: 'green', name: 'Robert B Green' }, orders: pile(300, 12), overdue: 0 },
+                    { site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: pile(400, 12), overdue: 0 },
+                ],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pool = screen.getByLabelText('Unassigned pool');
+        const [green, discharge] = within(pool).getAllByRole('navigation');
+        fireEvent.click(within(green!).getByRole('button', { name: 'Next' }));
+
+        expect(within(green!).getByText('Showing 9 to 12 of 12 waiting')).toBeInTheDocument();
+        expect(within(discharge!).getByText('Showing 1 to 8 of 12 waiting')).toBeInTheDocument();
+    });
+
     it('can assign without a mouse, which a drag-only board cannot', async () => {
         const { calls } = renderBoard(routes({ 'POST /api/projects/uh/uh/runs/10/stops': { added: [1], rejected: [] } }));
         await screen.findByRole('heading', { name: 'Dispatch board' });

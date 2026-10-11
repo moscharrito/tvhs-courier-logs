@@ -28,7 +28,7 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
 import { Requests } from './Requests';
-import { mergeBoard, type BoardView, type BoardWire } from '../../lib/board';
+import { mergeBoard, type BoardView, type BoardWire, type SiteRef } from '../../lib/board';
 
 const POLL_MS = 15_000;
 
@@ -213,8 +213,9 @@ export function Board() {
     }, [base]);
 
     /* Above every early return: hooks run in the same order every render.
-       The feed only. The pool and the lanes are left whole on purpose, for
-       the reasons recorded above the lanes. */
+       The feed only. The pool groups and the lanes hold a page each of their
+       own, in PoolGroup and LaneStops, because one page number shared across
+       nine pharmacies would turn to page 2 for all of them at once. */
     const pagedFeed = usePaged(data?.activity ?? []);
 
     if (!project) {
@@ -392,33 +393,15 @@ export function Board() {
                 <section className="izy-card izy-pool" aria-label="Unassigned pool">
                     <h2>Unassigned ({s.unassigned})</h2>
                     {data.pool.length === 0 ? <div className="izy-muted">Nothing waiting.</div> : data.pool.map((group) => (
-                        <div key={group.site.id} className="izy-pool-group">
-                            <h3>{group.site.name} <span className="izy-muted">({group.orders.length})</span></h3>
-                            {group.orders.map((o) => (
-                                <OrderCard
-                                    key={o.id}
-                                    order={o}
-                                    draggable
-                                    onDragStart={() => setDragging(o.id)}
-                                    onDragEnd={() => setDragging(null)}
-                                    projectCode={code}
-                                    action={laneOptions.length === 0 ? null : (
-                                        <label className="izy-assign">
-                                            <span className="izy-visually-hidden">Assign order {o.id} to</span>
-                                            <select
-                                                aria-label={`Assign order ${o.id} to`}
-                                                value=""
-                                                disabled={busy}
-                                                onChange={(e) => { if (e.target.value) void assign(o.id, Number(e.target.value)); }}
-                                            >
-                                                <option value="">Assign to...</option>
-                                                {laneOptions.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-                                            </select>
-                                        </label>
-                                    )}
-                                />
-                            ))}
-                        </div>
+                        <PoolGroup
+                            key={group.site.id}
+                            group={group}
+                            projectCode={code}
+                            busy={busy}
+                            laneOptions={laneOptions}
+                            onDragStart={setDragging}
+                            assign={assign}
+                        />
                     ))}
                 </section>
 
@@ -526,28 +509,13 @@ export function Board() {
                                 </button>
                             </div>
 
-                            {lane.stops.length === 0 ? <div className="izy-muted">No stops yet.</div> : lane.stops.map((stop) => (
-                                <OrderCard
-                                    key={stop.order.id}
-                                    order={stop.order}
-                                    sequence={stop.sequence}
-                                    current={lane.currentStop?.order.id === stop.order.id}
-                                    draggable
-                                    onDragStart={() => setDragging(stop.order.id)}
-                                    onDragEnd={() => setDragging(null)}
-                                    projectCode={code}
-                                    action={(
-                                        <button
-                                            className="izy-btn secondary"
-                                            type="button"
-                                            disabled={busy}
-                                            onClick={() => { void unassign(stop.order.id, lane.run.id); }}
-                                        >
-                                            Return to pool
-                                        </button>
-                                    )}
-                                />
-                            ))}
+                            <LaneStops
+                                lane={lane}
+                                projectCode={code}
+                                busy={busy}
+                                onDragStart={setDragging}
+                                unassign={unassign}
+                            />
                         </section>
                     ))}
 
@@ -587,6 +555,115 @@ export function Board() {
                     </div>
                 </div>
             </div>
+        </>
+    );
+}
+
+/* One pharmacy's waiting orders, paged.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TICKET 5.15 LEFT THE POOL WHOLE AND 7.8 PAGES IT. WHY THAT CHANGED.
+ *
+ * 5.15's reason was that a dispatcher drags cards out of here, and you
+ * cannot drag a card that is on another page. That was true and is still
+ * true. What it missed is that dragging was never the only way: every card
+ * carries an "Assign to..." select covering the same ground, so paging
+ * removes a shortcut and not a capability.
+ *
+ * Against that: Robert B. Green sends 241 a day, and the noon wave put all
+ * of them in the document at once on a screen that re-renders every fifteen
+ * seconds. Nobody reads 241 cards. They work the top of the pile.
+ *
+ * The count stays in the heading whatever page you are on, which is the part
+ * that has to be true: a dispatcher must never be able to mistake a page of
+ * eight for the whole of what is waiting.
+ */
+function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign }: {
+    group: { site: SiteRef; orders: BoardOrder[]; overdue: number };
+    projectCode: string;
+    busy: boolean;
+    laneOptions: Array<{ id: number; label: string }>;
+    onDragStart: (id: number | null) => void;
+    assign: (orderId: number, runId: number) => void | Promise<void>;
+}) {
+    const paged = usePaged(group.orders);
+    return (
+        <div className="izy-pool-group">
+            <h3>{group.site.name} <span className="izy-muted">({group.orders.length})</span></h3>
+            {paged.rows.map((o) => (
+                <OrderCard
+                    key={o.id}
+                    order={o}
+                    draggable
+                    onDragStart={() => onDragStart(o.id)}
+                    onDragEnd={() => onDragStart(null)}
+                    projectCode={projectCode}
+                    action={laneOptions.length === 0 ? null : (
+                        <label className="izy-assign">
+                            <span className="izy-visually-hidden">Assign order {o.id} to</span>
+                            <select
+                                aria-label={`Assign order ${o.id} to`}
+                                value=""
+                                disabled={busy}
+                                onChange={(e) => { if (e.target.value) void assign(o.id, Number(e.target.value)); }}
+                            >
+                                <option value="">Assign to...</option>
+                                {laneOptions.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                            </select>
+                        </label>
+                    )}
+                />
+            ))}
+            <Pager of={paged} noun="waiting" />
+        </div>
+    );
+}
+
+/* One courier's stops, paged.
+ *
+ * 5.15's other reason for leaving the board alone was that hiding stops nine
+ * and up hides who is late. The lane header answers that directly -- it says
+ * "x of y done" and the overdue count beside it, on every page -- so what is
+ * off screen is stated rather than hidden. A lane of thirty cards was also
+ * the reason a dispatcher had to scroll past one courier to reach the next.
+ *
+ * "Return to pool" is on every card, so reassigning across lanes works from
+ * any page: it costs a return and an assign where a drag was one movement.
+ */
+function LaneStops({ lane, projectCode, busy, onDragStart, unassign }: {
+    lane: Lane;
+    projectCode: string;
+    busy: boolean;
+    onDragStart: (id: number | null) => void;
+    unassign: (orderId: number, runId: number) => void | Promise<void>;
+}) {
+    const paged = usePaged(lane.stops);
+    if (lane.stops.length === 0) return <div className="izy-muted">No stops yet.</div>;
+    return (
+        <>
+            {paged.rows.map((stop) => (
+                <OrderCard
+                    key={stop.order.id}
+                    order={stop.order}
+                    sequence={stop.sequence}
+                    current={lane.currentStop?.order.id === stop.order.id}
+                    draggable
+                    onDragStart={() => onDragStart(stop.order.id)}
+                    onDragEnd={() => onDragStart(null)}
+                    projectCode={projectCode}
+                    action={(
+                        <button
+                            className="izy-btn secondary"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => { void unassign(stop.order.id, lane.run.id); }}
+                        >
+                            Return to pool
+                        </button>
+                    )}
+                />
+            ))}
+            <Pager of={paged} noun="stops" />
         </>
     );
 }

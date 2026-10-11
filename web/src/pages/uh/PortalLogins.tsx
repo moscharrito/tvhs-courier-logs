@@ -38,6 +38,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { SecretInput } from '../../app/SecretInput';
+import { Pager, usePaged } from '../../app/Pager';
 
 interface Portal {
     username: string;
@@ -66,6 +67,10 @@ export function PortalLogins() {
     const base = `/api/projects/${code}/uh/portals`;
 
     const [portals, setPortals] = useState<Portal[] | null>(null);
+    /* Eight counters today, so the control stays hidden. It is here for
+       the ninth: a contract that adds a site should not be the thing
+       that discovers this table was never paged. */
+    const paged = usePaged(portals ?? []);
     const [error, setError] = useState<string | null>(null);
 
     /* Which row is open, and what is in its box. One at a time: a page with
@@ -175,6 +180,7 @@ export function PortalLogins() {
                             and we will check what your login covers.
                         </p>
                     ) : (
+                        <>
                         <table className="izy-table">
                             <thead>
                                 <tr>
@@ -184,7 +190,7 @@ export function PortalLogins() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {portals.map((p) => (
+                                {paged.rows.map((p) => (
                                     <tr key={p.username}>
                                         <td>
                                             {p.pharmacies.join(', ') || p.name}
@@ -227,6 +233,8 @@ export function PortalLogins() {
                                 ))}
                             </tbody>
                         </table>
+                        <Pager of={paged} noun="pharmacies" />
+                        </>
                     )}
             </div>
 
