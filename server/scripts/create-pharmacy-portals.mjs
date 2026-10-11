@@ -59,6 +59,8 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import readline from 'node:readline';
+import { Writable } from 'node:stream';
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(`--${flag}`);
@@ -83,10 +85,36 @@ if (!isLocal && !/^https:/i.test(base)) {
     process.exit(1);
 }
 
+/** Ask for the password with the echo off. Never stored, never printed.
+ *
+ *  Requiring SEED_ADMIN_PASS in the environment was the only way in, and
+ *  an exported admin password stays live for every later command in that
+ *  shell. Asking is better, and the environment still wins when it is
+ *  already set, so nothing that works today stops working. */
+function askSecret(prompt) {
+    return new Promise((resolve) => {
+        let muted = false;
+        const out = new Writable({
+            write(chunk, _enc, cb) {
+                if (!muted) process.stdout.write(chunk);
+                cb();
+            },
+        });
+        const rl = readline.createInterface({ input: process.stdin, output: out, terminal: true });
+        rl.question(prompt, (answer) => {
+            rl.close();
+            process.stdout.write('\n');
+            resolve(answer);
+        });
+        muted = true;
+    });
+}
+
 const adminUser = process.env['SEED_ADMIN_USER'] ?? 'admin';
-const adminPass = process.env['SEED_ADMIN_PASS'] ?? '';
+const adminPass = process.env['SEED_ADMIN_PASS']
+    ?? (isLocal ? '' : await askSecret(`Password for ${adminUser} on ${base}: `));
 if (!isLocal && adminPass === '') {
-    console.error('Set SEED_ADMIN_PASS. It is read from the environment and never printed.');
+    console.error('No password given.');
     process.exit(1);
 }
 
@@ -179,99 +207,126 @@ async function call(pathname, options = {}) {
     return { status: res.status, body };
 }
 
+/* A refusal that stops the run.
+ *
+ * NOT process.exit(). Forcing an exit while fetch still holds a keep-alive
+ * socket trips a libuv assertion on Windows -- the script printed its error
+ * and then aborted on top of it, so the actual cause scrolled away under
+ * "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)". Throwing lets
+ * the loop drain and leaves the message as the last thing on screen. */
+class Stop extends Error {}
+
 function insist(label, res, ok = (s) => s >= 200 && s < 300) {
     if (ok(res.status)) return res;
     console.error(`\n${label} failed: HTTP ${res.status}`);
     console.error(typeof res.body === 'string' ? res.body.slice(0, 400) : JSON.stringify(res.body, null, 2).slice(0, 800));
-    process.exit(1);
+    throw new Stop();
 }
-
 /* ---------------------------------------------------------------- run it */
 
-say(`  ${base}`);
-insist('login', await call('/api/login', {
-    method: 'POST',
-    body: JSON.stringify({ username: adminUser, password: adminPass }),
-}));
-say(`  signed in as ${adminUser}`);
+async function main() {
 
-const sites = insist('sites', await call(`/api/projects/${projectCode}/uh/sites`)).body;
-const idByCode = new Map(sites.map((s) => [s.code, s.id]));
-say(`  ${sites.length} pharmacies in ${projectCode}`);
+    /* THE SERVER, LOUDLY. This defaults to localhost, and granting the
+       contract manager their reset capability against a developer's own
+       database looks exactly like granting it in production. */
+    say('');
+    say(`  SERVER   ${base}`);
+    say(`  PROJECT  ${projectCode}`);
+    say(`  ${isLocal ? '** LOCAL server, not production **' : 'Remote server.'}`);
+    insist('login', await call('/api/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: adminUser, password: adminPass }),
+    }));
+    say(`  signed in as ${adminUser}`);
 
-/* Checked before anything is written, for the reason in the header: a
-   membership whose codes did not resolve is an account that shows an empty
-   screen for ever and nobody can tell whether that is the scope or the day. */
-const missing = [...new Set(wanted.flatMap((p) => p.sites))].filter((code) => !idByCode.has(code));
-if (missing.length > 0) {
-    console.error(`\nThese pharmacies are not in ${projectCode}: ${missing.join(', ')}`);
-    console.error('Nothing was created. Check the site codes against the sites list.');
-    process.exit(1);
-}
+    const sites = insist('sites', await call(`/api/projects/${projectCode}/uh/sites`)).body;
+    const idByCode = new Map(sites.map((s) => [s.code, s.id]));
+    say(`  ${sites.length} pharmacies in ${projectCode}`);
 
-const made = [];
-for (const portal of wanted) {
-    const siteIds = portal.sites.map((code) => idByCode.get(code));
-    const existing = await call(`/api/users/${portal.username}`);
-
-    let pass = null;
-    if (existing.status !== 200) {
-        pass = password();
-        insist(`create ${portal.username}`, await call('/api/users', {
-            method: 'POST',
-            /* The password below is the account's password from here on.
-               Nothing forces a change; see the header for what replaced it. */
-            body: JSON.stringify({ username: portal.username, name: portal.name, password: pass, role: 'staff' }),
-        }), (s) => s === 201 || s === 200);
-    } else if (has('reset')) {
-        pass = password();
-        insist(`reset ${portal.username}`, await call(`/api/users/${portal.username}/password`, {
-            method: 'POST',
-            body: JSON.stringify({ password: pass }),
-        }));
+    /* Checked before anything is written, for the reason in the header: a
+       membership whose codes did not resolve is an account that shows an empty
+       screen for ever and nobody can tell whether that is the scope or the day. */
+    const missing = [...new Set(wanted.flatMap((p) => p.sites))].filter((code) => !idByCode.has(code));
+    if (missing.length > 0) {
+        console.error(`\nThese pharmacies are not in ${projectCode}: ${missing.join(', ')}`);
+        console.error('Nothing was created. Check the site codes against the sites list.');
+        throw new Stop();
     }
 
-    /* Written every time, new account or not: this is the line that carries
-       the scope, so a counter added or moved is a re-run rather than a
-       database edit. */
-    insist(`scope ${portal.username}`, await call(`/api/users/${portal.username}/memberships/${projectCode}`, {
-        method: 'PUT',
-        /* siteIds is the scope; capabilities is the manager's reset verb and
-           is absent for the eight counters, so re-running this never grants
-           one of them something it did not have. */
-        body: JSON.stringify({ role: 'pharmacy', settings: { siteIds, ...(portal.capabilities ?? {}) } }),
-    }));
+    const made = [];
+    for (const portal of wanted) {
+        const siteIds = portal.sites.map((code) => idByCode.get(code));
+        const existing = await call(`/api/users/${portal.username}`);
 
-    made.push({ ...portal, pass, existed: existing.status === 200 });
-    say(`  ${portal.username.padEnd(18)} ${portal.sites.length} ${portal.sites.length === 1 ? 'counter' : 'counters'}`);
-}
+        let pass = null;
+        if (existing.status !== 200) {
+            pass = password();
+            insist(`create ${portal.username}`, await call('/api/users', {
+                method: 'POST',
+                /* The password below is the account's password from here on.
+                   Nothing forces a change; see the header for what replaced it. */
+                body: JSON.stringify({ username: portal.username, name: portal.name, password: pass, role: 'staff' }),
+            }), (s) => s === 201 || s === 200);
+        } else if (has('reset')) {
+            pass = password();
+            insist(`reset ${portal.username}`, await call(`/api/users/${portal.username}/password`, {
+                method: 'POST',
+                body: JSON.stringify({ password: pass }),
+            }));
+        }
 
-/* ------------------------------------------------------------- the output */
+        /* Written every time, new account or not: this is the line that carries
+           the scope, so a counter added or moved is a re-run rather than a
+           database edit. */
+        insist(`scope ${portal.username}`, await call(`/api/users/${portal.username}/memberships/${projectCode}`, {
+            method: 'PUT',
+            /* siteIds is the scope; capabilities is the manager's reset verb and
+               is absent for the eight counters, so re-running this never grants
+               one of them something it did not have. */
+            body: JSON.stringify({ role: 'pharmacy', settings: { siteIds, ...(portal.capabilities ?? {}) } }),
+        }));
 
-say('');
-say('  SHOWN ONCE. Not written anywhere; re-run with --reset if this is lost.');
-say('');
-for (const portal of made) {
-    say(`    ${portal.name}`);
-    say(`      username  ${portal.username}`);
-    say(`      password  ${portal.pass ?? '(unchanged; account already existed)'}`);
-    say(`      sees      ${portal.sites.join(', ')}  — ${portal.note}`);
+        made.push({ ...portal, pass, existed: existing.status === 200 });
+        say(`  ${portal.username.padEnd(18)} ${portal.sites.length} ${portal.sites.length === 1 ? 'counter' : 'counters'}`);
+    }
+
+    /* ------------------------------------------------------------- the output */
+
     say('');
+    say('  SHOWN ONCE. Not written anywhere; re-run with --reset if this is lost.');
+    say('');
+    for (const portal of made) {
+        say(`    ${portal.name}`);
+        say(`      username  ${portal.username}`);
+        say(`      password  ${portal.pass ?? '(unchanged; account already existed)'}`);
+        say(`      sees      ${portal.sites.join(', ')}  — ${portal.note}`);
+        say('');
+    }
+
+    say('  THESE PASSWORDS DO NOT EXPIRE AND NOTHING FORCES A CHANGE. Each one works');
+    say('  until somebody replaces it, so the message you send is a live credential:');
+    say('  send each pharmacy only its own line, and delete it once they confirm.');
+    say('');
+    say('  Each account can change its own password under Your account at any time,');
+    say('  and uh.manager can set a new one for any of the eight counters from');
+    say('  Pharmacy logins in the portal. That is the recovery path -- a forgotten');
+    say('  password does not need us.');
+    say('');
+    say('  They see their own counter and nothing else: deliveries, proof of delivery,');
+    say('  performance, and the spreadsheet export. No other pharmacy, no pricing, no');
+    say('  invoices, no dispatch board.');
+    say('');
+    say('  Sending the daily list on the portal is OFF until the contract agrees to');
+    say('  it. Switch it on in the project settings, under letting the pharmacies');
+    say('  upload their daily list, once University Health have answered that.');
+
 }
 
-say('  THESE PASSWORDS DO NOT EXPIRE AND NOTHING FORCES A CHANGE. Each one works');
-say('  until somebody replaces it, so the message you send is a live credential:');
-say('  send each pharmacy only its own line, and delete it once they confirm.');
-say('');
-say('  Each account can change its own password under Your account at any time,');
-say('  and uh.manager can set a new one for any of the eight counters from');
-say('  Pharmacy logins in the portal. That is the recovery path -- a forgotten');
-say('  password does not need us.');
-say('');
-say('  They see their own counter and nothing else: deliveries, proof of delivery,');
-say('  performance, and the spreadsheet export. No other pharmacy, no pricing, no');
-say('  invoices, no dispatch board.');
-say('');
-say('  Sending the daily list on the portal is OFF until the contract agrees to');
-say('  it. Switch it on in the project settings, under letting the pharmacies');
-say('  upload their daily list, once University Health have answered that.');
+/* Stop is the script refusing, and it has already said why. Anything else
+   is a fault here and keeps its stack. */
+try {
+    await main();
+} catch (err) {
+    process.exitCode = 1;
+    if (!(err instanceof Stop)) throw err;
+}
