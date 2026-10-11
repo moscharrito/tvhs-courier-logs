@@ -59,9 +59,8 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import readline from 'node:readline';
-import { Writable } from 'node:stream';
 
+import { adminPassword } from './lib/secret.mjs';
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(`--${flag}`);
 const value = (name, fallback) => {
@@ -85,34 +84,8 @@ if (!isLocal && !/^https:/i.test(base)) {
     process.exit(1);
 }
 
-/** Ask for the password with the echo off. Never stored, never printed.
- *
- *  Requiring SEED_ADMIN_PASS in the environment was the only way in, and
- *  an exported admin password stays live for every later command in that
- *  shell. Asking is better, and the environment still wins when it is
- *  already set, so nothing that works today stops working. */
-function askSecret(prompt) {
-    return new Promise((resolve) => {
-        let muted = false;
-        const out = new Writable({
-            write(chunk, _enc, cb) {
-                if (!muted) process.stdout.write(chunk);
-                cb();
-            },
-        });
-        const rl = readline.createInterface({ input: process.stdin, output: out, terminal: true });
-        rl.question(prompt, (answer) => {
-            rl.close();
-            process.stdout.write('\n');
-            resolve(answer);
-        });
-        muted = true;
-    });
-}
-
 const adminUser = process.env['SEED_ADMIN_USER'] ?? 'admin';
-const adminPass = process.env['SEED_ADMIN_PASS']
-    ?? (isLocal ? '' : await askSecret(`Password for ${adminUser} on ${base}: `));
+const adminPass = await adminPassword({ user: adminUser, base, isLocal, label: 'create-pharmacy-portals.mjs' });
 if (!isLocal && adminPass === '') {
     console.error('No password given.');
     process.exit(1);

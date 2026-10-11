@@ -27,9 +27,8 @@
  * the password is absent it is asked for.
  */
 
-import readline from 'node:readline';
-import { Writable } from 'node:stream';
 
+import { adminPassword } from './lib/secret.mjs';
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(`--${flag}`);
 const value = (name, fallback) => {
@@ -64,26 +63,6 @@ if (!show && !isLocal && !has('i-mean-production')) {
 if (!isLocal && !/^https:/i.test(base)) {
     console.error('Refusing to send an admin password over plain HTTP.');
     process.exit(1);
-}
-
-/** Ask for the password with the echo off. Never stored, never printed. */
-function askSecret(prompt) {
-    return new Promise((resolve) => {
-        let muted = false;
-        const out = new Writable({
-            write(chunk, _enc, cb) {
-                if (!muted) process.stdout.write(chunk);
-                cb();
-            },
-        });
-        const rl = readline.createInterface({ input: process.stdin, output: out, terminal: true });
-        rl.question(prompt, (answer) => {
-            rl.close();
-            process.stdout.write('\n');
-            resolve(answer);
-        });
-        muted = true;
-    });
 }
 
 let cookie = '';
@@ -122,7 +101,7 @@ const readUpload = (body) => {
  */
 async function main() {
     const user = process.env['SEED_ADMIN_USER'] ?? 'admin';
-    const pass = process.env['SEED_ADMIN_PASS'] ?? await askSecret(`Password for ${user} on ${base}: `);
+    const pass = await adminPassword({ user, base, isLocal, label: 'portal-upload.mjs', askLocally: true });
     if (pass === '') {
         console.error('No password given.');
         process.exitCode = 1;
