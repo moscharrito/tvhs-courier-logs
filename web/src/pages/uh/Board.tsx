@@ -57,6 +57,23 @@ interface Courier {
     position: Position | null;
 }
 
+interface ProposedRun {
+    kind: 'stat' | 'standard';
+    orderIds: number[];
+    zips: string[];
+    siteIds: number[];
+    earliestDueAt: string | null;
+}
+
+interface Proposal {
+    serviceDate: string;
+    settings: { drivers: number; maxStopsPerRun: number; maxSitesPerRun: number; maxStopsPerStatRun: number };
+    runs: ProposedRun[];
+    unplaced: Array<{ orderId: number; why: string }>;
+    notes: string[];
+    driversNeeded: number;
+}
+
 interface Activity {
     id: number; at: string; minutesAgo: number; actor: string; courierName: string;
     type: string; orderId: number; externalRef: string; recipientName: string;
@@ -136,6 +153,12 @@ export function Board() {
     const [dragging, setDragging] = useState<number | null>(null);
     const [stale, setStale] = useState(false);
     const [newRunCourier, setNewRunCourier] = useState('');
+    const [proposal, setProposal] = useState<Proposal | null>(null);
+    /* Eighteen on paper. A dispatcher with fifteen on shift needs to see
+       what fifteen looks like before they start ringing people, so it is a
+       box on the screen and not a setting in a file. */
+    const [fleet, setFleet] = useState('18');
+    const [takeWith, setTakeWith] = useState<Record<number, string>>({});
     const pollRef = useRef<number | null>(null);
     /* The cards we already hold, and the cursor that says what we have seen.
        Refs rather than state: a poll reads and replaces both, and making them
@@ -264,6 +287,35 @@ export function Board() {
         () => api(`${base}/runs/${runId}/sequence/auto`, { method: 'POST', json: { strategy } }),
         `Run ${runId} sequenced.`,
     );
+
+    /* The proposal is held, not refetched on every render: it is a
+       suggestion a dispatcher is reading and comparing against the board,
+       and having it change underneath them on the fifteen-second poll is
+       the one thing it must not do. It is cleared when one is taken, so
+       what is on screen is never a plan that has already half happened. */
+    const proposeRoutes = () => act(
+        () => api<Proposal>(`${base}/runs/propose?drivers=${fleet}${data?.serviceDate ? `&serviceDate=${data.serviceDate}` : ''}`)
+            .then(setProposal),
+        'Routes proposed. Nothing is assigned yet.',
+    );
+
+    /* One proposed run becomes a real one through POST /runs with its
+       orderIds -- the path the board already uses, with the lifecycle
+       checks and the audit trail it already has. */
+    const takeProposed = (run: ProposedRun, index: number, courier: string) => act(
+        () => api(`${base}/runs`, {
+            method: 'POST',
+            json: {
+                courierUsername: courier,
+                label: run.kind === 'stat' ? 'STAT' : `Wave ${index + 1}`,
+                serviceDate: data?.serviceDate,
+                orderIds: run.orderIds,
+            },
+        }),
+        `Run created for ${courier} with ${run.orderIds.length} ${run.orderIds.length === 1 ? 'stop' : 'stops'}.`,
+    ).then(() => setProposal((p) => (p === null ? null : {
+        ...p, runs: p.runs.filter((r) => r !== run),
+    })));
 
     const startRun = () => act(
         () => api(`${base}/runs`, { method: 'POST', json: { courierUsername: newRunCourier, label: 'Wave', serviceDate: data?.serviceDate } }),
@@ -442,6 +494,127 @@ export function Board() {
                                     Start run
                                 </button>
                             </div>
+                        )}
+                    </Section>
+
+                    {/* THE NOON WAVE, BEFORE IT IS ANYBODY'S DAY.
+
+                        Nine counters release by noon and a Tuesday is 1,417
+                        deliveries. Moving those onto runs a card at a time
+                        is the afternoon this gives back.
+
+                        It proposes and stops. Nothing here is assigned
+                        until a courier is chosen against a run, because
+                        what is being suggested is where eighteen people
+                        spend their day, and a suggestion that has already
+                        happened is not one. Folded by default: it has
+                        nothing to say until it is asked. */}
+                    <Section
+                        id="uh.board.propose"
+                        /* Not "Propose routes", which is the button inside
+                           it. A panel and its own button reading the same
+                           words is two controls a screen reader cannot tell
+                           apart, and a sighted reader clicks the wrong one. */
+                        title="Plan the wave"
+                        defaultOpen={false}
+                        summary={proposal === null
+                            ? 'group the unassigned work into runs'
+                            : `${proposal.runs.length} proposed, ${proposal.unplaced.length} with no driver`}
+                    >
+                        <div className="izy-row">
+                            <label className="izy-field" style={{ maxWidth: 150 }}>Drivers on shift
+                                <input
+                                    value={fleet}
+                                    onChange={(e) => setFleet(e.target.value.replace(/[^0-9]/g, ''))}
+                                    inputMode="numeric"
+                                    aria-label="Drivers on shift"
+                                />
+                            </label>
+                            <button className="izy-btn" type="button" disabled={busy || fleet === ''}
+                                onClick={() => { void proposeRoutes(); }}>
+                                {proposal === null ? 'Propose routes' : 'Propose again'}
+                            </button>
+                            {proposal !== null && (
+                                <button className="izy-btn secondary" type="button" disabled={busy}
+                                    onClick={() => { setProposal(null); setTakeWith({}); }}>
+                                    Discard
+                                </button>
+                            )}
+                        </div>
+
+                        {proposal !== null && (
+                            <>
+                                {/* Said before the runs, not after them. A
+                                    dispatcher who can see at 12:05 that the
+                                    day needs six more drivers can do
+                                    something about it; one who finds out at
+                                    four o'clock cannot. */}
+                                {proposal.notes.map((n) => (
+                                    <div key={n} className="izy-alert warn" role="status">{n}</div>
+                                ))}
+
+                                {proposal.runs.length === 0 ? (
+                                    <p className="izy-muted">Nothing left to group.</p>
+                                ) : (
+                                    <table className="izy-table">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Route</th>
+                                                <th scope="col">Stops</th>
+                                                <th scope="col">Where</th>
+                                                <th scope="col">First due</th>
+                                                <th scope="col">Give it to</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {proposal.runs.map((run, i) => (
+                                                <tr key={run.orderIds.join(',')}>
+                                                    <td>
+                                                        {run.kind === 'stat'
+                                                            ? <span className="izy-pill">STAT</span>
+                                                            : `Wave ${i + 1}`}
+                                                    </td>
+                                                    <td>{run.orderIds.length}</td>
+                                                    <td>
+                                                        {run.zips.join(', ')}
+                                                        <br />
+                                                        <span className="izy-muted">
+                                                            {run.siteIds.length === 1 ? 'one pickup' : `${run.siteIds.length} pickups`}
+                                                        </span>
+                                                    </td>
+                                                    <td>{run.earliestDueAt === null
+                                                        ? <span className="izy-muted">not set</span>
+                                                        : clock(run.earliestDueAt)}</td>
+                                                    <td>
+                                                        <div className="izy-row">
+                                                            <select
+                                                                aria-label={`Courier for proposed route ${i + 1}`}
+                                                                value={takeWith[i] ?? ''}
+                                                                onChange={(e) => setTakeWith({ ...takeWith, [i]: e.target.value })}
+                                                            >
+                                                                <option value="">Choose a courier</option>
+                                                                {data.idleCouriers.map((c) => (
+                                                                    <option key={c.username} value={c.username}>
+                                                                        {c.name}{c.present ? '' : ' (not on shift)'}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                            <button
+                                                                className="izy-btn secondary small"
+                                                                type="button"
+                                                                disabled={busy || !(takeWith[i] ?? '')}
+                                                                onClick={() => { void takeProposed(run, i, takeWith[i] ?? ''); }}
+                                                            >
+                                                                Create run
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </>
                         )}
                     </Section>
 

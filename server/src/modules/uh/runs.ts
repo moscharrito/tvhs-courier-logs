@@ -32,6 +32,7 @@ import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from 
 import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
+import { proposeRuns, DEFAULT_CLUSTER_SETTINGS, type Clusterable } from './cluster';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -690,6 +691,80 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             auditEntity: 'report',
             auditEntityId: q['serviceDate'] ?? 'all',
         });
+    }));
+
+    /**
+     * The noon wave, grouped into routes somebody can drive.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * IT WRITES NOTHING, AND THAT IS WHY IT IS A GET.
+     *
+     * Nine pharmacies release by noon and a Tuesday is 1,417 deliveries.
+     * Moving those onto runs one card at a time is the afternoon this is
+     * meant to give back. But the thing a dispatcher is being offered is a
+     * SUGGESTION about where eighteen people spend their day, and a
+     * suggestion that has already happened is not one.
+     *
+     * So nothing here creates a run, assigns a courier or writes a custody
+     * event. The dispatcher reads the proposal, picks who drives each run,
+     * and POST /runs with its orderIds does the rest through the path that
+     * already exists -- with the audit trail, the lifecycle checks and the
+     * rejection reporting that path already has. A second write path for
+     * the same act is a second place for the two to disagree.
+     *
+     * The capacity numbers are query parameters rather than settings
+     * because they change with the day: eighteen drivers is the fleet on
+     * paper, and a dispatcher at 12:05 who has fifteen on shift needs to
+     * see what fifteen looks like before they start ringing people.
+     */
+    router.get('/propose', staff, wrap(async (req, res) => {
+        const q = req.query as Record<string, string | undefined>;
+        const serviceDate = q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])
+            ? q['serviceDate']
+            : todayIn(req.project!.timezone);
+
+        /* A positive integer inside a sane band, or the default. A NaN from
+           a typo must not become a fleet of zero that strands the day. */
+        const num = (name: string, fallback: number, max: number) => {
+            const raw = q[name];
+            if (raw === undefined) return fallback;
+            const n = Number(raw);
+            return Number.isInteger(n) && n >= 1 && n <= max ? n : fallback;
+        };
+
+        /* Unassigned only. An order already on a run belongs to a courier
+           who may have collected it, and proposing it to somebody else is
+           how a package ends up in two places. */
+        const rs = await client.execute({
+            sql: `SELECT o.id, o.site_id, o.zip, o.zone, o.due_at, o.service_type
+                    FROM orders o
+                   WHERE o.project_id = ? AND o.service_date = ?
+                     AND o.status IN ('ready', 'pending')
+                     AND NOT EXISTS (
+                           SELECT 1 FROM run_stops rs
+                            JOIN runs r ON r.id = rs.run_id
+                            WHERE rs.order_id = o.id AND r.status != 'cancelled')
+                   ORDER BY o.id`,
+            args: [req.project!.id, serviceDate],
+        });
+
+        const orders: Clusterable[] = rs.rows.map((r) => ({
+            id: Number(r['id']),
+            siteId: Number(r['site_id']),
+            zip: String(r['zip'] ?? ''),
+            zone: r['zone'] === null || r['zone'] === undefined ? null : Number(r['zone']),
+            dueAt: r['due_at'] === null || r['due_at'] === undefined ? null : String(r['due_at']),
+            serviceType: String(r['service_type'] ?? 'scheduled'),
+        }));
+
+        const settings = {
+            drivers: num('drivers', DEFAULT_CLUSTER_SETTINGS.drivers, 200),
+            maxStopsPerRun: num('maxStopsPerRun', DEFAULT_CLUSTER_SETTINGS.maxStopsPerRun, 200),
+            maxSitesPerRun: num('maxSitesPerRun', DEFAULT_CLUSTER_SETTINGS.maxSitesPerRun, 9),
+            maxStopsPerStatRun: num('maxStopsPerStatRun', DEFAULT_CLUSTER_SETTINGS.maxStopsPerStatRun, 40),
+        };
+
+        res.json({ serviceDate, settings, ...proposeRuns(orders, settings) });
     }));
 
     router.get('/', readers, wrap(async (req, res) => {

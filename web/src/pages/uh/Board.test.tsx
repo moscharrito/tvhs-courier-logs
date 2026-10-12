@@ -381,6 +381,78 @@ describe('Board', () => {
         expect(within(discharge!).getByText('Showing 1 to 8 of 12 waiting')).toBeInTheDocument();
     });
 
+    /* ──────────────────────────────────── proposing the noon wave (7.9) */
+    it('proposes routes without assigning anything', async () => {
+        /* The property the whole panel rests on. What is being suggested is
+           where eighteen people spend their day; a suggestion that has
+           already happened is not one. */
+        const { calls } = renderBoard(routes({
+            'GET /api/projects/uh/uh/runs/propose*': {
+                serviceDate: '2026-09-14',
+                settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
+                runs: [
+                    { kind: 'stat', orderIds: [3], zips: ['78215'], siteIds: [7], earliestDueAt: '2026-09-14T19:00:00.000Z' },
+                    { kind: 'standard', orderIds: [1, 2], zips: ['78207', '78228'], siteIds: [7], earliestDueAt: '2026-09-14T20:00:00.000Z' },
+                ],
+                unplaced: [],
+                notes: [],
+                driversNeeded: 2,
+            },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        expect(await screen.findByText('78207, 78228')).toBeInTheDocument();
+        /* Scoped to the proposal row: "STAT" is also the service level on
+           the order cards, so an unscoped match finds the board, not this. */
+        const statRow = screen.getByText('78215').closest('tr')!;
+        expect(within(statRow).getByText('STAT')).toBeInTheDocument();
+        /* Read, and nothing written. */
+        expect(calls.filter((c) => c.startsWith('POST'))).toHaveLength(0);
+    });
+
+    it('says how many more drivers the day needs, before the routes', async () => {
+        /* A dispatcher who learns at 12:05 that today needs six more
+           drivers can do something about it. At four o'clock they cannot. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/runs/propose*': {
+                serviceDate: '2026-09-14',
+                settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
+                runs: [],
+                unplaced: [{ orderId: 9, why: 'no_driver_left' }],
+                notes: ['217 deliveries have no driver. Today needs 24 and 18 are available.'],
+                driversNeeded: 24,
+            },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        expect(await screen.findByText(/Today needs 24 and 18 are available/)).toBeInTheDocument();
+    });
+
+    it('turns a proposed route into a run through the path that already exists', async () => {
+        const { calls } = renderBoard(routes({
+            'GET /api/projects/uh/uh/runs/propose*': {
+                serviceDate: '2026-09-14',
+                settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
+                runs: [{ kind: 'standard', orderIds: [1, 2], zips: ['78207'], siteIds: [7], earliestDueAt: null }],
+                unplaced: [], notes: [], driversNeeded: 1,
+            },
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        fireEvent.change(await screen.findByLabelText('Courier for proposed route 1'), { target: { value: 'bo.courier' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create run' }));
+
+        await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs'));
+    });
+
     it('can assign without a mouse, which a drag-only board cannot', async () => {
         const { calls } = renderBoard(routes({ 'POST /api/projects/uh/uh/runs/10/stops': { added: [1], rejected: [] } }));
         await screen.findByRole('heading', { name: 'Dispatch board' });

@@ -395,6 +395,7 @@ const MATRIX = [
     ['POST', `${UH}/notifications/read`, UH_MEMBER, 'mark mine read'],
     ['POST', '/api/me/push-devices', SIGNED_IN, 'this phone will take push'],
     ['DELETE', '/api/me/push-devices/999999', SIGNED_IN, 'it will not any more'],
+    ['GET', `${UH}/runs/propose`, UH_STAFF, 'the shape of the whole day across every counter, which no single pharmacy may read'],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'a lead moves a package at their own counter'],
