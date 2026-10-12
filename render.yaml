@@ -135,6 +135,41 @@ services:
       - key: ADMIN_PASS
         sync: false
 
+      # --- Amazon Location (ticket 7.11) ---
+      #
+      # The only geocoder permitted to see a delivery address. A patient's
+      # address is PHI; Google Maps Platform is not on Google's BAA and their
+      # terms exclude PHI, so google.ts is wired for pharmacy addresses only
+      # and refuses the rest in code.
+      #
+      # The place index MUST have been created with IntendedUse=Storage,
+      # because this platform keeps the coordinates on the order row. An index
+      # created SingleUse answers every call perfectly and breaches the licence
+      # on each one. docs/infra/create-location-resources.sh creates it the
+      # right way and prints the command to verify it.
+      #
+      # Its own IAM user, not the bucket's: that key can read patient
+      # photographs, and one credential doing both is a much worse day when it
+      # leaks. The two-action policy is in the same script.
+      - key: AWS_LOCATION_REGION
+        value: us-east-1
+      - key: AWS_LOCATION_PLACE_INDEX
+        value: izy-uh-places
+      - key: AWS_LOCATION_ROUTE_CALCULATOR
+        value: izy-uh-routes
+      - key: AWS_LOCATION_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_LOCATION_SECRET_ACCESS_KEY
+        sync: false
+
+      # Set ONLY against a countersigned BAA whose covered-services list names
+      # Amazon Location Service. Executed 12 October 2026. With this unset the
+      # platform geocodes pharmacy addresses and refuses delivery addresses,
+      # which is the safe default. The service refuses to boot if this is set
+      # while Google is the only geocoder configured.
+      - key: GEO_BAA_COVERS_PATIENT_ADDRESSES
+        sync: false
+
       # --- The scheduler ---
       #
       # Switches on the unclaimed sweep, which hands work that nobody has

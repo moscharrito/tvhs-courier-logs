@@ -36,6 +36,7 @@ import { createTexter } from './core/notify/twilio';
 import { createSesWebhookRouter } from './core/notify/suppressions';
 import { startOptimize } from './db/optimize';
 import { createGoogleProvider } from './core/geo/google';
+import { createAwsLocationProvider } from './core/geo/aws-location';
 import { scopedTo, unavailableProvider, type GeoScope } from './core/geo/provider';
 import { createGeoLookup } from './core/geo/lookup';
 import { createGeocodeRouter } from './modules/uh/geocode';
@@ -282,9 +283,29 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
      * is a disclosure to a processor with no agreement covering it. The
      * go-live check reports it as a blocker for exactly that reason. */
     const geoScopes: GeoScope[] = config.geo.patientGeocodeAllowed ? ['site', 'patient'] : ['site'];
-    const geoProvider = config.geo.googleApiKey
-        ? scopedTo(createGoogleProvider({ apiKey: config.geo.googleApiKey }), geoScopes)
-        : unavailableProvider('No address lookup is configured. Set GOOGLE_MAPS_API_KEY (ticket 1.4).');
+
+    /* AMAZON LOCATION FIRST WHEN IT IS THERE.
+     *
+     * Not a preference about quality. It is the only configured provider
+     * whose service is named on a signed BAA, so it is the only one that may
+     * ever see a delivery address. Google stays wired up because a pharmacy's
+     * street address is a business address and there is no reason to stop
+     * using it for those, but it can never be the one that carries 'patient':
+     * config.ts refuses to boot with the BAA flag set and only Google
+     * configured, and scopedTo() refuses again at the call.
+     *
+     * Both are still passed through scopedTo rather than trusting the
+     * provider's own `scopes`. A provider that is allowed to see patient
+     * addresses is not the same as a deployment that is permitted to send
+     * them, and the second question is config.geo.patientGeocodeAllowed. */
+    const geoProvider = config.geo.awsLocation
+        ? scopedTo(createAwsLocationProvider(config.geo.awsLocation), geoScopes)
+        : config.geo.googleApiKey
+            ? scopedTo(createGoogleProvider({ apiKey: config.geo.googleApiKey }), geoScopes)
+            : unavailableProvider(
+                'No address lookup is configured. Set AWS_LOCATION_* for delivery addresses, '
+                + 'or GOOGLE_MAPS_API_KEY for site addresses only (tickets 1.4 and 7.11).',
+            );
 
     if (config.geo.patientGeocodeAllowed) {
         /* At warn, not info. This is a deliberate, temporary relaxation of the

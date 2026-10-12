@@ -26,6 +26,18 @@ const base = {
 
 const load = (over = {}) => loadConfig({ ...base, ...over });
 
+/* Amazon Location, which is the only provider the BAA names. Before it
+   existed the flag meant "permit it" and there was nothing compliant to
+   point at; now the flag beside Google ALONE is the one combination that
+   actually discloses to an uncovered vendor, and config refuses it. */
+const LOCATION = {
+    AWS_LOCATION_REGION: 'us-east-1',
+    AWS_LOCATION_PLACE_INDEX: 'izy-uh-places',
+    AWS_LOCATION_ROUTE_CALCULATOR: 'izy-uh-routes',
+    AWS_LOCATION_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    AWS_LOCATION_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+};
+
 describe('permission to geocode a delivery address', () => {
     it('is refused when nobody has granted it', () => {
         const config = load();
@@ -80,7 +92,7 @@ describe('permission to geocode a delivery address', () => {
  * fine to go live on and the other is not. */
 describe('a signed agreement rather than a dated grant', () => {
     it('permits patient addresses with no expiry', () => {
-        const config = load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' });
+        const config = load({ ...LOCATION, GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' });
         expect(config.geo.patientGeocodeAllowed).toBe(true);
         expect(config.geo.patientGeocodeBasis).toBe('baa');
     });
@@ -88,18 +100,43 @@ describe('a signed agreement rather than a dated grant', () => {
     it('needs no date beside it', () => {
         /* The whole point: an agreement does not lapse, so requiring a date
            alongside it would reintroduce the thing it replaces. */
-        const config = load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' });
+        const config = load({ ...LOCATION, GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' });
         expect(config.geo.patientGeocodeUntil).toBeUndefined();
         expect(config.geo.patientGeocodeAllowed).toBe(true);
     });
 
     it('wins over an expired grant rather than being blocked by it', () => {
         const config = load({
+            ...LOCATION,
             GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true',
             UH_PATIENT_GEOCODE_UNTIL: day(-1),
         });
         expect(config.geo.patientGeocodeAllowed).toBe(true);
         expect(config.geo.patientGeocodeBasis).toBe('baa');
+    });
+
+    it('refuses to boot when the agreement is claimed and Google is the only geocoder', () => {
+        /* THE ONE THAT MATTERS. A BAA covers a named service. Setting the
+           flag with only Google wired up would send a delivery address to
+           the one vendor whose terms exclude protected health information,
+           and it would look like the feature working. */
+        expect(() => load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' }))
+            .toThrow(/not covered by any BAA|Google/i);
+    });
+
+    it('does not refuse when nothing can geocode at all', () => {
+        /* Narrower than "the flag requires Amazon Location". With no
+           provider configured nothing can be disclosed because no call can
+           be made, and a permission that is merely ahead of its plumbing is
+           not an outage. */
+        const config = load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true', GOOGLE_MAPS_API_KEY: undefined });
+        expect(config.geo.patientGeocodeAllowed).toBe(true);
+        expect(config.geo.awsLocation).toBeUndefined();
+    });
+
+    it('refuses a half-configured Amazon Location rather than failing at the first address', () => {
+        expect(() => load({ ...LOCATION, AWS_LOCATION_PLACE_INDEX: undefined }))
+            .toThrow(/partly configured/i);
     });
 
     it('is off unless it is actually set', () => {

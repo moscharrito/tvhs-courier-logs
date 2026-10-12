@@ -156,3 +156,94 @@ export function canonicalPartsForTest(input: PresignInput) {
         stringToSign: [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n'),
     };
 }
+
+/* ─────────────────────────────── signing a request you send yourself ──────
+ *
+ * Presigning above hands a URL to somebody else's browser, so the body is
+ * unknown and the signature travels in the query string. Amazon Location is
+ * the other shape: this process makes the call itself, over a JSON body it
+ * has in its hand, and AWS wants the signature in an Authorization header
+ * with the body's hash inside it.
+ *
+ * Everything underneath is the same and is deliberately not duplicated: the
+ * canonical request, the string to sign and the four-step key derivation are
+ * the functions above, proved byte for byte against AWS's own published
+ * worked example. What differs is three things -- the payload is hashed
+ * rather than declared UNSIGNED-PAYLOAD, x-amz-date and x-amz-content-sha256
+ * are signed headers rather than query parameters, and the result goes in a
+ * header. Getting a fourth thing to differ is the bug this comment exists to
+ * make obvious in review.
+ *
+ * STILL NO TEMPORARY CREDENTIALS. Same as above: no x-amz-security-token, so
+ * this wants a long-lived access key, which is what the Render environment
+ * already holds for the bucket.
+ */
+
+export interface SignedRequestInput {
+    method: 'GET' | 'POST';
+    /** Full host, no scheme. */
+    host: string;
+    /** Absolute path, already encoded. */
+    path: string;
+    region: string;
+    /** The AWS service name in the credential scope: 'geo', 's3', and so on. */
+    service: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    /** The exact bytes that will be sent. '' for a GET. */
+    body: string;
+    at: Date;
+    /** Extra headers to send and therefore to sign. */
+    headers?: Record<string, string>;
+}
+
+/**
+ * The headers to send with a request, Authorization included.
+ *
+ * Send exactly these and exactly this body. A header added afterwards that
+ * was not signed, or a body re-serialised into different bytes, produces a
+ * signature mismatch and AWS answers 403 with nothing useful in it.
+ */
+export function signedHeaders(input: SignedRequestInput): Record<string, string> {
+    const { amzDate, dateStamp } = amzDates(input.at);
+    const scope = `${dateStamp}/${input.region}/${input.service}/aws4_request`;
+    const payloadHash = sha256Hex(input.body);
+
+    const headers: Record<string, string> = {
+        host: input.host,
+        'x-amz-date': amzDate,
+        'x-amz-content-sha256': payloadHash,
+        ...(input.headers ?? {}),
+    };
+
+    const names = Object.keys(headers).map((h) => h.toLowerCase()).sort();
+    const byLowerName = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), String(v).trim()]));
+    const canonicalHeaders = `${names.map((h) => `${h}:${byLowerName.get(h)}`).join('\n')}\n`;
+    const signed = names.join(';');
+
+    const canonicalRequest = [
+        input.method,
+        input.path,
+        /* No query string on any call this makes. Kept explicit rather than
+           omitted, because the canonical request has a line for it either
+           way and a missing newline is a silent 403. */
+        '',
+        canonicalHeaders,
+        signed,
+        payloadHash,
+    ].join('\n');
+
+    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+
+    const dateKey = hmac(`AWS4${input.secretAccessKey}`, dateStamp);
+    const regionKey = hmac(dateKey, input.region);
+    const serviceKey = hmac(regionKey, input.service);
+    const signingKey = hmac(serviceKey, 'aws4_request');
+    const signature = crypto.createHmac('sha256', signingKey).update(stringToSign, 'utf8').digest('hex');
+
+    return {
+        ...headers,
+        Authorization: `${ALGORITHM} Credential=${input.accessKeyId}/${scope}, `
+            + `SignedHeaders=${signed}, Signature=${signature}`,
+    };
+}

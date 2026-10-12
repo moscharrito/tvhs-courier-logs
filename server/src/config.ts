@@ -49,6 +49,14 @@ export interface Config {
     geo: {
         /** Google Maps key. Sites only: see src/core/geo/provider.ts. */
         googleApiKey: string | undefined;
+        /** Amazon Location, when every one of its five values is present. */
+        awsLocation: {
+            region: string;
+            placeIndexName: string;
+            routeCalculatorName: string;
+            accessKeyId: string;
+            secretAccessKey: string;
+        } | undefined;
         /** Lookups per provider per day before everything is refused. */
         dailyCeiling: number;
         /** Draw a map of a patient's address inside the courier app.
@@ -213,6 +221,15 @@ const EnvSchema = z.object({
     S3_ACCESS_KEY_ID: optionalString,
     S3_SECRET_ACCESS_KEY: optionalString,
     S3_KMS_KEY_ID: optionalString,
+    /* Amazon Location. Its own key, not the bucket's: the bucket key wants
+       s3:PutObject and kms:GenerateDataKey and nothing else, and widening it
+       to geocoding would mean one credential that can read patient
+       photographs AND look up patient addresses. */
+    AWS_LOCATION_REGION: optionalString,
+    AWS_LOCATION_PLACE_INDEX: optionalString,
+    AWS_LOCATION_ROUTE_CALCULATOR: optionalString,
+    AWS_LOCATION_ACCESS_KEY_ID: optionalString,
+    AWS_LOCATION_SECRET_ACCESS_KEY: optionalString,
     /* Email, through SES. Separate credentials from S3 on purpose: the file
        user may write objects and the mail user may send mail, and neither
        should be able to do the other's job with a leaked key. */
@@ -432,6 +449,47 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
     }
 
+    /* ALL FIVE OR NONE, refused the same way S3 and SES are refused. A
+       partly configured geocoder is worse than none: it boots, every lookup
+       throws at the first real address, and it reads like an outage rather
+       than like a setting somebody forgot. */
+    let awsLocation: Config['geo']['awsLocation'] = undefined;
+    const locationKeys = [
+        'AWS_LOCATION_REGION', 'AWS_LOCATION_PLACE_INDEX', 'AWS_LOCATION_ROUTE_CALCULATOR',
+        'AWS_LOCATION_ACCESS_KEY_ID', 'AWS_LOCATION_SECRET_ACCESS_KEY',
+    ] as const;
+    const locationSet = locationKeys.filter((k) => e[k]);
+    if (locationSet.length > 0 && locationSet.length < locationKeys.length) {
+        problems.push(`Amazon Location is partly configured. Missing: ${locationKeys.filter((k) => !e[k]).join(', ')}`);
+    } else if (locationSet.length === locationKeys.length) {
+        awsLocation = {
+            region: e.AWS_LOCATION_REGION as string,
+            placeIndexName: e.AWS_LOCATION_PLACE_INDEX as string,
+            routeCalculatorName: e.AWS_LOCATION_ROUTE_CALCULATOR as string,
+            accessKeyId: e.AWS_LOCATION_ACCESS_KEY_ID as string,
+            secretAccessKey: e.AWS_LOCATION_SECRET_ACCESS_KEY as string,
+        };
+    }
+
+    /* THE AGREEMENT IS ABOUT A PROVIDER, NOT ABOUT THE IDEA OF GEOCODING.
+       
+       The hazard is one specific pairing: the BAA flag set while Google is
+       the provider that would answer. That sends a delivery address to the
+       one vendor whose own terms exclude protected health information,
+       which is the exact mistake the flag's comment warns about.
+
+       Narrower than "the flag needs Amazon Location", deliberately. With no
+       provider configured at all nothing can be disclosed because no call
+       can be made, and refusing to boot there would turn a permission that
+       is simply ahead of its plumbing into an outage. */
+    if (patientGeocode.basis === 'baa' && !awsLocation && e.GOOGLE_MAPS_API_KEY) {
+        problems.push(
+            'GEO_BAA_COVERS_PATIENT_ADDRESSES is set and Google is the only geocoder configured. '
+            + 'Google Maps Platform is not covered by any BAA and its terms exclude PHI. '
+            + 'Configure AWS_LOCATION_* or clear the flag.',
+        );
+    }
+
     if (problems.length) throw new ConfigError(problems);
 
     return {
@@ -443,6 +501,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         trustProxy: e.TRUST_PROXY ?? (isProduction ? 2 : 0),
         geo: {
             googleApiKey: e.GOOGLE_MAPS_API_KEY,
+            awsLocation,
             dailyCeiling: e.GEO_DAILY_CEILING ?? 2500,
             embedMaps: e.UH_MAPS_EMBED,
             patientGeocodeUntil: e.UH_PATIENT_GEOCODE_UNTIL,
@@ -492,7 +551,12 @@ export function describeConfig(c: Config): Record<string, string | number | bool
         log: `${c.log.level} ${c.log.format}`,
         trustProxy: c.trustProxy,
         // The key itself never appears here, only whether there is one.
-        geo: c.geo.googleApiKey ? `google, ceiling ${c.geo.dailyCeiling}/day` : 'no address lookup configured',
+        geo: c.geo.awsLocation
+            ? `amazon location (${c.geo.awsLocation.region}), ceiling ${c.geo.dailyCeiling}/day, `
+              + `delivery addresses ${c.geo.patientGeocodeAllowed ? `ON by ${c.geo.patientGeocodeBasis}` : 'refused'}`
+            : c.geo.googleApiKey
+                ? `google, sites only, ceiling ${c.geo.dailyCeiling}/day`
+                : 'no address lookup configured',
         /* Printed at every boot on purpose. This one decides whether patient
          * addresses go to Google from our pages, and a setting like that
          * should not be discoverable only by reading the code. */
