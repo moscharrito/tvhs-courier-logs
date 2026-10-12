@@ -29,14 +29,16 @@ import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth } from '../../app/auth';
 
-interface PayLine { delivered: number; rateCents: number; payCents: number | null }
+interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
 interface Totals {
     delivered: number;
     failed: number;
     payCents: number | null;
     rateSet: boolean;
-    byServiceType: Record<string, PayLine>;
+    /** What the lines are keyed on, so the column can be headed honestly. */
+    basis: 'serviceType' | 'zone';
+    lines: Record<string, PayLine>;
 }
 
 interface DriverRow extends Totals {

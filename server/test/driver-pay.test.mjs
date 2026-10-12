@@ -12,12 +12,23 @@ import {
     payFor, addTotals, noPay, rateFor, payBucket,
 } from '../src/modules/uh/driver-pay.ts';
 
+/** Rates keyed on the service level, which is the default basis. */
 const rates = (over = {}) => ({
+    basis: 'serviceType',
     perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0, ...over },
+    perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     currency: 'USD',
 });
 
-const stop = (status, serviceType = 'scheduled') => ({ status, serviceType });
+/** Rates keyed on the destination zone, which is what the offer letter pays. */
+const zoneRates = (over = {}) => ({
+    basis: 'zone',
+    perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 },
+    perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, ...over },
+    currency: 'USD',
+});
+
+const stop = (status, serviceType = 'scheduled', zone = 1) => ({ status, serviceType, zone });
 
 describe('what a set of stops comes to', () => {
     it('pays per completed delivery at the rate for its service level', () => {
@@ -68,8 +79,8 @@ describe('a rate nobody has set', () => {
         expect(got.rateSet).toBe(false);
         /* The priced line still shows its own figure, so somebody can see
            which half is answerable and which is waiting on a rate. */
-        expect(got.byServiceType['scheduled'].payCents).toBe(450);
-        expect(got.byServiceType['stat'].payCents).toBeNull();
+        expect(got.lines['scheduled'].payCents).toBe(450);
+        expect(got.lines['stat'].payCents).toBeNull();
     });
 
     it('does not care about a missing rate for a level nobody worked', () => {
@@ -141,5 +152,111 @@ describe('the buckets', () => {
         expect(payBucket('2026-11-03', 'day')).toBe('2026-11-03');
         expect(payBucket('2026-11-03', 'month')).toBe('2026-11');
         expect(payBucket('2026-11-03', 'year')).toBe('2026');
+    });
+});
+
+/* ─────────────────────────────────────────────── paying by zone (7.10)
+ *
+ * The courier offer letter pays per completed delivery by ZONE, not by
+ * service level: one rate for zone 1, another for zone 2, the same whether
+ * the stop was scheduled or ad hoc. Both keys were true at once for a while
+ * and they produce different numbers for the same day, which is the kind of
+ * disagreement that is only ever found on a payslip.
+ */
+describe('when a project pays by zone', () => {
+    it('pays the zone rate and ignores the service level', () => {
+        /* A STAT and a scheduled delivery to the same ZIP pay the same. */
+        const got = payFor([
+            stop('delivered', 'scheduled', 1),
+            stop('delivered', 'stat', 1),
+            stop('delivered', 'adhoc', 3),
+        ], zoneRates({ 1: 500, 3: 1200 }));
+
+        expect(got.payCents).toBe(500 + 500 + 1200);
+        expect(got.basis).toBe('zone');
+        expect(got.lines['zone-1'].delivered).toBe(2);
+        expect(got.lines['zone-3'].delivered).toBe(1);
+        /* And no line is keyed on the service level any more. */
+        expect(got.lines['scheduled']).toBeUndefined();
+    });
+
+    it('labels each line so no screen has to guess what it is reading', () => {
+        /* A column headed "Service level" with zones in it is a payslip
+           nobody can check. */
+        const got = payFor([stop('delivered', 'scheduled', 2)], zoneRates({ 2: 725 }));
+        expect(got.lines['zone-2'].label).toBe('Zone 2');
+
+        const byLevel = payFor([stop('delivered', 'stat', 2)], rates({ stat: 700 }));
+        expect(byLevel.lines['stat'].label).toBe('stat');
+    });
+
+    it('keeps zone 4 and zone 5 apart, because a range is not a rate', () => {
+        /* The offer letter prints zones 4-5 as "$22.00 - $28.00". Two
+           separate numbers is the only way that is payable. */
+        const got = payFor([
+            stop('delivered', 'scheduled', 4),
+            stop('delivered', 'scheduled', 5),
+        ], zoneRates({ 4: 2200, 5: 2800 }));
+        expect(got.payCents).toBe(2200 + 2800);
+        expect(got.lines['zone-4'].rateCents).toBe(2200);
+        expect(got.lines['zone-5'].rateCents).toBe(2800);
+    });
+
+    it('refuses to price a delivery whose ZIP is not on the zone map', () => {
+        /* The missing-rate rule, not a new one. A gap in the zone table must
+           not pay a driver nothing for a delivery they actually made. */
+        const got = payFor([
+            stop('delivered', 'scheduled', 1),
+            stop('delivered', 'scheduled', null),
+        ], zoneRates({ 1: 500 }));
+
+        expect(got.delivered).toBe(2);
+        expect(got.payCents).toBeNull();
+        expect(got.rateSet).toBe(false);
+        expect(got.lines['unzoned'].label).toBe('No zone');
+        expect(got.lines['unzoned'].payCents).toBeNull();
+    });
+
+    it('does not quietly fold an unknown zone into zone 1', () => {
+        const got = payFor([stop('delivered', 'scheduled', 9)], zoneRates({ 1: 500 }));
+        expect(got.lines['zone-1']).toBeUndefined();
+        expect(got.payCents).toBeNull();
+    });
+
+    it('still refuses a partial total when one zone is priced and another is not', () => {
+        const got = payFor([
+            stop('delivered', 'scheduled', 1),
+            stop('delivered', 'scheduled', 2),
+        ], zoneRates({ 1: 500 }));
+        expect(got.payCents).toBeNull();
+        expect(got.lines['zone-1'].payCents).toBe(500);
+        expect(got.lines['zone-2'].payCents).toBeNull();
+    });
+
+    it('rolls days together without mixing the two bases up', () => {
+        const monday = payFor([stop('delivered', 'scheduled', 1)], zoneRates({ 1: 500 }));
+        const tuesday = payFor([stop('delivered', 'stat', 1)], zoneRates({ 1: 500 }));
+        const both = addTotals(monday, tuesday);
+
+        expect(both.basis).toBe('zone');
+        expect(both.lines['zone-1'].delivered).toBe(2);
+        expect(both.payCents).toBe(1000);
+    });
+
+    it('says which rate card an empty answer is against', () => {
+        expect(noPay('zone').basis).toBe('zone');
+        expect(noPay().basis).toBe('serviceType');
+    });
+
+    it('prices the same stops differently under the two bases, which is the point', () => {
+        /* If these ever agreed by accident the setting would look harmless.
+           They do not: the whole reason the basis is explicit is that the
+           same day is worth different amounts under each. */
+        const stops = [stop('delivered', 'stat', 1), stop('delivered', 'scheduled', 1)];
+        const byLevel = payFor(stops, rates({ stat: 700, scheduled: 450 }));
+        const byZone = payFor(stops, zoneRates({ 1: 500 }));
+
+        expect(byLevel.payCents).toBe(1150);
+        expect(byZone.payCents).toBe(1000);
     });
 });

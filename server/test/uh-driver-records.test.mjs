@@ -180,6 +180,61 @@ describe('what it comes to', () => {
     });
 });
 
+/* ──────────────────────────────────────────── paying by zone (7.10)
+ *
+ * The courier offer letter pays per completed delivery by ZONE rather than
+ * by service level. Switching a project onto it is a settings change, and
+ * what matters here is that the whole chain follows: the stored basis, the
+ * rate used, and the column the record is reported under.
+ */
+describe('a project that pays by zone', () => {
+    afterAll(async () => {
+        /* Put it back, so a test added after this one gets the basis every
+           other test in this file assumes. */
+        await admin.patch('/api/projects/uh/settings').send({ driverPay: { basis: 'serviceType' } });
+    });
+
+    it('stores the basis and the zone rates', async () => {
+        const res = await admin.patch('/api/projects/uh/settings').send({
+            driverPay: { basis: 'zone', perZoneCents: { 1: 500, 2: 725, 3: 1200, 4: 2200, 5: 2800 } },
+        });
+        expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(200);
+
+        const settings = (await admin.get('/api/projects/uh/settings')).body;
+        const pay = (settings.settings ?? settings).driverPay;
+        expect(pay.basis).toBe('zone');
+        expect(pay.perZoneCents['2']).toBe(725);
+        /* Zones 4 and 5 are their own numbers: the offer letter prints them
+           as a range, and a range is not a rate. */
+        expect(pay.perZoneCents['4']).toBe(2200);
+        expect(pay.perZoneCents['5']).toBe(2800);
+    });
+
+    it('reports the record under Zone rather than under Service level', async () => {
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
+        expect(ada.basis).toBe('zone');
+        /* Every line is a zone line, and each carries its own label so the
+           screen does not have to guess what it is rendering. */
+        for (const [key, line] of Object.entries(ada.lines)) {
+            expect(key === 'unzoned' || key.startsWith('zone-'), key).toBe(true);
+            expect(line.label).toBeTruthy();
+        }
+    });
+
+    it('refuses a zone rate that is not whole cents', async () => {
+        const res = await admin.patch('/api/projects/uh/settings')
+            .send({ driverPay: { perZoneCents: { 1: 5.5 } } });
+        expect(res.status).toBe(400);
+    });
+
+    it('refuses a basis nobody recognises rather than inventing one', async () => {
+        const res = await admin.patch('/api/projects/uh/settings')
+            .send({ driverPay: { basis: 'mileage' } });
+        expect(res.status).toBe(400);
+    });
+});
+
 describe('a courier reading their own record', () => {
     it('gets it from /me, with the username off the session', async () => {
         const ada = await agentFor('pay.ada', 'pay-pass-11');

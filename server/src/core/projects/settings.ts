@@ -116,8 +116,32 @@ export interface ListReleaseSettings {
  * to one silently moved the other.
  */
 export interface DriverPaySettings {
+    /**
+     * What a rate is keyed on, and therefore what the pay breakdown shows.
+     *
+     * TWO BASES BECAUSE THE CONTRACT AND THE OFFER LETTER DISAGREED.
+     *
+     * This started as rates by service level, which is how the client rate
+     * card is shaped. The courier offer letter pays by zone instead -- one
+     * rate for zone 1, another for zone 2 -- and the mile bands printed
+     * beside those zones are a description of them, not the key: Addendum 2
+     * clause 2 prices by DESTINATION ZIP, so a delivery twelve miles out can
+     * sit in zone 1 and an eight-mile one in zone 2.
+     *
+     * So a project says which it pays on rather than the two quietly
+     * producing different numbers for the same day. It defaults to
+     * serviceType, which is what every existing project already means, and
+     * switching it is a deliberate act with a different rate card behind it.
+     */
+    basis: 'serviceType' | 'zone';
     /** Minor units, as cents, so no money is held as a float. */
     perDeliveryCents: { scheduled: number; stat: number; adhoc: number };
+    /**
+     * Cents per completed delivery by the destination's zone, used when
+     * `basis` is 'zone'. Zones 4 and 5 are separate numbers on purpose: the
+     * offer letter prints them as a range, and a range is not a rate.
+     */
+    perZoneCents: { 1: number; 2: number; 3: number; 4: number; 5: number };
     /** Shown beside the figures so a reader knows what the number is. */
     currency: string;
 }
@@ -318,7 +342,12 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     listRelease: { earliest: '12:00', latest: '14:00', allowPortalUpload: false },
     /* All zero, i.e. nobody has set them. See DriverPaySettings for why that
        is reported as unset rather than as nothing. */
-    driverPay: { perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 }, currency: 'USD' },
+    driverPay: {
+        basis: 'serviceType',
+        perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 },
+        perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        currency: 'USD',
+    },
     pricing: {
         // Addendum 1: "After-Hours Pickup and Delivery is defined as any
         // pickup or delivery service requested and performed outside of
@@ -396,6 +425,15 @@ export const SettingsPatch = z.object({
             scheduled: z.number().int().min(0).max(100_000).optional(),
             stat: z.number().int().min(0).max(100_000).optional(),
             adhoc: z.number().int().min(0).max(100_000).optional(),
+        }).strict().optional(),
+        basis: z.enum(['serviceType', 'zone']).optional(),
+        perZoneCents: z.object({
+            /* Same cap and same reason as the rates above. */
+            1: z.number().int().min(0).max(100_000).optional(),
+            2: z.number().int().min(0).max(100_000).optional(),
+            3: z.number().int().min(0).max(100_000).optional(),
+            4: z.number().int().min(0).max(100_000).optional(),
+            5: z.number().int().min(0).max(100_000).optional(),
         }).strict().optional(),
         currency: z.string().trim().length(3).toUpperCase().optional(),
     }).strict().optional(),
@@ -564,8 +602,30 @@ function driverPaySection(raw: unknown): DriverPaySettings {
         ? source['currency'].trim().toUpperCase()
         : defaults.currency;
 
+    const storedZones = (source['perZoneCents'] && typeof source['perZoneCents'] === 'object'
+        && !Array.isArray(source['perZoneCents'])
+        ? source['perZoneCents'] : {}) as Record<string, unknown>;
+
+    const zoneCents = (zone: 1 | 2 | 3 | 4 | 5): number => {
+        const value = storedZones[String(zone)];
+        return typeof value === 'number' && Number.isInteger(value) && value >= 0
+            ? value
+            : defaults.perZoneCents[zone];
+    };
+
+    /* Anything that is not one of the two known bases falls back to the
+       default rather than being carried forward. A stored value nobody
+       recognises must not decide how somebody is paid. */
+    const basis = source['basis'] === 'zone' || source['basis'] === 'serviceType'
+        ? source['basis']
+        : defaults.basis;
+
     return {
+        basis,
         perDeliveryCents: { scheduled: cents('scheduled'), stat: cents('stat'), adhoc: cents('adhoc') },
+        perZoneCents: {
+            1: zoneCents(1), 2: zoneCents(2), 3: zoneCents(3), 4: zoneCents(4), 5: zoneCents(5),
+        },
         currency,
     };
 }

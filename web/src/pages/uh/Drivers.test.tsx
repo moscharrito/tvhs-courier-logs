@@ -22,7 +22,11 @@ const asCourier = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: '
 
 const totals = (over = {}) => ({
     delivered: 3, failed: 1, payCents: 1850, rateSet: true,
-    byServiceType: { stat: { delivered: 2, rateCents: 700, payCents: 1400 }, adhoc: { delivered: 1, rateCents: 450, payCents: 450 } },
+    basis: 'serviceType',
+    lines: {
+        stat: { label: 'stat', delivered: 2, rateCents: 700, payCents: 1400 },
+        adhoc: { label: 'adhoc', delivered: 1, rateCents: 450, payCents: 450 },
+    },
     ...over,
 });
 
@@ -31,7 +35,7 @@ const everyone = (over = {}) => ({
     rateSet: true,
     drivers: [
         { username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...totals() },
-        { username: 'pay.bo', name: 'Bo Pay', daysWorked: 0, delivered: 0, failed: 0, payCents: 0, rateSet: true, byServiceType: {} },
+        { username: 'pay.bo', name: 'Bo Pay', daysWorked: 0, delivered: 0, failed: 0, payCents: 0, rateSet: true, basis: 'serviceType', lines: {} },
     ],
     totals: totals(),
     ...over,

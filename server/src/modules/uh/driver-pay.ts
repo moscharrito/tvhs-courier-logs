@@ -26,6 +26,31 @@
  * nobody argues about until somebody notices their pay is short.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * A RATE IS KEYED ON ONE THING, AND THE PROJECT SAYS WHICH.
+ *
+ * Rates started keyed on the service level, which is how the client rate
+ * card is shaped. The courier offer letter pays by ZONE instead: one rate
+ * for zone 1, another for zone 2, the same whether the stop was scheduled
+ * or ad hoc. Both were true at once for a while and they produce different
+ * numbers for the same day, which is the kind of disagreement that is only
+ * discovered on a payslip.
+ *
+ * So `driverPay.basis` decides, the breakdown follows it, and every line
+ * carries its own label -- a reader must never be shown a column headed
+ * "Service level" with zones in it.
+ *
+ * A ZONE IS THE DESTINATION ZIP'S BAND, NOT A DISTANCE. The mile ranges
+ * printed in the offer letter describe the zones; they do not define them.
+ * Addendum 2 clause 2 prices by destination ZIP, so a delivery twelve miles
+ * out can be zone 1. Paying on measured distance would disagree with the
+ * invoice for the same stop.
+ *
+ * AN UNZONED STOP HAS NO RATE, which is the missing-rate rule again rather
+ * than a new one: a ZIP outside the zone map resolves to null pay, never to
+ * nought. The alternative is paying a driver nothing for a delivery they
+ * made because a table was incomplete.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  * WHO A DELIVERY BELONGS TO.
  *
  * `orders.assigned_to_username`, the same attribution the courier's own
@@ -50,14 +75,26 @@ import type { DriverPaySettings } from '../../core/projects/settings';
 export const PAID_SERVICE_TYPES = ['scheduled', 'stat', 'adhoc'] as const;
 export type PaidServiceType = (typeof PAID_SERVICE_TYPES)[number];
 
+/** The zones a rate can be set for. */
+export const PAID_ZONES = [1, 2, 3, 4, 5] as const;
+export type PaidZone = (typeof PAID_ZONES)[number];
+
 /** One delivered or failed stop, reduced to what pay cares about. */
 export interface PayableStop {
     serviceType: string;
     status: string;
+    /** The destination ZIP's band. Null when the ZIP is not on the map. */
+    zone: number | null;
 }
 
 export interface PayLine {
-    /** How many completed deliveries at this service level. */
+    /**
+     * What this line is, in the reader's words: 'scheduled', or 'Zone 3'.
+     * Carried on the line rather than inferred from the key, so a screen
+     * can render either basis without knowing which it was given.
+     */
+    label: string;
+    /** How many completed deliveries on this line. */
     delivered: number;
     /** Cents each, as the rate card says. */
     rateCents: number;
@@ -73,13 +110,39 @@ export interface PayTotals {
     payCents: number | null;
     /** Whether every rate needed to answer was actually set. */
     rateSet: boolean;
-    byServiceType: Record<string, PayLine>;
+    /** What the lines below are keyed on, so a screen can head the column. */
+    basis: DriverPaySettings['basis'];
+    /** The breakdown, keyed by service level or by zone as `basis` says. */
+    lines: Record<string, PayLine>;
 }
 
-/** The rate for a service level, or 0 for one we hold no rate for. */
-export function rateFor(serviceType: string, rates: DriverPaySettings): number {
-    return (PAID_SERVICE_TYPES as readonly string[]).includes(serviceType)
-        ? rates.perDeliveryCents[serviceType as PaidServiceType]
+/**
+ * Which line a stop is paid on, and what to call it.
+ *
+ * One function so the key and the label cannot drift apart: a breakdown
+ * keyed on zone and labelled by service level is a payslip nobody can check.
+ */
+export function lineOf(stop: PayableStop, rates: DriverPaySettings): { key: string; label: string } {
+    if (rates.basis !== 'zone') {
+        return { key: stop.serviceType, label: stop.serviceType };
+    }
+    /* Not 'zone 0' and not lumped in with zone 1. A ZIP off the map is a
+       gap in the zone table and has to read as one. */
+    if (stop.zone === null || !(PAID_ZONES as readonly number[]).includes(stop.zone)) {
+        return { key: 'unzoned', label: 'No zone' };
+    }
+    return { key: `zone-${stop.zone}`, label: `Zone ${stop.zone}` };
+}
+
+/** The rate for a stop, or 0 for one we hold no rate for. */
+export function rateFor(stop: PayableStop, rates: DriverPaySettings): number {
+    if (rates.basis === 'zone') {
+        return stop.zone !== null && (PAID_ZONES as readonly number[]).includes(stop.zone)
+            ? rates.perZoneCents[stop.zone as PaidZone]
+            : 0;
+    }
+    return (PAID_SERVICE_TYPES as readonly string[]).includes(stop.serviceType)
+        ? rates.perDeliveryCents[stop.serviceType as PaidServiceType]
         : 0;
 }
 
@@ -93,18 +156,19 @@ export function rateFor(serviceType: string, rates: DriverPaySettings): number {
  * missing. Somebody would pay it.
  */
 export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings): PayTotals {
-    const byServiceType: Record<string, PayLine> = {};
+    const lines: Record<string, PayLine> = {};
     let delivered = 0;
     let failed = 0;
 
     for (const stop of stops) {
         if (stop.status === 'delivered') {
             delivered += 1;
-            const rateCents = rateFor(stop.serviceType, rates);
-            const line = byServiceType[stop.serviceType] ?? { delivered: 0, rateCents, payCents: 0 };
+            const rateCents = rateFor(stop, rates);
+            const { key, label } = lineOf(stop, rates);
+            const line = lines[key] ?? { label, delivered: 0, rateCents, payCents: 0 };
             line.delivered += 1;
             line.rateCents = rateCents;
-            byServiceType[stop.serviceType] = line;
+            lines[key] = line;
         } else if (stop.status === 'failed') {
             failed += 1;
         }
@@ -112,7 +176,7 @@ export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings):
 
     let total = 0;
     let everyRateSet = true;
-    for (const [, line] of Object.entries(byServiceType)) {
+    for (const [, line] of Object.entries(lines)) {
         if (line.rateCents <= 0) {
             line.payCents = null;
             everyRateSet = false;
@@ -130,16 +194,17 @@ export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings):
            nought whatever the rate card says. */
         payCents: delivered === 0 ? 0 : (everyRateSet ? total : null),
         rateSet: delivered === 0 ? true : everyRateSet,
-        byServiceType,
+        basis: rates.basis,
+        lines,
     };
 }
 
 /** Add two sets of totals, for rolling days into months and months into years. */
 export function addTotals(a: PayTotals, b: PayTotals): PayTotals {
-    const byServiceType: Record<string, PayLine> = {};
-    for (const source of [a.byServiceType, b.byServiceType]) {
-        for (const [type, line] of Object.entries(source)) {
-            const into = byServiceType[type] ?? { delivered: 0, rateCents: line.rateCents, payCents: 0 };
+    const lines: Record<string, PayLine> = {};
+    for (const source of [a.lines, b.lines]) {
+        for (const [key, line] of Object.entries(source)) {
+            const into = lines[key] ?? { label: line.label, delivered: 0, rateCents: line.rateCents, payCents: 0 };
             into.delivered += line.delivered;
             into.rateCents = line.rateCents;
             /* One unset side makes the sum unset, for the same reason a
@@ -147,22 +212,26 @@ export function addTotals(a: PayTotals, b: PayTotals): PayTotals {
             into.payCents = into.payCents === null || line.payCents === null
                 ? null
                 : into.payCents + line.payCents;
-            byServiceType[type] = into;
+            lines[key] = into;
         }
     }
-    const rateSet = a.rateSet && b.rateSet;
     return {
         delivered: a.delivered + b.delivered,
         failed: a.failed + b.failed,
         payCents: a.payCents === null || b.payCents === null ? null : a.payCents + b.payCents,
-        rateSet,
-        byServiceType,
+        rateSet: a.rateSet && b.rateSet,
+        /* Two sides can only disagree about the basis if the setting moved
+           mid-add, and then the lines being summed are not comparable. The
+           left side wins and is the one the caller asked about; the keys
+           keep the two apart in the breakdown regardless. */
+        basis: a.basis,
+        lines,
     };
 }
 
 /** An empty set of totals, which is what a driver with no work has. */
-export const noPay = (): PayTotals => ({
-    delivered: 0, failed: 0, payCents: 0, rateSet: true, byServiceType: {},
+export const noPay = (basis: DriverPaySettings['basis'] = 'serviceType'): PayTotals => ({
+    delivered: 0, failed: 0, payCents: 0, rateSet: true, basis, lines: {},
 });
 
 /**

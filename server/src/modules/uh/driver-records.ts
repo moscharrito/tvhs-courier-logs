@@ -59,6 +59,7 @@ interface StopRow {
     assigned_to_username: string | null;
     service_date: string;
     service_type: string;
+    zone: number | null;
     status: string;
     site_name: string | null;
     delivered_at: string | null;
@@ -116,7 +117,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         let who = '';
         if (username !== null) { who = 'AND o.assigned_to_username = ?'; args.push(username); }
         const rs = await client.execute({
-            sql: `SELECT o.assigned_to_username, o.service_date, o.service_type, o.status,
+            sql: `SELECT o.assigned_to_username, o.service_date, o.service_type, o.zone, o.status,
                          o.delivered_at, s.name AS site_name
                     FROM orders o
                     LEFT JOIN sites s ON s.id = o.site_id
@@ -135,7 +136,13 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
        same, and the adapter is here rather than in driver-pay.ts so that the
        arithmetic stays testable without a database. */
     const payable = (rows: readonly StopRow[]) =>
-        rows.map((r) => ({ serviceType: r.service_type, status: r.status }));
+        rows.map((r) => ({
+            serviceType: r.service_type,
+            status: r.status,
+            /* Null stays null rather than becoming 0. A ZIP off the zone map
+               has no rate, and zone 0 would quietly borrow one. */
+            zone: r.zone === null || r.zone === undefined ? null : Number(r.zone),
+        }));
 
     /** Everybody who holds a courier or lead membership, named. */
     async function driversOf(projectId: number): Promise<Map<string, string>> {
@@ -181,9 +188,12 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                 };
             });
 
+        /* Seeded with the project's own basis, so a reader with no work in
+           the range is still told which rate card the empty answer is
+           against rather than being shown the default. */
         const totals = periods.reduce<PayTotals>(
             (into, p) => addTotals(into, p),
-            noPay(),
+            noPay(rates.basis),
         );
         return { periods, totals };
     }
@@ -235,7 +245,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         }
 
         drivers.sort((a, b) => b.delivered - a.delivered || a.name.localeCompare(b.name));
-        const totals = drivers.reduce<PayTotals>((into, d) => addTotals(into, d), noPay());
+        const totals = drivers.reduce<PayTotals>((into, d) => addTotals(into, d), noPay(rates.basis));
 
         await req.audit('drivers.records', 'report', `${window.from}..${window.to}`, {
             drivers: drivers.length, delivered: totals.delivered,

@@ -29,14 +29,16 @@ import { Pager, usePaged } from '../../app/Pager';
 import { useAuth } from '../../app/auth';
 import { money } from './Drivers';
 
-interface PayLine { delivered: number; rateCents: number; payCents: number | null }
+interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
 interface Totals {
     delivered: number;
     failed: number;
     payCents: number | null;
     rateSet: boolean;
-    byServiceType: Record<string, PayLine>;
+    /** What the lines are keyed on, so the column can be headed honestly. */
+    basis: 'serviceType' | 'zone';
+    lines: Record<string, PayLine>;
 }
 
 interface Period extends Totals {
@@ -190,13 +192,17 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                             ))}
                         </tbody>
                     </table>
-                    {Object.keys(p.byServiceType).length > 0 && (
+                    {Object.keys(p.lines).length > 0 && (
                         <table className="izy-table">
-                            <thead><tr><th>Service level</th><th className="izy-num">Delivered</th><th className="izy-num">Rate</th><th className="izy-num">Pay</th></tr></thead>
+                            {/* The heading follows the rate card. A column
+                                headed "Service level" with zones under it is
+                                a payslip nobody can check, and this project
+                                can be set either way. */}
+                            <thead><tr><th>{p.basis === 'zone' ? 'Zone' : 'Service level'}</th><th className="izy-num">Delivered</th><th className="izy-num">Rate</th><th className="izy-num">Pay</th></tr></thead>
                             <tbody>
-                                {Object.entries(p.byServiceType).map(([type, line]) => (
-                                    <tr key={type}>
-                                        <td>{type}</td>
+                                {Object.entries(p.lines).map(([key, line]) => (
+                                    <tr key={key}>
+                                        <td>{line.label}</td>
                                         <td className="izy-num">{line.delivered}</td>
                                         <td className="izy-num">{line.rateCents > 0 ? money(line.rateCents, data.currency) : 'not set'}</td>
                                         <td className="izy-num">{money(line.payCents, data.currency)}</td>
