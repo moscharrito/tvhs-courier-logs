@@ -99,6 +99,12 @@ export interface PodData {
     events: PodEvent[];
     pickupSignature: PodSignature | null;
     deliverySignature: PodSignature | null;
+    /* The second party on a controlled-substance handover (ticket 7.13).
+     * Optional rather than required so a caller built before this -- the
+     * client portal's own POD route, the tests -- still compiles and simply
+     * prints the one-signature document it always did. */
+    pickupCountersignature?: PodSignature | null | undefined;
+    deliveryCountersignature?: PodSignature | null | undefined;
     /** A doorstep or courier-form photo, when there is one and the file
      *  service can serve it. `bytes` is the JPEG itself, fetched by the
      *  caller: this module renders, it does not reach for a bucket. */
@@ -274,11 +280,15 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
     const boxHeight = 74;
     const signatureBoxTop = y;
 
+    /* `top` so a second row can be drawn beneath the first on a controlled
+       handover. It defaults to the one row this page used to have, which is
+       what every ordinary delivery still gets. */
     const drawSignature = (
         title: string, signature: PodSignature | null, fallback: string, x: number,
+        top: number = signatureBoxTop,
     ) => {
-        page.text(title.toUpperCase(), x, signatureBoxTop, { size: 7, grey: 0.45 });
-        const boxY = signatureBoxTop - 12 - boxHeight;
+        page.text(title.toUpperCase(), x, top, { size: 7, grey: 0.45 });
+        const boxY = top - 12 - boxHeight;
         page.rect(x, boxY, boxWidth, boxHeight, { grey: 0.75 });
         if (signature && signature.strokes.length > 0) {
             for (const stroke of fitStrokes(signature.strokes, { x: x + 6, y: boxY + 6, width: boxWidth - 12, height: boxHeight - 12 })) {
@@ -313,6 +323,40 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         MARGIN + CONTENT_WIDTH / 2 + 12,
     );
     y = Math.min(senderBottom, receiverBottom);
+
+    /* THE SECOND PAIR, on a controlled-substance handover only.
+     *
+     * §6 of the courier offer letter promises a documented two-signature
+     * handoff for these, and this is the document that proves it was made.
+     * One signature printed where two were required would be the version of
+     * this page that is worse than useless: it would look complete.
+     *
+     * Drawn only when there is something to draw, so an ordinary delivery
+     * gets exactly the proof of delivery it always got. */
+    if (data.pickupCountersignature || data.deliveryCountersignature) {
+        y -= 6;
+        page.text(
+            'Controlled substance: both parties signed at each handover.',
+            MARGIN, y, { font: 'Helvetica-Bold', size: 9 },
+        );
+        y -= 16;
+
+        const collectedBottom = drawSignature(
+            'Courier (collecting)',
+            data.pickupCountersignature ?? null,
+            data.pickupCountersignature ? '' : 'Not countersigned',
+            MARGIN,
+            y,
+        );
+        const releasedBottom = drawSignature(
+            'Courier (releasing)',
+            data.deliveryCountersignature ?? null,
+            data.deliveryCountersignature ? '' : 'Not countersigned',
+            MARGIN + CONTENT_WIDTH / 2 + 12,
+            y,
+        );
+        y = Math.min(collectedBottom, releasedBottom);
+    }
 
     if (data.noSignatureReason) {
         for (const line of wrap(`Left without a signature: ${data.noSignatureReason}`, 'Helvetica', 9, CONTENT_WIDTH)) {
@@ -485,10 +529,17 @@ export async function loadPodData(client: Client, opts: LoadOptions): Promise<Po
     });
 
     /** The signature row a custody event points at, if any. */
-    const signatureFor = async (type: string): Promise<PodSignature | null> => {
-        const row = [...events.rows].reverse().find((e) => String(e['type']) === type && String(e['signature_key'] ?? '') !== '');
+    /* `column` picks which of the two marks on a handover to load: the
+       receiving party's, or -- on a controlled drug -- the courier's
+       countersignature beside it (ticket 7.13). */
+    const signatureFor = async (
+        type: string,
+        column: 'signature_key' | 'countersignature_key' = 'signature_key',
+    ): Promise<PodSignature | null> => {
+        const nameColumn = column === 'signature_key' ? 'signed_name' : 'countersigned_name';
+        const row = [...events.rows].reverse().find((e) => String(e['type']) === type && String(e[column] ?? '') !== '');
         if (!row) return null;
-        const id = Number(String(row['signature_key']).replace('local:signature:', ''));
+        const id = Number(String(row[column]).replace('local:signature:', ''));
         if (!Number.isInteger(id)) return null;
         const rs = await client.execute({
             sql: 'SELECT signed_name, strokes, captured_at FROM signatures WHERE id = ?',
@@ -505,7 +556,7 @@ export async function loadPodData(client: Client, opts: LoadOptions): Promise<Po
         }
         return {
             strokes,
-            signedName: String(sig['signed_name'] ?? row['signed_name'] ?? ''),
+            signedName: String(sig['signed_name'] ?? row[nameColumn] ?? ''),
             capturedAt: String(sig['captured_at'] ?? row['at']),
         };
     };
@@ -587,6 +638,10 @@ const hasPhoto = opts.hasPhoto ?? events.rows.some(
         })),
         pickupSignature: await signatureFor('picked_up'),
         deliverySignature: await signatureFor('delivered'),
+        /* Null on every ordinary delivery, which is most of them. Present
+           only where §6 required both parties to sign. */
+        pickupCountersignature: await signatureFor('picked_up', 'countersignature_key'),
+        deliveryCountersignature: await signatureFor('delivered', 'countersignature_key'),
         photo: {
             available: hasPhoto && opts.photoAvailable,
             /* Say what is missing and why. A doorstep delivery whose photo

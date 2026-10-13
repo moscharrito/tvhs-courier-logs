@@ -39,6 +39,8 @@ interface OrderDetail {
     arrivedAt: string | null;
     deliveryNotes: string;
     signatureRequired: boolean;
+    /** Ticket 7.13: this handover needs both parties to sign. */
+    controlled?: boolean;
     packages: Package[];
 }
 
@@ -96,6 +98,11 @@ export function Stop() {
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
     const [strokes, setStrokes] = useState<SignatureStrokes>([]);
+    /* The courier's own mark, on a controlled drug (7.13). This form is the
+       one dispatch uses when a phone has died, so whoever is signed in here
+       is the person attesting; the server takes the printed name from their
+       session rather than from this page. */
+    const [countersign, setCountersign] = useState<SignatureStrokes>([]);
     const [noSignatureReason, setNoSignatureReason] = useState('');
     const [photo, setPhoto] = useState<File | null>(null);
     const photoInput = useRef<HTMLInputElement>(null);
@@ -208,7 +215,11 @@ export function Stop() {
 
     const deliver = (e: FormEvent) => {
         e.preventDefault();
-        void post('deliver', { signedName: signedName.trim(), strokes }, 'Delivered and signed for.');
+        void post('deliver', {
+            signedName: signedName.trim(),
+            strokes,
+            ...(order.controlled === true ? { countersignStrokes: countersign } : {}),
+        }, 'Delivered and signed for.');
     };
 
     const doorstep = (e: FormEvent) => {
@@ -331,8 +342,37 @@ export function Stop() {
                                 <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required />
                             </label>
                             <SignaturePad label="Recipient signature" strokes={strokes} onChange={setStrokes} disabled={busy} />
+
+                            {/* CONTROLLED DRUG: BOTH PARTIES SIGN.
+
+                                §6 of the courier offer letter. This form is
+                                for recording a handover dispatch did not
+                                make, so the second mark is whoever is signed
+                                in here attesting to it, and the printed name
+                                comes from their session rather than from a
+                                box on this page that could say anybody. */}
+                            {order.controlled === true && (
+                                <>
+                                    <div className="izy-alert warn" role="status">
+                                        This is a controlled drug. Both parties sign for it: the person
+                                        receiving it, and you. Your name is taken from your account.
+                                    </div>
+                                    <SignaturePad
+                                        label="Your signature, releasing it"
+                                        strokes={countersign}
+                                        onChange={setCountersign}
+                                        disabled={busy}
+                                    />
+                                </>
+                            )}
+
                             <div className="izy-row">
-                                <button className="izy-btn" type="submit" disabled={busy || signedName.trim() === '' || pointCount(strokes) <= 2}>
+                                <button
+                                    className="izy-btn"
+                                    type="submit"
+                                    disabled={busy || signedName.trim() === '' || pointCount(strokes) <= 2
+                                        || (order.controlled === true && pointCount(countersign) <= 2)}
+                                >
                                     {busy ? 'Saving' : 'Record the delivery'}
                                 </button>
                                 <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setChoice(null)}>Back</button>

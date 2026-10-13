@@ -199,6 +199,11 @@ export function ClientPortal() {
         map.set(o.pharmacy, list2);
         return map;
     }, new Map<string, ClientOrder[]>())].sort((a, b) => a[0].localeCompare(b[0]));
+    /* Eight counters today, so this control stays hidden. It is here so a
+       contract that adds a site is not also the thing that discovers this
+       list was never paged. Each pharmacy's own table pages separately,
+       inside DeliveryTable. */
+    const pagedGroups = usePaged(groups);
 
     if (!project) {
         return (<><h1>Not available</h1><Link className="izy-btn secondary" to="/">Back</Link></>);
@@ -465,7 +470,8 @@ export function ClientPortal() {
                        with a real button. My first version of this did none
                        of those: it was a bare button, forgot every reload,
                        and was invisible to anything navigating by heading. */
-                    groups.map(([pharmacy, list]) => {
+                    <>
+                    {pagedGroups.rows.map(([pharmacy, list]) => {
                         const bad = list.filter(needsAttention).length;
                         return (
                             <Section
@@ -477,7 +483,9 @@ export function ClientPortal() {
                                 <DeliveryTable rows={list} clock={clock} open={open} setOpen={setOpen} />
                             </Section>
                         );
-                    })
+                    })}
+                    <Pager of={pagedGroups} noun="pharmacies" />
+                    </>
                 ) : (
                     <>
                         {/* Only for an account that HAS more than one counter.

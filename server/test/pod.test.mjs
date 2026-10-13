@@ -475,3 +475,76 @@ describe('our copy and the client copy', () => {
         checkStructure(Buffer.from(res.body));
     });
 });
+
+/* ───────────────────────────── the two-signature handoff on paper (7.13)
+ *
+ * §6 of the courier offer letter promises a documented two-signature
+ * handoff for controlled items, and this page is the document that proves
+ * one was made. One signature printed where two were required would be the
+ * version of this page that is worse than useless, because it would look
+ * complete.
+ */
+describe('a controlled-substance proof of delivery', () => {
+    const SIG = (name) => ({
+        strokes: [[{ x: 0.1, y: 0.5 }, { x: 0.6, y: 0.2 }]],
+        signedName: name,
+        capturedAt: '2026-11-02T18:00:00.000Z',
+    });
+
+    const controlled = (over = {}) => ({
+        orderId: 42, reference: 'RX-9001', serviceType: 'stat', serviceDate: '2026-11-02',
+        timezone: 'America/Chicago', pickupLocation: 'Discharge', pickupAddress: '',
+        deliveryName: 'Ines Vargas', deliveryAddress: '1100 Broadway St',
+        status: 'delivered', receivedAt: '2026-11-02T16:00:00.000Z', dueAt: null,
+        pickedUpAt: '2026-11-02T17:00:00.000Z', arrivedAt: null,
+        deliveredAt: '2026-11-02T18:00:00.000Z', returnedAt: null, returnedTo: '',
+        courier: 'Ada Courier', receivedBy: 'Ines Vargas', noSignatureReason: '', failureReason: '',
+        packages: [], events: [],
+        pickupSignature: SIG('Pharmacy Tech'),
+        deliverySignature: SIG('Ines Vargas'),
+        pickupCountersignature: SIG('Ada Courier'),
+        deliveryCountersignature: SIG('Ada Courier'),
+        photo: { available: false, note: '' },
+        ...over,
+    });
+
+    it('prints all four marks and says why there are four', () => {
+        const text = pdfText(renderPod(controlled()));
+        expect(text).toMatch(/Controlled substance: both parties signed/i);
+        expect(text).toMatch(/COURIER \(COLLECTING\)/i);
+        expect(text).toMatch(/COURIER \(RELEASING\)/i);
+        expect(text).toMatch(/Pharmacy Tech/);
+        expect(text).toMatch(/Ines Vargas/);
+        expect(text).toMatch(/Ada Courier/);
+    });
+
+    it('says which half is missing rather than looking complete', () => {
+        /* A handover that was countersigned at the counter and not at the
+           door is the shape a reader most needs to see. */
+        const text = pdfText(renderPod(controlled({ deliveryCountersignature: null })));
+        expect(text).toMatch(/Controlled substance: both parties signed/i);
+        expect(text).toMatch(/Not countersigned/);
+    });
+
+    it('leaves an ordinary delivery exactly as it was', () => {
+        /* Most deliveries are not controlled, and their proof of delivery
+           should not grow a row of empty boxes. */
+        const text = pdfText(renderPod(controlled({
+            pickupCountersignature: null,
+            deliveryCountersignature: null,
+        })));
+        expect(text).not.toMatch(/Controlled substance: both parties signed/i);
+        expect(text).not.toMatch(/COURIER \(RELEASING\)/i);
+        /* And the pair it always had is still there. */
+        expect(text).toMatch(/Ines Vargas/);
+    });
+
+    it('does not fall over when the fields are absent entirely', () => {
+        /* The client portal's POD route and every older caller pass neither
+           field. They must still get the one-signature document. */
+        const data = controlled();
+        delete data.pickupCountersignature;
+        delete data.deliveryCountersignature;
+        expect(() => renderPod(data)).not.toThrow();
+    });
+});

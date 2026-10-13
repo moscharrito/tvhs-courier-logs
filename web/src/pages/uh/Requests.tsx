@@ -100,6 +100,9 @@ export function Requests({ projectCode, timezone }: { projectCode: string; timez
     const [reason, setReason] = useState('');
     const [busy, setBusy] = useState(false);
     const [preview, setPreview] = useState<SweepOutcome | null>(null);
+    /* Both halves of a sweep preview. On the noon wave either can run to
+       hundreds, and this is the screen somebody reads before pressing the
+       button that hands all of it out. */
 
     const load = useCallback(async () => {
         try {
@@ -297,6 +300,9 @@ export function Requests({ projectCode, timezone }: { projectCode: string; timez
 
 /* ------------------------------------------------------------------ sweep */
 
+/* The sweep preview. Both halves can run to hundreds on the noon wave, and
+   this is the screen somebody reads before pressing the button that hands
+   all of it out. */
 function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
     state: SweepState | null;
     preview: SweepOutcome | null;
@@ -305,6 +311,8 @@ function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
     onRun: () => void;
     onCancel: () => void;
 }) {
+    const pagedStuck = usePaged(preview?.unassignable ?? []);
+    const pagedSweep = usePaged(preview?.assigned ?? []);
     return (
         <div style={{ marginTop: 16, borderTop: '1px solid var(--izy-line)', paddingTop: 12 }}>
             <h3>Work nobody has asked for</h3>
@@ -348,12 +356,13 @@ function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
                         <div className="izy-alert error" role="alert">
                             <b>{preview.unassignable.length} past the point of waiting, and nowhere to send {preview.unassignable.length === 1 ? 'it' : 'them'}.</b>
                             <ul>
-                                {preview.unassignable.map((u) => (
+                                {pagedStuck.rows.map((u) => (
                                     <li key={u.orderId}>
                                         #{u.orderId} ({u.serviceType.toUpperCase()}), {u.minutesToDue < 0 ? `${-u.minutesToDue} min overdue` : `due in ${u.minutesToDue} min`}: {u.reason}
                                     </li>
                                 ))}
                             </ul>
+                            <Pager of={pagedStuck} noun="deliveries" />
                         </div>
                     )}
 
@@ -366,7 +375,7 @@ function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
                                     <tr><th>Delivery</th><th>Would go to</th><th>Due</th></tr>
                                 </thead>
                                 <tbody>
-                                    {preview.assigned.map((a) => (
+                                    {pagedSweep.rows.map((a) => (
                                         <tr key={a.orderId}>
                                             <td>#{a.orderId} <span className="izy-muted">{a.serviceType.toUpperCase()}</span></td>
                                             <td><b>{a.courierUsername}</b></td>
@@ -377,6 +386,7 @@ function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
                                     ))}
                                 </tbody>
                             </table>
+                            <Pager of={pagedSweep} noun="deliveries" />
                             {preview.couriers.length > 0 && (
                                 <p className="izy-muted">
                                     On shift: {preview.couriers.map((c) => `${c.courierUsername} (${c.open} open)`).join(', ')}

@@ -240,6 +240,10 @@ export function Board() {
        own, in PoolGroup and LaneStops, because one page number shared across
        nine pharmacies would turn to page 2 for all of them at once. */
     const pagedFeed = usePaged(data?.activity ?? []);
+    /* The proposal's own runs. Eighteen on a good day and nearer thirty-five
+       on a Tuesday, each with a courier picker beside it, which was a long
+       scroll in a panel that is meant to be read quickly at noon. */
+    const pagedProposal = usePaged(proposal?.runs ?? []);
 
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
@@ -567,7 +571,7 @@ export function Board() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {proposal.runs.map((run, i) => (
+                                            {pagedProposal.rows.map((run, i) => (
                                                 <tr key={run.orderIds.join(',')}>
                                                     <td>
                                                         {run.kind === 'stat'
@@ -614,6 +618,7 @@ export function Board() {
                                         </tbody>
                                     </table>
                                 )}
+                                <Pager of={pagedProposal} noun="routes" />
                             </>
                         )}
                     </Section>
