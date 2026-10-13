@@ -37,7 +37,7 @@ import { recordOrderEvent, insertCustodyEvent, type OrderStateRow } from './orde
 import { TransitionError } from './lifecycle';
 import { DRY_RUN_REASONS } from '../../db/schema/uh';
 import type { FileStorage } from '../../core/files/storage';
-import { presentHandling, isNamedSigner, matchesName } from './handling';
+import { presentHandling, isNamedSigner, matchesName, needsCountersignature } from './handling';
 
 const Point = z.object({
     x: z.number().min(0).max(1),
@@ -77,6 +77,20 @@ const Deliver = z.object({
     captureMethod: z.enum(['drawn', 'initials']).default('drawn'),
     /** Required when strokes are empty. Checked in the handler. */
     noSignatureReason: z.string().trim().max(300).default(''),
+    /* THE COURIER'S OWN SIGNATURE, on a controlled-substance handover only.
+     *
+     * §6 of the offer letter promises every driver "a documented
+     * two-signature handoff" for controlled items. Everything above this is
+     * the person RECEIVING custody; these two are the person giving it up.
+     *
+     * Note what is NOT offered here: the no-signature escape above. On an
+     * ordinary delivery a mark that cannot be had costs a written reason,
+     * because a screen that will not move stops the round. On a controlled
+     * drug the clause is the point -- the courier is stood there holding the
+     * phone, so there is no version of "could not be obtained" that applies
+     * to their own hand. */
+    countersignedName: z.string().trim().max(160).default(''),
+    countersignStrokes: Strokes.or(z.array(z.never()).length(0)).default([]),
     note: z.string().trim().max(300).default(''),
 
     /* Required when a patient-only delivery was signed for by somebody the
@@ -384,6 +398,23 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             body.note,
         ].filter((x) => x !== '').join(' — ');
 
+        /* TWO SIGNATURES ON A CONTROLLED DRUG, refused rather than recorded
+           short. A one-signature row for a Schedule II item is a record that
+           says a two-party transfer happened when the system only ever saw
+           one party, and it is the record a DEA question would be answered
+           from. */
+        if (needsCountersignature(handling)
+            && (body.countersignedName === '' || body.countersignStrokes.length === 0)) {
+            res.status(400).json({
+                error: 'This is a controlled drug, so both parties sign for it: '
+                    + `${body.signedName || 'the person receiving it'} and you. `
+                    + 'Add your own name and signature before recording the delivery.',
+                code: 'deliver.countersignatureRequired',
+                need: ['countersignedName', 'countersignStrokes'],
+            });
+            return;
+        }
+
         if (handling.signatureRequired
             && handling.signatureRule === 'patient_only'
             && body.signerNotPatientReason === ''
@@ -431,6 +462,23 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                       VALUES (?, 'delivery', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
                 args: [projectId, body.signedName, JSON.stringify(body.strokes), body.captureMethod, actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null],
             });
+
+            /* The courier's own mark, stored the same way and at the same
+               moment. Always drawn: the typed-initials route exists because
+               persuading somebody ELSE to scrawl on a phone stops the round,
+               and that argument does not reach the person holding it. */
+            let countersignatureKey = '';
+            if (body.countersignStrokes.length > 0) {
+                const counter = await client.execute({
+                    sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_by, captured_at, lat, lng)
+                          VALUES (?, 'delivery', ?, ?, 'drawn', ?, ?, ?, ?) RETURNING id`,
+                    args: [
+                        projectId, body.countersignedName, JSON.stringify(body.countersignStrokes),
+                        actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null,
+                    ],
+                });
+                countersignatureKey = `local:signature:${Number(counter.rows[0]!['id'])}`;
+            }
             await recordOrderEvent(client, {
                 projectId,
                 order,
@@ -441,6 +489,10 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                     type: 'delivered', at,
                     signedName: body.signedName,
                     signatureKey: `local:signature:${Number(sig.rows[0]!['id'])}`,
+                    ...(countersignatureKey === '' ? {} : {
+                        countersignedName: body.countersignedName,
+                        countersignatureKey,
+                    }),
                     ...(body.lat !== undefined ? { lat: body.lat } : {}),
                     ...(body.lng !== undefined ? { lng: body.lng } : {}),
                     /* The signer explanation rides on the custody chain

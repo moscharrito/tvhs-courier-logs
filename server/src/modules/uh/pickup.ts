@@ -73,6 +73,17 @@ const Pickup = z.object({
      *
      * So the row says which, and the proof of collection says it too. */
     captureMethod: z.enum(['drawn', 'initials']).default('drawn'),
+    /* THE COURIER'S OWN SIGNATURE, when the batch holds a controlled drug.
+     *
+     * §6 of the offer letter promises every driver "a documented
+     * two-signature handoff" for controlled items. signedName above is the
+     * pharmacy handing over; this is the courier taking it away.
+     *
+     * The no-signature escape above does not reach this one. It exists
+     * because persuading a pharmacist to scrawl on a phone stops the round;
+     * the courier is the person holding the phone. */
+    countersignedName: z.string().trim().max(160).default(''),
+    countersignStrokes: Strokes.or(z.array(z.never()).length(0)).default([]),
     /** What the courier actually counted into the vehicle. */
     countedPackages: z.number().int().min(0).max(5000),
     /** Required when the count does not match, so a discrepancy has a reason. */
@@ -215,6 +226,23 @@ export function createPickupRouter({ client }: { client: Client }): Router {
             return;
         }
 
+        /* ONE COUNTERSIGNATURE COVERS THE BATCH, and is required as soon as
+           ANY item in it is controlled. The handover is one act -- the lead
+           hands over a tote and the courier takes it -- so a signature per
+           order would be the same mark recorded several times, and asking
+           for it only for part of a tote would mean the courier signs for
+           some of what they are carrying. */
+        if (rows.some((r) => Number(r['controlled']) === 1)
+            && (body.countersignedName === '' || body.countersignStrokes.length === 0)) {
+            res.status(400).json({
+                error: 'This collection includes a controlled drug, so both parties sign for it: '
+                    + 'the pharmacy and you. Add your own name and signature before recording the collection.',
+                code: 'pickup.countersignatureRequired',
+                need: ['countersignedName', 'countersignStrokes'],
+            });
+            return;
+        }
+
         const expectedPackages = rows.reduce((n, r) => n + Number(r['package_count']), 0);
         const discrepancy = body.countedPackages - expectedPackages;
         if (discrepancy !== 0 && body.note === '') {
@@ -250,6 +278,23 @@ export function createPickupRouter({ client }: { client: Client }): Router {
             signatureKey = `local:signature:${Number(sigRs.rows[0]!['id'])}`;
         }
 
+        /* The courier's own mark, stored the same way. Always drawn: the
+           typed-initials route exists because persuading somebody ELSE to
+           scrawl on a phone stops the round, and that does not apply to the
+           person holding it. */
+        let countersignatureKey = '';
+        if (body.countersignStrokes.length > 0) {
+            const counterRs = await client.execute({
+                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_by, captured_at, lat, lng)
+                      VALUES (?, 'pickup', ?, ?, 'drawn', ?, ?, ?, ?) RETURNING id`,
+                args: [
+                    project.id, body.countersignedName, JSON.stringify(body.countersignStrokes),
+                    actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null,
+                ],
+            });
+            countersignatureKey = `local:signature:${Number(counterRs.rows[0]!['id'])}`;
+        }
+
         /* One reason line on the custody event, carrying whichever of the two
            apply, labelled so a person reading it later knows which is which. */
         const reasonForEvent = [
@@ -274,6 +319,10 @@ export function createPickupRouter({ client }: { client: Client }): Router {
                         at,
                         signedName: body.signedName,
                         signatureKey,
+                        ...(countersignatureKey === '' ? {} : {
+                            countersignedName: body.countersignedName,
+                            countersignatureKey,
+                        }),
                         ...(body.lat !== undefined ? { lat: body.lat } : {}),
                         ...(body.lng !== undefined ? { lng: body.lng } : {}),
                         /* The count note and the missing-signature reason are

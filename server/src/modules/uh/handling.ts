@@ -104,6 +104,29 @@ export function signingInstruction(h: Handling, recipientName: string): string {
 }
 
 /**
+ * Does this handover need both parties to sign?
+ *
+ * §6 of the courier offer letter, in writing to every driver: "Controlled-
+ * substance items require a documented two-signature handoff." Until ticket
+ * 7.13 nothing in the system did that -- a handover recorded the receiving
+ * party's signature and the courier was only the `actor` on the row, which
+ * is one party to a transfer of custody.
+ *
+ * ONE PREDICATE, USED AT BOTH ENDS. Pickup and delivery are both transfers
+ * of custody and both ask this question; two implementations of "is this
+ * controlled" is the pair that eventually disagrees, and the half that says
+ * no is the half that loses the signature.
+ *
+ * Deliberately not widened to the other flags. A refrigerated item or one
+ * needing ID is still a one-signature handover: the second mark is about
+ * who is answerable for a controlled drug, not about care generally, and
+ * requiring it everywhere would make it mean nothing anywhere.
+ */
+export function needsCountersignature(h: Handling): boolean {
+    return h.controlled;
+}
+
+/**
  * The short flags a list can show, strongest first.
  *
  * Order is not cosmetic. A row in a list gets skimmed, and these are the

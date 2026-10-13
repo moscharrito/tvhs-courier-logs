@@ -1,0 +1,27 @@
+-- Ticket 7.13. The second signature on a controlled-substance handover.
+--
+-- WHAT §6 OF THE COURIER OFFER LETTER PROMISES, IN WRITING, TO EVERY DRIVER:
+--
+--   "Never open, alter, or separate a sealed package. Controlled-substance
+--    items require a documented two-signature handoff."
+--
+-- Nothing in the system did that. A handover recorded one signature: the
+-- pharmacy's at pickup, the recipient's at delivery. The courier was the
+-- `actor` on the custody row and signed nothing, so what the record showed
+-- for a Schedule II item was one party to a transfer of custody, which is
+-- not a two-signature handoff and is not what a driver was told they were
+-- doing.
+--
+-- BOTH SIDES OF A TRANSFER, which is what the second column is for. The
+-- existing signed_name/signature_key stay the RECEIVING party, unchanged, so
+-- every row written before today still means exactly what it meant. The new
+-- pair is the party giving custody up: the courier at delivery, and the
+-- courier again at pickup, because at pickup the pharmacy is already in
+-- signed_name and the courier is the one taking the controlled item away.
+--
+-- WHY A COLUMN AND NOT A SECOND ROW. A handover is one event. Two custody
+-- rows for one doorstep would double every count built on this table --
+-- deliveries made, attempts, the SLA numerator -- and every one of those
+-- queries would have to learn a rule about which row is real.
+ALTER TABLE `custody_events` ADD COLUMN `countersigned_name` text DEFAULT '' NOT NULL;--> statement-breakpoint
+ALTER TABLE `custody_events` ADD COLUMN `countersignature_key` text DEFAULT '' NOT NULL;

@@ -56,6 +56,12 @@ export interface CustodyEventInput {
     toStatus: string;
     signedName?: string | undefined;
     signatureKey?: string | undefined;
+    /* The second party on a controlled-substance handover (ticket 7.13).
+     * signedName above is whoever RECEIVED custody; this is whoever gave it
+     * up, which is the courier at both ends. Empty on every other handover,
+     * and empty on every row written before the column existed. */
+    countersignedName?: string | undefined;
+    countersignatureKey?: string | undefined;
     reason?: string | undefined;
     lat?: number | undefined;
     lng?: number | undefined;
@@ -82,12 +88,13 @@ export function custodyEventStatement(e: CustodyEventInput): { sql: string; args
     return {
         sql: `INSERT INTO custody_events
                 (project_id, order_id, package_id, type, at, actor, from_status, to_status,
-                 signed_name, signature_key, reason, lat, lng, file_id,
-                 contact_efforts, waited_minutes)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 signed_name, signature_key, countersigned_name, countersignature_key,
+                 reason, lat, lng, file_id, contact_efforts, waited_minutes)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
             e.projectId, e.orderId, e.packageId ?? null, e.type, e.at.toISOString(), e.actor,
-            e.fromStatus, e.toStatus, e.signedName ?? '', e.signatureKey ?? '', e.reason ?? '',
+            e.fromStatus, e.toStatus, e.signedName ?? '', e.signatureKey ?? '',
+            e.countersignedName ?? '', e.countersignatureKey ?? '', e.reason ?? '',
             e.lat ?? null, e.lng ?? null, e.fileId ?? null,
             (e.contactEfforts ?? []).join(','), e.waitedMinutes ?? -1,
         ],
@@ -156,6 +163,7 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
         projectId, orderId, type: event.type, at: event.at, actor,
         fromStatus: order.status, toStatus: applied.toStatus,
         signedName: event.signedName, signatureKey: event.signatureKey,
+        countersignedName: event.countersignedName, countersignatureKey: event.countersignatureKey,
         reason: event.reason, lat: event.lat, lng: event.lng, fileId: event.fileId,
         contactEfforts: event.contactEfforts, waitedMinutes: event.waitedMinutes,
     };

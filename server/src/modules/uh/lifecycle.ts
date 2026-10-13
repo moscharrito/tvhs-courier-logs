@@ -123,6 +123,11 @@ export interface EventInput {
     signedName?: string | undefined;
     /** Key of the stored signature image. Ticket 1.8 fills this in. */
     signatureKey?: string | undefined;
+    /** The second party on a controlled-substance handover (ticket 7.13).
+     *  signedName is whoever RECEIVED custody; this is whoever gave it up,
+     *  which is the courier at both the counter and the door. */
+    countersignedName?: string | undefined;
+    countersignatureKey?: string | undefined;
     /** The photo that supports this event, such as a doorstep delivery.
      *  Carried on the event rather than attached afterwards: custody_events
      *  is append-only, so there is no afterwards. */
