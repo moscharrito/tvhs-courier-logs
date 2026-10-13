@@ -22,6 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { Panel, Chip, Notice, CardButton, Confirm } from '../../ui/Glass';
+import { Pager, usePaged } from '../../ui/Pager';
 import { ScreenHeader } from '../../ui/Screen';
 import { get, post } from '../../lib/api';
 import {
@@ -93,6 +94,7 @@ export function Drivers({ token, code, onSignedOut, holding, onHandedOver }: Pro
     }
 
     const loads = driverLoads(board);
+    const pagedLoads = usePaged(loads);
 
     return (
         <>
@@ -118,7 +120,7 @@ export function Drivers({ token, code, onSignedOut, holding, onHandedOver }: Pro
                     </Panel>
                 )}
 
-                {loads.map((d) => {
+                {pagedLoads.rows.map((d) => {
                     const refusal = handoverRefusal(d);
                     return (
                         <Panel key={d.username} style={styles.driver}>
@@ -151,6 +153,7 @@ export function Drivers({ token, code, onSignedOut, holding, onHandedOver }: Pro
                         </Panel>
                     );
                 })}
+                <Pager of={pagedLoads} noun="drivers" />
             </ScrollView>
 
             <Confirm

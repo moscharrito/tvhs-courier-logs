@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Chip, Ground, Notice, Panel } from '../ui/Glass';
+import { Pager, usePaged } from '../ui/Pager';
 import { ScreenHeader } from '../ui/Screen';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../theme';
 import { deliveryHistory, type DeliveryHistory, type HistoryDay } from '../lib/api';
@@ -42,6 +43,9 @@ export function History({ token, code, onSignedOut }: {
 }) {
     const [days, setDays] = useState<Window>(30);
     const [data, setData] = useState<DeliveryHistory | null>(null);
+    /* Ninety days is the longest list in the app. The count under it is what
+       keeps a page of eight from reading as a quarter with eight days in it. */
+    const pagedDays = usePaged(data?.days ?? []);
     const [error, setError] = useState<string | null>(null);
 
     const load = useCallback(async () => {
@@ -108,13 +112,18 @@ export function History({ token, code, onSignedOut }: {
                     <Notice text="Nothing finished in this period." tone="info" />
                 )}
 
-                {data?.days.map((day) => <Day key={day.date} day={day} />)}
+                {pagedDays.rows.map((day) => <Day key={day.date} day={day} />)}
+                <Pager of={pagedDays} noun="days" />
             </ScrollView>
         </Ground>
     );
 }
 
 function Day({ day }: { day: HistoryDay }) {
+    /* A day of its own, because a busy Tuesday is forty stops and the day
+       above it may be four. One page number shared between them would move
+       both. */
+    const stops = usePaged(day.stops);
     return (
         <Panel style={styles.day}>
             <View style={styles.dayHead}>
@@ -129,7 +138,7 @@ function Day({ day }: { day: HistoryDay }) {
                 </View>
             </View>
 
-            {day.stops.map((s) => (
+            {stops.rows.map((s) => (
                 <View key={s.orderId} style={styles.stop}>
                     <Text style={styles.stopName}>{s.recipientName}</Text>
                     <Text style={styles.stopMeta} numberOfLines={2}>{s.address}</Text>
@@ -146,6 +155,7 @@ function Day({ day }: { day: HistoryDay }) {
                     )}
                 </View>
             ))}
+            <Pager of={stops} noun="stops" />
         </Panel>
     );
 }

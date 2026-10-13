@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Notice, Panel } from '../../ui/Glass';
+import { Pager, usePaged } from '../../ui/Pager';
 import { GLASS, RADIUS, SPACE, TAP, TYPE, theme } from '../../theme';
 import { get } from '../../lib/api';
 import { ApiError, isUnauthorized } from '../../lib/http';
@@ -65,6 +66,8 @@ export function MyLogs({ token, today, onSignedOut }: {
     const [period, setPeriod] = useState<Period>('weekly');
     const [anchor, setAnchor] = useState(today);
     const [rows, setRows] = useState<SavedLeg[] | null>(null);
+    /* A month of legs is the longest list on the TVHS side. */
+    const paged = usePaged(rows ?? []);
     const [error, setError] = useState<string | null>(null);
     const range = rangeFor(period, anchor);
 
@@ -114,7 +117,7 @@ export function MyLogs({ token, today, onSignedOut }: {
 
             {rows === null ? <ActivityIndicator color={theme.green} style={styles.spinner} /> : rows.length === 0 ? (
                 <Notice text="No logs found for this period." tone="info" />
-            ) : rows.map((r, i) => (
+            ) : paged.rows.map((r, i) => (
                 <Panel key={`${r.date}-${r.leg_index}-${i}`} style={styles.row}>
                     <Text style={styles.rowTitle}>
                         {parseYmd(r.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
@@ -128,6 +131,7 @@ export function MyLogs({ token, today, onSignedOut }: {
                     </Text>
                 </Panel>
             ))}
+            <Pager of={paged} noun="rows" />
         </ScrollView>
     );
 }
@@ -140,6 +144,7 @@ export function MyCheckins({ token, today, onSignedOut }: {
     const [period, setPeriod] = useState<Period>('weekly');
     const [anchor, setAnchor] = useState(today);
     const [rows, setRows] = useState<Array<{ date: string; checkin_at: string }> | null>(null);
+    const paged = usePaged(rows ?? []);
     const [error, setError] = useState<string | null>(null);
     const range = rangeFor(period, anchor);
 
@@ -174,7 +179,7 @@ export function MyCheckins({ token, today, onSignedOut }: {
 
             {rows === null ? <ActivityIndicator color={theme.green} style={styles.spinner} /> : rows.length === 0 ? (
                 <Notice text="No check-ins found for this period." tone="info" />
-            ) : rows.map((r) => (
+            ) : paged.rows.map((r) => (
                 <Panel key={r.date} style={styles.row}>
                     <Text style={styles.rowTitle}>
                         {parseYmd(r.date).toLocaleDateString('en-US', {
@@ -186,6 +191,7 @@ export function MyCheckins({ token, today, onSignedOut }: {
                     </Text>
                 </Panel>
             ))}
+            <Pager of={paged} noun="rows" />
         </ScrollView>
     );
 }

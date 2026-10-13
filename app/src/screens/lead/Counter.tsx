@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { Panel, Chip, Notice } from '../../ui/Glass';
+import { Pager, usePaged } from '../../ui/Pager';
 import { ScreenHeader } from '../../ui/Screen';
 import { get } from '../../lib/api';
 import { batchesByZone, lostCards, type BoardData, type ZoneBatch } from '../../lib/lead';
@@ -60,6 +61,7 @@ export function Counter({ token, code, onSignedOut, onHandOver }: Props) {
     }
 
     const batches = batchesByZone(board);
+    const pagedBatches = usePaged(batches);
     const waiting = batches.reduce((n, b) => n + b.orders.length, 0);
     /* Packages the board referenced and sent no card for. Normally zero: this
        app asks for the whole board every time rather than a delta. Shown
@@ -98,33 +100,50 @@ export function Counter({ token, code, onSignedOut, onHandOver }: Props) {
                         dispatch loads the list.
                     </Text>
                 </Panel>
-            ) : batches.map((batch) => (
-                <Panel key={batch.label} style={styles.batch}>
-                    <View style={styles.batchHead}>
-                        <Text style={styles.batchTitle}>{batch.label}</Text>
-                        <View style={styles.chips}>
-                            <Chip label={`${batch.orders.length}`} tone="neutral" />
-                            {batch.overdue > 0 && <Chip label={`${batch.overdue} late`} tone="bad" />}
-                        </View>
-                    </View>
-
-                    {batch.orders.map((o) => (
-                        <View key={o.id} style={styles.row}>
-                            <Text style={styles.name} numberOfLines={1}>{o.recipientName}</Text>
-                            <Text style={styles.meta}>
-                                {`${o.externalRef ?? `#${o.id}`} · ${o.zip}${o.serviceType === 'stat' ? '  STAT' : ''}`}
-                            </Text>
-                        </View>
+            ) : (
+                <>
+                    {pagedBatches.rows.map((batch) => (
+                        <Batch key={batch.label} batch={batch} onHandOver={onHandOver} />
                     ))}
-
-                    <HandOverButton batch={batch} onPress={() => onHandOver(batch)} />
-                </Panel>
-            ))}
+                    <Pager of={pagedBatches} noun="batches" />
+                </>
+            )}
         </ScrollView>
     );
 }
 
 /** Separate so the label can say the thing rather than say "Continue". */
+/* One batch. A component rather than inline JSX because its order list needs
+   a page number, and Robert B. Green puts 241 of them on one counter. The
+   count chip in the head is the whole total on every page, which is what
+   stops a page of eight reading as a batch of eight. */
+function Batch({ batch, onHandOver }: { batch: ZoneBatch; onHandOver: (b: ZoneBatch) => void }) {
+    const paged = usePaged(batch.orders);
+    return (
+        <Panel style={styles.batch}>
+            <View style={styles.batchHead}>
+                <Text style={styles.batchTitle}>{batch.label}</Text>
+                <View style={styles.chips}>
+                    <Chip label={`${batch.orders.length}`} tone="neutral" />
+                    {batch.overdue > 0 && <Chip label={`${batch.overdue} late`} tone="bad" />}
+                </View>
+            </View>
+
+            {paged.rows.map((o) => (
+                <View key={o.id} style={styles.row}>
+                    <Text style={styles.name} numberOfLines={1}>{o.recipientName}</Text>
+                    <Text style={styles.meta}>
+                        {`${o.externalRef ?? `#${o.id}`} · ${o.zip}${o.serviceType === 'stat' ? '  STAT' : ''}`}
+                    </Text>
+                </View>
+            ))}
+            <Pager of={paged} noun="packages" />
+
+            <HandOverButton batch={batch} onPress={() => onHandOver(batch)} />
+        </Panel>
+    );
+}
+
 function HandOverButton({ batch, onPress }: { batch: ZoneBatch; onPress: () => void }) {
     return (
         <Text

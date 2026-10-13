@@ -36,6 +36,7 @@ import { ApiError, isUnauthorized } from '../lib/http';
 import { Stop } from './Stop';
 import { Collect } from './Collect';
 import { CardButton, Chip, Ground, Notice, Panel, Sheet } from '../ui/Glass';
+import { Pager, usePaged } from '../ui/Pager';
 import { summarise } from '../lib/refusals';
 import { TopBar } from '../ui/Nav';
 import { BoxIcon, NavigateIcon, PinIcon } from '../ui/Icons';
@@ -143,6 +144,10 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     const remaining = stops.filter((s) => !DONE.includes(s.status));
     const next = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
+    /* "All stops" only. The NEXT stop is rendered above this on its own and
+       the header says "x of y done" on every page, so the two numbers a
+       driver plans their afternoon from are never the ones that got paged. */
+    const paged = usePaged(stops);
     const zone = data?.timezone ?? project.timezone;
     /* Anything still to be collected lives on a run, and a courier with two
        runs in a day (a second wave) collects against the current one. */
@@ -270,7 +275,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 {stops.length > 0 && (
                     <View style={styles.allStops}>
                         <Text style={styles.cardTitle}>All stops</Text>
-                        {stops.map((s) => (
+                        {paged.rows.map((s) => (
                             <Pressable
                                 key={s.orderId}
                                 style={[styles.stop, DONE.includes(s.status) ? styles.stopDone : null]}
@@ -286,6 +291,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                                 </Text>
                             </Pressable>
                         ))}
+                        <Pager of={paged} noun="stops" />
                     </View>
                 )}
 
