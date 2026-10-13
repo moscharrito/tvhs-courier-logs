@@ -86,22 +86,26 @@ describe('a controlled drug at the door', () => {
         expect(res.status).toBe(400);
         expect(res.body.code).toBe('deliver.countersignatureRequired');
         /* It says what to do, not just that it will not. */
-        expect(res.body.error).toMatch(/both parties sign/i);
+        expect(res.body.error).toMatch(/both of you sign/i);
     });
 
-    it('is refused when the courier types a name but draws nothing', async () => {
-        /* A name without a mark is the half-measure this is most likely to
-           be met with. */
+    it('takes the courier name from the session, never from the request', async () => {
+        /* A countersignature is by whoever is signed in. Asking the app to
+           say who that is invites it to say somebody else, and it saves the
+           one person who cannot usefully be asked -- the courier -- from
+           typing their own name at a door in the rain. */
         const order = await pickedUpOrder({ controlled: true });
-        const res = await deliver(order, { countersignedName: 'Ada Courier', countersignStrokes: [] });
-        expect(res.status).toBe(400);
-        expect(res.body.code).toBe('deliver.countersignatureRequired');
-    });
+        const res = await deliver(order, {
+            countersignStrokes: STROKES,
+            countersignedName: 'Somebody Else Entirely',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
 
-    it('is refused when the courier draws a mark but gives no name', async () => {
-        const order = await pickedUpOrder({ controlled: true });
-        const res = await deliver(order, { countersignedName: '', countersignStrokes: STROKES });
-        expect(res.status).toBe(400);
+        const rs = await sql(
+            `SELECT countersigned_name FROM custody_events WHERE order_id = ? AND type = 'delivered'`,
+            [order.id],
+        );
+        expect(rs.rows[0].countersigned_name).toBe('Ada Courier');
     });
 
     it('offers no "could not be obtained" escape, unlike an ordinary delivery', async () => {
@@ -111,7 +115,6 @@ describe('a controlled drug at the door', () => {
            argument does not reach their own hand. */
         const order = await pickedUpOrder({ controlled: true });
         const res = await deliver(order, {
-            countersignedName: 'Ada Courier',
             countersignStrokes: [],
             noSignatureReason: 'Could not get a second signature',
         });
@@ -121,7 +124,7 @@ describe('a controlled drug at the door', () => {
 
     it('goes through when both parties sign, and keeps both', async () => {
         const order = await pickedUpOrder({ controlled: true });
-        const res = await deliver(order, { countersignedName: 'Ada Courier', countersignStrokes: STROKES });
+        const res = await deliver(order, { countersignStrokes: STROKES });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
 
         const rs = await sql(
@@ -143,7 +146,7 @@ describe('a controlled drug at the door', () => {
            scrawl on a phone stops the round. It does not apply to the person
            holding it, and "the courier signed" has to mean one thing. */
         const order = await pickedUpOrder({ controlled: true });
-        await deliver(order, { countersignedName: 'Ada Courier', countersignStrokes: STROKES, captureMethod: 'initials' });
+        await deliver(order, { countersignStrokes: STROKES, captureMethod: 'initials' });
 
         const rs = await sql(
             `SELECT capture_method FROM signatures WHERE signed_name = 'Ada Courier' ORDER BY id DESC LIMIT 1`,
@@ -183,7 +186,7 @@ describe('a controlled drug at the counter', () => {
 
     it('goes through when the courier signs too', async () => {
         const { order, runId } = await waitingRun({ controlled: true });
-        const res = await collect(runId, { countersignedName: 'Ada Courier', countersignStrokes: STROKES });
+        const res = await collect(runId, { countersignStrokes: STROKES });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
 
         const rs = await sql(
@@ -224,7 +227,7 @@ describe('a controlled drug at the counter', () => {
 
         const ok = await ada.post(`${RUNS}/${run.body.id}/pickup`).send({
             siteId: dischargeId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 2,
-            countersignedName: 'Ada Courier', countersignStrokes: STROKES,
+            countersignStrokes: STROKES,
         });
         expect(ok.status, JSON.stringify(ok.body)).toBe(201);
 
@@ -237,6 +240,25 @@ describe('a controlled drug at the counter', () => {
             );
             expect(rs.rows[0].countersigned_name, `order ${id}`).toBe('Ada Courier');
         }
+    });
+
+    it('tells the phone a tote is controlled BEFORE it is submitted', async () => {
+        /* Without this the courier taps Record, gets a 400, and is asking
+           for a signature from a pharmacist who has already walked away.
+           The screen has to know while they are both still standing there. */
+        const { runId } = await waitingRun({ controlled: true });
+        const board = await ada.get(`${RUNS}/${runId}/pickup`);
+        expect(board.status).toBe(200);
+        const site = board.body.sites.find((g) => g.site.id === dischargeId);
+        expect(site.controlled).toBe(true);
+        expect(site.orders.some((o) => o.controlled === true)).toBe(true);
+    });
+
+    it('does not flag a tote with nothing controlled in it', async () => {
+        const { runId } = await waitingRun({ controlled: false });
+        const board = await ada.get(`${RUNS}/${runId}/pickup`);
+        const site = board.body.sites.find((g) => g.site.id === dischargeId);
+        expect(site.controlled).toBe(false);
     });
 
     it('does not ask when nothing in the tote is controlled', async () => {

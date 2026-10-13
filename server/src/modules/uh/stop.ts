@@ -77,19 +77,21 @@ const Deliver = z.object({
     captureMethod: z.enum(['drawn', 'initials']).default('drawn'),
     /** Required when strokes are empty. Checked in the handler. */
     noSignatureReason: z.string().trim().max(300).default(''),
-    /* THE COURIER'S OWN SIGNATURE, on a controlled-substance handover only.
+    /* THE COURIER'S OWN SIGNATURE, on a controlled-substance handover.
      *
      * §6 of the offer letter promises every driver "a documented
-     * two-signature handoff" for controlled items. Everything above this is
-     * the person RECEIVING custody; these two are the person giving it up.
+     * two-signature handoff" for controlled items. Everything above is the
+     * person RECEIVING custody; this is the person giving it up.
      *
-     * Note what is NOT offered here: the no-signature escape above. On an
-     * ordinary delivery a mark that cannot be had costs a written reason,
-     * because a screen that will not move stops the round. On a controlled
-     * drug the clause is the point -- the courier is stood there holding the
-     * phone, so there is no version of "could not be obtained" that applies
-     * to their own hand. */
-    countersignedName: z.string().trim().max(160).default(''),
+     * ONLY THE MARK IS SENT. The printed name is taken from the session,
+     * not from the request: a countersignature is by whoever is signed in,
+     * and asking an app to say who that is invites it to say somebody else.
+     * It also saves the one person who cannot usefully be asked -- the
+     * courier -- from typing their own name at a door in the rain.
+     *
+     * Note what is NOT offered: the no-signature escape above. That exists
+     * because persuading somebody ELSE to scrawl on a phone stops the
+     * round. The courier is the person holding the phone. */
     countersignStrokes: Strokes.or(z.array(z.never()).length(0)).default([]),
     note: z.string().trim().max(300).default(''),
 
@@ -403,14 +405,13 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
            says a two-party transfer happened when the system only ever saw
            one party, and it is the record a DEA question would be answered
            from. */
-        if (needsCountersignature(handling)
-            && (body.countersignedName === '' || body.countersignStrokes.length === 0)) {
+        if (needsCountersignature(handling) && body.countersignStrokes.length === 0) {
             res.status(400).json({
-                error: 'This is a controlled drug, so both parties sign for it: '
+                error: 'This is a controlled drug, so both of you sign for it: '
                     + `${body.signedName || 'the person receiving it'} and you. `
-                    + 'Add your own name and signature before recording the delivery.',
+                    + 'Add your own signature before recording the delivery.',
                 code: 'deliver.countersignatureRequired',
-                need: ['countersignedName', 'countersignStrokes'],
+                need: ['countersignStrokes'],
             });
             return;
         }
@@ -467,13 +468,15 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                moment. Always drawn: the typed-initials route exists because
                persuading somebody ELSE to scrawl on a phone stops the round,
                and that argument does not reach the person holding it. */
+            /* From the session, never from the request. See the schema. */
+            const countersignedName = req.session.user?.name || actorOf(req);
             let countersignatureKey = '';
             if (body.countersignStrokes.length > 0) {
                 const counter = await client.execute({
                     sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_by, captured_at, lat, lng)
                           VALUES (?, 'delivery', ?, ?, 'drawn', ?, ?, ?, ?) RETURNING id`,
                     args: [
-                        projectId, body.countersignedName, JSON.stringify(body.countersignStrokes),
+                        projectId, countersignedName, JSON.stringify(body.countersignStrokes),
                         actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null,
                     ],
                 });
@@ -489,10 +492,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                     type: 'delivered', at,
                     signedName: body.signedName,
                     signatureKey: `local:signature:${Number(sig.rows[0]!['id'])}`,
-                    ...(countersignatureKey === '' ? {} : {
-                        countersignedName: body.countersignedName,
-                        countersignatureKey,
-                    }),
+                    ...(countersignatureKey === '' ? {} : { countersignedName, countersignatureKey }),
                     ...(body.lat !== undefined ? { lat: body.lat } : {}),
                     ...(body.lng !== undefined ? { lng: body.lng } : {}),
                     /* The signer explanation rides on the custody chain

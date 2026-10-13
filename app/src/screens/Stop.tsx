@@ -35,6 +35,8 @@ import { newId, type OutboxEntry } from '../lib/outbox';
 import { queueAndSend } from '../lib/queue';
 import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/pod';
 import { SignatureMark } from './SignatureMark';
+import { SignaturePad } from './SignaturePad';
+import { type Stroke } from '../lib/strokes';
 import { handwrittenInitials } from '../lib/handwriting';
 import { readablePhone } from '../lib/phone';
 import { needsSignerExplanation } from '../lib/handling';
@@ -72,6 +74,14 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const [detail, setDetail] = useState<OrderDetail | null>(null);
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
+    /* The courier's own mark, on a controlled drug only (ticket 7.13). §6 of
+       the offer letter promises every driver a documented two-signature
+       handoff for these, and the server refuses one without it. Drawn, never
+       derived: the typed-initials route above exists because persuading
+       somebody ELSE to scrawl on a phone stops the round, and the courier is
+       the person holding the phone. */
+    const [countersign, setCountersign] = useState<Stroke[]>([]);
+    const [countersigned, setCountersigned] = useState(false);
     /* ─────────────────────────────────────────────────────────────────
      * TYPED INITIALS ARE THE ONLY WAY TO SIGN HERE, by request.
      *
@@ -244,6 +254,11 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                 ...(courierFormFileId !== undefined ? { courierFormFileId } : {}),
                 ...(patientIdFileId !== undefined ? { patientIdFileId } : {}),
                 identifiersChecked: checked,
+                /* Only the mark. The printed name comes from the session on
+                   the server, because a countersignature is by whoever is
+                   signed in and an app saying who that is could say somebody
+                   else. */
+                ...(needsCountersign ? { countersignStrokes: countersign } : {}),
             },
             `Delivery for ${stop.recipientName}`,
         );
@@ -298,8 +313,12 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const idSatisfied = !needsId || idPhoto !== null;
     const proofSatisfied = canPhotograph ? formPhoto !== null : auto.length > 0;
     const blockedByStorage = needsId && !canPhotograph;
+    /* Not just "some strokes": looksSigned rejects a tap, which is what a
+       phone handed over and poked produces. */
+    const needsCountersign = stop.controlled === true;
+    const countersignSatisfied = !needsCountersign || countersigned;
     const canDeliver = signedName.trim().length > 1 && proofSatisfied && idSatisfied
-        && signerExplained && !blockedByStorage && !busy;
+        && signerExplained && countersignSatisfied && !blockedByStorage && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
     const knowsPackages = (detail?.packages.length ?? 0) > 0;
@@ -514,6 +533,35 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                             )}
                         </>
                     )}
+                    {/* CONTROLLED DRUG: BOTH OF YOU SIGN.
+                        
+                        §6 of the offer letter, in writing to every driver:
+                        "Controlled-substance items require a documented
+                        two-signature handoff." Above is the person receiving
+                        it; this is the courier releasing it.
+
+                        No skip. An ordinary doorstep may record that nobody
+                        signed, at the cost of a written reason, because a
+                        screen that will not move stops the round. That
+                        argument is about persuading somebody else; this is
+                        the courier's own hand on their own phone. */}
+                    {needsCountersign && (
+                        <>
+                            <Text style={[styles.label, styles.warnLabel]}>
+                                CONTROLLED  ·  your signature too
+                            </Text>
+                            <SignaturePad
+                                label={`Your signature, releasing this to ${stop.recipientName}`}
+                                onChange={(strokes, signed) => { setCountersign(strokes); setCountersigned(signed); }}
+                            />
+                            <Text style={styles.photoNote}>
+                                Your name is taken from the account you are signed in to, so there is
+                                nothing to type. This is recorded beside their signature and cannot be
+                                changed afterwards.
+                            </Text>
+                        </>
+                    )}
+
                     {blockedByStorage && (
                         <Text style={styles.photoNote}>
                             This delivery is marked ID Required and photo storage is unavailable, so it

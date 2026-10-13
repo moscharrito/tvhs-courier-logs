@@ -25,12 +25,19 @@ export interface PickupOrder {
     orderId: number;
     externalRef: string;
     packages: number;
+    controlled?: boolean;
 }
 
 export interface PickupSite {
     site: { id: number; code: string; name: string };
     orders: PickupOrder[];
     packages: number;
+    /* True when any order in this tote is controlled, so the screen can ask
+       for the courier's own signature BEFORE they tap Record rather than
+       discovering it from a refusal with the pharmacist walking away.
+       Optional because a phone may still be running against a server that
+       predates it, and the server refuses either way. */
+    controlled?: boolean;
 }
 
 export interface PickupBoard {

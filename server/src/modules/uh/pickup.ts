@@ -73,16 +73,21 @@ const Pickup = z.object({
      *
      * So the row says which, and the proof of collection says it too. */
     captureMethod: z.enum(['drawn', 'initials']).default('drawn'),
-    /* THE COURIER'S OWN SIGNATURE, when the batch holds a controlled drug.
+    /* THE COURIER'S OWN SIGNATURE, on a controlled-substance handover.
      *
      * §6 of the offer letter promises every driver "a documented
-     * two-signature handoff" for controlled items. signedName above is the
-     * pharmacy handing over; this is the courier taking it away.
+     * two-signature handoff" for controlled items. Everything above is the
+     * person RECEIVING custody; this is the person giving it up.
      *
-     * The no-signature escape above does not reach this one. It exists
-     * because persuading a pharmacist to scrawl on a phone stops the round;
-     * the courier is the person holding the phone. */
-    countersignedName: z.string().trim().max(160).default(''),
+     * ONLY THE MARK IS SENT. The printed name is taken from the session,
+     * not from the request: a countersignature is by whoever is signed in,
+     * and asking an app to say who that is invites it to say somebody else.
+     * It also saves the one person who cannot usefully be asked -- the
+     * courier -- from typing their own name at a door in the rain.
+     *
+     * Note what is NOT offered: the no-signature escape above. That exists
+     * because persuading somebody ELSE to scrawl on a phone stops the
+     * round. The courier is the person holding the phone. */
     countersignStrokes: Strokes.or(z.array(z.never()).length(0)).default([]),
     /** What the courier actually counted into the vehicle. */
     countedPackages: z.number().int().min(0).max(5000),
@@ -150,27 +155,36 @@ export function createPickupRouter({ client }: { client: Client }): Router {
     function groupBySite(rows: Awaited<ReturnType<typeof waiting>>) {
         const groups = new Map<number, {
             site: { id: number; code: string; name: string };
-            orders: Array<{ orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number }>;
+            orders: Array<{ orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled: boolean }>;
             packages: number;
+            /* True when ANY order here is controlled, which is what decides
+               whether this collection needs the courier's signature as well
+               as the pharmacy's. Computed here so the phone can ask for the
+               mark BEFORE the courier taps Record, rather than discovering
+               it from a 400 with the pharmacist already walking away. */
+            controlled: boolean;
         }>();
         for (const r of rows) {
             const siteId = Number(r['site_id']);
             if (!groups.has(siteId)) {
                 groups.set(siteId, {
                     site: { id: siteId, code: String(r['site_code']), name: String(r['site_name']) },
-                    orders: [], packages: 0,
+                    orders: [], packages: 0, controlled: false,
                 });
             }
             const g = groups.get(siteId)!;
             const packages = Number(r['package_count']);
+            const controlled = Number(r['controlled']) === 1;
             g.orders.push({
                 orderId: Number(r['id']),
                 sequence: Number(r['sequence']),
                 recipientName: String(r['recipient_name']),
                 externalRef: String(r['external_ref']),
                 packages,
+                controlled,
             });
             g.packages += packages;
+            if (controlled) g.controlled = true;
         }
         return [...groups.values()];
     }
@@ -232,13 +246,12 @@ export function createPickupRouter({ client }: { client: Client }): Router {
            order would be the same mark recorded several times, and asking
            for it only for part of a tote would mean the courier signs for
            some of what they are carrying. */
-        if (rows.some((r) => Number(r['controlled']) === 1)
-            && (body.countersignedName === '' || body.countersignStrokes.length === 0)) {
+        if (rows.some((r) => Number(r['controlled']) === 1) && body.countersignStrokes.length === 0) {
             res.status(400).json({
-                error: 'This collection includes a controlled drug, so both parties sign for it: '
-                    + 'the pharmacy and you. Add your own name and signature before recording the collection.',
+                error: 'This collection includes a controlled drug, so both of you sign for it: '
+                    + 'the pharmacy and you. Add your own signature before recording the collection.',
                 code: 'pickup.countersignatureRequired',
-                need: ['countersignedName', 'countersignStrokes'],
+                need: ['countersignStrokes'],
             });
             return;
         }
@@ -282,13 +295,15 @@ export function createPickupRouter({ client }: { client: Client }): Router {
            typed-initials route exists because persuading somebody ELSE to
            scrawl on a phone stops the round, and that does not apply to the
            person holding it. */
+        /* From the session, never from the request. See the schema. */
+        const countersignedName = req.session.user?.name || actorOf(req);
         let countersignatureKey = '';
         if (body.countersignStrokes.length > 0) {
             const counterRs = await client.execute({
                 sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_by, captured_at, lat, lng)
                       VALUES (?, 'pickup', ?, ?, 'drawn', ?, ?, ?, ?) RETURNING id`,
                 args: [
-                    project.id, body.countersignedName, JSON.stringify(body.countersignStrokes),
+                    project.id, countersignedName, JSON.stringify(body.countersignStrokes),
                     actorOf(req), at.toISOString(), body.lat ?? null, body.lng ?? null,
                 ],
             });
@@ -319,10 +334,7 @@ export function createPickupRouter({ client }: { client: Client }): Router {
                         at,
                         signedName: body.signedName,
                         signatureKey,
-                        ...(countersignatureKey === '' ? {} : {
-                            countersignedName: body.countersignedName,
-                            countersignatureKey,
-                        }),
+                        ...(countersignatureKey === '' ? {} : { countersignedName, countersignatureKey }),
                         ...(body.lat !== undefined ? { lat: body.lat } : {}),
                         ...(body.lng !== undefined ? { lng: body.lng } : {}),
                         /* The count note and the missing-signature reason are

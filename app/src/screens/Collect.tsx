@@ -28,6 +28,8 @@ import { queueAndSend } from '../lib/queue';
 import { canCollect, checkCount, pickupLabel, type PickupBoard, type PickupSite } from '../lib/pickup';
 import { handwrittenInitials } from '../lib/handwriting';
 import { SignatureMark } from './SignatureMark';
+import { SignaturePad } from './SignaturePad';
+import { type Stroke } from '../lib/strokes';
 
 export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     token: string;
@@ -42,6 +44,8 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const [counted, setCounted] = useState('');
     const [note, setNote] = useState('');
     const [signedName, setSignedName] = useState('');
+    const [countersign, setCountersign] = useState<Stroke[]>([]);
+    const [countersigned, setCountersigned] = useState(false);
     /* ─────────────────────────────────────────────────────────────────
      * TYPED INITIALS ARE THE ONLY WAY TO SIGN HERE, by request.
      *
@@ -77,7 +81,12 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     /* Derived from the name as it is typed, so the courier sees the mark
        before they record it, with the person handing over stood there. */
     const auto = handwrittenInitials(signedName);
-    const ready = site !== null && canCollect(check, signedName, auto.length);
+    /* The courier's own mark, when the tote holds a controlled drug (7.13).
+       §6 of the offer letter promises a documented two-signature handoff,
+       and the server refuses the collection without it. */
+    const needsCountersign = site?.controlled === true;
+    const ready = site !== null && canCollect(check, signedName, auto.length)
+        && (!needsCountersign || countersigned);
 
     const submit = async () => {
         if (site === null || !ready) return;
@@ -99,6 +108,10 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                     noSignatureReason: '',
                     countedPackages: check.kind === 'incomplete' ? 0 : check.counted,
                     note: note.trim(),
+                    /* Only the mark: the printed name is taken from the
+                       session on the server, because a countersignature is
+                       by whoever is signed in. */
+                    ...(needsCountersign ? { countersignStrokes: countersign } : {}),
                     at: new Date().toISOString(),
                 },
                 label: pickupLabel(site),
@@ -231,6 +244,32 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             standing in front of them. */}
                         <SignatureMark strokes={auto} />
 
+                        {/* CONTROLLED DRUG IN THIS TOTE: BOTH OF YOU SIGN.
+                            
+                            §6 of the offer letter, to every driver:
+                            "Controlled-substance items require a documented
+                            two-signature handoff." Above is the pharmacy
+                            handing over; this is the courier taking it away.
+
+                            One mark covers the tote, because the handover is
+                            one act: a lead hands it over and the courier
+                            drives off with all of it. */}
+                        {needsCountersign && (
+                            <>
+                                <Text style={[styles.label, styles.warnLabel]}>
+                                    CONTROLLED  ·  your signature too
+                                </Text>
+                                <SignaturePad
+                                    label="Your signature, taking this collection"
+                                    onChange={(strokes, signed) => { setCountersign(strokes); setCountersigned(signed); }}
+                                />
+                                <Text style={styles.hint}>
+                                    Your name comes from the account you are signed in to. This is
+                                    recorded beside the pharmacy signature and cannot be changed after.
+                                </Text>
+                            </>
+                        )}
+
                         <View style={styles.actions}>
                             <CardButton
                                 title="Record the collection"
@@ -266,6 +305,9 @@ const styles = StyleSheet.create({
     chips: { flexDirection: 'row', gap: SPACE.sm, marginTop: SPACE.sm },
     sheet: { flex: 1 },
     label: { fontSize: TYPE.meta, color: theme.muted, marginTop: SPACE.md, marginBottom: SPACE.xs },
+    /* Same treatment as the ID-required label on the stop screen: this is
+       the one thing on this page that will refuse the collection. */
+    warnLabel: { color: theme.danger, fontWeight: '700' as const },
     input: {
         backgroundColor: 'rgba(255,255,255,0.85)',
         borderWidth: 1,
