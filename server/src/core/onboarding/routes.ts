@@ -209,7 +209,7 @@ export function createPublicApplicationsRouter({ client }: Deps): Router {
      * the person it is about. */
     router.get('/api/me/application', wrap(async (req, res) => {
         const me = req.session.user;
-        if (!me) { res.status(401).json({ error: 'Not authenticated' }); return; }
+        if (!me) { res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' }); return; }
 
         const rs = await run(
             `SELECT a.*, p.code AS project_code, p.name AS project_name, p.timezone AS project_timezone
@@ -272,7 +272,7 @@ export function createPublicApplicationsRouter({ client }: Deps): Router {
      */
     router.put('/api/me/application/checks/:kind', wrap(async (req, res) => {
         const me = req.session.user;
-        if (!me) { res.status(401).json({ error: 'Not authenticated' }); return; }
+        if (!me) { res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' }); return; }
 
         const kind = String(req.params['kind']);
         if (!(CHECK_KINDS as readonly string[]).includes(kind)) {

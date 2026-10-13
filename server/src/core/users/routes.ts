@@ -105,7 +105,7 @@ interface MembershipRow {
 
 function requireAdmin(req: Request, res: Response, next: NextFunction): void {
     if (!req.session.user) {
-        res.status(401).json({ error: 'Not authenticated' });
+        res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' });
         return;
     }
     if (req.session.user.role !== 'admin') {
@@ -304,7 +304,7 @@ export function createUsersRouter({ client, store }: Deps): Router {
      */
     router.post('/api/me/password', wrap(async (req, res) => {
         if (!req.session.user) {
-            res.status(401).json({ error: 'Not authenticated' });
+            res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' });
             return;
         }
         const body = parse(ChangeOwnPassword, req.body, res);
@@ -325,7 +325,7 @@ export function createUsersRouter({ client, store }: Deps): Router {
             /* A live session for a user that no longer exists. Ending it is
                the only honest answer. */
             await req.sessions.destroy();
-            res.status(401).json({ error: 'Not authenticated' });
+            res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' });
             return;
         }
 

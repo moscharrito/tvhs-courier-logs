@@ -346,12 +346,12 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
     }
 
     router.get('/api/devices', wrap(async (req, res) => {
-        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' }); return; }
         res.json(await listFor(req.session.user.username, deviceTokenOf(req)));
     }));
 
     router.get('/api/users/:username/devices', wrap(async (req, res) => {
-        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' }); return; }
         if (req.session.user.role !== 'admin') { res.status(403).json({ error: 'Admin access required' }); return; }
         const username = String(req.params['username']).toLowerCase();
         // Reading someone else's devices is reading about a person; record it.
@@ -367,7 +367,7 @@ export function createDevicesRouter({ client, config, throttles }: Deps): Router
      * would look like it had been handled when it had not.
      */
     router.delete('/api/devices/:id', wrap(async (req, res) => {
-        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' }); return; }
         const prefix = String(req.params['id']).slice(0, 12);
         const rs = await client.execute({
             sql: `SELECT d.id, u.username FROM devices d JOIN users u ON u.id = d.user_id

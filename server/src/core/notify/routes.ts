@@ -115,7 +115,7 @@ export function createPushDevicesRouter({ client }: { client: Client }): Router 
     const meOf = (req: Request) => req.session.user?.username ?? '';
 
     const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+        if (!req.session.user) { res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' }); return; }
         next();
     };
 

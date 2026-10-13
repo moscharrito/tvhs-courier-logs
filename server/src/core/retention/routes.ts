@@ -35,7 +35,7 @@ const Purge = z.object({
 
 function requireAdmin(req: Request, res: Response, next: NextFunction): void {
     if (!req.session.user) {
-        res.status(401).json({ error: 'Not authenticated' });
+        res.status(401).json({ error: 'Not authenticated', code: 'auth.sessionEnded' });
         return;
     }
     if (req.session.user.role !== 'admin') {

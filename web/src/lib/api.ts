@@ -21,6 +21,44 @@ export class ApiError extends Error {
     }
 }
 
+/* ───────────────────────────── a session that ended is not an error ──────
+ *
+ * A pharmacist left the portal open over lunch. The session idled out after
+ * thirty minutes, the next poll came back 401, and the page rendered it the
+ * way it renders any failure: a red "Not authenticated" over a screen still
+ * showing "Live · updated just now" and four zeros.
+ *
+ * The banner was the small half. The zeros were the dangerous half -- SENT
+ * TO US 0, DELIVERED 0 -- because a counter reading that does not think
+ * "my session expired", they think their deliveries have gone.
+ *
+ * So one place decides: a 401 from anything except signing in means the
+ * session is over, and the app says so by showing the sign-in page, which is
+ * where that person was heading anyway. Registered by the auth provider
+ * rather than imported from it, because this file knows about fetch and
+ * should not know about React.
+ */
+let onSessionEnded: (() => void) | null = null;
+
+export function whenSessionEnds(fn: () => void): void {
+    onSessionEnded = fn;
+}
+
+/* WHICH 401 THIS IS, FROM THE SERVER RATHER THAN FROM THE URL.
+ *
+ * Two different facts arrive as 401. "Your session is over" is one.
+ * "The password you just retyped is wrong" is the other, and POST
+ * /api/devices/enrol answers it that way to somebody who is perfectly well
+ * signed in and setting up a PIN -- an existing test caught this, after a
+ * first version of this file keyed off the URL and signed them out.
+ *
+ * A URL list would have rotted the first time an endpoint checked a
+ * password. The server knows which fact it means, so it tags the first one
+ * and this reads the tag. An untagged 401 is left to the page, which is the
+ * safe direction: the worst case is the old banner, not an unwanted
+ * sign-out. */
+const SESSION_ENDED = 'auth.sessionEnded';
+
 export async function api<T = unknown>(url: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
     const { json, ...rest } = init;
     const res = await fetch(url, {
@@ -34,6 +72,10 @@ export async function api<T = unknown>(url: string, init: RequestInit & { json?:
     try { body = text ? JSON.parse(text) : null; } catch { body = null; }
     if (!res.ok) {
         const b = (body ?? {}) as { error?: string; details?: string[]; code?: string };
+        /* Before the throw, so the shell is already on its way to the
+           sign-in page by the time a caller's catch runs. Whatever message
+           that catch sets lands on a component that is unmounting. */
+        if (res.status === 401 && b.code === SESSION_ENDED) onSessionEnded?.();
         throw new ApiError(res.status, b.error || `Request failed (${res.status})`, b.details ?? [], b.code);
     }
     return body as T;

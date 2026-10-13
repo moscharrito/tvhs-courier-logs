@@ -1,7 +1,7 @@
 /* Session state for the shell: who is signed in and which projects they belong to. */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, ApiError, type ProjectMembership, type SessionUser } from '../lib/api';
+import { api, ApiError, type ProjectMembership, type SessionUser, whenSessionEnds } from '../lib/api';
 import { clearOutbox, setOutboxUser, startOutbox } from '../lib/outbox';
 import { deviceZone } from '../lib/when';
 
@@ -75,6 +75,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await clearOutbox().catch(() => { /* nothing queued, or no IndexedDB */ });
         setUser(null);
         setProjects([]);
+    }, []);
+
+    /* ANY 401, ANYWHERE, ENDS THE SESSION HERE.
+     *
+     * refresh() already handled the one on /api/session. Every other call
+     * threw into whichever page made it, and the portal rendered that as a
+     * red banner over four zeros -- which reads as "your deliveries are
+     * gone" rather than "you have been signed out". One handler, registered
+     * once, so a page added later cannot forget it.
+     *
+     * The local state only. No /api/logout call: the session the server
+     * holds is already over, that is what the 401 said, and posting to it
+     * would be a second refusal to ignore. The outbox is left alone too --
+     * it belongs to the person, not the session, and they are about to sign
+     * back in on the same device. */
+    useEffect(() => {
+        whenSessionEnds(() => {
+            setUser(null);
+            setProjects([]);
+        });
     }, []);
 
     useEffect(() => { void refresh(); }, [refresh]);

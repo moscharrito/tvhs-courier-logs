@@ -48,7 +48,23 @@ export function createRequireProject(client: Client): RequestHandler {
     return (req: Request, res: Response, next: NextFunction) => {
         (async () => {
             if (!req.session.user) {
-                res.status(401).json({ error: 'Not authenticated' });
+                res.status(401).json({
+            /* THE CODE IS LOAD-BEARING, not decoration.
+             *
+             * Two different facts arrive as 401 and the browser cannot tell
+             * them apart from the status: this one ("your session is over")
+             * and a password check that failed while you are perfectly well
+             * signed in, which is what POST /devices/enrol answers when
+             * somebody retypes their password wrongly to set up a PIN.
+             *
+             * The web app signs you out on the first and shows the message
+             * on the second. Keying that off the URL meant a list of
+             * exceptions that would rot; keying it off the sentence meant
+             * reading English. The server knows which it means, so it says
+             * so. */
+            error: 'Not authenticated',
+            code: 'auth.sessionEnded',
+        });
                 return;
             }
             const pid = String(req.params['pid'] ?? '');
