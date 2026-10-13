@@ -395,6 +395,10 @@ const MATRIX = [
     ['POST', `${UH}/notifications/read`, UH_MEMBER, 'mark mine read'],
     ['POST', '/api/me/push-devices', SIGNED_IN, 'this phone will take push'],
     ['DELETE', '/api/me/push-devices/999999', SIGNED_IN, 'it will not any more'],
+    /* No role row: the check is per order, inside, because a pharmacy may
+       read its own deliveries and nobody else's. uh-order-messages covers it. */
+    ['GET', `${UH}/threads/999999`, UH_MEMBER, 'a thread is scoped to the order, not to a role'],
+    ['POST', `${UH}/threads/999999`, UH_MEMBER, 'same check, same place'],
     ['GET', `${UH}/runs/propose`, UH_STAFF, 'the shape of the whole day across every counter, which no single pharmacy may read'],
     ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],

@@ -15,6 +15,7 @@ import { stampFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
+import { Thread } from '../../app/Thread';
 import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
 
@@ -278,6 +279,18 @@ export function OrderDetail() {
                     </tbody>
                 </table>
                 <Pager of={pagedCustody} noun="events" />
+            </Section>
+
+            {/* Beside the custody trail, not in a separate inbox. What was
+                SAID about a delivery and what HAPPENED to it are read
+                together when somebody is working out which of the two is
+                wrong. */}
+            <Section
+                id="uh.order.thread"
+                title="Messages"
+                summary="with the pharmacy, about this delivery"
+            >
+                <Thread base={`/api/projects/${code}/uh`} orderId={order.id} label="" />
             </Section>
         </>
     );

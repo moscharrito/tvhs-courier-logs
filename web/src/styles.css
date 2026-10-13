@@ -129,6 +129,21 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 /* Pages of six (ticket 5.15). The count sits between the two buttons because
    it is the part that matters: a page of six with no total reads exactly like
    a list of six. */
+/* The conversation about one delivery (ticket 7.12). Deliberately plain:
+   this box takes typing from nine organisations and shows it to all of them,
+   so there is no markdown, no link detection and no HTML. */
+.izy-thread { margin-top: 16px; }
+.izy-thread h3 { margin: 0 0 8px; font-size: 14px; }
+.izy-thread h3:empty { display: none; }
+.izy-thread-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.izy-thread-list li { border-left: 3px solid var(--izy-rule, #d9e0dc); padding: 2px 0 2px 10px; }
+.izy-thread-who { font-size: 13px; }
+/* pre-wrap so a counter's line breaks survive, and break-word so a long
+   reference pasted in does not widen the panel it sits in. */
+.izy-thread-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.izy-thread-write textarea { width: 100%; font: inherit; padding: 8px; border-radius: 6px; border: 1px solid var(--izy-rule, #d9e0dc); }
+.izy-thread-write .izy-field { min-width: 0; }
+
 .izy-pager-shell { container-type: inline-size; }
 .izy-pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
 /* Narrow enough that Previous, the count and Next cannot share a line: a

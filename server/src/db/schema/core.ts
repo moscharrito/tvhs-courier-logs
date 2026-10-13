@@ -615,6 +615,10 @@ export const NOTIFICATION_KINDS = [
      * never a patient. See core/notify/ses.ts. */
     'delivery.completed',
     'delivery.failed',
+    /* Somebody tagged you on a delivery's thread (ticket 7.12). The body
+     * carries who and which delivery, by its reference, and never the
+     * patient, the address or the message. It is read on a lock screen. */
+    'thread.mention',
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 

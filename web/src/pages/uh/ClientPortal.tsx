@@ -18,6 +18,7 @@ import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
+import { Thread } from '../../app/Thread';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { useLive, agoLabel } from '../../app/useLive';
 import { describeFilter } from '../../lib/drilldown';
@@ -739,6 +740,15 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                     )}
                 </>
             )}
+
+            {/* OUTSIDE the proof block, so it is there before a delivery has
+                been made as well as after.
+                
+                The point of this panel is the delivery that went wrong, and
+                those are the ones with no proof to show: a counter whose
+                package never arrived needs somewhere to say so more than one
+                whose package did. */}
+            <Thread base={`/api/projects/${code}/uh`} orderId={order.id} label="Messages about this delivery" />
         </section>
     );
 }

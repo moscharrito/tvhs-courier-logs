@@ -42,6 +42,7 @@ import { createGeoLookup } from './core/geo/lookup';
 import { createGeocodeRouter } from './modules/uh/geocode';
 import { createDiscrepancyRouter } from './modules/uh/discrepancies';
 import { createGoLiveRouter } from './modules/uh/go-live';
+import { createOrderMessagesRouter } from './modules/uh/order-messages';
 import { MIGRATIONS_FOLDER } from './db/migrate';
 import { todayIn } from './core/dates';
 import { createHealthRouter, type StatisticsState } from './core/http/health';
@@ -336,6 +337,20 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
 
     /* The shadow week's log of what did not match (ticket 5.2). */
     legacy.app.use('/api/projects/:pid/uh/discrepancies', requireProject, createDiscrepancyRouter({ client: database.client }));
+
+    /* The conversation about one delivery (7.12).
+     *
+     * Mounted on its own rather than under /orders or under /client, because
+     * both sides of it are the same thread: dispatch reads it from the order
+     * page and a pharmacy reads it from the portal, and two routes would be
+     * two scope checks that eventually disagree. No role guard here on
+     * purpose -- the check is per order, inside, since a pharmacy may see
+     * its own deliveries and nobody else's. */
+    legacy.app.use(
+        '/api/projects/:pid/uh/threads',
+        requireProject,
+        createOrderMessagesRouter({ client: database.client }),
+    );
 
     /* Go-live readiness, and the daily report as a recorded send (5.3). */
     legacy.app.use('/api/projects/:pid/uh/go-live', requireProject, createGoLiveRouter({

@@ -82,7 +82,7 @@ const OLD_SCHEMA = `
 `;
 
 // Keep in step with drizzle/meta/_journal.json.
-const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications', '0034_onboarding_submissions', '0035_signature_capture_method', '0036_reattempt', '0037_mail_suppressions', '0038_paper_form_and_identifiers', '0039_patient_messages', '0040_patient_message_stages', '0041_remove_business_center', '0042_site_lead_role', '0043_facility_transfers', '0044_dry_run_efforts', '0045_out_of_area_authorisation', '0046_zip_rates', '0047_orders_updated_at', '0048_demo_project', '0049_must_change_password', '0050_retire_must_change_password', '0051_prescription_handling'];
+const MIGRATION_TAGS = ['0000_baseline', '0001_projects', '0002_sessions', '0003_users', '0004_audit', '0005_uh_project', '0006_sites', '0007_pricing', '0008_daily_lists', '0009_custody', '0010_runs', '0011_devices', '0012_signatures', '0013_files', '0014_stop_flow', '0015_return_flow', '0016_client_events', '0017_invoices', '0018_invoice_performed_at', '0019_mfa', '0020_retention', '0021_run_stops_project_run_idx', '0022_geocodes', '0023_out_of_area_basis', '0024_discrepancies', '0025_report_sends', '0026_device_pin', '0027_drop_mfa', '0028_three_roles', '0029_driver_applications', '0030_shifts', '0031_delivery_requests', '0032_shift_positions', '0033_notifications', '0034_onboarding_submissions', '0035_signature_capture_method', '0036_reattempt', '0037_mail_suppressions', '0038_paper_form_and_identifiers', '0039_patient_messages', '0040_patient_message_stages', '0041_remove_business_center', '0042_site_lead_role', '0043_facility_transfers', '0044_dry_run_efforts', '0045_out_of_area_authorisation', '0046_zip_rates', '0047_orders_updated_at', '0048_demo_project', '0049_must_change_password', '0050_retire_must_change_password', '0051_prescription_handling', '0052_order_messages'];
 const MIGRATION_COUNT = MIGRATION_TAGS.length;
 
 // users after 0003 (rebuilt in place; SQLite quotes the name after RENAME).
@@ -203,7 +203,7 @@ describe('fresh database', () => {
                 'geocodes_key_unique', 'import_mappings_site_unique', 'invoice_adjustments_invoice_idx', 'invoice_lines_invoice_idx',
                 'invoice_lines_invoice_order_unique', 'invoices_project_number_unique', 'invoices_project_period_idx', 'logs_project_id_idx',
                 'mail_suppressions_address_unique', 'memberships_project_id_idx', 'memberships_user_project_unique', 'notifications_unsent_idx', 'notifications_user_idx',
-                'onboarding_checks_application_idx', 'onboarding_checks_application_kind_unique', 'orders_dedupe_idx', 'orders_list_idx',
+                'onboarding_checks_application_idx', 'onboarding_checks_application_kind_unique', 'order_messages_order_idx', 'orders_dedupe_idx', 'orders_list_idx',
                 'orders_one_open_reattempt', 'orders_project_date_idx', 'orders_project_updated_idx', 'orders_reattempt_of_idx', 'orders_site_date_idx', 'orders_status_idx', 'packages_order_idx',
                 'patient_messages_once', 'patient_messages_unsent_idx', 'patient_optouts_phone_unique',
                 'price_schedules_project_from_unique', 'projects_code_unique', 'push_devices_token_unique', 'push_devices_user_idx',
@@ -217,6 +217,12 @@ describe('fresh database', () => {
             expect(triggers.rows.map((r) => r.name)).toEqual([
                 'audit_events_no_delete', 'audit_events_no_update',
                 'custody_events_no_delete', 'custody_events_no_update',
+                /* Migration 0052, and the same argument as custody: a thread
+                   somebody can revise afterwards is not evidence of what was
+                   said at the time, and these are read when a delivery is
+                   disputed. Both purge paths drop and restore them around a
+                   delete, visibly, exactly as they do for custody_events. */
+                'order_messages_no_delete', 'order_messages_no_update',
                 /* Migration 0047. The dispatch board polls "what changed
                    since", and before these two the column it asks about was
                    maintained by whichever writer remembered: three did not.

@@ -282,7 +282,9 @@ if (keys.length > 0) {
 }
 
 await run('DROP TRIGGER IF EXISTS custody_events_no_delete');
+await run('DROP TRIGGER IF EXISTS order_messages_no_delete');
 try {
+    await run(`DELETE FROM order_messages WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM files WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM patient_messages WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM custody_events WHERE order_id IN (${list})`, ids);
@@ -320,6 +322,9 @@ try {
     await run(`CREATE TRIGGER IF NOT EXISTS custody_events_no_delete
         BEFORE DELETE ON custody_events
         BEGIN SELECT RAISE(ABORT, 'custody_events is append-only'); END`);
+    await run(`CREATE TRIGGER IF NOT EXISTS order_messages_no_delete
+        BEFORE DELETE ON order_messages
+        BEGIN SELECT RAISE(ABORT, 'order_messages is append-only'); END`);
 }
 
 const trigger = await run(

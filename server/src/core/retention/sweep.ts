@@ -288,9 +288,17 @@ export async function purge(client: Client, options: PurgeOptions): Promise<Purg
      * visibly, exactly as the simulator's cleanup does. It is never relaxed
      * for the application, only for a purge somebody approved by count. */
     await client.execute('DROP TRIGGER IF EXISTS custody_events_no_delete');
+    /* order_messages is append-only for the same reason and has to go for a
+     * stronger one: a thread reading "the insulin for Mrs Vargas never
+     * arrived" is PHI, and leaving it behind when its order is purged would
+     * be a retention policy that quietly exempts the free-text part of the
+     * record -- which is the part most likely to name somebody. */
+    await client.execute('DROP TRIGGER IF EXISTS order_messages_no_delete');
     try {
         for (const chunk of chunks(ids, 200)) {
             const list = chunk.map(() => '?').join(',');
+            detail['order_messages'] = (detail['order_messages'] ?? 0)
+                + (await client.execute({ sql: `DELETE FROM order_messages WHERE order_id IN (${list})`, args: chunk })).rowsAffected;
             detail['custody_events'] = (detail['custody_events'] ?? 0)
                 + (await client.execute({ sql: `DELETE FROM custody_events WHERE order_id IN (${list})`, args: chunk })).rowsAffected;
             detail['run_stops'] = (detail['run_stops'] ?? 0)
@@ -304,6 +312,10 @@ export async function purge(client: Client, options: PurgeOptions): Promise<Purg
         await client.execute(`CREATE TRIGGER IF NOT EXISTS custody_events_no_delete BEFORE DELETE ON custody_events
 BEGIN
 	SELECT RAISE(ABORT, 'custody_events is append-only');
+END`);
+        await client.execute(`CREATE TRIGGER IF NOT EXISTS order_messages_no_delete BEFORE DELETE ON order_messages
+BEGIN
+	SELECT RAISE(ABORT, 'order_messages is append-only');
 END`);
     }
 
