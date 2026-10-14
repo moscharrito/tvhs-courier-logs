@@ -23,7 +23,16 @@ if (process.env.NODE_ENV !== 'production') {
 
 function configOrExit(): Config {
     try {
-        return loadConfig();
+        const config = loadConfig();
+        /* Wrong, but not wrong enough to refuse to start. On its own line and
+           loud, because the one that put this here -- Amazon Location half
+           configured by a blueprint that had not been given its keys yet --
+           took the service down and kept a week of work out of production
+           while master looked shipped. */
+        for (const warning of config.warnings) {
+            console.warn(`CONFIG WARNING  ${warning}`);
+        }
+        return config;
     } catch (err) {
         if (err instanceof ConfigError) {
             console.error(err.message);

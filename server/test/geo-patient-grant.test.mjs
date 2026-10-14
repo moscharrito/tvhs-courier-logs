@@ -134,9 +134,31 @@ describe('a signed agreement rather than a dated grant', () => {
         expect(config.geo.awsLocation).toBeUndefined();
     });
 
-    it('refuses a half-configured Amazon Location rather than failing at the first address', () => {
-        expect(() => load({ ...LOCATION, AWS_LOCATION_PLACE_INDEX: undefined }))
-            .toThrow(/partly configured/i);
+    it('warns about a half-configured Amazon Location and still boots', () => {
+        /* THE ONE THAT COST A WEEK. This used to throw, and render.yaml
+           carries three of the five values literally while the two
+           credentials are typed into Render by hand -- so the moment the
+           blueprint applied, the service saw three of five, refused to
+           start, and every deploy after it was rejected while master looked
+           shipped.
+
+           Three of five is not a contradiction. It is the normal half hour
+           between a blueprint applying and somebody pasting the keys in. An
+           optional integration being incomplete must never stop the service:
+           a courier cannot record a handover against a server that will not
+           boot, and deliveries do not need a geocoder. */
+        const config = load({ ...LOCATION, AWS_LOCATION_PLACE_INDEX: undefined });
+        expect(config.geo.awsLocation).toBeUndefined();
+        expect(config.warnings.join(' ')).toMatch(/partly configured/i);
+        expect(config.warnings.join(' ')).toMatch(/AWS_LOCATION_PLACE_INDEX/);
+    });
+
+    it('still refuses the one that is actually a contradiction', () => {
+        /* Claiming a BAA while Google is the only geocoder wired up would
+           send a delivery address to the one vendor whose terms exclude PHI.
+           That is not an incomplete setup, it is a wrong one. */
+        expect(() => load({ GEO_BAA_COVERS_PATIENT_ADDRESSES: 'true' }))
+            .toThrow(/not covered by any BAA|Google/i);
     });
 
     it('is off unless it is actually set', () => {

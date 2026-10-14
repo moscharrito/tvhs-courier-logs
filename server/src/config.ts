@@ -14,6 +14,10 @@ import { z } from 'zod';
 export type NodeEnv = 'development' | 'test' | 'production';
 
 export interface Config {
+    /** Wrong but not fatal. An optional integration that is half configured
+     *  belongs here: a courier cannot record a handover against a server
+     *  that refused to start. Logged at boot. */
+    warnings: string[];
     nodeEnv: NodeEnv;
     isProduction: boolean;
     port: number;
@@ -286,6 +290,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
     const parsed = EnvSchema.safeParse(cleaned);
     const problems: string[] = [];
+    /* Things that are wrong but must not stop the service starting. A
+       courier cannot record a handover against a server that will not boot,
+       so anything optional belongs here rather than in `problems`. Logged at
+       boot by index.ts and reported by `describe` below. */
+    const warnings: string[] = [];
     if (!parsed.success) {
         for (const issue of parsed.error.issues) {
             problems.push(`${issue.path.join('.') || 'env'}: ${issue.message}`);
@@ -460,7 +469,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ] as const;
     const locationSet = locationKeys.filter((k) => e[k]);
     if (locationSet.length > 0 && locationSet.length < locationKeys.length) {
-        problems.push(`Amazon Location is partly configured. Missing: ${locationKeys.filter((k) => !e[k]).join(', ')}`);
+        /* NOT A ConfigError, AND THE REASON IS A DEPLOY THAT DID NOT HAPPEN.
+         *
+         * This refused to boot, and that was the wrong severity by a long
+         * way. render.yaml carries the region, the index and the calculator
+         * as literal values and leaves the two credentials to be typed into
+         * Render by hand, so the instant the blueprint applies the service
+         * sees three of five and killed itself. Every deploy after that was
+         * rejected, Render kept the previous container alive, and a week of
+         * work sat in master looking shipped.
+         *
+         * Three of five is not a contradiction. It is the normal, expected
+         * half-hour between a blueprint applying and somebody pasting the
+         * keys in. An optional integration being incomplete must never stop
+         * the service: deliveries do not need a geocoder, and a courier
+         * cannot record a handover against a server that will not start.
+         *
+         * So it is loud and it is not fatal. The provider stays unavailable,
+         * /health says so, and the only thing that does not work is the
+         * thing that was never configured. */
+        warnings.push(
+            `Amazon Location is partly configured and is therefore OFF. Missing: ${locationKeys.filter((k) => !e[k]).join(', ')}`,
+        );
     } else if (locationSet.length === locationKeys.length) {
         awsLocation = {
             region: e.AWS_LOCATION_REGION as string,
@@ -493,6 +523,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (problems.length) throw new ConfigError(problems);
 
     return {
+        /* Said at boot, never thrown. See the Amazon Location block above. */
+        warnings,
         nodeEnv: e.NODE_ENV,
         isProduction,
         port: e.PORT,
