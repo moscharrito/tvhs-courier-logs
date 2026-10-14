@@ -410,13 +410,18 @@ step('  against the target University Health measure us by',
 /* ------------------------------------------------ 12. the notification */
 
 if (mailOn) {
+    /* Says what it proves and no more. This asked the endpoint for the
+       ADMIN's notifications and passed on a 200, while the notification for
+       a completed delivery is addressed to the pharmacy that sent the work.
+       It was green on a server that had never sent anything.
+
+       The real proof is further down, once the pharmacy account exists and
+       can be signed in as: a queued row becomes a sent one only when the
+       sweep has handed it to SES. */
     const notes = await call(`${UH}/notifications`);
-    step('a notification exists for the completed delivery', notes.status === 200, `${notes.status}`);
-    say('');
-    say('  The email itself is sent by the sweep within two minutes. Check the');
-    say('  inbox of a pharmacy account scoped to the Discharge Pharmacy.');
+    step('the notifications endpoint answers', notes.status === 200, `${notes.status}`);
 } else {
-    step('a notification exists for the completed delivery', 'skip', 'mail is not configured on this server');
+    step('the notifications endpoint answers', 'skip', 'mail is not configured on this server');
 }
 
 /* ────────────────────────────── what was built after this script was
@@ -636,6 +641,51 @@ if (!apply) {
     step('  and an ordinary counter is refused the whole page',
         counterTry.status === 403 && counterTry.body?.code === 'portal.notAManager',
         `${counterTry.status} ${counterTry.body?.code ?? ''}`);
+
+    /* ───────────────────────── was the email actually SENT? ────────────
+     *
+     * THE TRAP THIS EXISTS BECAUSE OF, AGAIN.
+     *
+     * /health reported `files: "configured"` for weeks against a bucket that
+     * refused every upload, because the field meant "somebody filled the
+     * form in". The notification step was the same shape: it asked whether
+     * an endpoint answered, and a reader scanning sixty green lines took
+     * that as "mail works".
+     *
+     * A notification is written immediately and SENT by the sweep, which
+     * runs every two minutes and sets sent_at when SES has accepted it. So
+     * this waits for that column rather than for a 200. If SES is still in
+     * its sandbox the row stays unsent, which is exactly the thing worth
+     * finding three weeks before the daily report to University Health
+     * starts depending on it.
+     */
+    if (mailOn) {
+        as('pharmacy');
+        const DEADLINE = Date.now() + 160000;
+        let sent = null;
+        let queued = null;
+        while (Date.now() < DEADLINE) {
+            const inbox = await call(`${UH}/notifications`);
+            const mine = (inbox.body?.notifications ?? [])
+                .filter((n) => n.kind === 'delivery.completed');
+            queued = mine.length;
+            sent = mine.find((n) => n.pushedAt !== null) ?? null;
+            if (sent) break;
+            await new Promise((r) => { setTimeout(r, 10000); });
+        }
+        step('the delivery notification reaches the pharmacy',
+            queued !== null && queued > 0,
+            `${queued ?? 0} queued for ${portalUser}`);
+        step('  and the sweep actually sent it, rather than queuing it for ever',
+            Boolean(sent),
+            sent
+                ? `sent ${sent.pushedAt}`
+                : 'still unsent after 160s. SES may be in its sandbox, or the sweep is not running.');
+        as('admin');
+    } else {
+        step('the delivery notification reaches the pharmacy', 'skip', 'mail is not configured on this server');
+        step('  and the sweep actually sent it, rather than queuing it for ever', 'skip', 'mail is not configured on this server');
+    }
 
     /* ───────────────────────── what was built in the last week ──────────
      *
