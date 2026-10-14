@@ -100,6 +100,27 @@ describe('a session somebody is using', () => {
 });
 
 describe('what does not count as somebody being there', () => {
+    it('does not exempt the dispatch board, which polls hardest of all', async () => {
+        /* Asked and answered on 14 October. Before this a dispatcher was
+           effectively never signed out, because the board refreshes every
+           fifteen seconds all day; now one who has not touched it for half
+           an hour is, like everybody else.
+
+           A board left untouched for thirty minutes is an unattended screen
+           showing patients' names, addresses and medications -- which is
+           exactly what an idle timeout is for. An exemption for the screen
+           that displays the most PHI for the longest would be the exemption
+           that mattered.
+
+           There is no allowlist of "active" screens, so this is the same
+           code path as every other test here. It is written down because a
+           future reader looking at a signed-out dispatcher will be tempted
+           to add one. */
+        await signIn();
+        await wait(31 * 60 * 1000);
+        expect(screen.getByText(/signed out because idle/)).toBeInTheDocument();
+    });
+
     it('is not kept alive by the portal polling itself', async () => {
         /* THE ONE THAT MATTERS. The client portal refreshes every fifteen
            seconds on a timer. If a request counted as activity, a tab left

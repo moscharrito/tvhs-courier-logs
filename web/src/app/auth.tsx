@@ -141,6 +141,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      * the room or not, and counting that as activity would mean a session
      * that never idles out as long as a tab is open somewhere -- which is
      * the opposite of what a thirty minute window is for.
+     *
+     * THE DISPATCH BOARD IS NOT EXEMPT, and that was asked and answered on
+     * 14 October rather than left to whoever reads this next.
+     *
+     * The board polls every fifteen seconds all day, so before this a
+     * dispatcher was effectively never signed out; now one who has not
+     * touched it for half an hour is. That was raised as a real cost -- it
+     * changes how a shift feels, and the first morning of the contract is a
+     * bad day to discover it -- and the owner's answer was to treat the
+     * board like everything else.
+     *
+     * It is the right answer. A board left untouched for thirty minutes is
+     * an unattended screen showing patients' names, addresses and
+     * medications, which is precisely what an idle timeout is for. An
+     * exemption for the screen that displays the most PHI for the longest
+     * would be the exemption that mattered.
+     *
+     * So: no allowlist of "active" screens, and no treating a timer as a
+     * person. If this is ever revisited, revisit the thirty minutes, not
+     * who it applies to.
      */
     useEffect(() => {
         if (!user) return undefined;
