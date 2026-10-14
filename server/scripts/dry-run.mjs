@@ -384,7 +384,16 @@ if (filesOn && formFileId !== undefined) {
     step('  and a photograph they can open', 'skip', 'no photograph was uploaded');
 }
 const pod = await call(`${UH}/client/orders/${orders[0].id}/pod.pdf`);
-step('  and a downloadable proof of delivery', pod.status === 200, `${pod.status}`);
+/* A 200 is not a document. This endpoint returns bytes, and "it answered"
+   was the same shape of claim as "a notification exists": true, and not
+   about the thing anybody cares about. A PDF starts %PDF- and a real one is
+   not three hundred bytes long. */
+const podLooksReal = pod.status === 200
+    && typeof pod.body === 'string' && pod.body.startsWith('%PDF-') && pod.body.length > 1000;
+step('  and a downloadable proof of delivery', podLooksReal,
+    pod.status === 200
+        ? `${typeof pod.body === 'string' ? pod.body.length : 0} bytes, ${typeof pod.body === 'string' && pod.body.startsWith('%PDF-') ? 'a PDF' : 'NOT a PDF'}`
+        : `${pod.status}`);
 
 /* ----------------------------------------------------- 11. the report */
 
@@ -796,8 +805,13 @@ if (!apply) {
         step('  and goes through when both parties sign', bothMarks.status === 201,
             bothMarks.status === 201 ? 'delivered, countersigned' : JSON.stringify(bothMarks.body).slice(0, 140));
 
-        const pod = await call(`${UH}/orders/${controlledOrder.body.id}/pod.pdf`);
-        step('  and its proof of delivery is produced', pod.status === 200, `${pod.status}`);
+        const cpod = await call(`${UH}/orders/${controlledOrder.body.id}/pod.pdf`);
+        const cpodReal = cpod.status === 200
+            && typeof cpod.body === 'string' && cpod.body.startsWith('%PDF-') && cpod.body.length > 1000;
+        step('  and its proof of delivery is a real document, not a 200', cpodReal,
+            cpod.status === 200
+                ? `${typeof cpod.body === 'string' ? cpod.body.length : 0} bytes`
+                : `${cpod.status}`);
     } else {
         step('a controlled drug is refused on one signature', false,
             `could not create the controlled order: ${JSON.stringify(controlledOrder.body).slice(0, 140)}`);

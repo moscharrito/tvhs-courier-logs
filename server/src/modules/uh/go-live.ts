@@ -29,6 +29,10 @@ import { todayIn } from '../../core/dates';
 interface Deps {
     client: Client;
     /** Facts about how this instance is configured, not what it could be. */
+    /** What the bucket actually did when something wrote to it. See
+     *  core/files/probe.ts. Optional so a caller without one still gets a
+     *  check, it just gets the weaker one. */
+    filesHealth?: (() => string) | undefined;
     deployment: {
         databaseKind: 'turso' | 'file';
         filesEnabled: boolean;
@@ -57,7 +61,7 @@ export interface Check {
     blocking: boolean;
 }
 
-export function createGoLiveRouter({ client, deployment, expectedMigrations }: Deps): Router {
+export function createGoLiveRouter({ client, deployment, expectedMigrations, filesHealth }: Deps): Router {
     const router = Router({ mergeParams: true });
     const read = requireProjectRole('admin');
 
@@ -226,14 +230,46 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations }: D
                 : 'Not set, so every audit row records the proxy address and the per-address throttle counts the internet as one caller.',
             blocking: false,
         });
+        /* THE BUCKET ACTUALLY TOOK A WRITE, not "five values are present".
+         *
+         * This said "A bucket is configured" and passed on config.files
+         * .enabled, which is the same sentence /health printed for weeks
+         * against a bucket that refused every upload. It was wrong in the
+         * worst possible place: the page somebody reads to decide whether
+         * the contract can start.
+         *
+         * The probe already existed when this was written and this did not
+         * ask it. It does now, and a bucket that refuses writes is a
+         * BLOCKING failure rather than a cheerful tick, because a doorstep
+         * delivery with no photograph is refused outright -- which on 1
+         * November is a courier who cannot complete a delivery. */
+        const bucket = filesHealth ? filesHealth() : null;
         add({
             id: 'deploy.files',
-            what: 'Doorstep photographs can be stored',
-            pass: deployment.filesEnabled,
-            detail: deployment.filesEnabled
-                ? 'A bucket is configured.'
-                : 'No bucket, so a doorstep delivery is refused rather than recorded without evidence. Needs ticket 0.10.',
-            blocking: false,
+            what: 'The bucket accepts a write, not just that one is configured',
+            pass: bucket === null ? deployment.filesEnabled : bucket === 'ok',
+            detail: bucket === null
+                ? (deployment.filesEnabled
+                    ? 'A bucket is configured. Nothing has probed it: this answer is weaker than it looks.'
+                    : 'No bucket, so a doorstep delivery is refused rather than recorded without evidence.')
+                : bucket === 'ok'
+                    ? 'A zero-byte object was written and deleted.'
+                    : bucket === 'checking'
+                        ? 'The first probe has not finished. Ask again in a moment.'
+                        : `The bucket refused: ${bucket}. A doorstep delivery will be refused rather than recorded without its photograph.`,
+            /* Blocking ONLY when a bucket exists and refuses.
+             *
+             * No bucket at all stays advisory, which was the existing
+             * decision and is a sound one: the app refuses a doorstep
+             * delivery rather than recording one without its photograph, so
+             * the failure is visible and safe. Reversing that is a policy
+             * change and not what this ticket is for.
+             *
+             * A bucket that is configured and refuses is the opposite. It
+             * reads as ready, the courier tries, and they are turned away at
+             * the door with a patient in front of them. That is the state
+             * this check reported as "A bucket is configured" for weeks. */
+            blocking: typeof bucket === 'string' && bucket.startsWith('unreachable'),
         });
 
         const db = await verifyDatabase(client, { expectedMigrations });

@@ -54,6 +54,15 @@ interface Deps {
     sweepIntervalSeconds?: number | undefined;
     /** Whether outbound email is configured. Not where it goes. */
     mailConfigured?: boolean | undefined;
+    /** What the LAST notifications the sweep finished actually did.
+     *
+     *  Not a test send. The reason mail is not probed the way S3 is has not
+     *  changed: a health check that sends email is a health check that mails
+     *  a hospital every thirty seconds. But since migration 0054 every
+     *  notification records whether SES accepted it, was skipped for want of
+     *  an address, or was suppressed -- so the real sends that already
+     *  happened can answer the question for free. */
+    mailRecent?: (() => Promise<string>) | undefined;
     /** Whether proof-of-delivery storage is usable. Not which bucket.
      *
      *  SUPERSEDED BY filesHealth where that is supplied, and kept for the
@@ -81,7 +90,7 @@ interface Deps {
 export type StatisticsState = 'ok' | 'missing' | 'unknown';
 
 export function createHealthRouter({
-    client, version, sweepIntervalSeconds, mailConfigured, filesConfigured, smsConfigured,
+    client, version, sweepIntervalSeconds, mailConfigured, mailRecent, filesConfigured, smsConfigured,
     statistics, filesHealth,
 }: Deps): Router {
     const router = Router();
@@ -97,6 +106,18 @@ export function createHealthRouter({
         } catch {
             db = 'error';
         }
+        /* Never throws and never blocks the endpoint: a health check that
+           500s because one extra query was slow is worse than one that says
+           less. */
+        const mailState = async (): Promise<string> => {
+            if (!mailRecent) return 'configured';
+            try {
+                return await mailRecent();
+            } catch {
+                return 'configured';
+            }
+        };
+
         const ok = db === 'ok';
         res.status(ok ? 200 : 503).json({
             status: ok ? 'ok' : 'degraded',
@@ -108,10 +129,18 @@ export function createHealthRouter({
                 /* The sweep that escalates unclaimed work to dispatch 45
                    minutes before its deadline, and drains queued email. */
                 sweep: sweepIntervalSeconds === undefined ? 'off' : `every ${sweepIntervalSeconds}s`,
-                /* Configured, not reachable: proving SES answers would mean
-                   sending something, and a health check that sends email is a
-                   health check that mails a hospital every thirty seconds. */
-                mail: mailConfigured ? 'configured' : 'off',
+                /* NOT A TEST SEND, and for the unchanged reason: proving SES
+                   answers by sending something is a health check that mails a
+                   hospital every thirty seconds.
+
+                   But "configured" was the same sentence /health printed for
+                   weeks about a bucket that refused every upload, and it was
+                   read the same way. Since migration 0054 each notification
+                   records what the sweep did with it, so the sends that have
+                   ALREADY happened answer this without a new one: "sending"
+                   once SES has accepted something recently, and if the last
+                   batch went nowhere it says which way. */
+                mail: mailConfigured ? await mailState() : 'off',
                 /* Same rule as mail, for the same reason: proving Twilio
                    answers would mean sending a text, and a health check that
                    texts somebody is a health check that texts a patient.

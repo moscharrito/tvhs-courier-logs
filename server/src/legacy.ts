@@ -69,6 +69,7 @@ import { createNotificationsRouter, createPushDevicesRouter } from './core/notif
 import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createFilesProbe } from './core/files/probe';
+import { recentMailState } from './core/notify/outbox';
 import { createBoardRouter } from './modules/uh/board';
 import { createClientPortalRouter } from './modules/uh/client-portal';
 import { createPortalResetRouter } from './modules/uh/portal-reset';
@@ -187,6 +188,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         version: VERSION,
         sweepIntervalSeconds: config.sweepIntervalSeconds,
         mailConfigured: mailer.available,
+        /* What the sweep actually did with the last batch, rather than
+           whether the SES values are filled in. See outbox.ts. */
+        mailRecent: () => recentMailState(database.client),
         filesConfigured: fileStorage.available,
         /* The probe starts here, so a bucket that refuses writes is in the
            boot log and on /health rather than waiting for somebody to run
@@ -355,6 +359,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     /* Go-live readiness, and the daily report as a recorded send (5.3). */
     legacy.app.use('/api/projects/:pid/uh/go-live', requireProject, createGoLiveRouter({
         client: database.client,
+        /* The same probe /health reads, so the two cannot disagree about
+           whether the bucket works. */
+        filesHealth: filesProbe.state,
         deployment: {
             databaseKind: config.db.kind,
             filesEnabled: config.files.enabled,

@@ -94,9 +94,16 @@ describe('the readiness check', () => {
 
     it('separates what blocks from what merely matters', async () => {
         const res = await admin.get(`${UH}/go-live`);
-        // Photographs are not blocking: the app refuses a doorstep delivery
-        // rather than recording one without evidence, which is safe.
+        /* No bucket is not blocking: the app refuses a doorstep delivery
+           rather than recording one without evidence, which is safe and
+           visible. A bucket that is CONFIGURED AND REFUSES is blocking, and
+           is a different fact entirely -- it reads as ready, the courier
+           tries, and they are turned away with a patient in front of them.
+           This check reported that state as "A bucket is configured" for
+           weeks, which is the same sentence /health printed while the real
+           bucket was answering 403 to every upload. */
         expect(check(res.body, 'deploy.files').blocking).toBe(false);
+        expect(check(res.body, 'deploy.files').detail).not.toMatch(/^A bucket is configured\.$/);
         // A wrong delivery record is.
         expect(check(res.body, 'discrepancies.critical').blocking).toBe(true);
     });

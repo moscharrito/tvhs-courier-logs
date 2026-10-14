@@ -114,3 +114,31 @@ export async function markSent(client: Client, ids: number[]): Promise<void> {
         await client.execute({ sql: 'UPDATE notifications SET sent_at = ? WHERE id = ? AND sent_at IS NULL', args: [at, id] });
     }
 }
+
+/**
+ * What the sweep has recently done with the notifications it finished.
+ *
+ * For /health. Not a test send: the reason mail is not probed the way S3 is
+ * has not changed, and a health check that emails a hospital every thirty
+ * seconds is worse than one that says less. This reads the outcomes of sends
+ * that already happened, which migration 0054 started recording.
+ *
+ * The window is the last fifty finished rows rather than a time range,
+ * because a quiet Sunday has no sends at all and "nothing lately" must not
+ * read as "broken".
+ */
+export async function recentMailState(client: Client): Promise<string> {
+    const rs = await client.execute(
+        `SELECT dispatch_result FROM notifications
+          WHERE sent_at IS NOT NULL AND dispatch_result != ''
+          ORDER BY id DESC LIMIT 50`,
+    );
+    const seen = rs.rows.map((r) => String(r['dispatch_result']));
+    if (seen.length === 0) return 'configured, nothing sent yet';
+    if (seen.includes('sent')) return 'sending';
+    /* Finished rows, none of which reached anybody. The two reasons are very
+       different problems and both are worth naming on this line. */
+    if (seen.every((r) => r === 'no_address')) return 'configured, but nobody has an address';
+    if (seen.every((r) => r === 'suppressed')) return 'configured, but every address is suppressed';
+    return 'configured, nothing sent recently';
+}
