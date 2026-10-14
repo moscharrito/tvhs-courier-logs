@@ -34,7 +34,8 @@
     "create:portals": "node scripts/create-pharmacy-portals.mjs",
     "make:docket": "tsx scripts/make-docket.mjs",
     "portal-upload": "node scripts/portal-upload.mjs",
-    "driver-rates": "node scripts/driver-rates.mjs"
+    "driver-rates": "node scripts/driver-rates.mjs",
+    "settings:show": "node scripts/settings-show.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
