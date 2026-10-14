@@ -99,6 +99,17 @@ let failed = 0;
 let skipped = 0;
 const results = [];
 
+/* A drawn mark, for the controlled-substance steps below. Three points
+   rather than one, because lib/strokes.ts calls a single point a tap and not
+   a signature, and a rehearsal that passes on a tap would be proving the
+   wrong thing. */
+const SCRAWL = [[
+    { x: 0.10, y: 0.62, t: 0 },
+    { x: 0.38, y: 0.22, t: 40 },
+    { x: 0.62, y: 0.70, t: 80 },
+    { x: 0.88, y: 0.30, t: 120 },
+]];
+
 function step(name, ok, detail = '') {
     if (ok === 'skip') { skipped += 1; results.push(['SKIP', name, detail]); return; }
     if (ok) { passed += 1; results.push(['ok', name, detail]); } else { failed += 1; results.push(['FAIL', name, detail]); }
@@ -626,7 +637,97 @@ if (!apply) {
         counterTry.status === 403 && counterTry.body?.code === 'portal.notAManager',
         `${counterTry.status} ${counterTry.body?.code ?? ''}`);
 
+    /* ───────────────────────── what was built in the last week ──────────
+     *
+     * Added because a dry run that only covers what shipped a month ago
+     * proves a month-old system. These three are the parts most likely to
+     * behave differently against a real database, a real session and a real
+     * noon wave than they do against a test harness.
+     */
     as('admin');
+
+    const thread = await call(`${UH}/threads/${orders[0].id}`, {
+        method: 'POST',
+        body: JSON.stringify({ body: 'Dry run: checking the thread writes.', mentions: [portalUser] }),
+    });
+    step('a message can be left on a delivery', thread.status === 201,
+        thread.status === 201 ? `message #${thread.body?.id}` : JSON.stringify(thread.body).slice(0, 140));
+
+    const threadRead = await call(`${UH}/threads/${orders[0].id}`);
+    const mine = (threadRead.body?.messages ?? []).find((m) => m.body?.startsWith('Dry run:'));
+    step('  and reads back with its author and the people who can be tagged',
+        threadRead.status === 200 && Boolean(mine?.authorName) && (threadRead.body?.people ?? []).length > 0,
+        `${(threadRead.body?.messages ?? []).length} messages, ${(threadRead.body?.people ?? []).length} taggable`);
+
+    /* The scope, against a real membership rather than a fixture. This is
+       the one that would be a disclosure if it were wrong. */
+    as('pharmacy');
+    const otherThread = await call(`${UH}/threads/${orders[0].id}`);
+    const ownSite = Number(orders[0].siteId ?? discharge.id) === Number(discharge.id);
+    step('  and a pharmacy sees only threads on its own deliveries',
+        ownSite ? otherThread.status === 200 : otherThread.status === 404,
+        `${otherThread.status} on a ${ownSite ? 'own' : 'foreign'} delivery`);
+
+    as('admin');
+
+    /* The noon wave, proposed. It must write nothing: the whole reason it is
+       a GET is that a dispatcher can look at what eighteen people's day
+       would be without that being the day. */
+    const runsBefore = await call(`${UH}/runs?serviceDate=${today}`);
+    const propose = await call(`${UH}/runs/propose?serviceDate=${today}&drivers=4`);
+    const runsAfter = await call(`${UH}/runs?serviceDate=${today}`);
+    step('the noon wave can be proposed', propose.status === 200,
+        propose.status === 200
+            ? `${(propose.body?.runs ?? []).length} routes, ${(propose.body?.unplaced ?? []).length} unplaced, needs ${propose.body?.driversNeeded}`
+            : JSON.stringify(propose.body).slice(0, 140));
+    step('  and proposing writes nothing',
+        (runsBefore.body ?? []).length === (runsAfter.body ?? []).length,
+        `${(runsBefore.body ?? []).length} runs before, ${(runsAfter.body ?? []).length} after`);
+
+    /* The promise in §6 of the offer letter, against the real enforcement
+       path rather than a unit test. */
+    const controlledOrder = await call(`${UH}/orders`, {
+        method: 'POST',
+        body: JSON.stringify({
+            siteId: discharge.id, serviceType: 'adhoc',
+            recipientName: 'Dry Run Controlled', addressLine: '9 Rehearsal Road', zip: '78215',
+            description: 'Controlled rehearsal item', quantity: 1,
+            externalRef: `DRY-CS-${today.replace(/-/g, '')}`,
+            controlled: true, signatureRequired: true,
+        }),
+    });
+    if (controlledOrder.status === 201) {
+        await call(`${UH}/runs/${run.body.id}/stops`, {
+            method: 'POST', body: JSON.stringify({ orderIds: [controlledOrder.body.id] }),
+        });
+        await call(`${UH}/orders/${controlledOrder.body.id}/events`, {
+            method: 'POST', body: JSON.stringify({ type: 'picked_up', signedName: 'Pharmacy Tech' }),
+        });
+
+        const oneMark = await call(`${UH}/orders/${controlledOrder.body.id}/deliver`, {
+            method: 'POST',
+            body: JSON.stringify({ signedName: 'Dry Run Controlled', strokes: SCRAWL, captureMethod: 'drawn' }),
+        });
+        step('a controlled drug is refused on one signature',
+            oneMark.status === 400 && oneMark.body?.code === 'deliver.countersignatureRequired',
+            `${oneMark.status} ${oneMark.body?.code ?? ''}`);
+
+        const bothMarks = await call(`${UH}/orders/${controlledOrder.body.id}/deliver`, {
+            method: 'POST',
+            body: JSON.stringify({
+                signedName: 'Dry Run Controlled', strokes: SCRAWL, captureMethod: 'drawn',
+                countersignStrokes: SCRAWL,
+            }),
+        });
+        step('  and goes through when both parties sign', bothMarks.status === 201,
+            bothMarks.status === 201 ? 'delivered, countersigned' : JSON.stringify(bothMarks.body).slice(0, 140));
+
+        const pod = await call(`${UH}/orders/${controlledOrder.body.id}/pod.pdf`);
+        step('  and its proof of delivery is produced', pod.status === 200, `${pod.status}`);
+    } else {
+        step('a controlled drug is refused on one signature', false,
+            `could not create the controlled order: ${JSON.stringify(controlledOrder.body).slice(0, 140)}`);
+    }
 
     const drivers = await call(`${UH}/drivers?from=${today}&to=${today}`);
     step('the drivers record answers for today', drivers.status === 200,
