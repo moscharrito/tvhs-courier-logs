@@ -56,13 +56,23 @@ export function usePaged<T>(items: T[], size: number = PAGE_SIZE): Paged<T> {
 /**
  * Previous, the count, Next.
  *
- * Hidden entirely at eight rows or fewer: a pager under a two-row list is
- * the clutter this was meant to remove, and on a phone it is also a tap
- * target where the next thing the thumb wants is not.
+ * THE COUNT IS ALWAYS THERE; THE BUTTONS ARE NOT. Two permanently disabled
+ * buttons under a three-row list are clutter, and on a phone they are also a
+ * tap target where the next thing a thumb wants is not. But hiding the whole
+ * control meant a courier with a short run never saw one at all, which reads
+ * as a missing feature rather than as the control working.
+ *
+ * Nothing when there is nothing: a list with no rows already says so in its
+ * own words, and "0 of 0" underneath is a second, worse version of it.
  */
 export function Pager<T>({ of, noun }: { of: Paged<T>; noun: string }) {
     const { page, pages, total, from, to, setPage } = of;
-    if (pages <= 1) return null;
+    if (total === 0) return null;
+
+    if (pages <= 1) {
+        /* "All 5 stops" rather than "1 to 5 of 5", which nobody says. */
+        return <Text style={[styles.count, styles.alone]}>All {total} {noun}</Text>;
+    }
 
     return (
         <View style={styles.wrap}>
@@ -122,4 +132,7 @@ const styles = StyleSheet.create({
     label: { fontSize: TYPE.meta, fontWeight: '700', color: theme.ink },
     labelOff: { color: theme.muted },
     count: { fontSize: TYPE.meta, color: theme.muted, flexShrink: 1, textAlign: 'center' },
+    /* On its own line rather than between two buttons, so it sits where the
+       list ends instead of centred in empty space. */
+    alone: { textAlign: 'left', marginTop: SPACE.md },
 });

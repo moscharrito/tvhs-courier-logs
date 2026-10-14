@@ -291,9 +291,13 @@ describe('an account covering several pharmacies', () => {
            should cost less information, not all of it. */
         renderPortal(routes(many));
         const rbg = await screen.findByRole('button', { name: /Robert B Green Pharmacy/ });
-        expect(screen.queryByText(/2 deliveries/)).toBeNull();
+        /* Exact, not a substring. While the panel is OPEN the pager under
+           its table says "All 2 deliveries", which a /2 deliveries/ regex
+           also matches; the summary this test is about is the bare phrase
+           the folded heading carries. */
+        expect(screen.queryByText('2 deliveries')).toBeNull();
         fireEvent.click(rbg);
-        expect(await screen.findByText(/2 deliveries/)).toBeInTheDocument();
+        expect(await screen.findByText('2 deliveries')).toBeInTheDocument();
     });
 
     it('rolls a pharmacy up and leaves the others alone', async () => {

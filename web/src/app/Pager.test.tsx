@@ -72,11 +72,21 @@ describe('paging', () => {
         expect(screen.getByText('Showing 9 to 16 of 18 rows')).toBeInTheDocument();
     });
 
-    it('hides itself when there is nothing to page', () => {
-        // A pager under a two-row table is the clutter this was to remove.
+    it('drops the buttons but keeps the count on a single page', () => {
+        /* 5.15 hid the whole control at eight rows or fewer. That was half
+           right: two permanently disabled buttons under a three-row table
+           are clutter, but a pharmacist at a quiet counter then never saw a
+           pager at all, which reads as a missing feature rather than as the
+           control working. The count is the thing it was built to say. */
         render(<List items={rows(8)} />);
         expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
-        expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Previous' })).not.toBeInTheDocument();
+        expect(screen.getByText(/All 8 rows/)).toBeInTheDocument();
+    });
+
+    it('says "All 5" rather than "Showing 1 to 5 of 5", which nobody says', () => {
+        render(<List items={rows(5)} />);
+        expect(screen.getByText('All 5 rows')).toBeInTheDocument();
     });
 
     it('lands on a real page when the list shrinks underneath', () => {
@@ -91,14 +101,18 @@ describe('paging', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
         expect(screen.getAllByRole('listitem')).toHaveLength(4);
         expect(screen.getByText('row 1')).toBeInTheDocument();
-        // One page now, so the control has nothing to do and goes.
+        // One page now, so the buttons go and the count stays.
         expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+        expect(screen.getByText('All 4 rows')).toBeInTheDocument();
     });
 
-    it('copes with an empty list without claiming a row', () => {
+    it('says nothing at all about an empty list', () => {
+        /* The list itself already says "Nothing for this day" in its own
+           words. "0 of 0" underneath is a second, worse version of that. */
         render(<List items={[]} />);
         expect(screen.queryAllByRole('listitem')).toHaveLength(0);
         expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/All 0/)).not.toBeInTheDocument();
     });
 
     it('announces the count politely, not as an interruption', () => {
@@ -115,7 +129,9 @@ describe('paging', () => {
             return <Pager of={paged} noun="orders" note="the newest 500" />;
         }
         render(<Capped />);
-        expect(screen.getByText('the newest 500')).toBeInTheDocument();
+        expect(screen.getByText(/the newest 500/)).toBeInTheDocument();
+        /* Beside the count, not instead of it. */
+        expect(screen.getByText(/All 3 orders/)).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
     });
 });

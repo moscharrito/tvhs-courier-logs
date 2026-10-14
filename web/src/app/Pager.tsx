@@ -72,10 +72,24 @@ interface Props<T> {
 
 export function Pager<T>({ of, noun, note }: Props<T>) {
     const { page, pages, total, from, to, setPage } = of;
-    if (pages <= 1) {
-        /* Nothing to page, but the note can still matter: a list capped at
-           500 by the server is worth saying even when it fits on one page. */
+
+    /* An empty list already says so in its own words -- "Nothing for this
+       day", "Nobody is on shift" -- and "0 of 0" underneath is a second,
+       worse version of that sentence. The note can still matter. */
+    if (total === 0) {
         return note === undefined ? null : <p className="izy-pager-note">{note}</p>;
+    }
+
+    if (pages <= 1) {
+        /* "All 5 deliveries" rather than "Showing 1 to 5 of 5", which is a
+           sentence nobody says out loud. The total is the part that matters
+           and it is here either way. */
+        return (
+            <p className="izy-pager-note">
+                All {total} {noun}
+                {note !== undefined && <> · {note}</>}
+            </p>
+        );
     }
 
     /* The shell exists only to be measured. A container cannot style itself,
