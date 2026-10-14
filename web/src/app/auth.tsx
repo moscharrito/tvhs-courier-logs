@@ -5,10 +5,34 @@ import { api, ApiError, type ProjectMembership, type SessionUser, whenSessionEnd
 import { clearOutbox, setOutboxUser, startOutbox } from '../lib/outbox';
 import { deviceZone } from '../lib/when';
 
+/* THE IDLE WINDOW, IN THE BROWSER.
+ *
+ * Thirty minutes, matching SESSION_STAFF_IDLE_MINUTES on the server. The
+ * server has always enforced it; what it could not do is tell a browser
+ * that nobody is touching. So the app only found out its session had gone
+ * when something it asked for came back 401, and the page it was on
+ * rendered that the way it renders any failure -- a red banner over a
+ * screen still showing four stale zeros.
+ *
+ * Reported four times, and each time I fixed the REACTION to the 401. This
+ * is the thing that was actually asked for: stop waiting to be told.
+ *
+ * Slightly early rather than late. If the server window is ever made longer
+ * this signs out first, which is harmless; if it is made shorter the 401
+ * handler is still there underneath as the backstop.
+ */
+const IDLE_MS = 30 * 60 * 1000;
+/* Checked every half minute. The cost is one comparison; the benefit is
+ * that a closed laptop reopened at four o'clock lands on the sign-in page
+ * rather than on a stale screen that 401s at the first touch. */
+const IDLE_TICK_MS = 30 * 1000;
+
 interface AuthState {
     loading: boolean;
     user: SessionUser | null;
     projects: ProjectMembership[];
+    /** Why the sign-in page is showing, when it is showing for a reason. */
+    signedOutBecause: 'idle' | null;
     /** Re-read /api/session and /api/me/projects (after login or a change). */
     refresh: () => Promise<void>;
     signOut: () => Promise<void>;
@@ -20,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [user, setUser] = useState<SessionUser | null>(null);
     const [projects, setProjects] = useState<ProjectMembership[]>([]);
+    const [signedOutBecause, setSignedOutBecause] = useState<'idle' | null>(null);
 
     const refresh = useCallback(async () => {
         try {
@@ -92,6 +117,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      * back in on the same device. */
     useEffect(() => {
         whenSessionEnds(() => {
+            /* The backstop, for a session the server dropped before this
+               browser's own clock reached thirty minutes -- revoked from
+               another device, a restart, a tab open since before the idle
+               timer shipped. The sign-in page says the same thing either
+               way, because to the person reading it the cause is the same. */
+            setSignedOutBecause('idle');
             setUser(null);
             setProjects([]);
         });
@@ -99,7 +130,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => { void refresh(); }, [refresh]);
 
-    const value = useMemo(() => ({ loading, user, projects, refresh, signOut }), [loading, user, projects, refresh, signOut]);
+    /* ─────────────────────────── signing off before being told to ───────
+     *
+     * The server idles a session out after thirty minutes and the browser
+     * had no idea, so it carried on showing a screen full of numbers until
+     * something it asked for failed. This watches the clock instead.
+     *
+     * Activity is a touch, a key or bringing the tab back. NOT a poll: the
+     * portal refreshes itself every fifteen seconds whether anybody is in
+     * the room or not, and counting that as activity would mean a session
+     * that never idles out as long as a tab is open somewhere -- which is
+     * the opposite of what a thirty minute window is for.
+     */
+    useEffect(() => {
+        if (!user) return undefined;
+
+        let last = Date.now();
+        const touched = () => { last = Date.now(); };
+
+        const check = () => {
+            if (Date.now() - last < IDLE_MS) return;
+            /* Local only. The server has already dropped it, or is about to,
+               and a POST to /api/logout here would be a request nobody is
+               waiting for. The outbox is left alone: it belongs to the
+               person, not the session. */
+            setSignedOutBecause('idle');
+            setUser(null);
+            setProjects([]);
+        };
+
+        /* Checked on wake as well as on the timer, so a laptop closed at
+           noon and opened at four lands on the sign-in page rather than on
+           a stale screen that 401s at the first touch. */
+        const woke = () => { if (!document.hidden) check(); };
+
+        for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const) {
+            window.addEventListener(event, touched, { passive: true });
+        }
+        document.addEventListener('visibilitychange', woke);
+        const timer = window.setInterval(check, IDLE_TICK_MS);
+
+        return () => {
+            for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const) {
+                window.removeEventListener(event, touched);
+            }
+            document.removeEventListener('visibilitychange', woke);
+            window.clearInterval(timer);
+        };
+    }, [user]);
+
+    /* Cleared the moment somebody is back in, so the line on the sign-in
+       page does not survive into the next session. */
+    useEffect(() => { if (user) setSignedOutBecause(null); }, [user]);
+
+    const value = useMemo(
+        () => ({ loading, user, projects, signedOutBecause, refresh, signOut }),
+        [loading, user, projects, signedOutBecause, refresh, signOut],
+    );
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

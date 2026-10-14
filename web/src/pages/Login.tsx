@@ -44,7 +44,7 @@ const pickHint = (d: DriverPick) => (d.route === null
     : `${routeLabel(d.route)} · ${d.hasPin ? 'Enter PIN' : 'Set up PIN'}`);
 
 export function Login() {
-    const { refresh } = useAuth();
+    const { refresh, signedOutBecause } = useAuth();
     const [projects, setProjects] = useState<LoginProject[] | null>(null);
     /** Who this phone belongs to, when it has been set up. */
     const [phone, setPhone] = useState<DeviceIdentity | null>(null);
@@ -148,6 +148,16 @@ export function Login() {
             <div className="izy-login-card">
                 <h1>TAG</h1>
                 <p className="izy-sub">Izy Global Services LLC</p>
+                {/* Said plainly and in grey. Being signed out after half an
+                    hour is the system working, not a failure, and it was
+                    reaching people as a red "Not authenticated" across a
+                    screen still showing their deliveries. A pharmacist
+                    reading that does not think "my session expired". */}
+                {signedOutBecause === 'idle' && error === null && (
+                    <div className="izy-alert muted" role="status">
+                        You were signed out after 30 minutes without activity. Sign in to carry on.
+                    </div>
+                )}
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
 
                 {mode === 'device' && phone?.enrolled && (
