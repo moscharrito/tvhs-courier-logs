@@ -109,7 +109,7 @@ export async function dispatchPending(deps: DispatchDeps): Promise<DispatchResul
            still there for them. */
         if (email !== '' && suppressed.has(email)) {
             result.suppressed += 1;
-            await markSent(client, id, logger);
+            await markSent(client, id, logger, 'suppressed');
             continue;
         }
 
@@ -118,7 +118,7 @@ export async function dispatchPending(deps: DispatchDeps): Promise<DispatchResul
            in-app notification is still there for them. */
         if (email === '') {
             result.skipped += 1;
-            await markSent(client, id, logger);
+            await markSent(client, id, logger, 'no_address');
             continue;
         }
 
@@ -134,7 +134,7 @@ export async function dispatchPending(deps: DispatchDeps): Promise<DispatchResul
                 text: `${String(row['body'])}\n\n${portalUrl}\n`,
             });
             result.sent += 1;
-            await markSent(client, id, logger);
+            await markSent(client, id, logger, 'sent');
         } catch (err) {
             /* Left unsent on purpose, so the next tick tries again. The
                message text is never logged: it is addressed to a hospital
@@ -150,11 +150,24 @@ export async function dispatchPending(deps: DispatchDeps): Promise<DispatchResul
     return result;
 }
 
-async function markSent(client: Client, id: number, logger: Logger): Promise<void> {
+/**
+ * Stop retrying this one, and say why.
+ *
+ * `sent_at` answers "should the sweep pick this up again" and all three
+ * outcomes answer it the same way: no. `dispatch_result` answers the
+ * different question somebody actually wants -- was a pharmacy emailed --
+ * which used to be inferred from the timestamp and was wrong whenever the
+ * account had no address. See migration 0054.
+ */
+type DispatchOutcome = 'sent' | 'no_address' | 'suppressed';
+
+async function markSent(
+    client: Client, id: number, logger: Logger, outcome: DispatchOutcome,
+): Promise<void> {
     try {
         await client.execute({
-            sql: 'UPDATE notifications SET sent_at = ? WHERE id = ? AND sent_at IS NULL',
-            args: [new Date().toISOString(), id],
+            sql: 'UPDATE notifications SET sent_at = ?, dispatch_result = ? WHERE id = ? AND sent_at IS NULL',
+            args: [new Date().toISOString(), outcome, id],
         });
     } catch (err) {
         /* The mail went. Failing to record that means one duplicate on the

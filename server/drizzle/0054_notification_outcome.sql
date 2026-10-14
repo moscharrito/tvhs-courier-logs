@@ -1,0 +1,31 @@
+-- Ticket 7.17. WHY a notification stopped being pending, not just that it did.
+--
+-- THE BUG THIS EXISTS BECAUSE OF, WHICH IS THE SAME BUG THREE TIMES.
+--
+-- `sent_at` was set in three different situations and meant something
+-- different in each:
+--
+--   the mail was handed to SES and accepted;
+--   the account had no email address, so there was nobody to send to;
+--   the address was suppressed after an earlier bounce or complaint.
+--
+-- All three set the column, because all three mean "stop retrying this every
+-- two minutes forever", which is a perfectly good reason to write it. What it
+-- is not is proof that anybody was told anything.
+--
+-- A production rehearsal then checked `sent_at` and reported "the sweep
+-- actually sent it" for a test account that had no email address at all. That
+-- is the third time this platform has shipped a green light meaning "the form
+-- was filled in": /health said `files: "configured"` for weeks against a
+-- bucket that refused every upload, and the dry run said "a notification
+-- exists" while only proving an endpoint answered.
+--
+-- So the row now records which of the three happened. A caller that wants to
+-- know whether a pharmacy was actually emailed can ask, instead of inferring
+-- it from a timestamp that was never about that.
+--
+-- Empty on every row written before today, which is honest: those rows were
+-- marked done by a dispatcher that did not record why, and backfilling a
+-- guess would be inventing the very fact this column exists to stop being
+-- guessed.
+ALTER TABLE `notifications` ADD COLUMN `dispatch_result` text DEFAULT '' NOT NULL;

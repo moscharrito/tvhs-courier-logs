@@ -659,32 +659,56 @@ if (!apply) {
      * finding three weeks before the daily report to University Health
      * starts depending on it.
      */
-    if (mailOn) {
+    const mailTo = arg('mail-to');
+    if (mailOn && mailTo !== '') {
+        /* THE ADDRESS IS THE POINT. Without one the dispatcher takes the
+           no_address branch, marks the row done so it stops retrying, and
+           the rehearsal that read sent_at called that "the sweep actually
+           sent it" -- for an account with nobody to send to. */
+        await call(`/api/users/${portalUser}`, {
+            method: 'PATCH', body: JSON.stringify({ email: mailTo }),
+        });
+
         as('pharmacy');
-        const DEADLINE = Date.now() + 160000;
-        let sent = null;
-        let queued = null;
+        const DEADLINE = Date.now() + 170000;
+        let note = null;
+        let queued = 0;
         while (Date.now() < DEADLINE) {
             const inbox = await call(`${UH}/notifications`);
-            const mine = (inbox.body?.notifications ?? [])
-                .filter((n) => n.kind === 'delivery.completed');
+            const mine = (inbox.body?.notifications ?? []).filter((n) => n.kind === 'delivery.completed');
             queued = mine.length;
-            sent = mine.find((n) => n.pushedAt !== null) ?? null;
-            if (sent) break;
+            note = mine.find((n) => n.pushedAt !== null) ?? null;
+            if (note) break;
             await new Promise((r) => { setTimeout(r, 10000); });
         }
-        step('the delivery notification reaches the pharmacy',
-            queued !== null && queued > 0,
-            `${queued ?? 0} queued for ${portalUser}`);
-        step('  and the sweep actually sent it, rather than queuing it for ever',
-            Boolean(sent),
-            sent
-                ? `sent ${sent.pushedAt}`
-                : 'still unsent after 160s. SES may be in its sandbox, or the sweep is not running.');
+
+        step('the delivery notification reaches the pharmacy', queued > 0,
+            `${queued} queued for ${portalUser}`);
+
+        /* 'sent' and nothing else. 'no_address' and 'suppressed' also stop
+           the sweep retrying and also set sent_at, which is exactly how the
+           previous version of this step passed against a server that had
+           emailed nobody. */
+        step('  and SES accepted it, rather than it being skipped or suppressed',
+            note?.dispatchResult === 'sent',
+            note === null
+                ? 'still pending after 170s: the sweep may not be running'
+                : `dispatch_result=${note.dispatchResult || '(none)'}`);
+
+        say('');
+        say(`  SES ACCEPTED IT. That is not the same as it arriving: check ${mailTo}.`);
+        say('  If it is not there, SES took it and something after SES did not.');
         as('admin');
+    } else if (mailOn) {
+        /* Skipped, loudly, rather than passed on a timestamp that cannot
+           tell "sent" from "nobody to send to". */
+        step('the delivery notification reaches the pharmacy', 'skip',
+            'no --mail-to address, so nothing about email delivery was proved');
+        step('  and SES accepted it, rather than it being skipped or suppressed', 'skip',
+            'pass --mail-to you@example.com to exercise the mail path');
     } else {
         step('the delivery notification reaches the pharmacy', 'skip', 'mail is not configured on this server');
-        step('  and the sweep actually sent it, rather than queuing it for ever', 'skip', 'mail is not configured on this server');
+        step('  and SES accepted it, rather than it being skipped or suppressed', 'skip', 'mail is not configured on this server');
     }
 
     /* ───────────────────────── what was built in the last week ──────────

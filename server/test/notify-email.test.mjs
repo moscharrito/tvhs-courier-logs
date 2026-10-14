@@ -197,6 +197,66 @@ describe('turning notifications into email', () => {
         expect(unsent).toHaveLength(0);
     });
 
+    it('records WHY a row stopped being pending, not only that it did', async () => {
+        /* ────────────────────────────────────────────────────────────────
+         * THE SAME BUG, THREE TIMES, AND THIS IS THE THIRD.
+         *
+         * sent_at is set in three situations -- SES accepted it, the account
+         * had no address, the address was suppressed -- because all three
+         * mean "stop retrying this every two minutes". That is a good reason
+         * to write the column and a terrible reason to read it as proof
+         * anybody was told anything.
+         *
+         * A production rehearsal did exactly that and reported "the sweep
+         * actually sent it" for a test account with no email address at all.
+         * /health said `files: "configured"` for weeks against a bucket that
+         * refused every write. Each time, a green light that meant the form
+         * had been filled in.
+         *
+         * So the row says which ending it had, and this is the test that
+         * stops the three collapsing back into one.
+         * ──────────────────────────────────────────────────────────────── */
+        await closeOne('delivered');
+        await dispatch(fakeMailer());
+
+        const sent = await rows(
+            "SELECT dispatch_result FROM notifications WHERE sent_at IS NOT NULL AND kind LIKE 'delivery.%'",
+        );
+        expect(sent.length).toBeGreaterThan(0);
+        expect(sent.every((r) => r.dispatch_result === 'sent')).toBe(true);
+    });
+
+    it('does not call an account with no address "sent"', async () => {
+        /* The exact shape the rehearsal passed on. Nobody was emailed; the
+           row is finished so the sweep leaves it alone; and it must not read
+           as a delivery that happened. */
+        /* Saved and put back: every test after this one needs an address to
+           send to, and a test that quietly empties a column the rest of the
+           file depends on is a worse bug than the one it is checking. */
+        const before = await rows('SELECT username, email FROM users WHERE email IS NOT NULL');
+        expect(before.length, 'nothing to blank, so this proves nothing').toBeGreaterThan(0);
+        try {
+            await srv.core.client.execute('UPDATE users SET email = NULL');
+            await closeOne('delivered');
+            const mailer = fakeMailer();
+            const result = await dispatch(mailer);
+
+            expect(mailer.sent).toHaveLength(0);
+            expect(result.skipped).toBeGreaterThan(0);
+            const finished = await rows(
+                "SELECT dispatch_result FROM notifications WHERE dispatch_result = 'no_address'",
+            );
+            expect(finished.length).toBeGreaterThan(0);
+        } finally {
+            for (const u of before) {
+                await srv.core.client.execute({
+                    sql: 'UPDATE users SET email = ? WHERE username = ?',
+                    args: [u.email, u.username],
+                });
+            }
+        }
+    });
+
     it('puts the portal link in the body and nothing else', async () => {
         await closeOne('delivered');
         const mailer = fakeMailer();

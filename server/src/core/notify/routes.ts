@@ -79,6 +79,13 @@ export function createNotificationsRouter({ client }: { client: Client }): Route
                    screen is the honest state while no channel is configured:
                    you were told, in the app, and not on your phone. */
                 pushedAt: r['sent_at'] === null ? null : String(r['sent_at']),
+                /* WHICH of the three endings this had: 'sent', 'no_address',
+                   'suppressed', or '' for a row the sweep has not reached
+                   and for every row written before migration 0054. pushedAt
+                   alone cannot tell them apart, and a rehearsal that read it
+                   as proof of an email reported success for an account with
+                   no address at all. */
+                dispatchResult: String(r['dispatch_result'] ?? ''),
             })),
         });
     }));
