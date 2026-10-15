@@ -12,7 +12,7 @@ import { NewOrder } from './uh/NewOrder';
 import { ProjectSettings } from './ProjectSettings';
 
 const ROLE_LABEL: Record<string, string> = {
-    admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
+    admin: 'Admin and dispatch', lead: 'Site manager', courier: 'Driver', pharmacy: 'Pharmacy staff',
 };
 
 export function ProjectHome() {
@@ -30,7 +30,10 @@ export function ProjectHome() {
         );
     }
 
-    /* One role runs the operation now, so one flag covers it. */
+    /* TWO ROLES RUN THE OPERATION from ticket 7.20: an administrator, and
+       one site manager who dispatches, handles what comes back and talks to
+       drivers on site. The manager sees the operation; this flag is what
+       the commercials hang off, and it stays admin-only. */
     const canManage = project.role === 'admin';
     const canImport = canManage;
 
@@ -61,8 +64,14 @@ export function ProjectHome() {
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
-                {/* What each driver delivered and what it comes to. Admin
-                    only, which the page and the endpoint both enforce. */}
+                {/* Undelivered medication going back to the pharmacy that
+                    issued it. Half of what the site manager role exists for,
+                    and it was missing from this page entirely. */}
+                <Link className="izy-btn secondary" to={`/projects/${project.code}/returns`}>Returns</Link>
+                {/* What each driver delivered, and -- for an administrator --
+                    what it comes to. The site manager gets the same page with
+                    the money stripped out by the server, not hidden by the
+                    screen. */}
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/drivers`}>Drivers record</Link>
                 {canManage && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>

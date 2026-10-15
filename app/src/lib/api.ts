@@ -84,8 +84,11 @@ export interface Project {
     code: string;
     name: string;
     timezone: string;
-    /* 'lead' is a site lead: stationary at one pharmacy, owning the handover
-     *  to drivers there. App.tsx renders them a different shell. */
+    /* 'lead' is the site manager, and this app no longer renders anything
+       for them: ticket 7.20 replaced eight per-counter leads with one
+       manager who works from the web dispatch portal. The value stays in
+       the union because the server still sends it and a membership this
+       type cannot describe is a membership this app would crash on. */
     role: 'admin' | 'lead' | 'courier' | 'pharmacy';
 }
 

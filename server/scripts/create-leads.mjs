@@ -46,6 +46,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { adminPassword } from './lib/secret.mjs';
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(`--${flag}`);
@@ -71,9 +72,11 @@ if (!isLocal && !/^https:/i.test(base)) {
 }
 
 const adminUser = process.env['SEED_ADMIN_USER'] ?? 'admin';
-const adminPass = process.env['SEED_ADMIN_PASS'] ?? '';
+const adminPass = await adminPassword({
+    user: process.env['SEED_ADMIN_USER'] ?? 'admin', base, isLocal, label: 'create-leads.mjs',
+});
 if (!isLocal && adminPass === '') {
-    console.error('Set SEED_ADMIN_PASS. It is read from the environment and never printed.');
+    console.error('No password given.');
     process.exit(1);
 }
 
@@ -81,15 +84,32 @@ const projectCode = value('project', 'uh');
 
 /* ------------------------------------------------------------- the leads */
 
+/* ONE SITE MANAGER, NOT EIGHT LEADS (ticket 7.20).
+ *
+ * The model this script was written for -- a lead standing at each of the
+ * eight counters, each seeing only their own -- is gone. Operations came
+ * back with one person: they dispatch the whole contract, handle what comes
+ * back, and talk to drivers on site each day.
+ *
+ * So the siteIds list is every counter rather than one. That is still a
+ * scope and not an absence of one: lead-scope.ts refuses a membership with
+ * no siteIds everything, deliberately, so that a half-made account shows an
+ * empty board rather than the whole contract. Naming all eight is the
+ * difference between "allowed everywhere" and "nobody finished this".
+ *
+ * What the role still cannot reach: invoices, the rate card, and the record
+ * of reports already sent to University Health. They run the operation
+ * without the commercials.
+ */
+const ALL_COUNTERS = ['green', 'discharge', 'southeast', 'southwest', 'tdi', 'pavilion', 'wheatley', 'vida'];
+
 const LEADS = [
-    { username: 'lead.green', name: 'Lead, Robert B. Green', sites: ['green'], note: '241 a day, the largest site' },
-    { username: 'lead.discharge', name: 'Lead, Discharge Pharmacy', sites: ['discharge'], note: '155 a day, and the 24-hour returns counter' },
-    { username: 'lead.southeast', name: 'Lead, Southeast', sites: ['southeast'], note: '147 a day' },
-    { username: 'lead.southwest', name: 'Lead, Southwest', sites: ['southwest'], note: '134 a day' },
-    { username: 'lead.tdi', name: 'Lead, Texas Diabetes Institute', sites: ['tdi'], note: '128 a day' },
-    { username: 'lead.pavilion', name: 'Lead, Pavilion', sites: ['pavilion'], note: '114 a day' },
-    { username: 'lead.wheatley', name: 'Lead, Wheatley', sites: ['wheatley'], note: '11 a day' },
-    { username: 'lead.vida', name: 'Lead, Vida', sites: ['vida'], note: '7 a day' },
+    {
+        username: 'uh.sitemanager',
+        name: 'UH Site Manager',
+        sites: ALL_COUNTERS,
+        note: 'dispatch, returns and the drivers on site, across all eight counters',
+    },
 ];
 
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -146,7 +166,8 @@ function insist(label, res, ok = (s) => s >= 200 && s < 300) {
 
 /* ---------------------------------------------------------------- run it */
 
-say(`  ${base}`);
+say(`  SERVER   ${base}`);
+say(`  ${isLocal ? '** LOCAL server, not production **' : 'Remote server.'}`);
 insist('login', await call('/api/login', {
     method: 'POST',
     body: JSON.stringify({ username: adminUser, password: adminPass }),
@@ -230,6 +251,12 @@ if (stale.length > 0) {
     say('');
 }
 
-say('  They sign in to the courier app and get the lead screens, not a stop list.');
-say('  Each sees only their own pharmacies: the board, the counter, and the drivers');
-say('  on shift there. No pricing, no invoices, no other pharmacy.');
+say('  THEY SIGN IN TO THE WEB PORTAL, not the phone. Ticket 7.20 removed the');
+say('  lead screens from the courier app: that app is drivers only now.');
+say('');
+say('  They get the dispatch board, the order search, returns, discrepancies,');
+say('  performance, and the drivers record WITHOUT the pay columns -- the server');
+say('  strips those, so it is not a matter of which screen they open.');
+say('');
+say('  What they cannot reach: invoices, the rate card, and the record of reports');
+say('  already sent to University Health. They run the operation, not the contract.');

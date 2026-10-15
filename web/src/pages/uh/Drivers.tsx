@@ -31,6 +31,15 @@ import { useAuth } from '../../app/auth';
 
 interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
+/* IS THERE MONEY IN THIS ANSWER AT ALL?
+ *
+ * From ticket 7.20 the site manager reads this page with the pay fields
+ * removed by the server. The screen asks the DATA rather than the role: a
+ * component that re-decides who may see money is a second copy of the rule,
+ * and the copy that drifts is the one that shows it to somebody. If the
+ * field is absent, there is no column. */
+const hasMoney = (d: { currency?: string | undefined }) => d.currency !== undefined;
+
 interface Totals {
     delivered: number;
     failed: number;
@@ -48,7 +57,10 @@ interface DriverRow extends Totals {
 }
 
 interface Everyone {
-    from: string; to: string; timezone: string; currency: string;
+    from: string; to: string; timezone: string;
+    /* Absent for the site manager: the server strips it with the pay
+       fields, and its absence is what `hasMoney` reads. */
+    currency?: string;
     rateSet: boolean;
     drivers: DriverRow[];
     totals: Totals;
@@ -159,7 +171,9 @@ export function Drivers() {
                     <div className={data.totals.failed > 0 ? 'izy-stat-bad' : undefined}>
                         <b>{data.totals.failed}</b><span>not delivered</span>
                     </div>
-                    <div><b>{money(data.totals.payCents, data.currency)}</b><span>to disburse</span></div>
+                    {hasMoney(data) && (
+                        <div><b>{money(data.totals.payCents, data.currency!)}</b><span>to disburse</span></div>
+                    )}
                 </div>
             </div>
 
@@ -182,7 +196,7 @@ export function Drivers() {
                                     <th className="izy-num">Days worked</th>
                                     <th className="izy-num">Delivered</th>
                                     <th className="izy-num">Not delivered</th>
-                                    <th className="izy-num">Pay</th>
+                                    {hasMoney(data) && <th className="izy-num">Pay</th>}
                                 </tr>
                             </thead>
                             <tbody>
@@ -199,7 +213,9 @@ export function Drivers() {
                                         <td className="izy-num">{d.daysWorked}</td>
                                         <td className="izy-num">{d.delivered}</td>
                                         <td className={`izy-num${d.failed > 0 ? ' izy-stat-bad' : ''}`}>{d.failed}</td>
-                                        <td className="izy-num">{money(d.payCents, data.currency)}</td>
+                                        {hasMoney(data) && (
+                                            <td className="izy-num">{money(d.payCents, data.currency!)}</td>
+                                        )}
                                     </tr>
                                 ))}
                             </tbody>

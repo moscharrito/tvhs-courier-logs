@@ -634,7 +634,13 @@ export const DEFINITIONS: Array<{ measure: string; definition: string; note: str
 
 export function createReportsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin');
+    /* The site manager reads performance (7.20): completion and on-time are
+       what the operation is run against day to day, and somebody dispatching
+       without them is dispatching blind.
+    
+       `bill` below stays admin-only. What University Health are CHARGED is
+       commercial and is not this role's business. */
+    const staff = requireProjectRole('admin', 'lead');
 
     const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -797,7 +803,12 @@ export function createReportsRouter({ client }: { client: Client }): Router {
         figures: z.record(z.string(), z.unknown()),
     });
 
-    router.get('/sent', staff, wrap(async (req, res) => {
+    /* ADMIN, not the site manager. There is a line here worth keeping:
+       reading PERFORMANCE is operational and the person dispatching needs
+       it, but this is the record of formal statements already MADE to
+       University Health, with their figures frozen as sent. That is a
+       contract artefact, and the role was created without the contract. */
+    router.get('/sent', bill, wrap(async (req, res) => {
         const rs = await client.execute({
             sql: `SELECT id, service_date, recipient, channel, note, sent_by, sent_at, figures
                   FROM report_sends WHERE project_id = ? ORDER BY service_date DESC LIMIT 60`,

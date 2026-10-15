@@ -180,6 +180,85 @@ describe('what it comes to', () => {
     });
 });
 
+/* ───────────────────────── the site manager sees the work, not the money
+ *
+ * Ticket 7.20 replaced eight per-counter leads with ONE site manager who
+ * dispatches the whole contract, handles what comes back and talks to
+ * drivers on site. They need to know who is carrying what and who is
+ * running late. What each driver is PAID is commercial and is not theirs.
+ *
+ * Stripped on the way out of the server rather than hidden by the screen,
+ * because a field a client is trusted not to render is a field that leaks
+ * the first time somebody opens devtools. These tests read the JSON.
+ */
+describe('what the site manager may see of the drivers record', () => {
+    let manager;
+
+    beforeAll(async () => {
+        await admin.post('/api/users').send({
+            username: 'uh.sitemanager', name: 'Site Manager', password: 'manager-pass-1', role: 'staff',
+        });
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        await admin.put('/api/users/uh.sitemanager/memberships/uh').send({
+            role: 'lead', settings: { siteIds: sites.map((x) => x.id) },
+        });
+        manager = srv.agent();
+        expect((await manager.post('/api/login').send({
+            username: 'uh.sitemanager', password: 'manager-pass-1',
+        })).status).toBe(200);
+        await setRates({ scheduled: 450, stat: 700, adhoc: 500 });
+    });
+
+    it('can read the record at all, which the old lead could not', async () => {
+        const res = await manager.get(`${DRIVERS}?from=${day}&to=${day}`);
+        expect(res.status).toBe(200);
+        expect(res.body.drivers.length).toBeGreaterThan(0);
+    });
+
+    it('sees who delivered what', async () => {
+        const res = await manager.get(`${DRIVERS}?from=${day}&to=${day}`);
+        const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
+        expect(ada.delivered).toBeGreaterThan(0);
+        expect(ada.failed).toBeDefined();
+        expect(ada.daysWorked).toBeDefined();
+    });
+
+    it('sees no money anywhere in it', async () => {
+        const res = await manager.get(`${DRIVERS}?from=${day}&to=${day}`);
+        /* The whole body, not a field at a time: the pay numbers live in
+           three shapes -- the totals, each driver, and the lines inside
+           them -- and a strip applied to two of the three is a leak in the
+           third. */
+        const body = JSON.stringify(res.body);
+        expect(body).not.toMatch(/payCents/);
+        expect(body).not.toMatch(/rateCents/);
+        expect(body).not.toMatch(/"lines"/);
+        expect(res.body.currency).toBeUndefined();
+    });
+
+    it('sees no money on one named driver either', async () => {
+        const res = await manager.get(`${DRIVERS}/pay.ada?from=${day}&to=${day}`);
+        expect(res.status).toBe(200);
+        const body = JSON.stringify(res.body);
+        expect(body).not.toMatch(/payCents/);
+        expect(body).not.toMatch(/rateCents/);
+    });
+
+    it('cannot export the payment run as a spreadsheet', async () => {
+        /* The workbook is built from the same rows and carries the rate and
+           pay columns. Rather than keep a second shape of it in step, the
+           export stays where the money is allowed. */
+        expect((await manager.get(`${DRIVERS}/export.xlsx?from=${day}&to=${day}`)).status).toBe(403);
+    });
+
+    it('still shows an admin the money', async () => {
+        /* The strip is about the role, not about the endpoint. */
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        expect(JSON.stringify(res.body)).toMatch(/payCents/);
+        expect(res.body.currency).toBe('USD');
+    });
+});
+
 /* ──────────────────────────────────────────── paying by zone (7.10)
  *
  * The courier offer letter pays per completed delivery by ZONE rather than

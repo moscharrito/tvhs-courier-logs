@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Drivers, money } from './Drivers';
 import { DriverRecord } from './DriverRecord';
@@ -149,6 +149,47 @@ describe('every driver', () => {
         renderDrivers();
         await screen.findByRole('link', { name: 'Ada Pay' });
         expect(document.body.textContent).not.toMatch(/patient/i);
+    });
+});
+
+/* THE SITE MANAGER'S VIEW (ticket 7.20).
+ *
+ * One site manager replaced eight per-counter leads. They dispatch, handle
+ * what comes back and talk to drivers on site, so they read this page -- but
+ * what a driver is paid is commercial and is not theirs.
+ *
+ * The server strips the pay fields; this screen reads the DATA rather than
+ * the role, because a component that re-decides who may see money is a
+ * second copy of the rule and the copy that drifts is the one that shows it.
+ */
+describe('the drivers record without the money', () => {
+    const noMoney = {
+        from: '2026-11-02', to: '2026-11-02', timezone: 'America/Chicago',
+        drivers: [{
+            username: 'pay.ada', name: 'Ada Pay', daysWorked: 1,
+            delivered: 3, failed: 2, rateSet: true, basis: 'serviceType', lines: {},
+        }],
+        totals: { delivered: 3, failed: 2, rateSet: true, basis: 'serviceType', lines: {} },
+    };
+
+    it('shows who delivered what', async () => {
+        renderDrivers({ 'GET /api/projects/uh/uh/drivers*': noMoney });
+        expect(await screen.findByText('Ada Pay')).toBeInTheDocument();
+        /* Scoped to the row: "3" is also the delivered total in the summary
+           above, and an unscoped match finds both. */
+        const row = screen.getByText('Ada Pay').closest('tr')!;
+        /* Delivered, scoped to the row: the same figure is in the summary
+           above, so an unscoped match finds both. */
+        expect(within(row).getByText('3')).toBeInTheDocument();
+    });
+
+    it('has no Pay column and no figure to disburse', async () => {
+        renderDrivers({ 'GET /api/projects/uh/uh/drivers*': noMoney });
+        await screen.findByText('Ada Pay');
+        expect(screen.queryByRole('columnheader', { name: 'Pay' })).not.toBeInTheDocument();
+        expect(screen.queryByText('to disburse')).not.toBeInTheDocument();
+        /* And nothing that looks like money got rendered anyway. */
+        expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
     });
 });
 

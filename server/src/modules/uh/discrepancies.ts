@@ -90,8 +90,11 @@ export function createDiscrepancyRouter({ client }: { client: Client }): Router 
     /* Everybody who does the work can report. The courier holding the package
      * is usually the one who notices, and a report they cannot file is a
      * report that becomes a shrug. */
-    const report = requireProjectRole('admin', 'courier');
-    const review = requireProjectRole('admin');
+    const report = requireProjectRole('admin', 'lead', 'courier');
+    /* Reading and closing the log is dispatch work, and from 7.20 there is
+       one site manager doing it. Still a judgement about whether the
+       contract was affected, which is why it is not open to a courier. */
+    const review = requireProjectRole('admin', 'lead');
 
     router.get('/summary', review, wrap(async (req, res) => {
         const rs = await client.execute({

@@ -139,7 +139,12 @@ export function createReturnsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     // A courier returns their own load; staff can record it for them when a
     // phone has died, the same as a pickup.
-    const operate = requireProjectRole('admin', 'courier');
+    /* The site manager is in here from ticket 7.20. Handling what came back
+       is half of what the role was created for: one person at the counter
+       who takes undelivered items off a driver and sends them back to the
+       pharmacy that issued them. A courier can record their own return; the
+       manager records anybody's. */
+    const operate = requireProjectRole('admin', 'lead', 'courier');
 
     const actorOf = (req: Request) => req.session.user?.username ?? '';
 

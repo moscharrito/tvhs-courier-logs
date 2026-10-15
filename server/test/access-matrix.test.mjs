@@ -71,6 +71,12 @@ const UH_LEAD_BOARD = ['lead', 'projectAdmin', 'platformAdmin'];
 /* Moving an order between drivers, which is the lead's one write. Not
  * creating a run, resequencing one or closing it. */
 const UH_REASSIGN = ['lead', 'projectAdmin', 'platformAdmin'];
+/* ONE SITE MANAGER, from ticket 7.20. The eight per-counter leads are gone;
+   `lead` is now a single person who dispatches the whole contract, handles
+   what comes back and talks to drivers on site. They see the operation and
+   not the commercials, which is the line these rows draw. */
+const UH_DISPATCH = ['lead', 'projectAdmin', 'platformAdmin'];
+const UH_DISPATCH_AND_COURIER = ['lead', 'courier', 'projectAdmin', 'platformAdmin'];
 const UH_MANAGE = UH_STAFF;
 const UH_CLIENT_VIEW = ['pharmacy', 'projectAdmin', 'platformAdmin'];
 const TVHS_MEMBER = ['outsider', 'platformAdmin'];
@@ -284,10 +290,10 @@ const MATRIX = [
        exported to a bookkeeper. Two shapes rather than one with a flag: a
        courier asks for /me and the username comes off the session, and
        everything that names a driver is dispatch's. */
-    ['GET', `${UH}/drivers`, UH_STAFF, 'every driver and what they earned'],
+    ['GET', `${UH}/drivers`, UH_DISPATCH, 'who delivered what; the site manager gets this with the money stripped out'],
     ['GET', `${UH}/drivers/me`, UH_MEMBER, 'a courier reads their own, and only by this route'],
     ['GET', `${UH}/drivers/export.xlsx`, UH_STAFF, 'the payment run as a file'],
-    ['GET', `${UH}/drivers/nobody`, UH_STAFF, 'naming a driver is dispatch only'],
+    ['GET', `${UH}/drivers/nobody`, UH_DISPATCH, 'naming a driver is dispatch; the site manager gets it without the money'],
 
     /* --- pharmacies. Addresses and contacts of University Health sites. */
     ['GET', `${UH}/sites`, UH_LEAD_READ, 'a courier needs the pickup address; a lead works at one'],
@@ -410,8 +416,8 @@ const MATRIX = [
     ['POST', `${UH}/runs/999999/pickup`, UH_STAFF_AND_COURIER, ''],
 
     /* --- medication coming back. */
-    ['GET', `${UH}/returns`, UH_STAFF_AND_COURIER, ''],
-    ['POST', `${UH}/returns`, UH_STAFF_AND_COURIER, ''],
+    ['GET', `${UH}/returns`, UH_DISPATCH_AND_COURIER, 'handling what came back is half the site manager role'],
+    ['POST', `${UH}/returns`, UH_DISPATCH_AND_COURIER, ''],
 
     /* --- the dispatch board: every patient address in the contract on one
        screen. Couriers see their own run instead. */
@@ -463,11 +469,11 @@ const MATRIX = [
     /* --- the shadow week's log (ticket 5.2). A courier can report what they
        see at the door; reviewing and closing is a judgement about the
        contract and is not theirs to make. */
-    ['POST', `${UH}/discrepancies`, UH_STAFF_AND_COURIER, 'anybody who notices'],
-    ['GET', `${UH}/discrepancies/export.xlsx`, UH_STAFF, 'the disputes, as a file'],
-    ['GET', `${UH}/discrepancies`, UH_STAFF, 'the log'],
-    ['GET', `${UH}/discrepancies/summary`, UH_STAFF, 'the go-live question'],
-    ['PATCH', `${UH}/discrepancies/999999`, UH_STAFF, 'close one'],
+    ['POST', `${UH}/discrepancies`, UH_DISPATCH_AND_COURIER, 'anybody who notices'],
+    ['GET', `${UH}/discrepancies/export.xlsx`, UH_DISPATCH, 'the disputes, as a file. No money in it, unlike the drivers export'],
+    ['GET', `${UH}/discrepancies`, UH_DISPATCH, 'the log, and closing one is a dispatch judgement'],
+    ['GET', `${UH}/discrepancies/summary`, UH_DISPATCH, 'the go-live question'],
+    ['PATCH', `${UH}/discrepancies/999999`, UH_DISPATCH, 'closing one is a judgement about whether the contract was affected'],
 
     /* --- go-live (ticket 5.3). Reading the readiness check is for anybody
        running the contract; recording a report as sent to University Health
@@ -478,8 +484,8 @@ const MATRIX = [
     /* --- performance against the contract. */
     ['GET', `${UH}/reports/sent`, UH_STAFF, 'what we have told University Health'],
     ['POST', `${UH}/reports/sent`, UH_MANAGE, 'record the daily report as sent'],
-    ['GET', `${UH}/reports/sla`, UH_STAFF, ''],
-    ['GET', `${UH}/reports/sla.xlsx`, UH_STAFF, ''],
+    ['GET', `${UH}/reports/sla`, UH_DISPATCH, 'completion and on-time are what the operation is run against'],
+    ['GET', `${UH}/reports/sla.xlsx`, UH_DISPATCH, ''],
 
     /* --- money. Reading an invoice is the contract's revenue; issuing one is
        a document that leaves the building. */

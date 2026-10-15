@@ -69,7 +69,52 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
     const router = Router({ mergeParams: true });
     /* Project admin. A lead runs one counter and has no business reading what
        every courier on the contract earned. */
-    const dispatchOnly = requireProjectRole('admin');
+    /* The site manager reads this from ticket 7.20, WITHOUT the money. They
+       liaise with drivers on site daily and need to know who is carrying
+       what and who is running late; what each driver is paid is commercial
+       and is not theirs. Stripped on the way out by `visibleTo` rather than
+       hidden by the screen, because a field a client is trusted not to
+       render is a field that leaks the first time somebody opens devtools
+       or exports the spreadsheet. */
+    const dispatchOnly = requireProjectRole('admin', 'lead');
+
+    /**
+     * The same record, with the money taken out for anybody who may not see
+     * it.
+     *
+     * ONE FUNCTION ON THE WAY OUT, not a flag each caller remembers. The pay
+     * fields are spread through three shapes -- the totals, each driver, and
+     * each line inside them -- and a strip applied in two of the three is a
+     * leak in the third.
+     *
+     * Deleted rather than zeroed. A pay of 0 reads as "earned nothing",
+     * which is a different and worse claim than "not shown to you", and
+     * driver-pay.ts is explicit that nought is not a rate.
+     */
+    type Money = { payCents?: unknown; rateCents?: unknown; lines?: Record<string, unknown>; currency?: unknown; rateSet?: unknown };
+    function stripMoney<T extends Money>(row: T): T {
+        const { payCents, rateCents, lines, ...rest } = row as Money & Record<string, unknown>;
+        void payCents; void rateCents; void lines;
+        return rest as T;
+    }
+
+    function visibleTo<T extends Record<string, unknown>>(req: Request, body: T): T {
+        if (req.membership?.role !== 'lead') return body;
+        const out = { ...body } as Record<string, unknown>;
+        delete out['currency'];
+        delete out['rateSet'];
+        if (Array.isArray(out['drivers'])) {
+            out['drivers'] = (out['drivers'] as Money[]).map(stripMoney);
+        }
+        if (Array.isArray(out['periods'])) {
+            out['periods'] = (out['periods'] as Money[]).map(stripMoney);
+        }
+        if (out['totals'] && typeof out['totals'] === 'object') {
+            out['totals'] = stripMoney(out['totals'] as Money);
+        }
+        return out as T;
+    }
+
     const anyMember = requireProjectRole('admin', 'lead', 'courier', 'pharmacy');
 
     /** The window, bounded, so nobody asks for every delivery ever made. */
@@ -251,14 +296,14 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             drivers: drivers.length, delivered: totals.delivered,
         });
 
-        res.json({
+        res.json(visibleTo(req, {
             ...window,
             timezone: project.timezone,
             currency: rates.currency,
             rateSet: totals.rateSet,
             drivers,
             totals,
-        });
+        }));
     }));
 
     /* --------------------------------------------------------- as a file */
@@ -273,7 +318,14 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
        rather than /uh/drivers.xlsx, which would have been outside the mount
        and answered 404 to everybody. Declared before '/:username' or Express
        reads the filename as a driver's name. */
-    router.get('/export.xlsx', dispatchOnly, wrap(async (req, res) => {
+    /* ADMIN ONLY, deliberately not the site manager.
+    
+       The workbook is built from the same rows as the screen and carries the
+       rate and pay columns. Rather than maintain a second shape of it and
+       hope the two never diverge, this one stays where the money is allowed.
+       A site manager who needs the delivery counts has them on screen, and
+       the thing they would export is the operational list, not the payroll. */
+    router.get('/export.xlsx', requireProjectRole('admin'), wrap(async (req, res) => {
         const project = req.project!;
         const window = windowOf(req, res);
         if (!window) return;
@@ -385,7 +437,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             from: window.from, to: window.to, stops: stops.length,
         });
 
-        res.json({
+        res.json(visibleTo(req, {
             ...window,
             timezone: project.timezone,
             currency: rates.currency,
@@ -393,7 +445,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             name: names.get(username) ?? username,
             grouping: groupingOf(req),
             ...recordOf(stops, groupingOf(req), rates),
-        });
+        }));
     }));
 
     return router;
