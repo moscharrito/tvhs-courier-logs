@@ -61,6 +61,40 @@ of the shift being started and the banner changing. Budget for that round.
 
 ---
 
+## Google gates background location on EVERY track, closed tests included
+
+Checked 15 October 2026, because the plan was to publish to Play while Apple
+enrolment finished and this decides whether that is a week or a month.
+
+`app.json` requests `ACCESS_BACKGROUND_LOCATION`. Google's own page on the
+permission instructs developers who do not need it to remove it "for all APKs
+across all tracks (including closed and open tracks)" — naming closed tracks
+explicitly. So the **permission declaration has to be on file before a closed
+test, not just before production.** There is no quick internal Play track that
+skips it for an app that requests this permission.
+
+What the declaration needs beyond the text already written above for Apple:
+
+- Google asks for a **screen recording** showing the in-app disclosure, the
+  permission prompt, and the feature working. The prompt appears when the
+  driver goes on shift, which is the thing worth filming.
+- The in-app disclosure must appear **before** the system prompt and must say
+  who collects the data and why. The shift screen does this; confirm the
+  wording matches the declaration before filing, because a mismatch between
+  the two is a documented rejection reason.
+
+**A separate deadline, close enough to matter.** Google is making a precise
+location (`ACCESS_FINE_LOCATION`) declaration mandatory from **28 October
+2026** for apps targeting **API level 37 or later**. This app targets 36, so
+it is not caught today — but that is four days before go-live, and an Expo SDK
+bump that moves targetSdk to 37 would walk into it. Check the Policy Deadlines
+page in the Console before any SDK upgrade.
+
+**Therefore the Play Store is not the way to get the app onto 18 phones for
+testing.** The `preview` profile in `eas.json` is already internal
+distribution pointing at production: it installs by link or QR code with no
+Console, no review and no declaration. Play runs in parallel on its own clock.
+
 ## The reviewer has to be able to sign in
 
 **This is the item most likely to waste a cycle, and it is not about
@@ -75,9 +109,11 @@ Three things have to be true before the first submission:
 
 1. **A reachable server over HTTPS.** `eas.json` carries
    `EXPO_PUBLIC_API_URL` per profile, and both release profiles say
-   `REPLACE-ME.example.com` on purpose so that nobody ships the placeholder
-   by accident. `src/lib/apiUrl.ts` **refuses the build** if a release profile
-   is left unset, points at localhost, or uses plain HTTP.
+   `https://logs.izyglobalservices.com`, which is live and answering.
+   `src/lib/apiUrl.cjs` **refuses the build** if a release profile is left
+   unset, points at localhost, or uses plain HTTP. (Both profiles used to say
+   `REPLACE-ME.example.com` so the placeholder could not ship by accident;
+   that is no longer the state, and the guard is what still enforces it.)
 2. **A demo account, supplied in App Store Connect.** A courier account on a
    project with a run on it. Apple requires the credentials; Google asks for
    them when a login wall exists.
@@ -146,11 +182,24 @@ Things that are done:
 Things that are not, and are not code:
 
 - [ ] **Apple and Google accounts.** Start the D-U-N-S number now.
-- [ ] **An app icon and a splash screen.** Required by both stores. There is
-      no placeholder in the repository on purpose: a green square that ships
-      by accident is worse than a build that stops.
+- [x] **The app icon.** `assets/icon.png` and `assets/adaptive-icon.png`, and
+      they are wired up in `app.config.ts` rather than `app.json` for a
+      reason: Expo substitutes its own icon when none is configured, so static
+      config cannot say "stop". `src/lib/appIcons.cjs` **throws on a
+      production build with no artwork** and warns on a preview one.
+- [ ] **The store listing artwork, which is not the app icon.** Google wants a
+      1024x500 feature graphic and at least two phone screenshots; neither is
+      in the repository. These are uploaded in the Console, not built into the
+      app, which is why the icon being done does not cover them.
 - [ ] **A privacy policy at a public URL.** Both stores require one, and it
       has to describe the location collection above in the same terms.
+      **Half done, and the half that is left is the one a reviewer sees.**
+      `https://logs.izyglobalservices.com/privacy` is live and serves the real
+      policy, written from the code. Its own first line still reads *"DRAFT.
+      NOT YET REVIEWED BY AN ATTORNEY, AND NOT YET PUBLISHED."* That is the
+      URL that goes in the Play Console, a reviewer opens it, and the page
+      says it is not published. The banner is accurate, so the fix is the
+      attorney review rather than deleting the sentence.
 - [ ] **A demo account and a reachable server.** See above.
 - [ ] **Support contact details** that reach a person.
 
