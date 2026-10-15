@@ -286,3 +286,58 @@ describe('a lead exporting the orders list', () => {
         expect(detail.containedPatientData).toBe(true);
     });
 });
+
+describe('the platform role a lead account holds', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE FIXTURE ABOVE WAS RIGHT AND THE REAL SCRIPT WAS WRONG.
+     *
+     * `make()` creates these leads with platform role 'staff', which is what
+     * they should be -- so every test in this file passed while
+     * create-leads.mjs put the actual site manager into production as a
+     * 'driver' on 15 October. A fixture that quietly disagrees with the thing
+     * that makes the real account tests nothing about the real account.
+     *
+     * Two rules read the PLATFORM role, and a lead sits on the wrong side of
+     * both as a 'driver'. They are asserted here, against an account built
+     * the way the script builds it, so the next person to reach for 'driver'
+     * on the grounds that a lead stands at a counter has to delete a test
+     * that says why not.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('is staff, so four digits cannot open the whole contract', async () => {
+        /* MAY_USE_DEVICE_PIN is role === 'driver'. A device PIN is a gate on
+           a bound phone holding one run; this account sees every counter's
+           board -- every patient name, address and medication in the
+           contract. */
+        const res = await srv.agent().post('/api/devices/enrol')
+            .send({ username: 'lead.discharge', password: PASS, pin: '1234' });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('device.notAllowed');
+    });
+
+    it('gets a staff session, not a courier thirty days', async () => {
+        /* lifetimesFor() hands a 'driver' the courier lifetimes, which are
+           long on purpose: a courier on the road must not be signed out
+           mid-run. Applied to the dispatch account it would mean the screen
+           showing the most PHI held the longest-lived session in the system,
+           which is the opposite of what the idle work was for. */
+        const { lifetimesFor } = await import('../src/core/auth/sessions.ts');
+        const cfg = {
+            staffIdleMinutes: 12 * 60, staffAbsoluteMinutes: 18 * 60,
+            courierIdleMinutes: 12 * 60, courierAbsoluteMinutes: 30 * 24 * 60,
+        };
+        const row = (await admin.get('/api/users/lead.discharge')).body;
+        expect(row.role).toBe('staff');
+        expect(lifetimesFor(row.role, cfg).absoluteMinutes).toBe(18 * 60);
+        /* And the figure it must not get, named so the test fails loudly
+           rather than quietly agreeing with itself. */
+        expect(lifetimesFor(row.role, cfg).absoluteMinutes)
+            .not.toBe(cfg.courierAbsoluteMinutes);
+    });
+
+    it('still reaches the board, because the project role is what grants that', async () => {
+        /* The point of the change: nothing a site manager does needs the
+           platform role. If this breaks, 'staff' was the wrong answer. */
+        expect((await lead.get(`${UH}/board?date=2026-11-01`)).status).toBe(200);
+    });
+});

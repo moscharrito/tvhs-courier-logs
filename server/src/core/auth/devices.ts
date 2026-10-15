@@ -62,10 +62,20 @@ import { createAuthThrottles, tooManyAttempts, type AuthThrottles } from './thro
 /**
  * Who may reduce their sign-in to four digits.
  *
- * Platform role, not project role: a site lead is a `driver` here and works
- * from a phone at a counter exactly as a courier does, which is the case the
- * device binding was built for. Everybody else, our own administrators
- * included, signs in with a password.
+ * A COURIER PHONE HOLDING ONE RUN, and nothing else. Four digits is a
+ * reasonable gate on a bound device whose scope is the stops on it; it is not
+ * a reasonable gate on a screen showing the whole contract.
+ *
+ * This comment used to add "a site lead is a `driver` here and works from a
+ * phone at a counter exactly as a courier does". Ticket 7.20 made the site
+ * manager web-only, so that stopped being true -- and because the rule reads
+ * the PLATFORM role, the stale claim was load-bearing: an account created as
+ * a `driver` on the strength of it could sign in to everything that account
+ * can see with a PIN. create-leads.mjs now makes the site manager `staff`.
+ *
+ * So: the platform role decides this, the project role decides what somebody
+ * can see, and the two must not be confused. Everybody else, our own
+ * administrators included, signs in with a password.
  *
  * Exported so the tests name the rule rather than restating it.
  */

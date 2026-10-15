@@ -29,9 +29,25 @@
  * could not resolve rather than leaving somebody a login that silently shows
  * an empty board.
  *
- * PLATFORM ROLE `driver`, because a lead works from a phone and has no
- * business in the platform's own staff functions. The project role is what
- * grants them their pharmacy.
+ * PLATFORM ROLE `staff`, and it used to be `driver` on the grounds that a
+ * lead works from a phone at a counter exactly as a courier does. Ticket
+ * 7.20 made this account web-only and took the lead screens out of the
+ * courier app, so that reasoning is gone -- and what it left behind pointed
+ * the wrong way twice:
+ *
+ *   MAY_USE_DEVICE_PIN is `role === 'driver'`, so the one account that can
+ *   see every counter's board -- every patient name, address and medication
+ *   in the contract -- could reduce its sign-in to FOUR DIGITS. A device PIN
+ *   is for a courier phone holding one run.
+ *
+ *   lifetimesFor() gives a `driver` the courier lifetimes, so its session
+ *   lasted THIRTY DAYS absolute instead of eighteen hours. The account
+ *   seeing the most PHI would have held the longest-lived session in the
+ *   system.
+ *
+ * Nothing the site manager actually does needs the platform role: the board,
+ * returns and discrepancies all gate on the PROJECT role `lead`, which is
+ * what grants them their pharmacies.
  *
  * RUN FROM THE REPOSITORY ROOT. The paths below say `server/scripts` for a
  * reason: every terminal opens at the root, `node scripts/create-leads.mjs`
@@ -147,6 +163,11 @@ const RETIRED = [
     ...ALL_COUNTERS.map((code) => `lead.${code}`),  // one per counter, until 7.20
 ];
 
+/* See the header. `staff` is what every other web portal account is, and the
+ * two things the platform role decides -- device PIN eligibility and session
+ * lifetime -- both want this account treated as staff. */
+const PLATFORM_ROLE = 'staff';
+
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const wanted = only.length === 0
     ? LEADS
@@ -245,7 +266,7 @@ async function main() {
             pass = password();
             insist(`create ${lead.username}`, await call('/api/users', {
                 method: 'POST',
-                body: JSON.stringify({ username: lead.username, name: lead.name, password: pass, role: 'driver' }),
+                body: JSON.stringify({ username: lead.username, name: lead.name, password: pass, role: PLATFORM_ROLE }),
             }), (s) => s === 201 || s === 200);
         } else if (has('reset')) {
             pass = password();
@@ -253,6 +274,21 @@ async function main() {
                 method: 'POST',
                 body: JSON.stringify({ password: pass }),
             }));
+        }
+
+        /* RECONCILED EVERY RUN, like the membership below, and for the same
+           reason: the role is only set at creation, so an account made under
+           an earlier version keeps whatever that version chose. Production
+           got uh.sitemanager as a `driver` on 15 October -- a 4-digit PIN and
+           a 30-day session on the account that sees the whole contract -- and
+           re-running a script that only writes the role on create would never
+           have corrected it. */
+        if (existing.status === 200 && existing.body?.role !== PLATFORM_ROLE) {
+            insist(`platform role ${lead.username}`, await call(`/api/users/${lead.username}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ role: PLATFORM_ROLE }),
+            }));
+            say(`  ${lead.username.padEnd(18)} platform role ${existing.body?.role} -> ${PLATFORM_ROLE}`);
         }
 
         /* The membership is written every time, existing account or not: this is
