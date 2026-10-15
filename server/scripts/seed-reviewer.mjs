@@ -33,9 +33,9 @@
  * so nobody reading a board has to wonder which rows are real. No University
  * Health data, real or sampled, goes anywhere near this.
  *
- *   npx tsx scripts/seed-reviewer.mjs                        localhost
- *   npx tsx scripts/seed-reviewer.mjs --days 30              a longer window
- *   SEED_ADMIN_PASS=... npx tsx scripts/seed-reviewer.mjs \
+ *   npx tsx server/scripts/seed-reviewer.mjs                        localhost
+ *   npx tsx server/scripts/seed-reviewer.mjs --days 30              a longer window
+ *   SEED_ADMIN_PASS=... npx tsx server/scripts/seed-reviewer.mjs \
  *     --base https://logs.izyglobalservices.com --i-mean-production
  *
  * The reviewer's password is generated here and printed ONCE. It is written

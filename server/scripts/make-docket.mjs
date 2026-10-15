@@ -39,8 +39,8 @@
  * The pharmacy is not party to the second one: their record is the manifest
  * and their own list, and the docket starts where the lead takes custody.
  *
- *   npx tsx scripts/make-docket.mjs              # writes both to docs/forms/
- *   npx tsx scripts/make-docket.mjs path/to/dir
+ *   npx tsx server/scripts/make-docket.mjs              # writes both to docs/forms/
+ *   npx tsx server/scripts/make-docket.mjs path/to/dir
  */
 
 import fs from 'node:fs';

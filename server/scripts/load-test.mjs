@@ -23,9 +23,9 @@
  * opens the portal while it runs. The guard is the same one clear-test-work
  * carries, for the same reason.
  *
- *   npx tsx scripts/load-test.mjs                 # a Tuesday, 1417 orders
- *   npx tsx scripts/load-test.mjs --orders 1875   # the worst day they have had
- *   npx tsx scripts/load-test.mjs --keep          # leave the data behind
+ *   npx tsx server/scripts/load-test.mjs                 # a Tuesday, 1417 orders
+ *   npx tsx server/scripts/load-test.mjs --orders 1875   # the worst day they have had
+ *   npx tsx server/scripts/load-test.mjs --keep          # leave the data behind
  */
 
 import path from 'node:path';
@@ -264,7 +264,7 @@ if (!has('keep')) {
 } else {
     say('');
     say(`  --keep: ${orders} orders left on ${serviceDate}.`);
-    say(`  Remove them with: npx tsx scripts/clear-test-work.mjs --from ${serviceDate} --to ${serviceDate} --project ${projectCode} --apply`);
+    say(`  Remove them with: npx tsx server/scripts/clear-test-work.mjs --from ${serviceDate} --to ${serviceDate} --project ${projectCode} --apply`);
 }
 
 client.close();

@@ -103,7 +103,7 @@ if (meansProduction && config.db.kind === 'file') {
     console.error('');
     console.error('To act on the live database, take the values from the Render dashboard:');
     console.error('  ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=...');
-    console.error('  node scripts/remove-accounts.mjs <usernames> --i-mean-production --apply --disable');
+    console.error('  node server/scripts/remove-accounts.mjs <usernames> --i-mean-production --apply --disable');
     console.error('');
     console.error('To act on this laptop, drop the flag: it is only for a remote database.');
     process.exit(1);

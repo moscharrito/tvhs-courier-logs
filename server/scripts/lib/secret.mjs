@@ -108,7 +108,7 @@ export async function adminPassword({ user, base, isLocal, label, askLocally = f
         console.error('  This happens when the script is run through `npm run` on Windows,');
         console.error('  which puts a cmd.exe between your terminal and node. Two ways out:');
         console.error('');
-        console.error(`    node scripts/${label} --base ${base} --i-mean-production ...`);
+        console.error(`    node server/scripts/${label} --base ${base} --i-mean-production ...`);
         console.error('');
         console.error('  or, if you are scripting it and accept that the password stays in');
         console.error('  the environment for the rest of the session:');

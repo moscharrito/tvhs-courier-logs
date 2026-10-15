@@ -21,8 +21,8 @@
  * on, and says what each one MEANS rather than printing its value and
  * leaving the reader to remember which way round it goes.
  *
- *   node scripts/settings-show.mjs
- *   node scripts/settings-show.mjs --base https://logs.izyglobalservices.com
+ *   node server/scripts/settings-show.mjs
+ *   node server/scripts/settings-show.mjs --base https://logs.izyglobalservices.com
  *
  * No --i-mean-production: it changes nothing. Reading what is set is exactly
  * what somebody does when they are not sure what is set.

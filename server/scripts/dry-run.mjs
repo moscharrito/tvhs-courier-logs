@@ -900,12 +900,12 @@ function summarise() {
         say('  Take the two Turso values from the Render dashboard, then, in bash:');
         say('');
         say('    ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... \\');
-        say(`      node scripts/clear-test-work.mjs --from ${today} --project uh --i-mean-production --apply`);
+        say(`      node server/scripts/clear-test-work.mjs --from ${today} --project uh --i-mean-production --apply`);
         say('');
         say('  or, in PowerShell, which has no inline environment prefix:');
         say('');
         say('    $env:ALLOW_TURSO_OUTSIDE_PRODUCTION="true"; $env:TURSO_DATABASE_URL="..."; $env:TURSO_AUTH_TOKEN="..."');
-        say(`    node scripts/clear-test-work.mjs --from ${today} --project uh --i-mean-production --apply`);
+        say(`    node server/scripts/clear-test-work.mjs --from ${today} --project uh --i-mean-production --apply`);
         say('');
         say('  Run it from the server directory. Without those values it lands on');
         say('  this laptop, which is what the refusal in clear:work is there to catch.');

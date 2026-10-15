@@ -46,8 +46,8 @@
  * telephoning us. So a credential that has gone astray is a five-minute fix
  * at their end rather than a support call at ours.
  *
- *   node scripts/create-pharmacy-portals.mjs                      # local
- *   node scripts/create-pharmacy-portals.mjs --i-mean-production  # the live site
+ *   node server/scripts/create-pharmacy-portals.mjs                      # local
+ *   node server/scripts/create-pharmacy-portals.mjs --i-mean-production  # the live site
  *   ... --only=green,manager                                      # just these
  *   ... --reset                                                   # new password for one that exists
  *

@@ -11,10 +11,10 @@
  * change, it goes through here, where every run says which server it hit
  * and reads the result back.
  *
- *   node scripts/driver-rates.mjs --show
- *   node scripts/driver-rates.mjs --basis zone --zone1 5.00 --zone2 7.25 \
+ *   node server/scripts/driver-rates.mjs --show
+ *   node server/scripts/driver-rates.mjs --basis zone --zone1 5.00 --zone2 7.25 \
  *       --zone3 12.00 --zone4 22.00 --zone5 28.00
- *   node scripts/driver-rates.mjs --show --base https://logs.izyglobalservices.com
+ *   node server/scripts/driver-rates.mjs --show --base https://logs.izyglobalservices.com
  *
  * Add --i-mean-production for a remote server. The admin password is asked
  * for with the echo off; SEED_ADMIN_PASS still wins when it is already set.

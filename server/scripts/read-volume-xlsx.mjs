@@ -5,7 +5,7 @@
  * lets zones 4 and 5 carry per-ZIP rates, and until this file arrived nobody
  * had the distribution those rates would be quoted against.
  *
- *   npx tsx scripts/read-volume-xlsx.mjs "<path to the .xlsx>"
+ *   npx tsx server/scripts/read-volume-xlsx.mjs "<path to the .xlsx>"
  */
 import ExcelJS from 'exceljs';
 

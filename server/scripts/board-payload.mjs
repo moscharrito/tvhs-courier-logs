@@ -21,8 +21,8 @@
  * reaches a dispatcher on hospital wifi, and is already brotli by the time it
  * gets there because Cloudflare is in front.
  *
- *   npx tsx scripts/board-payload.mjs
- *   npx tsx scripts/board-payload.mjs --orders 1875
+ *   npx tsx server/scripts/board-payload.mjs
+ *   npx tsx server/scripts/board-payload.mjs --orders 1875
  */
 
 import { gzipSync } from 'node:zlib';

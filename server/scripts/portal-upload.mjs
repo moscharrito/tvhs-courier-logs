@@ -18,9 +18,9 @@
  * what is about to change, and reads it back afterwards to prove the
  * change landed rather than reporting the HTTP status and hoping.
  *
- *   node scripts/portal-upload.mjs --on                      # local
- *   node scripts/portal-upload.mjs --on  --base https://logs.izyglobalservices.com --i-mean-production
- *   node scripts/portal-upload.mjs --off --base https://logs.izyglobalservices.com --i-mean-production
+ *   node server/scripts/portal-upload.mjs --on                      # local
+ *   node server/scripts/portal-upload.mjs --on  --base https://logs.izyglobalservices.com --i-mean-production
+ *   node server/scripts/portal-upload.mjs --off --base https://logs.izyglobalservices.com --i-mean-production
  *
  * SEED_ADMIN_USER and SEED_ADMIN_PASS are read from the environment when
  * they are set, so this fits the same habits as the other scripts here. If

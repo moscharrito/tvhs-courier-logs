@@ -12,7 +12,7 @@
  * Read-only, and it touches no database. Everything it prints comes out of
  * the workbook.
  *
- *   npx tsx scripts/analyse-volume.mjs "<path to the .xlsx>"
+ *   npx tsx server/scripts/analyse-volume.mjs "<path to the .xlsx>"
  */
 import ExcelJS from 'exceljs';
 

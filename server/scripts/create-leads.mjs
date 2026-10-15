@@ -50,9 +50,9 @@
  * what grants them their pharmacies.
  *
  * RUN FROM THE REPOSITORY ROOT. The paths below say `server/scripts` for a
- * reason: every terminal opens at the root, `node scripts/create-leads.mjs`
- * there is MODULE_NOT_FOUND, and the first production run of this script
- * failed on exactly that rather than on anything it was asked to do. The
+ * reason: every terminal opens at the root, so dropping the `server/` is
+ * MODULE_NOT_FOUND, and the first production run of this script failed on
+ * exactly that rather than on anything it was asked to do. The
  * script does not care which directory it is called from -- it finds .env and
  * the server from its own location -- so the only thing that needs to be
  * right is the path on the command line.

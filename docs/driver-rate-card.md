@@ -33,8 +33,8 @@ Not in Project settings, deliberately: the rest of that screen is operational
 settings a dispatcher changes mid-shift, and these are what people are paid.
 
 ```
-node scripts/driver-rates.mjs --show
-node scripts/driver-rates.mjs --basis zone \
+node server/scripts/driver-rates.mjs --show
+node server/scripts/driver-rates.mjs --basis zone \
     --zone1 5.00 --zone2 7.25 --zone3 12.00 --zone4 22.00 --zone5 28.00
 ```
 

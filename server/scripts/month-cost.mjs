@@ -30,8 +30,8 @@
  * covers that shape; billing is a whole month and an average is the honest
  * input for it. Seeding takes a while and says where it is up to.
  *
- *   npx tsx scripts/month-cost.mjs
- *   npx tsx scripts/month-cost.mjs --days 30 --orders 1417   # a peak month
+ *   npx tsx server/scripts/month-cost.mjs
+ *   npx tsx server/scripts/month-cost.mjs --days 30 --orders 1417   # a peak month
  */
 
 import { gzipSync } from 'node:zlib';

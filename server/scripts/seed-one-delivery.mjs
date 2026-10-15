@@ -22,8 +22,8 @@
  * EVERY NAME AND ADDRESS IS INVENTED. No University Health data, real or
  * sampled, goes anywhere near this file.
  *
- *   node scripts/seed-one-delivery.mjs                      # local
- *   node scripts/seed-one-delivery.mjs --i-mean-production  # the live site
+ *   node server/scripts/seed-one-delivery.mjs                      # local
+ *   node server/scripts/seed-one-delivery.mjs --i-mean-production  # the live site
  *   ... --phone=2105551234                                  # text a real phone
  *
  * WITHOUT --phone THIS TEXTS NOBODY. The recipient is a 555 number no carrier
