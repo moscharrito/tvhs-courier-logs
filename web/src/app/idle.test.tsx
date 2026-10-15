@@ -3,7 +3,9 @@
  * ─────────────────────────────────────────────────────────────────────────
  * REPORTED FOUR TIMES BEFORE THIS TEST EXISTED.
  *
- * The server has always idled a staff session out after thirty minutes. The
+ * The server idles a staff session out after twelve hours -- thirty minutes
+ * until 14 October, raised to a shift because a pharmacist checking their
+ * deliveries between other work was signed out between every check. The
  * browser had no idea, so the app only discovered its session had gone when
  * something it asked for came back 401 — and the page it was on rendered
  * that the way it renders any failure: a red "Not authenticated" across a
@@ -16,7 +18,7 @@
  * must NOT count: the portal refreshes itself every fifteen seconds whether
  * anybody is in the room or not, and counting that as activity would mean a
  * session that never idles out for as long as a tab is open somewhere,
- * which is the opposite of what a thirty minute window is for.
+ * which is the opposite of what an idle window is for.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -60,19 +62,22 @@ const wait = async (ms: number) => {
 };
 
 describe('a session nobody is using', () => {
-    it('signs itself out after thirty minutes, without being told to', async () => {
+    it('lasts a whole working day, and then goes', async () => {
+        /* The number that was asked for. Signed in at eight, untouched all
+           day, still signed in at seven in the evening; left on the counter
+           overnight, cleared by morning. */
         await signIn();
 
-        await wait(29 * 60 * 1000);
+        await wait(11 * 60 * 60 * 1000);
         expect(screen.getByText(/signed in/)).toBeInTheDocument();
 
-        await wait(2 * 60 * 1000);
+        await wait(90 * 60 * 1000);
         expect(screen.getByText(/signed out/)).toBeInTheDocument();
     });
 
     it('says why, so the sign-in page is not a mystery', async () => {
         await signIn();
-        await wait(31 * 60 * 1000);
+        await wait(13 * 60 * 60 * 1000);
         expect(screen.getByText(/signed out because idle/)).toBeInTheDocument();
     });
 });
@@ -81,20 +86,20 @@ describe('a session somebody is using', () => {
     it('stays open while there is a hand on it', async () => {
         await signIn();
 
-        /* Twenty minutes, a touch, twenty more. Were the clock not reset by
-           the touch, this would be forty minutes and signed out. */
-        await wait(20 * 60 * 1000);
+        /* Eight hours, a touch, eight more. Were the clock not reset by the
+           touch, this would be sixteen hours and signed out. */
+        await wait(8 * 60 * 60 * 1000);
         fireEvent.pointerDown(window);
-        await wait(20 * 60 * 1000);
+        await wait(8 * 60 * 60 * 1000);
 
         expect(screen.getByText(/signed in/)).toBeInTheDocument();
     });
 
     it('counts a keystroke too, not only a tap', async () => {
         await signIn();
-        await wait(20 * 60 * 1000);
+        await wait(8 * 60 * 60 * 1000);
         fireEvent.keyDown(window, { key: 'a' });
-        await wait(20 * 60 * 1000);
+        await wait(8 * 60 * 60 * 1000);
         expect(screen.getByText(/signed in/)).toBeInTheDocument();
     });
 });
@@ -117,7 +122,7 @@ describe('what does not count as somebody being there', () => {
            future reader looking at a signed-out dispatcher will be tempted
            to add one. */
         await signIn();
-        await wait(31 * 60 * 1000);
+        await wait(13 * 60 * 60 * 1000);
         expect(screen.getByText(/signed out because idle/)).toBeInTheDocument();
     });
 
@@ -129,7 +134,7 @@ describe('what does not count as somebody being there', () => {
         await signIn();
         const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
 
-        await wait(31 * 60 * 1000);
+        await wait(13 * 60 * 60 * 1000);
 
         expect(screen.getByText(/signed out/)).toBeInTheDocument();
         /* And it really was polling throughout, so the test is not passing

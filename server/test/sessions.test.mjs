@@ -58,7 +58,21 @@ describe('login creates a server-side session', () => {
         const driver = (await sessionRows('north.driver'))[0];
         expect(minutes(driver.last_seen_at, driver.idle_expires_at)).toBe(cfg.courierIdleMinutes);
         expect(minutes(driver.created_at, driver.absolute_expires_at)).toBe(cfg.courierAbsoluteMinutes);
-        expect(cfg.courierIdleMinutes).toBeGreaterThan(cfg.staffIdleMinutes);
+        /* They converged on 14 October and the reason the ordering existed
+           is still honoured.
+           
+           A courier's window was longer because signing somebody out
+           mid-round, in a van, with a phone in one hand, is worse than
+           signing out a desk. Staff was thirty minutes. Staff is now a
+           shift, which is what the courier window already was, so the two
+           idle numbers meet rather than one overtaking the other.
+           
+           Where the distinction still lives is the ABSOLUTE: eighteen hours
+           for staff against thirty days for a courier, because a phone that
+           has to be signed into again every morning is a phone somebody
+           writes the password on. */
+        expect(cfg.courierIdleMinutes).toBeGreaterThanOrEqual(cfg.staffIdleMinutes);
+        expect(cfg.courierAbsoluteMinutes).toBeGreaterThan(cfg.staffAbsoluteMinutes);
     });
 
     it('PIN login and PIN setup also open sessions', async () => {

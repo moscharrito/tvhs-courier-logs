@@ -84,14 +84,22 @@ describe('the numbers a programme would quote', () => {
        drift apart silently. */
 
     it('session timeouts', () => {
+        /* Raised from 30 minutes on 14 October. The programme quotes these
+           numbers to University Health, so the prose and the defaults have
+           to move together -- this test is the thing that makes that true,
+           and it is why the document was not simply edited. */
         const cfg = {
-            staffIdleMinutes: 30, staffAbsoluteMinutes: 12 * 60,
+            staffIdleMinutes: 12 * 60, staffAbsoluteMinutes: 18 * 60,
             courierIdleMinutes: 12 * 60, courierAbsoluteMinutes: 30 * 24 * 60,
         };
-        expect(lifetimesFor('staff', cfg)).toEqual({ idleMinutes: 30, absoluteMinutes: 720 });
+        expect(lifetimesFor('staff', cfg)).toEqual({ idleMinutes: 720, absoluteMinutes: 1080 });
         expect(lifetimesFor('driver', cfg)).toEqual({ idleMinutes: 720, absoluteMinutes: 43200 });
-        expect(prose).toMatch(/Staff: 30 minutes idle, 12 hours absolute/);
+        expect(prose).toMatch(/Staff: 12 hours idle, 18 hours absolute/);
         expect(prose).toMatch(/Couriers: 12 hours idle, 30 days absolute/);
+
+        /* The defaults the server actually boots with are asserted in
+           sessions.test.mjs against a real server. This file's job is that
+           the PROSE matches, which is the half that drifts. */
     });
 
     it('failed-attempt limits', () => {

@@ -7,9 +7,19 @@ import { deviceZone } from '../lib/when';
 
 /* THE IDLE WINDOW, IN THE BROWSER.
  *
- * Thirty minutes, matching SESSION_STAFF_IDLE_MINUTES on the server. The
+ * Twelve hours, matching SESSION_STAFF_IDLE_MINUTES on the server. The
  * server has always enforced it; what it could not do is tell a browser
- * that nobody is touching. So the app only found out its session had gone
+ * that nobody is touching.
+ *
+ * It was thirty minutes until 14 October, which was the right number for an
+ * office and the wrong one for a pharmacy counter: a pharmacist checks
+ * their deliveries a few times a day between other work and was signed out
+ * between every check. Removing the timeout outright was asked for and not
+ * done -- automatic logoff is addressable under HIPAA 164.312(a)(2)(iii),
+ * and a counter PC with no timeout shows the last pharmacist's patient list
+ * to whoever sits down next. A shift-length window is the agreed answer:
+ * nobody is signed out during a working day, and an unattended machine
+ * still clears overnight. So the app only found out its session had gone
  * when something it asked for came back 401, and the page it was on
  * rendered that the way it renders any failure -- a red banner over a
  * screen still showing four stale zeros.
@@ -21,7 +31,7 @@ import { deviceZone } from '../lib/when';
  * this signs out first, which is harmless; if it is made shorter the 401
  * handler is still there underneath as the backstop.
  */
-const IDLE_MS = 30 * 60 * 1000;
+const IDLE_MS = 12 * 60 * 60 * 1000;
 /* Checked every half minute. The cost is one comparison; the benefit is
  * that a closed laptop reopened at four o'clock lands on the sign-in page
  * rather than on a stale screen that 401s at the first touch. */

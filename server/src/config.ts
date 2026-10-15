@@ -255,8 +255,30 @@ const EnvSchema = z.object({
     TWILIO_ACCOUNT_SID: optionalString,
     TWILIO_AUTH_TOKEN: optionalString,
     TWILIO_FROM: optionalString,
-    SESSION_STAFF_IDLE_MINUTES: z.coerce.number().int().min(1).default(30),
-    SESSION_STAFF_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
+    /* ───────────────────── a shift, not half an hour (14 October) ───────
+     *
+     * Thirty minutes was the right number for an office and the wrong one
+     * for a pharmacy counter. A pharmacist checks their deliveries a few
+     * times a day between other work, and was signed out between every
+     * check; a dispatcher watching the board was signed out for watching it.
+     *
+     * The owner asked for the timeout to be removed outright. It is not
+     * removed, because automatic logoff is an addressable specification
+     * under HIPAA 164.312(a)(2)(iii) -- skippable only with a documented
+     * reason and an equivalent control -- and because a counter PC with no
+     * timeout shows the last pharmacist's patient list to whoever sits down
+     * next. Twelve hours was agreed instead: nobody is signed out during a
+     * working day, and an unattended machine still clears overnight.
+     *
+     * THE ABSOLUTE WENT UP WITH IT, and had to. It was also twelve hours,
+     * measured from sign-in rather than from last use, so it would have
+     * fired first and the idle window would have been dead config. Worse,
+     * it would have reproduced the original complaint for anybody on a long
+     * day: sign in at six, signed out at six, mid-shift. Eighteen hours
+     * covers the longest realistic shift and still keeps a daily boundary,
+     * so a stolen cookie cannot live for a week. */
+    SESSION_STAFF_IDLE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
+    SESSION_STAFF_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(18 * 60),
     SESSION_COURIER_IDLE_MINUTES: z.coerce.number().int().min(1).default(12 * 60),
     SESSION_COURIER_ABSOLUTE_MINUTES: z.coerce.number().int().min(1).default(30 * 24 * 60),
     ADMIN_USER: optionalString,

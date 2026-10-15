@@ -148,14 +148,14 @@ export function Login() {
             <div className="izy-login-card">
                 <h1>TAG</h1>
                 <p className="izy-sub">Izy Global Services LLC</p>
-                {/* Said plainly and in grey. Being signed out after half an
-                    hour is the system working, not a failure, and it was
-                    reaching people as a red "Not authenticated" across a
-                    screen still showing their deliveries. A pharmacist
-                    reading that does not think "my session expired". */}
+                {/* Said plainly and in grey. Being signed out is the system
+                    working, not a failure, and it was reaching people as a
+                    red "Not authenticated" across a screen still showing
+                    their deliveries. A pharmacist reading that does not
+                    think "my session expired". */}
                 {signedOutBecause === 'idle' && error === null && (
                     <div className="izy-alert muted" role="status">
-                        You were signed out after 30 minutes without activity. Sign in to carry on.
+                        You were signed out after 12 hours without activity. Sign in to carry on.
                     </div>
                 )}
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
