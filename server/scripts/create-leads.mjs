@@ -157,106 +157,129 @@ async function call(pathname, options = {}) {
     return { status: res.status, body };
 }
 
+/* A refusal that stops the run.
+ *
+ * NOT process.exit(). Forcing an exit while fetch still holds a keep-alive
+ * socket trips a libuv assertion on Windows, so the script printed why it
+ * stopped and then aborted on top of it, burying the cause. The same bug
+ * was fixed in create-pharmacy-portals.mjs and left here, which is why the
+ * first production run of this script reported an error rather than a
+ * reason. */
+class Stop extends Error {}
+
 function insist(label, res, ok = (s) => s >= 200 && s < 300) {
     if (ok(res.status)) return res;
     console.error(`\n${label} failed: HTTP ${res.status}`);
     console.error(typeof res.body === 'string' ? res.body.slice(0, 400) : JSON.stringify(res.body, null, 2).slice(0, 800));
-    process.exit(1);
+    throw new Stop();
 }
 
 /* ---------------------------------------------------------------- run it */
 
-say(`  SERVER   ${base}`);
-say(`  ${isLocal ? '** LOCAL server, not production **' : 'Remote server.'}`);
-insist('login', await call('/api/login', {
-    method: 'POST',
-    body: JSON.stringify({ username: adminUser, password: adminPass }),
-}));
-say(`  signed in as ${adminUser}`);
+async function main() {
 
-const sites = insist('sites', await call(`/api/projects/${projectCode}/uh/sites`)).body;
-const idByCode = new Map(sites.map((s) => [s.code, s.id]));
-say(`  ${sites.length} pharmacies in ${projectCode}`);
+    say(`  SERVER   ${base}`);
+    say(`  ${isLocal ? '** LOCAL server, not production **' : 'Remote server.'}`);
+    insist('login', await call('/api/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: adminUser, password: adminPass }),
+    }));
+    say(`  signed in as ${adminUser}`);
 
-/* Checked before anything is written. A membership whose site codes did not
-   resolve would be an account that sees an empty board for ever, and nobody
-   would know whether that was the scope or the day. */
-const missing = [...new Set(wanted.flatMap((l) => l.sites))].filter((code) => !idByCode.has(code));
-if (missing.length > 0) {
-    console.error(`\nThese pharmacies are not in ${projectCode}: ${missing.join(', ')}`);
-    console.error('Nothing was created. Check the site codes against the sites list.');
-    process.exit(1);
-}
+    const sites = insist('sites', await call(`/api/projects/${projectCode}/uh/sites`)).body;
+    const idByCode = new Map(sites.map((s) => [s.code, s.id]));
+    say(`  ${sites.length} pharmacies in ${projectCode}`);
 
-const made = [];
-for (const lead of wanted) {
-    const siteIds = lead.sites.map((code) => idByCode.get(code));
-    const existing = await call(`/api/users/${lead.username}`);
-
-    let pass = null;
-    if (existing.status !== 200) {
-        pass = password();
-        insist(`create ${lead.username}`, await call('/api/users', {
-            method: 'POST',
-            body: JSON.stringify({ username: lead.username, name: lead.name, password: pass, role: 'driver' }),
-        }), (s) => s === 201 || s === 200);
-    } else if (has('reset')) {
-        pass = password();
-        insist(`reset ${lead.username}`, await call(`/api/users/${lead.username}/password`, {
-            method: 'POST',
-            body: JSON.stringify({ password: pass }),
-        }));
+    /* Checked before anything is written. A membership whose site codes did not
+       resolve would be an account that sees an empty board for ever, and nobody
+       would know whether that was the scope or the day. */
+    const missing = [...new Set(wanted.flatMap((l) => l.sites))].filter((code) => !idByCode.has(code));
+    if (missing.length > 0) {
+        console.error(`\nThese pharmacies are not in ${projectCode}: ${missing.join(', ')}`);
+        console.error('Nothing was created. Check the site codes against the sites list.');
+        throw new Stop();
     }
 
-    /* The membership is written every time, existing account or not: this is
-       the line that carries the scope, and a lead moved between pharmacies is
-       a re-run of this script rather than a database edit. */
-    insist(`scope ${lead.username}`, await call(`/api/users/${lead.username}/memberships/${projectCode}`, {
-        method: 'PUT',
-        body: JSON.stringify({ role: 'lead', settings: { siteIds } }),
-    }));
+    const made = [];
+    for (const lead of wanted) {
+        const siteIds = lead.sites.map((code) => idByCode.get(code));
+        const existing = await call(`/api/users/${lead.username}`);
 
-    made.push({ ...lead, pass, existed: existing.status === 200 });
-    say(`  ${lead.username.padEnd(18)} ${lead.sites.join(', ')}`);
-}
+        let pass = null;
+        if (existing.status !== 200) {
+            pass = password();
+            insist(`create ${lead.username}`, await call('/api/users', {
+                method: 'POST',
+                body: JSON.stringify({ username: lead.username, name: lead.name, password: pass, role: 'driver' }),
+            }), (s) => s === 201 || s === 200);
+        } else if (has('reset')) {
+            pass = password();
+            insist(`reset ${lead.username}`, await call(`/api/users/${lead.username}/password`, {
+                method: 'POST',
+                body: JSON.stringify({ password: pass }),
+            }));
+        }
 
-/* ------------------------------------------------------------- the output */
+        /* The membership is written every time, existing account or not: this is
+           the line that carries the scope, and a lead moved between pharmacies is
+           a re-run of this script rather than a database edit. */
+        insist(`scope ${lead.username}`, await call(`/api/users/${lead.username}/memberships/${projectCode}`, {
+            method: 'PUT',
+            body: JSON.stringify({ role: 'lead', settings: { siteIds } }),
+        }));
 
-say('');
-say('  SHOWN ONCE. Not written anywhere; re-run with --reset if this is lost.');
-say('');
-for (const lead of made) {
-    say(`    ${lead.name}`);
-    say(`      username  ${lead.username}`);
-    say(`      password  ${lead.pass ?? '(unchanged; account already existed)'}`);
-    say(`      sees      ${lead.sites.join(' and ')}  — ${lead.note}`);
+        made.push({ ...lead, pass, existed: existing.status === 200 });
+        say(`  ${lead.username.padEnd(18)} ${lead.sites.join(', ')}`);
+    }
+
+    /* ------------------------------------------------------------- the output */
+
     say('');
-}
-/* The paired accounts an earlier version of this script created. They are
- * still scoped and still work, which is the problem: two logins covering the
- * same counters as the single-site leads is two more passwords in circulation
- * for no gain. Named rather than deleted, because disabling somebody's login
- * is not a thing a seeding script should decide. */
-const RETIRED = ['lead.maincampus', 'lead.northeast'];
-const stale = [];
-for (const username of RETIRED) {
-    const found = await call(`/api/users/${username}`);
-    if (found.status === 200) stale.push(username);
-}
-if (stale.length > 0) {
-    say(`  ${stale.join(' and ')} ${stale.length === 1 ? 'is' : 'are'} left over from the paired`);
-    say('  version of this script and now cover counters that have their own lead.');
-    say('  Disable them once nobody is signed in on one:');
-    for (const username of stale) say(`    PATCH /api/users/${username}  {"status":"disabled"}`);
+    say('  SHOWN ONCE. Not written anywhere; re-run with --reset if this is lost.');
     say('');
+    for (const lead of made) {
+        say(`    ${lead.name}`);
+        say(`      username  ${lead.username}`);
+        say(`      password  ${lead.pass ?? '(unchanged; account already existed)'}`);
+        say(`      sees      ${lead.sites.join(' and ')}  — ${lead.note}`);
+        say('');
+    }
+    /* The paired accounts an earlier version of this script created. They are
+     * still scoped and still work, which is the problem: two logins covering the
+     * same counters as the single-site leads is two more passwords in circulation
+     * for no gain. Named rather than deleted, because disabling somebody's login
+     * is not a thing a seeding script should decide. */
+    const RETIRED = ['lead.maincampus', 'lead.northeast'];
+    const stale = [];
+    for (const username of RETIRED) {
+        const found = await call(`/api/users/${username}`);
+        if (found.status === 200) stale.push(username);
+    }
+    if (stale.length > 0) {
+        say(`  ${stale.join(' and ')} ${stale.length === 1 ? 'is' : 'are'} left over from the paired`);
+        say('  version of this script and now cover counters that have their own lead.');
+        say('  Disable them once nobody is signed in on one:');
+        for (const username of stale) say(`    PATCH /api/users/${username}  {"status":"disabled"}`);
+        say('');
+    }
+
+    say('  THEY SIGN IN TO THE WEB PORTAL, not the phone. Ticket 7.20 removed the');
+    say('  lead screens from the courier app: that app is drivers only now.');
+    say('');
+    say('  They get the dispatch board, the order search, returns, discrepancies,');
+    say('  performance, and the drivers record WITHOUT the pay columns -- the server');
+    say('  strips those, so it is not a matter of which screen they open.');
+    say('');
+    say('  What they cannot reach: invoices, the rate card, and the record of reports');
+    say('  already sent to University Health. They run the operation, not the contract.');
+
 }
 
-say('  THEY SIGN IN TO THE WEB PORTAL, not the phone. Ticket 7.20 removed the');
-say('  lead screens from the courier app: that app is drivers only now.');
-say('');
-say('  They get the dispatch board, the order search, returns, discrepancies,');
-say('  performance, and the drivers record WITHOUT the pay columns -- the server');
-say('  strips those, so it is not a matter of which screen they open.');
-say('');
-say('  What they cannot reach: invoices, the rate card, and the record of reports');
-say('  already sent to University Health. They run the operation, not the contract.');
+/* Stop is the script refusing, and it has already said why. Anything else
+   is a fault here and keeps its stack. */
+try {
+    await main();
+} catch (err) {
+    process.exitCode = 1;
+    if (!(err instanceof Stop)) throw err;
+}

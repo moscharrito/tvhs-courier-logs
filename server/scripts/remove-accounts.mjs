@@ -65,6 +65,7 @@ const apply = args.includes('--apply');
 const withWork = args.includes('--with-work');
 const disable = args.includes('--disable');
 const restore = args.includes('--restore');
+const meansProduction = args.includes('--i-mean-production');
 const usernames = args.filter((a) => !a.startsWith('--'));
 
 if (usernames.length === 0) {
@@ -73,6 +74,48 @@ if (usernames.length === 0) {
 }
 
 const config = loadConfig();
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE FLAG HAS TO AGREE WITH THE TARGET, BOTH WAYS ROUND.
+ *
+ * This talks to the database directly and takes it from TURSO_DATABASE_URL,
+ * which lives on Render. clear-test-work.mjs grew this same guard after 30
+ * September, when it was run with the live site in mind, cleaned the laptop,
+ * printed "Done", and left the production rows exactly where they were.
+ *
+ * The mirror is worse, and is why this is a refusal rather than a warning: a
+ * shell that happens to be holding Turso credentials, deleting accounts from
+ * production while somebody believes they are tidying a local copy. These are
+ * accounts that may have signed for a controlled drug.
+ *
+ * So asking for production and getting a file is refused, and changing a
+ * remote database without asking for it is refused. A dry run is still
+ * allowed either way: reading is harmless, and being told which database you
+ * are reading is the point of the line below.
+ * ───────────────────────────────────────────────────────────────────────── */
+if (meansProduction && config.db.kind === 'file') {
+    console.error('Refusing to run: you asked for production and this is a local file.');
+    console.error('');
+    console.error(`  target  ${config.db.url}`);
+    console.error('');
+    console.error('TURSO_DATABASE_URL lives on Render and not here, so without it every');
+    console.error('command lands on this laptop. Nothing was changed.');
+    console.error('');
+    console.error('To act on the live database, take the values from the Render dashboard:');
+    console.error('  ALLOW_TURSO_OUTSIDE_PRODUCTION=true TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=...');
+    console.error('  node scripts/remove-accounts.mjs <usernames> --i-mean-production --apply --disable');
+    console.error('');
+    console.error('To act on this laptop, drop the flag: it is only for a remote database.');
+    process.exit(1);
+}
+if (apply && config.db.kind !== 'file' && !meansProduction) {
+    console.error('Refusing to run: this is not a local file database.');
+    console.error(`  target  ${config.db.url}`);
+    console.error('');
+    console.error('These accounts may have signed for a controlled drug. If you mean it,');
+    console.error('add --i-mean-production. Take a backup first:  npm run backup -w server');
+    process.exit(1);
+}
 const database = createDatabase(config);
 const client = database.client;
 const run = (sql, a = []) => client.execute({ sql, args: a });
