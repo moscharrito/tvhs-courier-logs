@@ -33,13 +33,23 @@
  * business in the platform's own staff functions. The project role is what
  * grants them their pharmacy.
  *
- *   node scripts/create-leads.mjs                      # local
- *   node scripts/create-leads.mjs --i-mean-production  # the live site
- *   ... --only=green,tdi                               # just these
- *   ... --reset                                        # new password for one that exists
+ * RUN FROM THE REPOSITORY ROOT. The paths below say `server/scripts` for a
+ * reason: every terminal opens at the root, `node scripts/create-leads.mjs`
+ * there is MODULE_NOT_FOUND, and the first production run of this script
+ * failed on exactly that rather than on anything it was asked to do. The
+ * script does not care which directory it is called from -- it finds .env and
+ * the server from its own location -- so the only thing that needs to be
+ * right is the path on the command line.
  *
- * Credentials come from the environment and are never printed:
- *   SEED_ADMIN_USER (default "admin")   SEED_ADMIN_PASS
+ *   node server/scripts/create-leads.mjs
+ *   node server/scripts/create-leads.mjs --base https://... --i-mean-production
+ *   ... --retire     # disable the accounts of every earlier lead model
+ *   ... --only=green,tdi                 # just these
+ *   ... --reset                          # new password for one that exists
+ *
+ * It asks for the admin password and stores it nowhere. SEED_ADMIN_PASS in
+ * the environment still works for scripting, with the cost that it then stays
+ * live for every later command in that shell.
  *
  * The leads' own passwords are generated here and printed ONCE. They are not
  * written anywhere: if the output is lost, run again with --reset.
@@ -110,6 +120,31 @@ const LEADS = [
         sites: ALL_COUNTERS,
         note: 'dispatch, returns and the drivers on site, across all eight counters',
     },
+];
+
+/* EVERY ACCOUNT MODEL THIS SCRIPT HAS HAD BEFORE THIS ONE.
+ *
+ * Two shapes came before the single site manager: a version that paired
+ * sites by volume, and then one lead per counter. Both left working logins
+ * behind, covering ground uh.sitemanager now covers on its own, which is
+ * passwords in circulation for no gain.
+ *
+ * `--retire` sets them to disabled through PATCH /api/users/:username. That
+ * route takes the account off every sign-in roster, revokes any live session,
+ * and writes a user.update audit event. remove-accounts.mjs can do this too,
+ * but it reaches the database directly: it needs Turso credentials in the
+ * shell and it writes no audit event, because it goes UNDER the server rather
+ * than through it. A role change has no reason to go under the server.
+ *
+ * DISABLED, NEVER DELETED. These accounts may have signed for a controlled
+ * drug, and custody_events names the actor who did the handover. Deleting a
+ * signatory is the one outcome that trigger's append-only rule exists to
+ * prevent. A disabled account cannot sign in and its signatures stay exactly
+ * where they are -- and it goes back with the same route and "active".
+ */
+const RETIRED = [
+    'lead.maincampus', 'lead.northeast',            // paired by volume
+    ...ALL_COUNTERS.map((code) => `lead.${code}`),  // one per counter, until 7.20
 ];
 
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -244,22 +279,55 @@ async function main() {
         say(`      sees      ${lead.sites.join(' and ')}  — ${lead.note}`);
         say('');
     }
-    /* The paired accounts an earlier version of this script created. They are
-     * still scoped and still work, which is the problem: two logins covering the
-     * same counters as the single-site leads is two more passwords in circulation
-     * for no gain. Named rather than deleted, because disabling somebody's login
-     * is not a thing a seeding script should decide. */
-    const RETIRED = ['lead.maincampus', 'lead.northeast'];
-    const stale = [];
+    /* ------------------------------------------- the models that came before */
+
+    /* An account that would not disable. Collected rather than thrown on, so
+       that one failure does not leave the other seven able to sign in, and
+       reported in the exit code so a script calling this one can tell. */
+    const failed = [];
+    const found = [];
     for (const username of RETIRED) {
-        const found = await call(`/api/users/${username}`);
-        if (found.status === 200) stale.push(username);
+        const res = await call(`/api/users/${username}`);
+        if (res.status === 200) found.push({ username, status: res.body?.status ?? 'unknown' });
     }
-    if (stale.length > 0) {
-        say(`  ${stale.join(' and ')} ${stale.length === 1 ? 'is' : 'are'} left over from the paired`);
-        say('  version of this script and now cover counters that have their own lead.');
-        say('  Disable them once nobody is signed in on one:');
-        for (const username of stale) say(`    PATCH /api/users/${username}  {"status":"disabled"}`);
+    const live = found.filter((a) => a.status !== 'disabled');
+
+    if (found.length === 0) {
+        say('  Nothing left over from the earlier lead models.');
+        say('');
+    } else if (live.length === 0) {
+        say(`  ${found.length} earlier lead account${found.length === 1 ? '' : 's'}, all already disabled.`);
+        say('');
+    } else if (!has('retire')) {
+        /* Reported and not acted on, because retiring somebody's login is a
+           decision and this flag is where it gets made. */
+        say(`  ${live.length} account${live.length === 1 ? '' : 's'} from an earlier lead model can still sign in:`);
+        for (const a of live) say(`      ${a.username}`);
+        say('');
+        say('  They cover counters uh.sitemanager now covers alone. Disable them:');
+        say(`      node server/scripts/create-leads.mjs --base ${base}${isLocal ? '' : ' --i-mean-production'} --retire`);
+        say('');
+    } else {
+        say(`  Retiring ${live.length} account${live.length === 1 ? '' : 's'} from the earlier lead model.`);
+        say('  DISABLED, not deleted: anything they signed for still names them.');
+        say('');
+        for (const a of live) {
+            const res = await call(`/api/users/${a.username}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: 'disabled' }),
+            });
+            if (res.status === 200) {
+                const revoked = res.body?.revokedSessions ?? 0;
+                say(`      ${a.username.padEnd(18)} disabled${revoked > 0 ? `, ${revoked} live session${revoked === 1 ? '' : 's'} revoked` : ''}`);
+            } else {
+                /* Named rather than thrown: one account refusing is not a
+                   reason to leave the rest signed in. */
+                say(`      ${a.username.padEnd(18)} NOT disabled -- HTTP ${res.status}`);
+                failed.push(a.username);
+            }
+        }
+        say('');
+        say('  To put one back:  PATCH /api/users/<username>  {"status":"active"}');
         say('');
     }
 
@@ -273,6 +341,11 @@ async function main() {
     say('  What they cannot reach: invoices, the rate card, and the record of reports');
     say('  already sent to University Health. They run the operation, not the contract.');
 
+    if (failed.length > 0) {
+        console.error('');
+        console.error(`  ${failed.length} account${failed.length === 1 ? '' : 's'} could not be disabled and can STILL SIGN IN: ${failed.join(', ')}`);
+        throw new Stop();
+    }
 }
 
 /* Stop is the script refusing, and it has already said why. Anything else
