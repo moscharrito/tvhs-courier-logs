@@ -15,10 +15,9 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
-import { sweepUnclaimed } from '../src/modules/uh/requests.ts';
+import { sweepUnclaimed } from '../src/modules/uh/escalation.ts';
 
 const UH = '/api/projects/uh/uh';
-const REQ = `${UH}/requests`;
 const NOTE = `${UH}/notifications`;
 
 let srv;
@@ -62,45 +61,16 @@ beforeAll(async () => {
 afterAll(async () => { await srv?.stop(); });
 
 describe('what a courier is told', () => {
-    it('says their request was approved, and which run it went on', async () => {
-        const id = await poolOrder();
-        await ana.post(REQ).send({ orderIds: [id] });
-        const reqId = (await admin.get(REQ)).body.requests.find((r) => r.orderId === id).id;
-        await admin.post(`${REQ}/${reqId}/approve`).send({});
+    /* THREE TESTS WENT FROM HERE ON 16 OCTOBER 2026, with the feature they
+       covered: a courier's request being approved, being pipped by another
+       courier, and being turned down with a reason. Asking for work is gone
+       -- dispatch assigns everything -- so those notifications can no longer
+       be produced.
 
-        const mine = await inbox(ana);
-        const note = mine.notifications.find((n) => n.orderId === id && n.kind === 'request.approved');
-        expect(note).toBeDefined();
-        expect(note.body).toMatch(/Approved/);
-        expect(mine.unread).toBeGreaterThan(0);
-    });
-
-    it('tells the loser they were pipped, not that they were refused', async () => {
-        /* "Somebody got there first" is a different sentence from "no", and a
-           courier who reads the wrong one twice stops asking for work. */
-        const id = await poolOrder();
-        await ana.post(REQ).send({ orderIds: [id] });
-        await bo.post(REQ).send({ orderIds: [id] });
-        const anasRequest = (await admin.get(REQ)).body.requests
-            .find((r) => r.orderId === id && r.courierUsername === 'ana.note');
-        await admin.post(`${REQ}/${anasRequest.id}/approve`).send({});
-
-        const note = (await inbox(bo)).notifications.find((n) => n.orderId === id);
-        expect(note.kind).toBe('request.superseded');
-        expect(note.body).toMatch(/Nothing wrong with the request/);
-        expect(note.body).not.toMatch(/denied|refused/i);
-    });
-
-    it('carries the reason when they are turned down', async () => {
-        const id = await poolOrder();
-        await ana.post(REQ).send({ orderIds: [id] });
-        const reqId = (await admin.get(REQ)).body.requests.find((r) => r.orderId === id).id;
-        await admin.post(`${REQ}/${reqId}/deny`).send({ reason: 'Bo is closer to that ZIP today.' });
-
-        const note = (await inbox(ana)).notifications.find((n) => n.orderId === id && n.kind === 'request.denied');
-        expect(note.body).toMatch(/closer to that ZIP/);
-    });
-
+       What is left is the one that was never about asking. The sweep hands
+       out a delivery nobody was given, and the courier it lands on is told
+       why it arrived. That matters MORE under a push model, not less: the
+       deliveries it catches are the ones dispatch missed. */
     it('says when the clock gave them work nobody claimed', async () => {
         const id = await poolOrder({ serviceType: 'stat' });
         await srv.core.client.execute({
@@ -125,12 +95,30 @@ describe('mine means mine', () => {
     });
 
     it('marks read only what belongs to the caller', async () => {
-        const bosFirst = (await inbox(bo)).notifications[0];
-        expect(bosFirst).toBeDefined();
-        /* Ana asking to mark Bo's message read. Scoped in the WHERE, so it
-           matches nothing rather than being checked and refused. */
-        await ana.post(`${NOTE}/read`).send({ ids: [bosFirst.id] });
-        const still = (await inbox(bo)).notifications.find((n) => n.id === bosFirst.id);
+        /* MAKES ITS OWN MESSAGE. This used to read Bo's first notification,
+           which existed only because a test above it had Bo pipped to a
+           request -- and that test went with the feature on 16 October. A
+           test standing on another test's leftovers passes until somebody
+           deletes the other test, and then fails for a reason that has
+           nothing to do with what it is checking. */
+        const id = await poolOrder({ serviceType: 'stat' });
+        await srv.core.client.execute({
+            sql: 'UPDATE orders SET due_at = ? WHERE id = ?',
+            args: [new Date(Date.now() + 10 * 60_000).toISOString(), id],
+        });
+        const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
+        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const who = out.assigned.find((a) => a.orderId === id).courierUsername;
+        const owner = who === 'ana.note' ? ana : bo;
+        const other = who === 'ana.note' ? bo : ana;
+
+        const mine = (await inbox(owner)).notifications.find((n) => n.orderId === id);
+        expect(mine, 'the sweep told somebody').toBeDefined();
+
+        /* The other courier asking to mark it read. Scoped in the WHERE, so
+           it matches nothing rather than being checked and refused. */
+        await other.post(`${NOTE}/read`).send({ ids: [mine.id] });
+        const still = (await inbox(owner)).notifications.find((n) => n.id === mine.id);
         expect(still.readAt).toBeNull();
     });
 

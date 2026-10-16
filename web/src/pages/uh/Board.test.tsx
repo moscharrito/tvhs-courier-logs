@@ -29,7 +29,11 @@ const order = (over = {}) => ({
 
 const courier = (over = {}) => ({
     username: 'ada.courier', name: 'Ada Courier', lastSeenAt: '2026-09-14T18:00:00.000Z',
-    minutesSinceSeen: 2, present: true, position: null, ...over,
+    /* `present` is "seen in the last ten minutes"; `onShift` is whether a
+       shift is open. They are different questions and the board used to
+       answer the second with the first -- see courierNote() in Board.tsx. */
+    minutesSinceSeen: 2, present: true, onShift: true, shiftStartedAt: '2026-09-14T13:00:00.000Z',
+    position: null, ...over,
 });
 
 const position = (over = {}) => ({
@@ -128,7 +132,7 @@ const routes = (over = {}) => ({
        page, which is then the alert these tests find instead of the
        board's. Empty by default: what it does with a queue is its own
        file's business. */
-    'GET /api/projects/uh/uh/requests?status=pending': { requests: [], sweep: { automatic: false, everySeconds: null } },
+    'GET /api/projects/uh/uh/escalation': { sweep: { automatic: false, everySeconds: null } },
     ...over,
 });
 
@@ -508,18 +512,38 @@ describe('Board', () => {
         expect(screen.getByText(/now at stop 1/)).toBeInTheDocument();
     });
 
+    it('says on shift but quiet, rather than calling a working driver off shift', async () => {
+        /* THE LIE THIS REPLACES. The pill read `present ? 'on shift' : seen`,
+           and `present` means seen within ten minutes. A driver mid-drive
+           with the phone in a pocket for eleven minutes was shown as off
+           shift, and a dispatcher looking for somebody to take a STAT would
+           skip the nearest person on the strength of it. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                lanes: [{
+                    ...screenBoard().lanes[0],
+                    courier: courier({ onShift: true, present: false, minutesSinceSeen: 25 }),
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        expect(screen.getByText(/on shift · 25 min ago/)).toBeInTheDocument();
+    });
+
     it('does not claim a courier is on shift when they have never signed in', async () => {
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
                 lanes: [{
                     ...screenBoard().lanes[0],
-                    courier: courier({ present: false, lastSeenAt: null, minutesSinceSeen: null }),
+                    courier: courier({
+                        onShift: false, shiftStartedAt: null,
+                        present: false, lastSeenAt: null, minutesSinceSeen: null,
+                    }),
                 }],
             }),
         }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
-        expect(screen.getByText('never signed in')).toBeInTheDocument();
-        expect(screen.queryByText('on shift')).not.toBeInTheDocument();
+        expect(screen.getByText(/off shift · never signed in/)).toBeInTheDocument();
     });
 
     it('starts a run for a courier who has none', async () => {

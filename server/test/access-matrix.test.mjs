@@ -377,14 +377,12 @@ const MATRIX = [
 
     /* --- asking for work (tickets 6.4 and 6.5). A courier browses and asks;
        only dispatch decides, and only dispatch runs the sweep. */
-    ['GET', `${UH}/requests/available`, UH_STAFF_AND_COURIER, 'what can I ask for: no patient names, no street addresses'],
-    ['POST', `${UH}/requests`, UH_STAFF_AND_COURIER, 'ask for some stops'],
-    ['GET', `${UH}/requests/mine`, UH_STAFF_AND_COURIER, 'what did I ask for'],
-    ['DELETE', `${UH}/requests/999999`, UH_STAFF_AND_COURIER, 'never mind'],
-    ['GET', `${UH}/requests`, UH_STAFF, 'the queue'],
-    ['POST', `${UH}/requests/999999/approve`, UH_STAFF, 'yes'],
-    ['POST', `${UH}/requests/999999/deny`, UH_STAFF, 'no, and why'],
-    ['POST', `${UH}/requests/sweep`, UH_STAFF, 'hand out what nobody claimed'],
+    /* Asking for work went on 16 October 2026: dispatch assigns everything,
+       so the seven routes that let a courier browse and request were deleted
+       rather than left reachable. What survives is the sweep, which is the
+       opposite feature -- the platform handing out what nobody was given. */
+    ['GET', `${UH}/escalation`, UH_STAFF, 'is the sweep automatic'],
+    ['POST', `${UH}/escalation/sweep`, UH_STAFF, 'hand out what nobody has'],
 
     /* --- tracking (tickets 6.6 and 6.7). A courier posts their own fixes and
        can read nobody's track, not even their own: a map of where they were

@@ -63,7 +63,7 @@ import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
 import { createApplicationsRouter, createPublicApplicationsRouter } from './core/onboarding/routes';
 import { createShiftsRouter } from './modules/uh/shifts';
-import { createRequestsRouter } from './modules/uh/requests';
+import { createEscalationRouter } from './modules/uh/escalation';
 import { createTrackingRouter } from './modules/uh/tracking';
 import { createNotificationsRouter, createPushDevicesRouter } from './core/notify/routes';
 import { createIdempotency } from './core/http/idempotency';
@@ -421,7 +421,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/invoices', requireProject, createInvoicesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/files', requireProject, idempotent, createFilesRouter({ client: database.client, storage: fileStorage }));
     legacy.app.use('/api/projects/:pid/uh/shifts', requireProject, createShiftsRouter({ client: database.client }));
-    legacy.app.use('/api/projects/:pid/uh/requests', requireProject, createRequestsRouter({ client: database.client, config }));
+    /* Asking for work is gone (16 October 2026): dispatch assigns everything.
+       What is left is the sweep that refuses to let a delivery sit unassigned
+       while its deadline runs out. See modules/uh/escalation.ts. */
+    legacy.app.use('/api/projects/:pid/uh/escalation', requireProject, createEscalationRouter({ client: database.client, config }));
     legacy.app.use('/api/projects/:pid/uh/tracking', requireProject, createTrackingRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/notifications', requireProject, createNotificationsRouter({ client: database.client }));
     legacy.app.use(createPushDevicesRouter({ client: database.client }));

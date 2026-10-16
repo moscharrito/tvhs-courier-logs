@@ -27,7 +27,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
-import { Requests } from './Requests';
+import { Escalation } from './Escalation';
 import { mergeBoard, type BoardView, type BoardWire, type SiteRef } from '../../lib/board';
 
 const POLL_MS = 15_000;
@@ -53,6 +53,10 @@ interface Position {
 interface Courier {
     username: string; name: string; lastSeenAt: string | null;
     minutesSinceSeen: number | null; present: boolean;
+    /* Whether a shift is OPEN, from the shifts table -- not inferred from
+       recent activity, which is what `present` means. See the note on
+       courierNote(): the board used to print one as the other. */
+    onShift: boolean; shiftStartedAt: string | null;
     /** Where they were when they last sent an event. Null if never. */
     position: Position | null;
 }
@@ -128,6 +132,27 @@ const since = (minutes: number): string => {
 /** A position is evidence about a moment. The age is never dropped. */
 function positionLabel(p: Position): string {
     return `last seen ${since(p.minutesAgo)}${p.fresh ? '' : ' (old)'}`;
+}
+
+/* WHAT TO PUT AFTER A COURIER'S NAME.
+ *
+ * This used to be `c.present ? '' : ' (not on shift)'`, and `present` means
+ * "used the app in the last ten minutes". So a driver who was on shift and
+ * mid-drive, phone in a pocket for eleven minutes, was labelled as not
+ * working -- and a dispatcher looking for somebody to take a STAT would pass
+ * over the nearest person on the strength of it.
+ *
+ * Three states now, because there are three:
+ *
+ *   not on shift          not working today. Do not assign.
+ *   on shift, quiet       working; their phone has not spoken to us for a
+ *                         while. Assignable, but ring rather than assume.
+ *   on shift, seen        working and in touch. Nothing to say.
+ */
+function courierNote(c: Courier): string {
+    if (!c.onShift) return ' (not on shift)';
+    if (!c.present) return ` (on shift, last seen ${seenLabel(c)})`;
+    return '';
 }
 
 function seenLabel(c: Courier): string {
@@ -443,7 +468,7 @@ export function Board() {
                 a courier standing still behind it, waiting to be told yes or
                 no. Staff only, so a courier who reaches /board directly does
                 not fire a request the server will refuse. */}
-            {project.role === 'admin' && <Requests projectCode={code} timezone={data.timezone} />}
+            {project.role === 'admin' && <Escalation projectCode={code} />}
 
             <div className="izy-board">
                 <section className="izy-card izy-pool" aria-label="Unassigned pool">
@@ -490,7 +515,7 @@ export function Board() {
                                     <select value={newRunCourier} onChange={(e) => setNewRunCourier(e.target.value)}>
                                         <option value="">Choose a courier</option>
                                         {data.idleCouriers.map((c) => (
-                                            <option key={c.username} value={c.username}>{c.name}{c.present ? '' : ' (not on shift)'}</option>
+                                            <option key={c.username} value={c.username}>{c.name}{courierNote(c)}</option>
                                         ))}
                                     </select>
                                 </label>
@@ -599,7 +624,7 @@ export function Board() {
                                                                 <option value="">Choose a courier</option>
                                                                 {data.idleCouriers.map((c) => (
                                                                     <option key={c.username} value={c.username}>
-                                                                        {c.name}{c.present ? '' : ' (not on shift)'}
+                                                                        {c.name}{courierNote(c)}
                                                                     </option>
                                                                 ))}
                                                             </select>
@@ -650,8 +675,13 @@ export function Board() {
                                         <span className="izy-lane-run"> · {runName(lane)}</span>
                                     )}
                                 </h2>
-                                <span className={`izy-pill ${lane.courier.present ? '' : 'muted'}`} title={lane.courier.lastSeenAt ?? 'never signed in'}>
-                                    {lane.courier.present ? 'on shift' : seenLabel(lane.courier)}
+                                <span className={`izy-pill ${lane.courier.onShift ? '' : 'muted'}`} title={lane.courier.lastSeenAt ?? 'never signed in'}>
+                                    {/* The pill answers "is this person working", and the
+                                        time answers "are they in touch". Separate, because
+                                        a quiet phone is not a finished shift. */}
+                                    {lane.courier.onShift
+                                        ? (lane.courier.present ? 'on shift' : `on shift · ${seenLabel(lane.courier)}`)
+                                        : `off shift · ${seenLabel(lane.courier)}`}
                                 </span>
                             </div>
                             <p className="izy-muted">

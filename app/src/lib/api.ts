@@ -277,11 +277,12 @@ export const endShift = (token: string, code: string): Promise<unknown> =>
  * model University Health were shown. So the app no longer browses or claims,
  * and Board, Requests and lib/work.ts went with it.
  *
- * The /uh/requests endpoints stay on the server. They are still reachable by
- * a courier and are still covered by the access matrix, because deleting a
- * working API to remove a screen is two changes dressed as one, and the
- * decision about the API belongs with whoever decides whether any contract
- * ever wants self-assignment again.
+ * The /uh/requests endpoints outlived the screens by a few weeks and are now
+ * gone too (16 October 2026): the decision this comment deferred -- whether
+ * any contract ever wants self-assignment again -- was taken, and the answer
+ * was no. What replaced them is /uh/escalation, which is the opposite
+ * feature: the platform handing out a delivery nobody was given rather than a
+ * courier asking for one.
  */
 
 

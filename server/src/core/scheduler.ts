@@ -25,7 +25,7 @@
 
 import type { Client } from '@libsql/client';
 import type { Logger } from './http/logger';
-import { sweepUnclaimed } from '../modules/uh/requests';
+import { sweepUnclaimed } from '../modules/uh/escalation';
 import { dispatchPending } from './notify/dispatch';
 import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
 import { sendDailyReport } from '../modules/uh/daily-report';

@@ -360,15 +360,41 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * renders as "never signed in" beside the run they just completed.
          * Never and not-any-more are different things to a dispatcher deciding
          * whether to ring somebody. Found by walking docs/day-rehearsal.md. */
+        /* ON SHIFT AND SEEN RECENTLY ARE DIFFERENT QUESTIONS, AND THE BOARD
+         * USED TO ANSWER ONLY ONE OF THEM.
+         *
+         * `present` is "has used the app in the last ten minutes". The board
+         * printed that as "(not on shift)", which is a different claim and
+         * frequently a false one: a driver who IS on shift but whose phone
+         * has been in a pocket between two addresses for eleven minutes read
+         * as off shift, and a dispatcher deciding where to send the next STAT
+         * would skip the nearest person on that basis.
+         *
+         * There was no better answer available when that label was written --
+         * nothing opened a shift from the web, and the phone app's shift
+         * control was never wired up, so the shifts table was close to empty
+         * and reading it would have said "nobody is working" all day. Both
+         * clients open shifts now, so the real answer exists and the board
+         * asks for it.
+         *
+         * Both are returned. They mean different things to a dispatcher: not
+         * on shift is "this person is not working today", while on shift and
+         * not seen for an hour is "working, but their phone has not spoken to
+         * us, so ring them". Collapsing those two into one word is what
+         * produced the misleading label in the first place. */
         const presence = await client.execute({
-            sql: `SELECT u.username, u.name, MAX(s.last_seen_at) AS last_seen
+            sql: `SELECT u.username, u.name, MAX(s.last_seen_at) AS last_seen,
+                         MAX(CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END) AS on_shift,
+                         MIN(sh.started_at) AS shift_started
                   FROM users u
                   JOIN memberships m ON m.user_id = u.id AND m.project_id = ? AND m.role = 'courier'
                   LEFT JOIN sessions s ON s.user_id = u.id
+                  LEFT JOIN shifts sh ON sh.courier_username = u.username
+                       AND sh.project_id = ? AND sh.ended_at IS NULL
                   WHERE u.status = 'active'
                   GROUP BY u.username, u.name
                   ORDER BY u.name`,
-            args: [project.id],
+            args: [project.id, project.id],
         });
         const now = Date.now();
         const couriers = presence.rows.map((r) => {
@@ -380,6 +406,9 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                 lastSeenAt,
                 minutesSinceSeen: minutesAgo,
                 present: minutesAgo !== null && minutesAgo <= PRESENT_WITHIN_MINUTES,
+                /* The shifts table, not an inference from activity. */
+                onShift: Number(r['on_shift']) === 1,
+                shiftStartedAt: r['shift_started'] === null ? null : String(r['shift_started']),
             };
         });
         const courierByUsername = new Map(couriers.map((c) => [c.username, c]));
@@ -493,7 +522,13 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                     startedAt: r['started_at'] === null ? null : String(r['started_at']),
                 },
                 courier: {
-                    ...(courierByUsername.get(username) ?? { username, name: username, lastSeenAt: null, minutesSinceSeen: null, present: false }),
+                    /* The fallback is a courier who holds a run but is no
+                       longer an active member of the project. Not on shift
+                       and not seen, which is the truthful reading. */
+                    ...(courierByUsername.get(username) ?? {
+                        username, name: username, lastSeenAt: null, minutesSinceSeen: null,
+                        present: false, onShift: false, shiftStartedAt: null,
+                    }),
                     position: positionByUsername.get(username) ?? null,
                 },
                 /* By id. The card itself is in `orders`, once, however many
