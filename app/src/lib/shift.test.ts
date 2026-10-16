@@ -41,8 +41,21 @@ describe('the order of operations', () => {
         expect(steps.indexOf('startShift')).toBeLessThan(steps.indexOf('startTracking'));
     });
 
-    it('prompts after opening the shift and before tracking', () => {
-        expect(goOnShift('undetermined')).toEqual(['startShift', 'askPermission', 'startTracking']);
+    it('discloses before it prompts, which is the policy requirement', () => {
+        /* Google wants a prominent in-app disclosure BEFORE the runtime
+           prompt. A button saying "Go on shift" is not one, so the order here
+           is what makes the declaration we file true. */
+        const steps = goOnShift('undetermined');
+        expect(steps).toEqual(['startShift', 'disclose', 'askPermission', 'startTracking']);
+        expect(steps.indexOf('disclose')).toBeLessThan(steps.indexOf('askPermission'));
+    });
+
+    it('does not disclose again once the phone has an answer', () => {
+        /* The disclosure exists to precede the prompt. With no prompt coming,
+           a dialog every time somebody starts work is noise they learn to
+           dismiss without reading. */
+        expect(goOnShift('granted')).not.toContain('disclose');
+        expect(goOnShift('denied')).not.toContain('disclose');
     });
 
     it('stops the tracker before closing the shift', () => {

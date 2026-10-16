@@ -28,6 +28,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Confirm } from './Glass';
 import { SPACE, TAP, TYPE, RADIUS, theme } from '../theme';
 import { trackingState, type StopReason } from '../lib/trace';
 import { goOffShift, goOnShift, shiftButton, type Step } from '../lib/shift';
@@ -53,6 +54,10 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
        shift" to somebody who is on one -- which is the one direction this
        must not get wrong. */
     const [known, setKnown] = useState(false);
+    /* The disclosure is a dialog, and the step sequence is a loop, so the
+       loop has to wait for an answer. Holding the resolver here is what
+       bridges the two without making lib/shift.ts know about React. */
+    const [asking, setAsking] = useState<((agreed: boolean) => void) | null>(null);
 
     const reread = useCallback(async () => {
         try {
@@ -78,9 +83,22 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
         return () => clearInterval(t);
     }, []);
 
+    /* Shown once, before the runtime prompt, because Google requires a
+       prominent in-app disclosure of background collection and a button
+       reading "Go on shift" is not one. Resolves false if the driver
+       declines, and the shift stays open and untracked. */
+    const disclose = () => new Promise<boolean>((resolve) => { setAsking(() => resolve); });
+
     const run = async (steps: Step[]) => {
         for (const step of steps) {
-            if (step === 'startShift') await startShift(token, code);
+            if (step === 'disclose') {
+                const agreed = await disclose();
+                /* Declined: no prompt, and nothing after this in the list.
+                   Asking anyway would be the prompt-without-disclosure that
+                   the disclosure exists to prevent. */
+                if (!agreed) return;
+            }
+            else if (step === 'startShift') await startShift(token, code);
             else if (step === 'endShift') await endShift(token, code);
             else if (step === 'askPermission') setPermission(await askPermission());
             else if (step === 'startTracking') setPermission(await startTracking(code));
@@ -116,6 +134,28 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
         : { on: false, text: 'Checking whether you are on shift…' };
 
     return (
+        <>
+        <Confirm
+            open={asking !== null}
+            title="Dispatch can see where you are while you work"
+            /* Paragraphs joined rather than written with escape sequences:
+               the blank line between them is the difference between a
+               disclosure somebody reads and a wall nobody does. */
+            body={[
+                'While you are on shift, Izy Global Services collects your location in the '
+                + 'background -- including when the app is closed or the screen is locked -- '
+                + 'so dispatch can tell whether a delivery will make its deadline, and move '
+                + 'it to another driver if not.',
+                'It stops when you go off shift. Nothing is collected outside a shift. It is '
+                + 'kept for seven days, and is never used for advertising or shared with '
+                + 'anybody outside Izy Global Services.',
+                'Your phone will ask next. You can say no and still work: dispatch will ring '
+                + 'you instead.',
+            ].join('\n\n')}
+            confirmLabel="Continue"
+            onConfirm={() => { asking?.(true); setAsking(null); }}
+            onCancel={() => { asking?.(false); setAsking(null); }}
+        />
         <View style={styles.bar}>
             <View style={styles.textSide}>
                 <View
@@ -150,6 +190,7 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
                 </Text>
             </Pressable>
         </View>
+        </>
     );
 }
 

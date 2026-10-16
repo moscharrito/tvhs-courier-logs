@@ -51,6 +51,7 @@ export type PermissionState = 'granted' | 'denied' | 'undetermined';
  *  be asserted without a phone. */
 export type Step =
     | 'startShift'
+    | 'disclose'
     | 'askPermission'
     | 'startTracking'
     | 'stopTracking'
@@ -72,6 +73,13 @@ export function permissionStep(current: PermissionState): 'ask' | 'start' | 'ski
 /**
  * The steps for going on shift, in order.
  *
+ * 'disclose' IS A POLICY REQUIREMENT, NOT A COURTESY. Google requires a
+ * prominent in-app disclosure BEFORE the runtime prompt, saying that location
+ * is collected in the background and why. A button reading "Go on shift" and
+ * a banner reading "Off shift" are not that, so the prompt cannot be the
+ * first thing a driver sees. It appears once, on the only run where the
+ * permission is undetermined, and declining it opens the shift untracked.
+ *
  * `permission` is what the phone says BEFORE being asked. When it is
  * undetermined the prompt is shown and tracking is attempted afterwards:
  * startTracking re-reads the real permission and returns 'denied' without
@@ -81,7 +89,7 @@ export function permissionStep(current: PermissionState): 'ask' | 'start' | 'ski
 export function goOnShift(permission: PermissionState): Step[] {
     const step = permissionStep(permission);
     if (step === 'start') return ['startShift', 'startTracking'];
-    if (step === 'ask') return ['startShift', 'askPermission', 'startTracking'];
+    if (step === 'ask') return ['startShift', 'disclose', 'askPermission', 'startTracking'];
     /* On shift, untracked, and told so. */
     return ['startShift'];
 }
