@@ -37,6 +37,7 @@ import { readQueue } from '../lib/queue';
 import type { Project } from '../lib/api';
 import { Run } from './Run';
 import { History } from './History';
+import { ShiftBar } from '../ui/ShiftBar';
 
 type Tab = 'run' | 'history' | 'you';
 
@@ -69,6 +70,13 @@ export function Driving({ token, project, username, onSignedOut, onBack }: Props
 
     return (
         <Ground>
+            {/* ABOVE THE TABS, NOT INSIDE ONE.
+                trace.ts promises there is no state in which the banner is
+                empty, and a banner on one tab of three is not that promise.
+                Here it is on screen whenever the app is, which is also what
+                the store submission says the app does. */}
+            <ShiftBar token={token} code={project.code} onSignedOut={onSignedOut} />
+
             <View style={styles.body}>
                 {tab === 'run' && (
                     <Run token={token} project={project} onSignedOut={onSignedOut} onBack={onBack} />
