@@ -78,6 +78,42 @@ describe('the readiness check', () => {
         expect(res.body.blocking).not.toContain('admins.second');
     });
 
+    it('counts an administrator who cannot open the board, which is the trap', async () => {
+        /* THE CHECK ABOVE CAN BE SATISFIED BY HALF AN ACCOUNT.
+         *
+         * `admins.second` counts users with platform role admin. POST
+         * /api/users writes no membership, and the existing administrator has
+         * one on every project only because 0005_uh_project.sql and its
+         * siblings inserted them for the admins that existed when those
+         * migrations ran. A migration that has run does not run again.
+         *
+         * So an administrator created today satisfies this check, can create
+         * users and read the audit trail, and gets 403 from the dispatch
+         * board. That is not a bug in the check -- two people who can reset
+         * each other's passwords IS what it is for -- but it is the gap
+         * somebody walks into when they read the check as "there is a second
+         * person who can run this". scripts/create-admin.mjs grants the
+         * memberships; this records why it has to.
+         *
+         * If this test ever fails because the board returns 200, somebody has
+         * added a platform-admin bypass to requireProject. That would be a
+         * real decision with real consequences, and it should not arrive as a
+         * side effect of making this test pass. */
+        await admin.post('/api/users').send({
+            username: 'gl.bare', name: 'Bare', password: 'gl-pass-5566', role: 'admin',
+        });
+        const bare = srv.agent();
+        await bare.post('/api/login').send({ username: 'gl.bare', password: 'gl-pass-5566' });
+
+        /* Counted by the readiness check... */
+        const res = await admin.get(`${UH}/go-live`);
+        expect(check(res.body, 'admins.second').pass).toBe(true);
+        /* ...and unable to see the thing they are supposedly cover for. */
+        expect((await bare.get(`${UH}/board?date=2026-12-01`)).status).toBe(403);
+        /* But able to do the account work the check actually exists for. */
+        expect((await bare.get('/api/users')).status).toBe(200);
+    });
+
     it('fails a file database, because it is lost on the next redeploy', async () => {
         const res = await admin.get(`${UH}/go-live`);
         const deploy = check(res.body, 'deploy.production');

@@ -2,9 +2,22 @@
  *
  * requireProject resolves :pid (code or numeric id), checks the caller's
  * membership, and attaches req.project and req.membership. requireProjectRole
- * narrows further for write endpoints. Platform admins are enrolled in every
- * project at boot, so they pass by membership like everyone else rather than
- * through a bypass.
+ * narrows further for write endpoints.
+ *
+ * THERE IS NO BYPASS FOR PLATFORM ADMINS, and this comment used to say they
+ * were "enrolled in every project at boot", which was never quite true and is
+ * now actively misleading. Their memberships were written by migrations --
+ * 0005_uh_project.sql and its siblings -- for the administrators that existed
+ * when those migrations ran. A migration that has run does not run again, so
+ * an administrator created today has no membership at all unless somebody
+ * grants one.
+ *
+ * What that produces is worth stating, because it passed a check designed to
+ * catch it: a second administrator who satisfies go-live's `admins.second`,
+ * can create users and read the audit trail, and gets 403 from the dispatch
+ * board, because `req.membership` is undefined and the code below is honest
+ * about that. Half an account. scripts/create-admin.mjs grants the
+ * memberships for exactly this reason.
  *
  * This is the TypeScript twin of the copy still living in server.js; the
  * legacy one goes away when the TVHS handlers move into a module. */
