@@ -67,6 +67,17 @@ describe('a release build', () => {
            nothing, and is rejected as broken. */
         expect(() => resolveApiUrl({ configured: undefined, profile: 'production' })).toThrow(ApiUrlError);
         expect(() => resolveApiUrl({ configured: '', profile: 'preview' })).toThrow(/EXPO_PUBLIC_API_URL is not set/);
+
+        /* LEAVING EAS MUST NOT DISABLE THIS.
+           Gradle sets no EAS profile, so the check used to pass and the
+           build baked in this machine's LAN address. NODE_ENV is what
+           survives: the Gradle release task bundles with production set. */
+        expect(() => resolveApiUrl({ configured: '', profile: undefined, nodeEnv: 'production' }))
+            .toThrow(/cannot default to/);
+        expect(() => resolveApiUrl({ configured: 'http://127.0.0.1:3000', profile: undefined, nodeEnv: 'production' }))
+            .toThrow(/the phone itself/);
+        expect(() => resolveApiUrl({ configured: 'http://example.com', profile: undefined, nodeEnv: 'production' }))
+            .toThrow();
     });
 
     it('refuses an address that is the phone itself, however it is spelled', () => {

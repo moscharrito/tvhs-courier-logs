@@ -34,6 +34,9 @@ export interface ResolveInput {
     profile: string | undefined;
     /** Injectable for tests. Defaults to os.networkInterfaces(). */
     interfaces?: Record<string, NetworkAddress[] | undefined>;
+    /** NODE_ENV. 'production' means a release bundle even with no EAS
+     *  profile, which is the case when Gradle builds the native project. */
+    nodeEnv?: string | undefined;
 }
 
 /** The base URL for this build, or a refusal explaining what to set. */

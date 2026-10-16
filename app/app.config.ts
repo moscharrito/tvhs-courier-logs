@@ -39,8 +39,14 @@ ${message}
     const apiBaseUrl = resolveApiUrl({
         configured: process.env['EXPO_PUBLIC_API_URL'],
         /* EAS sets this to the profile being built. Absent means somebody is
-           running `expo start` on their own machine. */
+           running `expo start` on their own machine -- OR that Gradle is
+           building the native project with no EAS involved at all, which is
+           why NODE_ENV goes with it. The profile stopped being a sufficient
+           signal the moment the APK could be built somewhere else: see
+           apiUrl.cjs, where an unset profile took the development path and
+           baked in this machine's LAN address. */
         profile: process.env['EAS_BUILD_PROFILE'],
+        nodeEnv: process.env['NODE_ENV'],
     });
 
     return {

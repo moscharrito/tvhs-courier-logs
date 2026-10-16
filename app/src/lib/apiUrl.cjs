@@ -99,8 +99,21 @@ const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2|\[::1\
  * points at localhost is the failure mode; a build that stops with a sentence
  * naming the variable is twenty seconds.
  */
-function resolveApiUrl({ configured, profile, interfaces }) {
-    const release = profile === 'production' || profile === 'preview';
+function resolveApiUrl({ configured, profile, interfaces, nodeEnv }) {
+    /* A RELEASE IS NOT ONLY AN EAS RELEASE.
+     *
+     * This used to read the EAS profile and nothing else, which was true for
+     * as long as EAS was the only thing that produced a release build. Build
+     * the same app with `gradlew bundleRelease` on your own machine and
+     * EAS_BUILD_PROFILE is unset, so `release` was false, so an unset URL
+     * took the DEVELOPMENT path and baked in this machine's LAN address --
+     * an APK for eighteen drivers pointing at a laptop. Leaving EAS would
+     * have quietly disabled the guard written to prevent exactly that.
+     *
+     * NODE_ENV is the signal that survives, because the Gradle release task
+     * runs `expo export:embed` with production set. Either one means the
+     * bundle is going to somebody else's phone. */
+    const release = profile === 'production' || profile === 'preview' || nodeEnv === 'production';
     const url = (configured ?? '').trim();
 
     if (url === '') {
@@ -109,9 +122,10 @@ function resolveApiUrl({ configured, profile, interfaces }) {
             return lan === null ? DEV_FALLBACK : `http://${lan}:${DEV_PORT}`;
         }
         throw new ApiUrlError(
-            `EXPO_PUBLIC_API_URL is not set, and a ${profile} build cannot default to localhost: `
-            + 'the app would reach for a server on the reviewer’s own phone and be rejected as broken. '
-            + 'Set it in eas.json for this profile.',
+            `EXPO_PUBLIC_API_URL is not set, and a ${profile ?? 'release'} build cannot default to `
+            + 'localhost: the app would reach for a server on the reviewer’s own phone and be '
+            + 'rejected as broken. Set it in eas.json for this profile, or export it before '
+            + 'gradlew if you are building the native project yourself.',
         );
     }
 
@@ -121,7 +135,7 @@ function resolveApiUrl({ configured, profile, interfaces }) {
 
     if (release && LOCAL.test(url.replace(/\/+$/, ''))) {
         throw new ApiUrlError(
-            `A ${profile} build cannot point at ${url}. That address is the phone itself, so the app would `
+            `A ${profile ?? 'release'} build cannot point at ${url}. That address is the phone itself, so the app would `
             + 'reach nothing on any device but this one.',
         );
     }
