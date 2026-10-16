@@ -6,7 +6,12 @@
     <meta name="theme-color" content="#14532d" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- A PNG, NOT THE SVG. iOS ignores an SVG apple-touch-icon entirely and
+         falls back to a screenshot of the page, so a driver who adds this to
+         their home screen gets a thumbnail of whatever was on screen instead
+         of the mark. 1024x1024 and iOS scales it; the file has no alpha
+         channel, which Apple also requires. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="TAG" />
     <title>TAG</title>

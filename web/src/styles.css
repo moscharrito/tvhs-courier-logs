@@ -486,3 +486,23 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 /* Pressed means the password is visible, which is worth showing: somebody
    who walked away with it revealed should be able to see that they did. */
 .izy-secret-toggle[aria-pressed="true"] { color: var(--izy-green); }
+
+/* The shift control on a courier's run (ticket 7.21).
+ *
+ * `align-items: center` rather than the baseline that .izy-row-between uses:
+ * the button is taller than the sentence beside it, and on a baseline a
+ * wrapped sentence drags the button down the card. A courier is reading this
+ * one-handed on a pavement. */
+.izy-shift .izy-row-between { align-items: center; }
+.izy-shift-state { margin: 0; font-size: 15px; line-height: 1.5; }
+.izy-shift-carrying { margin: 8px 0 0; font-size: 14px; }
+.izy-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+.izy-dot.on { background: var(--izy-green, #16a34a); }
+.izy-dot.off { background: var(--izy-muted, #6b7280); }
+
+/* Stacked on a phone, because a sentence and a button side by side leaves
+   about 90px for the button and "Go off shift" wraps inside it. */
+@media (max-width: 420px) {
+    .izy-shift .izy-row-between { flex-direction: column; align-items: stretch; gap: 10px; }
+    .izy-shift .izy-btn { width: 100%; }
+}

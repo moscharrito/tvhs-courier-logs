@@ -25,6 +25,7 @@ import { slaLabel, type Sla } from './Orders';
 import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
+import { ShiftBar } from './ShiftBar';
 
 interface Stop {
     sequence: number;
@@ -138,6 +139,13 @@ export function MyRun() {
             <p className="izy-sub">
                 {user?.name} · {data.serviceDate} · {done} of {stops.length} done
             </p>
+
+            {/* FIRST, ABOVE THE STOPS, because it gates the day. Dispatch
+                cannot assign to a courier who is not on shift, and the
+                escalation for unclaimed work looks for somebody who is -- so
+                a driver who never finds this control is a driver the board
+                cannot use. */}
+            <ShiftBar code={code} onChanged={() => { void load(); }} />
 
             {error !== null && <div className="izy-alert warn" role="status">{error}</div>}
 
