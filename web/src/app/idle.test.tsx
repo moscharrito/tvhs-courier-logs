@@ -40,6 +40,21 @@ const answer = (body: unknown) => ({
     text: async () => JSON.stringify(body),
 });
 
+/* A LONGER BUDGET, AND NOT BECAUSE THE TESTS ARE SLOW BY ACCIDENT.
+ *
+ * The idle window is twelve hours and the clock ticks every thirty seconds,
+ * so a test that pushes sixteen hours past it drives on the order of two
+ * thousand timer callbacks, each settling its own microtasks. That takes
+ * about 600ms alone and comfortably over five seconds when the other thirty
+ * suites are competing for the same cores -- which is how this file failed
+ * twice on a full run while passing every time on its own.
+ *
+ * The default five seconds is the wrong budget for simulating a working day,
+ * not evidence of a problem. Raised here rather than globally so that every
+ * other test keeps the short timeout that makes a hang obvious.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.stubGlobal('fetch', vi.fn(async (url: string) => (
