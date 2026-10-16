@@ -74,15 +74,68 @@ Write-Host ''
 
 # ─────────────────────────────────────────────────────── the toolchain
 
+# A JDK THAT IS INSTALLED BUT NOT ON PATH IS THE COMMON CASE, NOT THE RARE
+# ONE. Temurin's installer leaves "Set JAVA_HOME" and "Add to PATH" switched
+# OFF by default, and Android Studio hides a perfectly good JDK inside itself.
+# Refusing on `java` alone would send somebody to reinstall a thing they
+# already have.
+function Find-Jdk {
+    if ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\java.exe'))) {
+        return $env:JAVA_HOME
+    }
+    if (Get-Command java -ErrorAction SilentlyContinue) { return $null }  # already on PATH
+
+    $roots = @(
+        "$env:ProgramFiles\Eclipse Adoptium"
+        "$env:LOCALAPPDATA\Programs\Eclipse Adoptium"
+        "$env:ProgramFiles\Java"
+        "$env:ProgramFiles\Microsoft\jdk"
+        "$env:ProgramFiles\Android\Android Studio\jbr"
+        "$env:LOCALAPPDATA\Programs\Android Studio\jbr"
+        "$env:LOCALAPPDATA\Programs\AdoptiumJDK"
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        if (Test-Path (Join-Path $root 'bin\java.exe')) { return $root }
+        $hit = Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'bin\java.exe') } |
+            Sort-Object Name -Descending | Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
+    return $null
+}
+
+$found = Find-Jdk
+if ($found) {
+    $env:JAVA_HOME = $found
+    $env:PATH = (Join-Path $found 'bin') + ';' + $env:PATH
+    Write-Host "  JDK       $found  (found, not on PATH)"
+}
+
 if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
-    Fail 'No JDK on this machine. Gradle cannot run without one.' @(
-        'Install Temurin 17 (Android Gradle Plugin 8 needs 17, not 21):'
+    Fail 'No JDK on this machine, and none in the usual places. Gradle cannot run.' @(
+        'THE INSTALLER NEEDS ELEVATION AND HAS REFUSED THREE TIMES. winget'
+        'exit 1602 is ERROR_INSTALL_USEREXIT -- the UAC consent dialog was'
+        'dismissed. Raised from a terminal embedded in an app it often cannot'
+        'present itself properly, so retrying it there will keep failing.'
         ''
-        '  winget install --id EclipseAdoptium.Temurin.17.JDK -e --accept-package-agreements --accept-source-agreements'
+        'THE PATH THAT NEEDS NO ADMINISTRATOR AT ALL. A JDK is a folder; the'
+        'installer only adds Start menu entries and registry keys that nothing'
+        'here uses. Download the zip and point at it:'
         ''
-        'Exit code 1602 from winget means the UAC prompt was dismissed rather'
-        'than anything going wrong. Accept it, or run PowerShell as'
-        'Administrator first. Then OPEN A NEW TERMINAL so PATH is reloaded.'
+        '  $jdk = "$env:LOCALAPPDATA\Programs\jdk17"'
+        '  $zip = "$env:TEMP\temurin17.zip"'
+        '  Invoke-WebRequest -Uri "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk" -OutFile $zip'
+        '  Expand-Archive $zip -DestinationPath $jdk -Force'
+        '  [Environment]::SetEnvironmentVariable("JAVA_HOME", (Get-ChildItem $jdk -Directory)[0].FullName, "User")'
+        ''
+        'Then OPEN A NEW TERMINAL and run this script again. It reads'
+        'JAVA_HOME, so PATH does not have to be touched.'
+        ''
+        'OR, if you would rather have the installer: open PowerShell from the'
+        'Start menu with "Run as administrator" -- OUTSIDE this app, so the'
+        'elevation prompt has somewhere to appear -- and run the winget line'
+        'from the README. Then open a new terminal.'
     )
 }
 
