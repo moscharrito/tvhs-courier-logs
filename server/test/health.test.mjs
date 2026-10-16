@@ -94,6 +94,28 @@ describe('GET /health', () => {
         expect((await request(app).get('/health')).body.statistics).toBe('missing');
     });
 
+    it('says whether a courier can be tracked at all, because off is silent', async () => {
+        /* The failure this closes. With no retention period the ingest
+           endpoint refuses every batch with 503 tracking.retentionUndecided,
+           and trace.ts treats that as a PERMANENT stop -- so tracking does
+           not degrade, it silently does not exist. render.yaml declaring the
+           variable is not proof the running process received it, and the only
+           thing that said otherwise was a line in the boot log. */
+        const app = express();
+        app.use(createHealthRouter({ client: srv.core.client, version: '1.2.3' }));
+        expect((await request(app).get('/health')).body.tracking).toMatch(/^off/);
+
+        const on = express();
+        on.use(createHealthRouter({
+            client: srv.core.client, version: '1.2.3', trackingRetentionDays: 7,
+        }));
+        const body = (await request(on).get('/health')).body;
+        expect(body.tracking).toMatch(/^on/);
+        /* The number matters: "on" without it would be the same empty
+           reassurance that files: "configured" gave for weeks. */
+        expect(body.tracking).toMatch(/7 days/);
+    });
+
     it('says only the one word, never which tables', async () => {
         /* The rule at the top of health.ts forbids a count of anything in the
            database or any word that came from a row. Which tables lack

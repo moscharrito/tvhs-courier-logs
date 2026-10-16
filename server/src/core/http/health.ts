@@ -81,6 +81,10 @@ interface Deps {
      *  database on every health check would add five queries to an endpoint
      *  a platform hits every few seconds. */
     statistics?: (() => StatisticsState) | undefined;
+    /** How many days a courier's location trace is kept, or undefined when
+     *  nobody has decided -- in which case tracking is refused outright
+     *  rather than collected without a disposal date. */
+    trackingRetentionDays?: number | undefined;
 }
 
 /** `unknown` is honest rather than optimistic: the first optimise runs at
@@ -91,7 +95,7 @@ export type StatisticsState = 'ok' | 'missing' | 'unknown';
 
 export function createHealthRouter({
     client, version, sweepIntervalSeconds, mailConfigured, mailRecent, filesConfigured, smsConfigured,
-    statistics, filesHealth,
+    statistics, filesHealth, trackingRetentionDays,
 }: Deps): Router {
     const router = Router();
     const started = Date.now();
@@ -169,6 +173,27 @@ export function createHealthRouter({
                and somebody should read the boot log for which. See the note
                at the top for why this is one word and not the list. */
             statistics: statistics === undefined ? 'unknown' : statistics(),
+            /* Whether a courier's phone can record their position at all.
+               Off is the SAFE direction and that is exactly why it needs
+               saying out loud: modules/uh/tracking.ts refuses every batch
+               with 503 tracking.retentionUndecided while no retention period
+               is set, and lib/trace.ts treats that refusal as a permanent
+               stop. So the feature does not degrade, it silently does not
+               exist -- the driver's banner reads "no retention period has
+               been agreed yet" and nothing reaches the board.
+
+               Here because RETENTION_LOCATION_TRACE_DAYS is an environment
+               variable, render.yaml declaring it is not proof the running
+               process got it, and the only thing that said otherwise was one
+               line in the boot log. That is the same gap the sms and
+               statistics fields above were added to close.
+
+               A number of days, not the variable and not a date: a retention
+               period is a policy somebody already has to be told, and it is
+               no use to anybody attacking this. */
+            tracking: trackingRetentionDays === undefined
+                ? 'off: no retention period decided'
+                : `on: tracks kept ${trackingRetentionDays} days`,
         });
     });
 

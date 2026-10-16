@@ -197,6 +197,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
            a dry run against production. */
         filesHealth: filesProbe.state,
         smsConfigured: texter.available,
+        /* So "is tracking actually on in production" is a curl rather than a
+           line in a boot log nobody outside the Render dashboard can read. */
+        trackingRetentionDays: config.retention.locationTraceDays,
         statistics: () => statisticsState,
     }));
     /* The privacy policy, rendered from docs/privacy-policy.md. Public and
