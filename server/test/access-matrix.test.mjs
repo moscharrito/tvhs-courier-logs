@@ -355,15 +355,15 @@ const MATRIX = [
     ['POST', `${UH}/orders/999999/attempt`, UH_STAFF_AND_COURIER, ''],
 
     /* --- runs and the pharmacy counter. */
-    ['POST', `${UH}/runs`, UH_STAFF, ''],
-    ['GET', `${UH}/runs`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/runs/export.xlsx`, UH_STAFF_AND_COURIER, 'a courier exports their own runs, as on screen'],
-    ['GET', `${UH}/runs/mine`, UH_STAFF_AND_COURIER, ''],
+    ['POST', `${UH}/runs`, UH_DISPATCH, 'the Site Manager IS dispatch since 7.20'],
+    ['GET', `${UH}/runs`, UH_DISPATCH_AND_COURIER, ''],
+    ['GET', `${UH}/runs/export.xlsx`, UH_DISPATCH_AND_COURIER, 'a courier exports their own runs, as on screen; no rate or price is in it'],
+    ['GET', `${UH}/runs/mine`, UH_DISPATCH_AND_COURIER, ''],
     /* Delivery History. A courier reads their OWN finished work: the
        username comes from the session and there is no parameter to
        change, so this cannot become a way to read the patients another
        driver delivered to. Staff may call it too, and get their own. */
-    ['GET', `${UH}/runs/history`, UH_STAFF_AND_COURIER, 'what I have already delivered'],
+    ['GET', `${UH}/runs/history`, UH_DISPATCH_AND_COURIER, 'what I have already delivered'],
 
     /* --- shifts (ticket 6.3). A courier starts and ends their own; only
        dispatch ends somebody else's, which is the escape hatch for a driver
@@ -403,13 +403,13 @@ const MATRIX = [
        read its own deliveries and nobody else's. uh-order-messages covers it. */
     ['GET', `${UH}/threads/999999`, UH_MEMBER, 'a thread is scoped to the order, not to a role'],
     ['POST', `${UH}/threads/999999`, UH_MEMBER, 'same check, same place'],
-    ['GET', `${UH}/runs/propose`, UH_STAFF, 'the shape of the whole day across every counter, which no single pharmacy may read'],
-    ['GET', `${UH}/runs/999999`, UH_STAFF_AND_COURIER, ''],
-    ['PATCH', `${UH}/runs/999999`, UH_STAFF, ''],
-    ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'a lead moves a package at their own counter'],
+    ['GET', `${UH}/runs/propose`, UH_DISPATCH, 'the shape of the whole day across every counter, which no single pharmacy may read'],
+    ['GET', `${UH}/runs/999999`, UH_DISPATCH_AND_COURIER, ''],
+    ['PATCH', `${UH}/runs/999999`, UH_DISPATCH, ''],
+    ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'scoped to the sites on the membership, which for the Site Manager is all eight'],
     ['DELETE', `${UH}/runs/999999/stops/999999`, UH_REASSIGN, ''],
-    ['PUT', `${UH}/runs/999999/sequence`, UH_STAFF, ''],
-    ['POST', `${UH}/runs/999999/sequence/auto`, UH_STAFF, ''],
+    ['PUT', `${UH}/runs/999999/sequence`, UH_DISPATCH, ''],
+    ['POST', `${UH}/runs/999999/sequence/auto`, UH_DISPATCH, ''],
     ['GET', `${UH}/runs/999999/pickup`, UH_STAFF_AND_COURIER, ''],
     ['POST', `${UH}/runs/999999/pickup`, UH_STAFF_AND_COURIER, ''],
 

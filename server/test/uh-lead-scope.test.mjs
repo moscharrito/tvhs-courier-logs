@@ -170,14 +170,35 @@ describe('a lead moving a package', () => {
         expect(onRun).not.toContain(mine.id);
     });
 
-    it('cannot create a run, resequence one, or close it', async () => {
-        /* Dispatch owns routing. Moving a package at the counter is the whole
-           of a lead's write access. */
-        expect((await lead.post(`${UH}/runs`).send({
-            courierUsername: 'lead.driver', label: 'Nope', orderIds: [],
-        })).status).toBe(403);
-        expect((await lead.put(`${UH}/runs/${run.id}/sequence`).send({ orderIds: [] })).status).toBe(403);
-        expect((await lead.patch(`${UH}/runs/${run.id}`).send({ status: 'completed' })).status).toBe(403);
+    it('CAN create a run, resequence one and close it, since 7.20', async () => {
+        /* THIS TEST USED TO ASSERT THE OPPOSITE, and it was right to, under
+           the model it was written for: eight leads at eight counters, where
+           "moving a package at the counter is the whole of a lead's write
+           access" and dispatch was somebody else.
+
+           Ticket 7.20 abolished that model. There is one Site Manager and
+           they ARE dispatch, so refusing them the three routes that make up
+           dispatching left the board offering controls the server bounced.
+           Inverted deliberately rather than deleted, so the history of the
+           decision stays legible to whoever reads this next. */
+        const made = await lead.post(`${UH}/runs`).send({
+            courierUsername: 'lead.driver', label: 'Second wave', orderIds: [],
+        });
+        expect(made.status, JSON.stringify(made.body)).toBe(201);
+
+        /* Its own run and its own stop, not the shared ones above:
+           sequencing must be a permutation of the stops actually on the run,
+           and the schema refuses an empty list, so a test that borrowed a run
+           somebody else had been adding to would fail on arithmetic rather
+           than on access. */
+        const fresh = await orderAt(dischargeId);
+        expect((await lead.post(`${UH}/runs/${made.body.id}/stops`).send({ orderIds: [fresh.id] })).status).toBe(200);
+
+        const seq = await lead.put(`${UH}/runs/${made.body.id}/sequence`).send({ orderIds: [fresh.id] });
+        expect(seq.status, JSON.stringify(seq.body)).toBe(200);
+
+        const closed = await lead.patch(`${UH}/runs/${made.body.id}`).send({ status: 'completed' });
+        expect(closed.status, JSON.stringify(closed.body)).toBe(200);
     });
 
     it('cannot reach pricing, invoices or the client portal', async () => {
@@ -339,5 +360,56 @@ describe('the platform role a lead account holds', () => {
         /* The point of the change: nothing a site manager does needs the
            platform role. If this breaks, 'staff' was the wrong answer. */
         expect((await lead.get(`${UH}/board?date=2026-11-01`)).status).toBe(200);
+    });
+});
+
+describe('the Site Manager dispatching a day', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE GATES IN runs.ts WERE THE LAST ONES STILL ON THE OLD MODEL.
+     *
+     * Eight leads standing at eight counters could move a package between
+     * two drivers and nothing else, because dispatch was somebody else.
+     * Ticket 7.20 replaced them with one Site Manager who IS dispatch, and
+     * runs.ts was missed while returns, discrepancies, reports and driver
+     * records were widened.
+     *
+     * What that produced: a dispatch board that rendered Start a run, Propose
+     * routes and Auto-sequence to the one person meant to use them, and a
+     * server that answered 403 to all three. Runs could not even be listed.
+     * Nobody caught it because no test asked the Site Manager to dispatch a
+     * day -- they only asked what a lead could SEE.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('can start a run, which is where a day begins', async () => {
+        const res = await lead.post(`${UH}/runs`).send({
+            courierUsername: 'lead.driver', label: 'Site manager wave', serviceDate: '2026-11-01',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+    });
+
+    it('can list and read runs, which it could not before', async () => {
+        expect((await lead.get(`${UH}/runs`)).status).toBe(200);
+    });
+
+    it('can ask for a proposed wave across every counter', async () => {
+        /* The clustering. It spans all eight pharmacies, which is why no
+           single pharmacy may read it and why the Site Manager must. */
+        const res = await lead.get(`${UH}/runs/propose?drivers=18&serviceDate=2026-11-01`);
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+    });
+
+    it('still cannot reach an invoice, which is the line 7.20 drew', async () => {
+        /* The widening above must not have moved this. Dispatch is
+           operational; the commercials are not, and that was the explicit
+           instruction when the role was created. */
+        expect((await lead.get(`${UH}/invoices`)).status).toBe(403);
+    });
+
+    it('still cannot reach the rate card', async () => {
+        expect((await lead.get(`${UH}/pricing`)).status).toBe(403);
+    });
+
+    it('still cannot read what was reported to University Health', async () => {
+        expect((await lead.get(`${UH}/reports/sent`)).status).toBe(403);
     });
 });

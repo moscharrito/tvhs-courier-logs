@@ -1,12 +1,13 @@
 /* Runs: one courier's batch of stops for part of a day.
  *
- *   GET    /api/projects/:pid/uh/runs                 members; couriers see their own
- *   POST   /api/projects/:pid/uh/runs                 staff, create a run
- *   GET    /api/projects/:pid/uh/runs/:id             the run and its stops in sequence
- *   PATCH  /api/projects/:pid/uh/runs/:id             staff, label, notes, status
- *   POST   /api/projects/:pid/uh/runs/:id/stops       staff, add orders
- *   DELETE /api/projects/:pid/uh/runs/:id/stops/:orderId  staff, take one off
- *   PUT    /api/projects/:pid/uh/runs/:id/sequence    staff, reorder the whole run
+ *   GET    /api/projects/:pid/uh/runs                     members; couriers see their own
+ *   POST   /api/projects/:pid/uh/runs                     dispatch, create a run
+ *   GET    /api/projects/:pid/uh/runs/:id                 the run and its stops in sequence
+ *   PATCH  /api/projects/:pid/uh/runs/:id                 dispatch, label, notes, status
+ *   POST   /api/projects/:pid/uh/runs/:id/stops           dispatch, add orders
+ *   DELETE /api/projects/:pid/uh/runs/:id/stops/:orderId  dispatch, take one off
+ *   PUT    /api/projects/:pid/uh/runs/:id/sequence        dispatch, reorder the whole run
+ *   GET    /api/projects/:pid/uh/runs/propose             dispatch, a wave, unapplied
  *
  * Adding a stop is what assigns an order, and removing one is what unassigns
  * it. Both go through the transition table in modules/uh/order-events, so
@@ -104,21 +105,34 @@ const presentRun = (r: RunRow) => ({
 
 export function createRunsRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
-    const staff = requireProjectRole('admin');
-    /* MOVING AN ORDER BETWEEN DRIVERS IS THE LEAD'S ONE WRITE.
+    /* THE LEAD DISPATCHES NOW, AND THIS FILE WAS THE LAST TO HEAR.
      *
-     * Dispatch assigns from the forecast when the list lands. The lead is the
-     * person standing at the counter when a driver is late or a batch is too
-     * big for one round, and making them ring dispatch to move one package is
-     * how packages stop being moved at all.
+     * These gates were written for a model with eight leads, each standing at
+     * one counter. The comment that stood here said so: "moving an order
+     * between drivers is the lead's one write... a lead cannot create a run,
+     * resequence one, or close it", because dispatch was somebody else.
      *
-     * Only these two routes: adding a stop and taking one off. A lead cannot
-     * create a run, resequence one, or close it. Both handlers check the
-     * order's own site below, so a lead can only move work that is theirs. */
-    const reassign = requireProjectRole('admin', 'lead');
+     * Ticket 7.20 replaced all eight with one Site Manager who IS dispatch.
+     * Several modules were widened to match -- returns, discrepancies,
+     * reports, driver records -- and this one was missed, which left the
+     * dispatch board offering a Site Manager four controls the server then
+     * refused: start a run, auto-sequence it, propose a wave, apply one. Only
+     * moving a stop between two existing runs worked, and runs could not even
+     * be LISTED, because `readers` was admin and courier.
+     *
+     * So the split is no longer "who dispatches" -- it is "who is doing the
+     * driving". Nothing in a run carries a rate, a price or an invoice line,
+     * so widening this takes nothing across the line 7.20 drew: the
+     * commercials live in invoices.ts and pricing-routes.ts and stay admin. */
+    const dispatch = requireProjectRole('admin', 'lead');
+    /* Kept as its own name because the handlers below check the order's site
+     * against the caller's scope. That mattered when a lead held one counter;
+     * the Site Manager holds all eight, so it now permits everything while
+     * still refusing a lead who was scoped to fewer. */
+    const reassign = dispatch;
     /* A run is a courier's day and every stop on it. Couriers read their own
      * (narrowed below); a client viewer has no business reading any of it. */
-    const readers = requireProjectRole('admin', 'courier');
+    const readers = requireProjectRole('admin', 'lead', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';
@@ -349,7 +363,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
 
     /* -------------------------------------------------------------- create */
 
-    router.post('/', staff, wrap(async (req, res) => {
+    router.post('/', dispatch, wrap(async (req, res) => {
         const body = parse(CreateRun, req.body, res);
         if (!body) return;
         const project = req.project!;
@@ -473,7 +487,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         res.json({ ...presentRun(run), stops: await stopsOf(projectId, Number(run.id)) });
     }));
 
-    router.put('/:id/sequence', staff, wrap(async (req, res) => {
+    router.put('/:id/sequence', dispatch, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;
         const body = parse(Reorder, req.body, res);
@@ -520,7 +534,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
      * the board shows the minutes-to-due badges so a nearest-neighbour route
      * that strands a tight STAT is visible rather than silent.
      */
-    router.post('/:id/sequence/auto', staff, wrap(async (req, res) => {
+    router.post('/:id/sequence/auto', dispatch, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;
         const body = parse(AutoSequence, req.body ?? {}, res);
@@ -600,7 +614,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
 
     /* --------------------------------------------------------------- admin */
 
-    router.patch('/:id', staff, wrap(async (req, res) => {
+    router.patch('/:id', dispatch, wrap(async (req, res) => {
         const run = await loadOr404(req, res);
         if (!run) return;
         const body = parse(PatchRun, req.body, res);
@@ -717,7 +731,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
      * paper, and a dispatcher at 12:05 who has fifteen on shift needs to
      * see what fifteen looks like before they start ringing people.
      */
-    router.get('/propose', staff, wrap(async (req, res) => {
+    router.get('/propose', dispatch, wrap(async (req, res) => {
         const q = req.query as Record<string, string | undefined>;
         const serviceDate = q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])
             ? q['serviceDate']
