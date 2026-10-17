@@ -73,8 +73,39 @@ function renderStop(r: Record<string, unknown> = routes()) {
 
 /** Draw on the pad. jsdom has no layout and no PointerEvent, so the box is
  *  given a size and the coordinates are put on the event by hand. */
-function sign() {
-    const pad = screen.getByRole('application', { name: 'Recipient signature' });
+/* THE RECIPIENT'S PAD IS GONE from the deliver screen (17 October): the
+   pharmacy's form is signed on paper and photographed, so asking for a
+   scrawl on glass too was asking one person to sign twice. These tests
+   now prove the handover the way the screen does.
+
+   Kept as a helper rather than inlined, because the courier's own
+   countersignature on a controlled handover IS still drawn and uses the
+   same pointer dance. */
+/* The server takes a photographed form, OR a stated reason for not having
+   one. This is the reason branch: it needs no bucket, so a test about what
+   the screen SAYS is not also a test of the file service. attachForm() is
+   the other branch, used where the photograph is the point. */
+function proveHandover() {
+    fireEvent.change(screen.getByLabelText(/If there is no signed form, say why/), {
+        target: { value: 'the pharmacy sent no form with this one' },
+    });
+}
+
+function attachForm() {
+    const input = screen.getByLabelText(/Photo of the signed form/) as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], 'form.jpg', { type: 'image/jpeg' });
+    fireEvent.change(input, { target: { files: [file] } });
+}
+
+/** The three steps the uploader takes, so a photo test can reach a bucket. */
+const fileRoutes = {
+    'POST /api/projects/uh/uh/files': { id: 99, upload: { url: 'https://bucket.test/put', method: 'PUT', headers: {} } },
+    'PUT https://bucket.test/put': { ok: true },
+    'POST /api/projects/uh/uh/files/99/stored': { ok: true },
+};
+
+function drawOn(label: string) {
+    const pad = screen.getByRole('application', { name: label });
     pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
     if (!pad.setPointerCapture) pad.setPointerCapture = () => {};
     pad.releasePointerCapture = () => {};
@@ -89,6 +120,8 @@ function sign() {
     point('pointerMove', 140, 60);
     point('pointerUp', 140, 60);
 }
+
+const sign = () => drawOn('Recipient signature');
 
 const bodyOf = (fn: ReturnType<typeof mockFetch>['fn'], key: string) => {
     const call = fn.mock.calls.find(([url, init]) => `${((init as RequestInit | undefined)?.method ?? 'GET').toUpperCase()} ${String(url)}` === key);
@@ -183,7 +216,7 @@ describe('Stop', () => {
         expect(screen.getByLabelText(/Photo of the signed form/)).toBeInTheDocument();
     });
 
-    it('will not record a delivery without both a name and a signature', async () => {
+    it('will not record a delivery without both a name and some proof', async () => {
         renderStop();
         await screen.findByRole('heading', { name: 'Stop' });
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
@@ -194,23 +227,29 @@ describe('Stop', () => {
         fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
         expect(submit).toBeDisabled();
 
-        sign();
+        proveHandover();
         expect(screen.getByRole('button', { name: 'Record the delivery' })).toBeEnabled();
     });
 
-    it('sends the signature as strokes, not as a picture', async () => {
-        const { fn } = renderStop({ ...routes(), [`POST ${ORDER}/deliver`]: { status: 201, body: { status: 'delivered' } } });
+    it('sends the photographed form as the proof, and no strokes', async () => {
+        const { fn } = renderStop({ ...routes(), ...fileRoutes, [`POST ${ORDER}/deliver`]: { status: 201, body: { status: 'delivered' } } });
         await screen.findByRole('heading', { name: 'Stop' });
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
-        sign();
+        attachForm();
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
         await waitFor(() => expect(screen.getByText('Delivered and recorded.')).toBeInTheDocument());
         const body = bodyOf(fn, `POST ${ORDER}/deliver`);
         expect(body.signedName).toBe('Ines Vargas');
-        expect(body.strokes[0].length).toBeGreaterThan(2);
-        expect(body.strokes[0][0]).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+        /* THE PHOTOGRAPH IS THE PROOF NOW. The file id is what the server
+           reads; strokes go empty rather than absent, so every delivery
+           already recorded with a drawn signature still means what it meant. */
+        expect(body.courierFormFileId).toBe(99);
+        expect(body.strokes).toEqual([]);
+        /* And no reason, because there WAS a form. A reason beside a
+           photograph would be a contradiction in the record. */
+        expect(body.noSignatureReason).toBeUndefined();
     });
 
     it('needs a reason for every item before a dry run can be recorded', async () => {
@@ -325,7 +364,7 @@ describe('Stop', () => {
         await screen.findByRole('heading', { name: 'Stop' });
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
-        sign();
+        proveHandover();
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
         await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('A delivered order cannot be delivered again'));
@@ -340,7 +379,7 @@ describe('Stop', () => {
         await screen.findByRole('heading', { name: 'Stop' });
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
-        sign();
+        proveHandover();
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
         await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());

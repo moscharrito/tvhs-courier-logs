@@ -117,6 +117,9 @@ export function Stop() {
        uploadPhotoNow for why that differs from the doorstep photo. */
     const [formPhoto, setFormPhoto] = useState<File | null>(null);
     const [idPhoto, setIdPhoto] = useState<File | null>(null);
+    /* Its own, not the doorstep branch's: two forms sharing one box means
+       typing in one silently fills the other. */
+    const [noFormReason, setNoFormReason] = useState('');
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
     const [busy, setBusy] = useState(false);
     const [queuedHere, setQueuedHere] = useState(false);
@@ -244,7 +247,7 @@ export function Stop() {
                 ] as const) {
                     if (file === null) continue;
                     ids[key] = await uploadPhotoNow({
-                        module: base, orderId: order.id, blob: file,
+                        module: `/api/projects/${code}/uh`, orderId: order.id, blob: file,
                         contentType: file.type, kind,
                         idemKey: `${order.id}-${kind}-${file.size}-${file.lastModified}`,
                     });
@@ -265,6 +268,7 @@ export function Stop() {
             void post('deliver', {
                 signedName: signedName.trim(),
                 strokes,
+                ...(formPhoto === null ? { noSignatureReason: noFormReason.trim() } : {}),
                 ...ids,
                 ...(order.controlled === true ? { countersignStrokes: countersign } : {}),
             }, 'Delivered and recorded.');
@@ -435,7 +439,33 @@ export function Stop() {
                                 </div>
                             )}
 
-                            <SignaturePad label="Recipient signature" strokes={strokes} onChange={setStrokes} disabled={busy} />
+                            {/* THE RECIPIENT'S SIGNATURE PAD IS GONE.
+                                The pharmacy's form is signed on paper and
+                                photographed above, so asking for a scrawl on
+                                glass as well was asking the same person to
+                                sign twice. The server accepts a photographed
+                                form, strokes, or a stated reason -- see
+                                deliver.noProof in stop.ts -- and this screen
+                                now offers the first and the third.
+
+                                `strokes` is still sent, always empty, rather
+                                than removed: the column and the capture
+                                method are history for every delivery already
+                                recorded with one. */}
+                            {formPhoto === null && (
+                                <label className="izy-field">If there is no signed form, say why
+                                    <input
+                                        value={noFormReason}
+                                        onChange={(e) => setNoFormReason(e.target.value)}
+                                        placeholder="e.g. the pharmacy sent no form with this one"
+                                        disabled={busy}
+                                    />
+                                    <span className="izy-muted izy-field-note">
+                                        A delivery with no proof and no explanation is a gap nobody can
+                                        account for a year later.
+                                    </span>
+                                </label>
+                            )}
 
                             {/* CONTROLLED DRUG: BOTH PARTIES SIGN.
 
@@ -464,7 +494,15 @@ export function Stop() {
                                 <button
                                     className="izy-btn"
                                     type="submit"
-                                    disabled={busy || signedName.trim() === '' || pointCount(strokes) <= 2
+                                    /* The same three branches the server
+                                       checks: a photographed form, or a
+                                       reason for not having one. Plus the ID
+                                       where the pharmacy stamped it, and the
+                                       courier's own mark on a controlled
+                                       handover, which has no escape. */
+                                    disabled={busy || signedName.trim() === ''
+                                        || (formPhoto === null && noFormReason.trim().length < 3)
+                                        || (order.idRequired === true && idPhoto === null)
                                         || (order.controlled === true && pointCount(countersign) <= 2)}
                                 >
                                     {busy ? 'Saving' : 'Record the delivery'}
