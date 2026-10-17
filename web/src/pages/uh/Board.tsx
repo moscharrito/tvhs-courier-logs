@@ -182,7 +182,12 @@ export function Board() {
     /* Eighteen on paper. A dispatcher with fifteen on shift needs to see
        what fifteen looks like before they start ringing people, so it is a
        box on the screen and not a setting in a file. */
-    const [fleet, setFleet] = useState('18');
+    /* Typed by hand until 17 October, defaulting to eighteen -- the number in
+       the contract rather than the number standing in a car park. Proposing a
+       wave for eighteen drivers when five are on shift produces a plan that
+       cannot be driven, and the dispatcher finds out by assigning it. */
+    const [fleet, setFleet] = useState('');
+    const [fleetTouched, setFleetTouched] = useState(false);
     const [takeWith, setTakeWith] = useState<Record<number, string>>({});
     const pollRef = useRef<number | null>(null);
     /* The cards we already hold, and the cursor that says what we have seen.
@@ -323,7 +328,7 @@ export function Board() {
        the one thing it must not do. It is cleared when one is taken, so
        what is on screen is never a plan that has already half happened. */
     const proposeRoutes = () => act(
-        () => api<Proposal>(`${base}/runs/propose?drivers=${fleet}${data?.serviceDate ? `&serviceDate=${data.serviceDate}` : ''}`)
+        () => api<Proposal>(`${base}/runs/propose?drivers=${fleetTouched ? fleet : (data?.couriers ?? []).filter((c) => c.onShift).length}${data?.serviceDate ? `&serviceDate=${data.serviceDate}` : ''}`)
             .then(setProposal),
         'Routes proposed. Nothing is assigned yet.',
     );
@@ -356,6 +361,15 @@ export function Board() {
         label: `${l.courier.name}${l.run.label ? ` (${l.run.label})` : ''}`,
     }));
 
+    /* ON SHIFT, FROM THE SHIFTS TABLE. Not `present`, which is "used the app
+       in the last ten minutes" -- a driver halfway between two addresses is
+       on shift and quiet, and both panels below would be wrong about them.
+       See courierNote() for the same distinction on the lane pills. */
+    const onShift = (data?.couriers ?? []).filter((c) => c.onShift);
+    const onShiftCount = onShift.length;
+    /* Somebody who can be given a run right now: on shift, and without one. */
+    const startable = (data?.idleCouriers ?? []).filter((c) => c.onShift);
+
     if (data === null) return <div className="izy-card"><Loading label="Loading the board" /></div>;
 
     /* Couriers carrying more than one run today. Their lanes say which. */
@@ -366,6 +380,10 @@ export function Board() {
     const twiceOver = new Set([...runsPer].filter(([, n]) => n > 1).map(([u]) => u));
 
     const s = data.summary;
+    /* Follows the roster until somebody types over it. Planning for a number
+       nobody chose is how a proposal gets built for a fleet that is not
+       there. */
+    const fleetValue = fleetTouched ? fleet : String(onShiftCount);
 
     return (
         <>
@@ -502,19 +520,28 @@ export function Board() {
                            rule here and it was the wrong one: a courier who
                            comes on shift at two o'clock still needs a run,
                            and by then the panel had folded itself away. */
-                        defaultOpen={data.idleCouriers.length > 0}
-                        summary={data.idleCouriers.length === 0
-                            ? 'everybody has a run today'
-                            : `${data.idleCouriers.length} without a run today`}
+                        defaultOpen={startable.length > 0}
+                        summary={startable.length === 0
+                            ? (onShiftCount === 0 ? 'nobody is on shift' : 'everybody on shift has a run')
+                            : `${startable.length} on shift without a run`}
                     >
-                        {data.idleCouriers.length === 0 ? (
-                            <p className="izy-muted">Every courier on this project already has a run today.</p>
+                        {startable.length === 0 ? (
+                            /* TWO DIFFERENT NOTHINGS. "Everybody has a run" is
+                               a finished morning; "nobody is on shift" is a
+                               day that has not started, and a dispatcher who
+                               reads the first when the second is true goes
+                               looking for a fault that is not there. */
+                            <p className="izy-muted">
+                                {onShiftCount === 0
+                                    ? 'Nobody is on shift. A driver has to go on shift in the app before they can be given a run.'
+                                    : 'Every driver on shift already has a run today.'}
+                            </p>
                         ) : (
                             <div className="izy-row">
                                 <label className="izy-field">Courier
                                     <select value={newRunCourier} onChange={(e) => setNewRunCourier(e.target.value)}>
                                         <option value="">Choose a courier</option>
-                                        {data.idleCouriers.map((c) => (
+                                        {startable.map((c) => (
                                             <option key={c.username} value={c.username}>{c.name}{courierNote(c)}</option>
                                         ))}
                                     </select>
@@ -551,15 +578,24 @@ export function Board() {
                             : `${proposal.runs.length} proposed, ${proposal.unplaced.length} with no driver`}
                     >
                         <div className="izy-row">
-                            <label className="izy-field" style={{ maxWidth: 150 }}>Drivers on shift
+                            <label className="izy-field" style={{ maxWidth: 170 }}>Drivers on shift
                                 <input
-                                    value={fleet}
-                                    onChange={(e) => setFleet(e.target.value.replace(/[^0-9]/g, ''))}
+                                    value={fleetValue}
+                                    onChange={(e) => { setFleetTouched(true); setFleet(e.target.value.replace(/[^0-9]/g, '')); }}
                                     inputMode="numeric"
                                     aria-label="Drivers on shift"
                                 />
+                                {/* What the roster actually says, beside the
+                                    box, so an overridden number is visibly an
+                                    override rather than a fact. */}
+                                <span className="izy-muted izy-field-note">
+                                    {onShiftCount === 0
+                                        ? 'nobody is on shift'
+                                        : `${onShiftCount} on shift now`}
+                                    {fleetTouched && fleetValue !== String(onShiftCount) ? ' — overridden' : ''}
+                                </span>
                             </label>
-                            <button className="izy-btn" type="button" disabled={busy || fleet === ''}
+                            <button className="izy-btn" type="button" disabled={busy || fleetValue === '' || fleetValue === '0'}
                                 onClick={() => { void proposeRoutes(); }}>
                                 {proposal === null ? 'Propose routes' : 'Propose again'}
                             </button>
@@ -794,10 +830,21 @@ function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign 
     onDragStart: (id: number | null) => void;
     assign: (orderId: number, runId: number) => void | Promise<void>;
 }) {
-    const paged = usePaged(group.orders);
+    /* SIX, NOT THE USUAL EIGHT. Nine counters are nine of these stacked down
+       one column, so the page size here multiplies by nine rather than
+       standing alone. Six keeps a pharmacy's slice short enough that the
+       counter below it is still on screen. */
+    const paged = usePaged(group.orders, 6);
     return (
-        <div className="izy-pool-group">
-            <h3>{group.site.name} <span className="izy-muted">({group.orders.length})</span></h3>
+        <Section
+            id={`uh.pool.${group.site.code ?? group.site.id}`}
+            title={group.site.name}
+            /* Folding is per counter and remembered, because a dispatcher
+               working the Green wave does not want Wheatley's seven
+               deliveries between them and the next card. */
+            defaultOpen
+            summary={`${group.orders.length} waiting${group.overdue > 0 ? `, ${group.overdue} overdue` : ''}`}
+        >
             {paged.rows.map((o) => (
                 <OrderCard
                     key={o.id}
@@ -823,7 +870,7 @@ function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign 
                 />
             ))}
             <Pager of={paged} noun="waiting" />
-        </div>
+        </Section>
     );
 }
 

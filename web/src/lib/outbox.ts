@@ -268,6 +268,34 @@ async function postJson(url: string, body: unknown): Promise<{ status: number; b
     return { status: res.status, body: parsed };
 }
 
+/**
+ * Put a photo in the bucket and answer with its file id.
+ *
+ * EXPORTED, because a handover needs TWO of them -- the signed form and,
+ * where the pharmacy stamped it, the identification -- and the queue carries
+ * one photo per entry. The phone app settled this first and the web follows
+ * it rather than inventing a second answer: both are uploaded BEFORE the
+ * delivery is queued, and a failure records nothing.
+ *
+ * That is deliberately different from the doorstep photo, which goes through
+ * the queue. A doorstep drop without its picture is still a delivery; a
+ * handover whose proof did not upload is a handover we cannot evidence, and
+ * where the form was stamped ID Required it is one the pharmacy forbade
+ * outright. So this one is allowed to fail loudly and stop the courier.
+ */
+export async function uploadPhotoNow(input: {
+    /** `/api/projects/:code/uh`, the module the file service hangs off. */
+    module: string;
+    orderId: number;
+    blob: Blob;
+    contentType: string;
+    kind: string;
+    /** Makes the upload idempotent across a retry. */
+    idemKey: string;
+}): Promise<number> {
+    return putPhoto(input.module, input.orderId, input.blob, input.contentType, input.kind, input.idemKey);
+}
+
 /** Put the photo in the bucket, then answer with the file id. */
 async function sendPhoto(entry: OutboxEntry): Promise<number> {
     const photo = entry.photo!;
@@ -277,11 +305,21 @@ async function sendPhoto(entry: OutboxEntry): Promise<number> {
        "uh", and a split would stop at the first of them. */
     const module = /^(\/api\/projects\/[^/]+\/[^/]+)\//.exec(entry.url)?.[1];
     if (!module) throw Object.assign(new Error('That upload has nowhere to go'), { status: 400 });
+    return putPhoto(module, entry.orderId, photo.blob, photo.contentType, photo.kind, entry.id);
+}
+
+/** The three steps, in one place: create, PUT, confirm. */
+async function putPhoto(
+    module: string, orderId: number | null | undefined, blob: Blob,
+    contentType: string, kind: string, idemKey: string,
+): Promise<number> {
+    const photo = { blob, contentType, kind };
+    const entry = { id: idemKey };
     const created = await postJson(`${module}/files`, {
         kind: photo.kind,
         contentType: photo.contentType,
         bytes: photo.blob.size,
-        orderId: entry.orderId,
+        orderId,
         // Its own id, derived from the entry so a retry of the upload is
         // itself idempotent rather than leaving a trail of pending files.
         clientEventId: `${entry.id}-f`,

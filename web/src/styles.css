@@ -506,3 +506,9 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
     .izy-shift .izy-row-between { flex-direction: column; align-items: stretch; gap: 10px; }
     .izy-shift .izy-btn { width: 100%; }
 }
+
+/* The roster figure beside the wave's driver count (ticket 7.22). Its own
+   line under the box rather than after it: at 150px the field is already as
+   wide as "Drivers on shift", and a note on the same line pushed the button
+   off the row on a laptop. */
+.izy-field-note { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; }

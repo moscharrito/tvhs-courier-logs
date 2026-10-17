@@ -153,6 +153,36 @@ describe('Stop', () => {
         expect(screen.queryByRole('button', { name: 'Left at the door' })).not.toBeInTheDocument();
     });
 
+    it('offers the camera when the pharmacy stamped ID Required', async () => {
+        /* FOUND ON A PHONE, 17 OCTOBER. The server refuses a delivery marked
+           ID Required without patientIdFileId, and this screen had no way to
+           supply one: a courier got a red server error at the door with no
+           control to satisfy it. The phone app had the capture; the web
+           never got it, which mattered the moment drivers moved to the
+           browser because Apple enrolment was late. */
+        renderStop(routes({ 'GET /api/projects/uh/uh/orders/21': order({ idRequired: true }) }));
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+
+        expect(screen.getByText(/ID Required/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/Photo of the identification/)).toBeInTheDocument();
+    });
+
+    it('does not ask for identification when the pharmacy did not', async () => {
+        /* A control demanded at every door is one nobody reads. */
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+        expect(screen.queryByLabelText(/Photo of the identification/)).not.toBeInTheDocument();
+    });
+
+    it('always offers the signed form, because the signature moved onto paper', async () => {
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+        expect(screen.getByLabelText(/Photo of the signed form/)).toBeInTheDocument();
+    });
+
     it('will not record a delivery without both a name and a signature', async () => {
         renderStop();
         await screen.findByRole('heading', { name: 'Stop' });
@@ -176,7 +206,7 @@ describe('Stop', () => {
         sign();
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
-        await waitFor(() => expect(screen.getByText('Delivered and signed for.')).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByText('Delivered and recorded.')).toBeInTheDocument());
         const body = bodyOf(fn, `POST ${ORDER}/deliver`);
         expect(body.signedName).toBe('Ines Vargas');
         expect(body.strokes[0].length).toBeGreaterThan(2);

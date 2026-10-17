@@ -19,7 +19,7 @@ import { clockFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
-import { sendOrQueue, pendingFor } from '../../lib/outbox';
+import { sendOrQueue, pendingFor, uploadPhotoNow } from '../../lib/outbox';
 
 interface Package {
     id: number; description: string; quantity: number;
@@ -41,6 +41,9 @@ interface OrderDetail {
     signatureRequired: boolean;
     /** Ticket 7.13: this handover needs both parties to sign. */
     controlled?: boolean;
+    /** The pharmacy stamped this one: no identification, no delivery. The
+     *  server refuses it outright, so the screen has to offer the camera. */
+    idRequired?: boolean;
     packages: Package[];
 }
 
@@ -106,6 +109,14 @@ export function Stop() {
     const [noSignatureReason, setNoSignatureReason] = useState('');
     const [photo, setPhoto] = useState<File | null>(null);
     const photoInput = useRef<HTMLInputElement>(null);
+    /* THE SIGNATURE MOVED ONTO PAPER, and this screen was the last place
+       still asking for it on glass. The pharmacy's own form is signed at the
+       door and photographed; the strokes below stay as optional history.
+       Identification is its own photograph and only where the form was
+       stamped. Both are uploaded BEFORE the delivery is recorded -- see
+       uploadPhotoNow for why that differs from the doorstep photo. */
+    const [formPhoto, setFormPhoto] = useState<File | null>(null);
+    const [idPhoto, setIdPhoto] = useState<File | null>(null);
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
     const [busy, setBusy] = useState(false);
     const [queuedHere, setQueuedHere] = useState(false);
@@ -215,11 +226,49 @@ export function Stop() {
 
     const deliver = (e: FormEvent) => {
         e.preventDefault();
-        void post('deliver', {
-            signedName: signedName.trim(),
-            strokes,
-            ...(order.controlled === true ? { countersignStrokes: countersign } : {}),
-        }, 'Delivered and signed for.');
+        /* Checked here as well as on the server. The server's refusal is the
+           one that counts, but a courier who only learns at the door that
+           they needed a photograph has already handed the packages over. */
+        if (order.idRequired === true && idPhoto === null) {
+            setMsg({ kind: 'error', text: 'This delivery is marked ID Required. Photograph the identification before recording it.' });
+            return;
+        }
+        void (async () => {
+            setBusy(true);
+            setMsg(null);
+            const ids: Record<string, number> = {};
+            try {
+                for (const [file, kind, key, label] of [
+                    [formPhoto, 'courier_form', 'courierFormFileId', 'signed form'],
+                    [idPhoto, 'patient_id', 'patientIdFileId', 'identification'],
+                ] as const) {
+                    if (file === null) continue;
+                    ids[key] = await uploadPhotoNow({
+                        module: base, orderId: order.id, blob: file,
+                        contentType: file.type, kind,
+                        idemKey: `${order.id}-${kind}-${file.size}-${file.lastModified}`,
+                    });
+                }
+            } catch (err) {
+                setBusy(false);
+                /* NOTHING IS RECORDED. A handover whose proof did not upload
+                   is one we cannot evidence, and where the form was stamped
+                   it is one the pharmacy forbade outright. */
+                setMsg({
+                    kind: 'error',
+                    text: `The photo could not be sent: ${err instanceof Error ? err.message : 'unknown error'}. `
+                        + 'Nothing was recorded. Try again, or record this as could not deliver.',
+                });
+                return;
+            }
+            setBusy(false);
+            void post('deliver', {
+                signedName: signedName.trim(),
+                strokes,
+                ...ids,
+                ...(order.controlled === true ? { countersignStrokes: countersign } : {}),
+            }, 'Delivered and recorded.');
+        })();
     };
 
     const doorstep = (e: FormEvent) => {
@@ -341,6 +390,51 @@ export function Stop() {
                             <label className="izy-field">Printed name of the person receiving it
                                 <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required />
                             </label>
+                            {/* THE PAPER IS THE PROOF NOW. The pharmacy's own
+                                form is signed at the door and photographed;
+                                these strokes are optional history. That is a
+                                downgrade in evidence quality -- a photograph
+                                of a form is a photograph, where strokes were
+                                the movement of the pen -- made knowingly
+                                because the client's own document is the
+                                record. See the Deliver schema in stop.ts. */}
+                            <label className="izy-field">Photo of the signed form
+                                <input
+                                    type="file"
+                                    accept={PHOTO_TYPES.join(',')}
+                                    capture="environment"
+                                    disabled={busy}
+                                    onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
+                                />
+                                <span className="izy-muted izy-field-note">
+                                    {formPhoto === null
+                                        ? 'The pharmacy form the recipient signed.'
+                                        : `Ready to send: ${formPhoto.name}`}
+                                </span>
+                            </label>
+
+                            {order.idRequired === true && (
+                                <div className="izy-card izy-id-required">
+                                    <div className="izy-alert warn" role="status">
+                                        This delivery is marked <b>ID Required</b>. The pharmacy stamped it
+                                        because this medication may only go to someone who proved who they
+                                        are. Photograph the identification before recording it.
+                                    </div>
+                                    <label className="izy-field">Photo of the identification
+                                        <input
+                                            type="file"
+                                            accept={PHOTO_TYPES.join(',')}
+                                            capture="environment"
+                                            disabled={busy}
+                                            onChange={(e) => setIdPhoto(e.target.files?.[0] ?? null)}
+                                        />
+                                        <span className="izy-muted izy-field-note">
+                                            {idPhoto === null ? 'Required for this delivery.' : `Ready to send: ${idPhoto.name}`}
+                                        </span>
+                                    </label>
+                                </div>
+                            )}
+
                             <SignaturePad label="Recipient signature" strokes={strokes} onChange={setStrokes} disabled={busy} />
 
                             {/* CONTROLLED DRUG: BOTH PARTIES SIGN.

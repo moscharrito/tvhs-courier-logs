@@ -292,7 +292,7 @@ describe('Board', () => {
      * still reachable on whatever page you are on. Both are tested here
      * rather than left to the reader of the component.
      */
-    it('pages a pharmacy pile at eight and still says how big it is', async () => {
+    it('pages a pharmacy pile at six and still says how big it is', async () => {
         const many = Array.from({ length: 20 }, (_, i) => order({ id: 100 + i, externalRef: `RX-${100 + i}` }));
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
@@ -302,12 +302,15 @@ describe('Board', () => {
         await screen.findByRole('heading', { name: 'Dispatch board' });
 
         const pool = screen.getByLabelText('Unassigned pool');
-        /* The heading carries the whole number. A dispatcher must never be
-           able to read a page of eight as the whole of what is waiting. */
-        expect(within(pool).getByRole('heading', { name: /Discharge Pharmacy \(20\)/ })).toBeInTheDocument();
-        expect(within(pool).getByText('Showing 1 to 8 of 20 waiting')).toBeInTheDocument();
+        /* SIX, NOT THE USUAL EIGHT. Nine counters stack down one column, so
+           the page size here multiplies by nine rather than standing alone.
+
+           The summary carries the whole number. A dispatcher must never be
+           able to read a page of six as the whole of what is waiting. */
+        expect(within(pool).getByText(/20 waiting/)).toBeInTheDocument();
+        expect(within(pool).getByText('Showing 1 to 6 of 20 waiting')).toBeInTheDocument();
         expect(within(pool).getByLabelText('Assign order 100 to')).toBeInTheDocument();
-        expect(within(pool).queryByLabelText('Assign order 108 to')).not.toBeInTheDocument();
+        expect(within(pool).queryByLabelText('Assign order 106 to')).not.toBeInTheDocument();
     });
 
     it('can assign a card from a later page, which is what paging has to keep', async () => {
@@ -362,6 +365,68 @@ describe('Board', () => {
         expect(within(lane).getByText('Patient 9')).toBeInTheDocument();
     });
 
+    it('offers a run only to drivers who are on shift', async () => {
+        /* ASKED FOR AFTER THE FIRST REAL WAVE. The picker listed everybody
+           with "(not on shift)" beside the ones who were not, which is a
+           label doing a filter's job: at 241 unassigned the dispatcher is
+           not reading suffixes, and a run started for somebody who is not
+           working is work that sits until they are rung. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                couriers: [
+                    courier({ username: 'on.shift', name: 'On Shift', onShift: true }),
+                    courier({ username: 'off.shift', name: 'Off Shift', onShift: false }),
+                ],
+                idleCouriers: [
+                    courier({ username: 'on.shift', name: 'On Shift', onShift: true }),
+                    courier({ username: 'off.shift', name: 'Off Shift', onShift: false }),
+                ],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const picker = screen.getByLabelText('Courier');
+        expect(within(picker).getByRole('option', { name: /On Shift/ })).toBeInTheDocument();
+        expect(within(picker).queryByRole('option', { name: /Off Shift/ })).not.toBeInTheDocument();
+    });
+
+    it('says nobody is on shift rather than that everybody has a run', async () => {
+        /* Two different nothings. A dispatcher who reads "everybody has a
+           run" at eight in the morning goes looking for runs that do not
+           exist. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                couriers: [courier({ username: 'off.shift', name: 'Off Shift', onShift: false })],
+                idleCouriers: [courier({ username: 'off.shift', name: 'Off Shift', onShift: false })],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        /* Folded, because it has nothing to do -- so open it to read what it
+           says, which is the point of the test. */
+        fireEvent.click(screen.getByRole('button', { name: /Start a run/ }));
+        expect(await screen.findByText(/Nobody is on shift/)).toBeInTheDocument();
+    });
+
+    it('plans the wave for the number of drivers actually on shift', async () => {
+        /* It defaulted to eighteen, the number in the contract rather than
+           the number standing in a car park. Proposing for eighteen when
+           five are working produces a plan that cannot be driven, and the
+           dispatcher finds out by assigning it. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                couriers: [
+                    courier({ username: 'a', name: 'A', onShift: true }),
+                    courier({ username: 'b', name: 'B', onShift: true }),
+                    courier({ username: 'c', name: 'C', onShift: false }),
+                ],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        expect(await screen.findByLabelText('Drivers on shift')).toHaveValue('2');
+        expect(screen.getByText(/2 on shift now/)).toBeInTheDocument();
+    });
+
     it('gives each pharmacy its own page number', async () => {
         /* One page number shared across nine pharmacies would turn them all
            to page 2 together, which is why PoolGroup is a component. */
@@ -381,8 +446,8 @@ describe('Board', () => {
         const [green, discharge] = within(pool).getAllByRole('navigation');
         fireEvent.click(within(green!).getByRole('button', { name: 'Next' }));
 
-        expect(within(green!).getByText('Showing 9 to 12 of 12 waiting')).toBeInTheDocument();
-        expect(within(discharge!).getByText('Showing 1 to 8 of 12 waiting')).toBeInTheDocument();
+        expect(within(green!).getByText('Showing 7 to 12 of 12 waiting')).toBeInTheDocument();
+        expect(within(discharge!).getByText('Showing 1 to 6 of 12 waiting')).toBeInTheDocument();
     });
 
     /* ──────────────────────────────────── proposing the noon wave (7.9) */
