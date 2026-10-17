@@ -37,3 +37,9 @@ portals.txt
 leads.txt
 credentials.txt
 *-credentials.txt
+
+# Generated mock lists. The generator is in server/scripts/mock-list.mjs and
+# is deterministic, so the file can always be remade; a binary spreadsheet of
+# invented patients does not belong in the history.
+docs/forms/mock-list-*.xlsx
+docs/forms/mock-list-*.csv
