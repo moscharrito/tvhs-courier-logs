@@ -153,8 +153,14 @@ describe('collecting a batch', () => {
         const res = await ada.post(`${RUNS}/${run.id}/pickup`)
             .send({ siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 1 });
         expect(res.status).toBe(400);
-        expect(res.body.code).toBe('pickup.noSignatureReason');
-        expect(res.body.error).toMatch(/Say why/);
+        /* Renamed from pickup.noSignatureReason when a photographed form
+           became the third way to prove a collection. The refusal is
+           unchanged: a printed name on its own still proves nothing. */
+        expect(res.body.code).toBe('pickup.noProof');
+        /* The wording moved with the third option: it now names the
+           photograph first, because that is what a courier will have. */
+        expect(res.body.error).toMatch(/Photograph the signed form/);
+        expect(res.body.error).toMatch(/say why neither was possible/);
         expect((await admin.get(`${ORDERS}/${order.id}`)).body.status).toBe('assigned');
     });
 
@@ -387,5 +393,93 @@ describe('access control and the record', () => {
     it('scopes every signature to its project', async () => {
         const rows = (await sql('SELECT DISTINCT p.code FROM signatures s JOIN projects p ON p.id = s.project_id')).rows;
         expect(rows.map((r) => r.code)).toEqual(['uh']);
+    });
+});
+
+describe('the collection form, photographed', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE PHARMACY'S SIGNATURE MOVED ONTO PAPER, 18 October 2026, the same
+     * change the door made first. The counter signs its own collection
+     * document and the courier photographs it.
+     *
+     * ONE PHOTOGRAPH COVERS THE BATCH, exactly as one signature does. A
+     * technician handing over forty packages signs one form, so every
+     * custody event in the collection has to point at that one file -- which
+     * is the half a reviewer would not notice is missing, because the
+     * collection still succeeds and only the evidence is thin.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    /** A stored file the batch can claim. order_id stays NULL: it belongs to
+     *  the collection rather than to any one order in it. */
+    async function storedForm() {
+        const at = new Date().toISOString();
+        const rs = await sql(
+            `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', 'ada.courier', ?, ?)
+             RETURNING id`,
+            [`uh/test/form/${Math.random()}.jpg`, at, at],
+        );
+        return Number(rs.rows[0].id);
+    }
+
+    it('accepts a photographed form with no signature and no reason', async () => {
+        /* The point of the change. Before today this was refused outright. */
+        const a = await makeOrder();
+        const b = await makeOrder();
+        const run = await makeRun([a.id, b.id]);
+        const ada = await courierAgent('ada.courier');
+        const fileId = await storedForm();
+
+        const res = await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 2, courierFormFileId: fileId,
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+    });
+
+    it('puts the one photograph on every custody event in the batch', async () => {
+        /* The half that would go unnoticed: the collection succeeds either
+           way, and only the evidence is thin. */
+        const a = await makeOrder();
+        const b = await makeOrder();
+        const run = await makeRun([a.id, b.id]);
+        const ada = await courierAgent('ada.courier');
+        const fileId = await storedForm();
+
+        await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 2, courierFormFileId: fileId,
+        });
+
+        const rows = (await sql(
+            "SELECT order_id, file_id FROM custody_events WHERE type = 'picked_up' AND order_id IN (?, ?)",
+            [a.id, b.id],
+        )).rows;
+        expect(rows.length).toBe(2);
+        for (const r of rows) expect(Number(r.file_id)).toBe(fileId);
+    });
+
+    it('refuses an id that is not a stored courier form', async () => {
+        /* Otherwise any integer makes every row in the batch claim a
+           photograph that is not there. */
+        const order = await makeOrder();
+        const run = await makeRun([order.id]);
+        const ada = await courierAgent('ada.courier');
+
+        const res = await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 1, courierFormFileId: 999999,
+        });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(res.body)).toMatch(/courier_form/);
+    });
+
+    it('still takes a drawn signature, because old collections mean what they meant', async () => {
+        const order = await makeOrder();
+        const run = await makeRun([order.id]);
+        const ada = await courierAgent('ada.courier');
+
+        const res = await ada.post(`${RUNS}/${run.id}/pickup`).send({
+            siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 1,
+            strokes: [[{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.4 }, { x: 0.9, y: 0.2 }]],
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 });

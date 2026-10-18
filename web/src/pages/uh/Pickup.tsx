@@ -16,10 +16,14 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
-import { sendOrQueue } from '../../lib/outbox';
+import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
-interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number }
-interface SiteGroup { site: { id: number; code: string; name: string }; orders: WaitingOrder[]; packages: number }
+interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled?: boolean }
+/* `controlled` is true when ANY order in the group is, which is what decides
+   whether the courier has to countersign. The server has always sent it; this
+   screen never read it, so a courier could not complete a collection holding
+   a controlled item from a browser at all. */
+interface SiteGroup { site: { id: number; code: string; name: string }; orders: WaitingOrder[]; packages: number; controlled?: boolean }
 interface Waiting { runId: number; courierUsername: string; sites: SiteGroup[]; totals: { orders: number; packages: number } }
 
 interface PickupResult {
@@ -55,6 +59,15 @@ export function Pickup() {
     const [siteId, setSiteId] = useState<number | ''>(params.get('siteId') ? Number(params.get('siteId')) : '');
     const [signedName, setSignedName] = useState('');
     const [strokes, setStrokes] = useState<SignatureStrokes>([]);
+    /* THE COUNTER SIGNS PAPER NOW, same as the door. One photograph covers
+       the batch, exactly as one signature did: a technician handing over
+       forty packages signs one form. */
+    const [formPhoto, setFormPhoto] = useState<File | null>(null);
+    const [noFormReason, setNoFormReason] = useState('');
+    /* §6 of the offer letter: a documented two-signature handoff on anything
+       controlled. This one stays on glass and has no photograph and no
+       escape, because the courier is the person holding the phone. */
+    const [countersign, setCountersign] = useState<SignatureStrokes>([]);
     const [counted, setCounted] = useState('');
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
@@ -80,7 +93,14 @@ export function Pickup() {
     const expected = group?.packages ?? 0;
     const countedNumber = counted === '' ? null : Number(counted);
     const mismatch = countedNumber !== null && countedNumber !== expected;
-    const ready = group !== null && signedName.trim() !== '' && pointCount(strokes) > 2 && countedNumber !== null
+    /* The server's own three branches: a photographed form, or a reason for
+       not having one. The printed name is untouched -- Scope 1.2.8 wants the
+       name of the sending personnel and a photograph does not reliably yield
+       one. */
+    const controlled = group?.controlled === true;
+    const ready = group !== null && signedName.trim() !== '' && countedNumber !== null
+        && (formPhoto !== null || noFormReason.trim().length >= 3)
+        && (!controlled || pointCount(countersign) > 2)
         && (!mismatch || note.trim() !== '');
 
     const submit = async (e: FormEvent) => {
@@ -89,6 +109,32 @@ export function Pickup() {
         setBusy(true);
         setMsg(null);
         const position = await currentPosition();
+
+        /* Uploaded BEFORE the collection is queued, and a failure records
+           nothing -- the same rule the door follows, for the same reason: a
+           handover whose proof did not upload is one we cannot evidence. */
+        let courierFormFileId: number | undefined;
+        if (formPhoto !== null) {
+            try {
+                courierFormFileId = await uploadPhotoNow({
+                    module: `/api/projects/${code}/uh`,
+                    orderId: null,
+                    blob: formPhoto,
+                    contentType: formPhoto.type,
+                    kind: 'courier_form',
+                    idemKey: `pickup-${group.site.id}-${formPhoto.size}-${formPhoto.lastModified}`,
+                });
+            } catch (err) {
+                setBusy(false);
+                setMsg({
+                    kind: 'error',
+                    text: `The photo of the form could not be sent: ${err instanceof Error ? err.message : 'unknown error'}. `
+                        + 'Nothing was recorded. Try again, or say why there is no form.',
+                });
+                return;
+            }
+        }
+
         try {
             /* Through the outbox: pharmacy counters are indoors, often in a
                basement, and a courier who cannot record a pickup cannot start
@@ -99,6 +145,9 @@ export function Pickup() {
                     siteId: group.site.id,
                     signedName: signedName.trim(),
                     strokes,
+                    ...(courierFormFileId === undefined ? {} : { courierFormFileId }),
+                    ...(formPhoto === null ? { noSignatureReason: noFormReason.trim() } : {}),
+                    ...(controlled ? { countersignStrokes: countersign } : {}),
                     countedPackages: countedNumber,
                     note: note.trim(),
                     ...(position ?? {}),
@@ -112,6 +161,9 @@ export function Pickup() {
                 setQueued(true);
             }
             setStrokes([]);
+            setCountersign([]);
+            setFormPhoto(null);
+            setNoFormReason('');
             setSignedName('');
             setCounted('');
             setNote('');
@@ -213,15 +265,79 @@ export function Pickup() {
                             </div>
 
                             <div className="izy-card">
-                                <h2>Pharmacy signature</h2>
+                                <h2>The signed form</h2>
                                 <p className="izy-muted">
-                                    The printed name and the signature of the person handing the packages over.
-                                    The contract asks for both.
+                                    The printed name of the person handing the packages over, and a photograph of
+                                    the form they signed. One photograph covers the whole collection.
                                 </p>
                                 <label className="izy-field">Printed name
                                     <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required placeholder="Name of the pharmacy staff member" />
                                 </label>
-                                <SignaturePad label="Pharmacy signature" strokes={strokes} onChange={setStrokes} disabled={busy} />
+
+                                {/* THE PHARMACY'S PAD IS GONE. The counter
+                                    signs its own collection document and this
+                                    photographs it, so asking a technician to
+                                    scrawl on a phone as well was asking them
+                                    to sign twice -- and that scrawl was the
+                                    thing couriers reported stopped the round. */}
+                                <label className="izy-field">Photo of the signed form
+                                    <input
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp"
+                                        capture="environment"
+                                        disabled={busy}
+                                        onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
+                                    />
+                                    <span className="izy-muted izy-field-note">
+                                        {formPhoto === null
+                                            ? 'The pharmacy form for this collection.'
+                                            : `Ready to send: ${formPhoto.name}`}
+                                    </span>
+                                </label>
+
+                                {formPhoto === null && (
+                                    <label className="izy-field">If there is no signed form, say why
+                                        <input
+                                            value={noFormReason}
+                                            onChange={(e) => setNoFormReason(e.target.value)}
+                                            placeholder="e.g. the counter had no form ready"
+                                            disabled={busy}
+                                        />
+                                        <span className="izy-muted izy-field-note">
+                                            A collection with no proof and no explanation is a gap in the chain of
+                                            custody that nobody can explain later.
+                                        </span>
+                                    </label>
+                                )}
+
+                                {/* CONTROLLED: BOTH PARTIES SIGN, and this
+                                    half stays on glass. §6 of the offer
+                                    letter promises every driver a documented
+                                    two-signature handoff. One countersignature
+                                    covers the whole tote and is required as
+                                    soon as ANY item in it is controlled: the
+                                    handover is one act, and signing for part
+                                    of what you are carrying is not one.
+
+                                    No photograph and no escape here, unlike
+                                    the pharmacy's half. That escape exists
+                                    because persuading somebody ELSE to scrawl
+                                    on a phone stops the round; the courier is
+                                    the person holding it. */}
+                                {controlled && (
+                                    <>
+                                        <div className="izy-alert warn" role="status">
+                                            This collection includes a controlled drug. You sign for it too.
+                                            Your name is taken from your account.
+                                        </div>
+                                        <SignaturePad
+                                            label="Your signature, taking custody"
+                                            strokes={countersign}
+                                            onChange={setCountersign}
+                                            disabled={busy}
+                                        />
+                                    </>
+                                )}
                             </div>
 
                             <div className="izy-card">
@@ -231,7 +347,8 @@ export function Pickup() {
                                 {!ready && (
                                     <p className="izy-muted">
                                         {signedName.trim() === '' && 'Add the printed name. '}
-                                        {pointCount(strokes) <= 2 && 'Add the signature. '}
+                                        {formPhoto === null && noFormReason.trim().length < 3 && 'Photograph the signed form, or say why there is none. '}
+                                        {controlled && pointCount(countersign) <= 2 && 'Add your own signature: this collection is controlled. '}
                                         {countedNumber === null && 'Count the packages. '}
                                         {mismatch && note.trim() === '' && 'Say why the count is different.'}
                                     </p>

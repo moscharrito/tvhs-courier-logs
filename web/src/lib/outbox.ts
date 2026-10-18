@@ -286,7 +286,9 @@ async function postJson(url: string, body: unknown): Promise<{ status: number; b
 export async function uploadPhotoNow(input: {
     /** `/api/projects/:code/uh`, the module the file service hangs off. */
     module: string;
-    orderId: number;
+    /** null for a batch photograph: a collection form belongs to the
+     *  collection, not to any one order in it. */
+    orderId: number | null;
     blob: Blob;
     contentType: string;
     kind: string;

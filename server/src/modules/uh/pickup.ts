@@ -89,6 +89,20 @@ const Pickup = z.object({
      * because persuading somebody ELSE to scrawl on a phone stops the
      * round. The courier is the person holding the phone. */
     countersignStrokes: Strokes.or(z.array(z.never()).length(0)).default([]),
+
+    /* THE PHARMACY'S SIGNATURE MOVED ONTO PAPER, same as the door.
+     *
+     * The counter signs its own collection document and the courier
+     * photographs it, so this is what proves a handover now and the strokes
+     * above are optional history. The same downgrade in evidence quality
+     * that stop.ts records -- a photograph of a form is a photograph, where
+     * the strokes were the movement of the pen -- made for the same reason:
+     * the pharmacy's own document is the record.
+     *
+     * ONE PHOTOGRAPH COVERS THE BATCH, exactly as one signature does. A
+     * technician handing over forty packages signs one form, so every
+     * custody event in the batch points at this one file. */
+    courierFormFileId: z.number().int().positive().optional(),
     /** What the courier actually counted into the vehicle. */
     countedPackages: z.number().int().min(0).max(5000),
     /** Required when the count does not match, so a discrepancy has a reason. */
@@ -222,13 +236,41 @@ export function createPickupRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        if (body.strokes.length === 0 && body.noSignatureReason === '') {
+        /* Either a photograph of the signed form, or strokes, or a stated
+           reason for neither -- the same three branches the door has, and
+           the same rule this route has always had underneath them: a
+           collection with nothing on it and no explanation is a gap nobody
+           can account for a year later. */
+        if (body.courierFormFileId === undefined && body.strokes.length === 0 && body.noSignatureReason === '') {
             res.status(400).json({
-                error: 'Nobody signed for this. Say why before recording it: a collection with no signature and no '
-                    + 'reason is a gap in the custody chain that nobody can explain later.',
-                code: 'pickup.noSignatureReason',
+                error: 'Nothing proves this collection. Photograph the signed form, capture a signature, '
+                    + 'or say why neither was possible.',
+                code: 'pickup.noProof',
             });
             return;
+        }
+
+        /* The file has to exist, be stored, and be the kind it claims. The
+           caller could otherwise pass any integer and every custody event in
+           the batch would claim a photograph that is not there.
+
+           order_id IS NULL because this one covers a BATCH: it belongs to the
+           collection, not to any single order in it. The retention sweep
+           works on age rather than ownership, so an unbound file is still
+           purged on time. */
+        if (body.courierFormFileId !== undefined) {
+            const found = await client.execute({
+                sql: `SELECT id FROM files WHERE project_id = ? AND id = ? AND kind = 'courier_form'
+                        AND status = 'stored' AND order_id IS NULL`,
+                args: [project.id, body.courierFormFileId],
+            });
+            if (found.rows.length === 0) {
+                res.status(400).json({
+                    error: 'That photograph is not one this collection can use.',
+                    details: ['courierFormFileId: no stored courier_form file with that id'],
+                });
+                return;
+            }
         }
 
         const rows = await waiting(project.id, Number(run['id']), body.siteId);
@@ -335,6 +377,9 @@ export function createPickupRouter({ client }: { client: Client }): Router {
                         signedName: body.signedName,
                         signatureKey,
                         ...(countersignatureKey === '' ? {} : { countersignedName, countersignatureKey }),
+                        /* The same file on every row, the way the same
+                           signature is on every row. */
+                        ...(body.courierFormFileId === undefined ? {} : { fileId: body.courierFormFileId }),
                         ...(body.lat !== undefined ? { lat: body.lat } : {}),
                         ...(body.lng !== undefined ? { lng: body.lng } : {}),
                         /* The count note and the missing-signature reason are

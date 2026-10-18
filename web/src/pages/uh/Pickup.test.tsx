@@ -31,12 +31,35 @@ const waiting = (over = {}) => ({
     ...over,
 });
 
+/* A collection holding something controlled, which is what puts the
+   courier's own pad on the screen. The pharmacy's pad is gone -- they sign
+   their own form and it is photographed -- so this is the only pad left
+   here, and the pad-behaviour tests below use it. */
+const controlledWaiting = () => waiting({
+    sites: [{
+        site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' },
+        orders: [{ orderId: 21, sequence: 1, recipientName: 'Ines Vargas', externalRef: 'RX-1', packages: 2, controlled: true }],
+        packages: 2,
+        controlled: true,
+    }],
+    totals: { orders: 1, packages: 2 },
+});
+
 const routes = (over = {}) => ({
     'GET /api/session': session,
     'GET /api/me/projects': projects,
     'GET /api/projects/uh/uh/runs/10/pickup': waiting(),
     ...over,
 });
+
+const controlledRoutes = () => routes({ 'GET /api/projects/uh/uh/runs/10/pickup': controlledWaiting() });
+
+/** The proof the counter's form provides, without needing a bucket. */
+function sayWhyNoForm() {
+    fireEvent.change(screen.getByLabelText(/If there is no signed form, say why/), {
+        target: { value: 'the counter had no form ready' },
+    });
+}
 
 function renderPickup(r = routes()) {
     const mocked = mockFetch(r);
@@ -52,7 +75,7 @@ function renderPickup(r = routes()) {
 
 /** Draw on the pad. jsdom has no layout, so the box is given a size first. */
 function sign() {
-    const pad = screen.getByRole('application', { name: 'Pharmacy signature' });
+    const pad = screen.getByRole('application', { name: 'Your signature, taking custody' });
     pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
     if (!pad.setPointerCapture) pad.setPointerCapture = () => {};
     pad.releasePointerCapture = () => {};
@@ -103,7 +126,11 @@ describe('Pickup', () => {
         expect((screen.getByLabelText('Packages counted') as HTMLInputElement).value).toBe('');
     });
 
-    it('will not submit a printed name without a signature', async () => {
+    it('will not submit a printed name with nothing proving the handover', async () => {
+        /* The pharmacy's pad went on 18 October -- they sign their own form
+           and it is photographed -- so the thing missing here is the form,
+           not a scrawl. The refusal is otherwise unchanged: a printed name
+           on its own proves nothing. */
         renderPickup();
         await screen.findByRole('heading', { name: 'Pick up' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
@@ -111,14 +138,14 @@ describe('Pickup', () => {
 
         const submit = screen.getByRole('button', { name: /Take custody/ });
         expect(submit).toBeDisabled();
-        expect(screen.getByText(/Add the signature/)).toBeInTheDocument();
+        expect(screen.getByText(/Photograph the signed form, or say why there is none/)).toBeInTheDocument();
     });
 
     it('will not submit a signature without a printed name', async () => {
         renderPickup();
         await screen.findByRole('heading', { name: 'Pick up' });
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
-        sign();
+        sayWhyNoForm();
         expect(screen.getByRole('button', { name: /Take custody/ })).toBeDisabled();
         expect(screen.getByText(/Add the printed name/)).toBeInTheDocument();
     });
@@ -127,7 +154,7 @@ describe('Pickup', () => {
         renderPickup();
         await screen.findByRole('heading', { name: 'Pick up' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        sign();
+        sayWhyNoForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
 
         expect(screen.getByText(/The list expects 3/)).toBeInTheDocument();
@@ -146,7 +173,7 @@ describe('Pickup', () => {
         }));
         await screen.findByRole('heading', { name: 'Pick up' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        sign();
+        sayWhyNoForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
         fireEvent.click(screen.getByRole('button', { name: /Take custody/ }));
 
@@ -154,12 +181,12 @@ describe('Pickup', () => {
         const post = fn.mock.calls.find(([, init]) => init?.method === 'POST');
         const body = JSON.parse(String(post?.[1]?.body));
         expect(body).toMatchObject({ siteId: 7, signedName: 'Pharmacy Tech', countedPackages: 3, lat: 29.5, lng: -98.6 });
-        expect(body.strokes[0].length).toBeGreaterThan(2);
-        // Captured in a 0..1 space so it does not depend on the phone's screen.
-        for (const p of body.strokes[0]) {
-            expect(p.x).toBeGreaterThanOrEqual(0);
-            expect(p.x).toBeLessThanOrEqual(1);
-        }
+        /* No pad on an ordinary collection, so the proof travels as the
+           stated reason and strokes go empty rather than absent -- every
+           collection already recorded with a drawn one still means what it
+           meant. */
+        expect(body.strokes).toEqual([]);
+        expect(body.noSignatureReason).toMatch(/no form ready/);
         expect(await screen.findByText(/Collected 2 orders/)).toBeInTheDocument();
     });
 
@@ -178,7 +205,7 @@ describe('Pickup', () => {
         }));
         await screen.findByRole('heading', { name: 'Pick up' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        sign();
+        sayWhyNoForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
         fireEvent.click(screen.getByRole('button', { name: /Take custody/ }));
 
@@ -197,7 +224,7 @@ describe('Pickup', () => {
         }));
         await screen.findByRole('heading', { name: 'Pick up' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        sign();
+        sayWhyNoForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
         fireEvent.click(screen.getByRole('button', { name: /Take custody/ }));
         expect(await screen.findByRole('alert')).toHaveTextContent(/Nothing on this run is waiting/);
@@ -210,14 +237,18 @@ describe('Pickup', () => {
            lines. This fires a burst synchronously, which is what a real finger
            produces. */
         const { fn, calls } = renderPickup(routes({
+            'GET /api/projects/uh/uh/runs/10/pickup': controlledWaiting(),
             'POST /api/projects/uh/uh/runs/10/pickup': {
-                collected: [21, 22], refused: [], expectedPackages: 3, countedPackages: 3,
+                collected: [21], refused: [], expectedPackages: 2, countedPackages: 2,
                 discrepancy: 0, notes: [], remaining: [],
             },
         }));
         await screen.findByRole('heading', { name: 'Pick up' });
+        sayWhyNoForm();
+        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
+        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
 
-        const pad = screen.getByRole('application', { name: 'Pharmacy signature' });
+        const pad = screen.getByRole('application', { name: 'Your signature, taking custody' });
         pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
         pad.setPointerCapture = () => {};
         pad.releasePointerCapture = () => {};
@@ -231,42 +262,78 @@ describe('Pickup', () => {
         for (let i = 1; i <= 20; i += 1) point('pointerMove', 10 + i * 8, 50 + (i % 2 === 0 ? 20 : -20));
         point('pointerUp', 170, 50);
 
-        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
         fireEvent.click(screen.getByRole('button', { name: /Take custody/ }));
         await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs/10/pickup'));
 
         const post = fn.mock.calls.find(([, init]) => init?.method === 'POST');
         const body = JSON.parse(String(post?.[1]?.body));
-        expect(body.strokes).toHaveLength(1);
+        /* The courier's own mark now, not the pharmacy's: theirs moved onto
+           paper. Same pad, same capture bug this test exists for. */
+        expect(body.countersignStrokes).toHaveLength(1);
         // One down plus twenty moves; the up ends the stroke without adding a
         // point. Before the fix this collapsed to 2.
-        expect(body.strokes[0].length).toBe(21);
+        expect(body.countersignStrokes[0].length).toBe(21);
     });
 
     it('still records the stroke when the browser refuses pointer capture', async () => {
         // Capture throws on a pointer the browser does not recognise. Losing
         // it costs an edge case; letting it throw would abort the signature
         // before a single point was kept.
-        renderPickup();
+        renderPickup(controlledRoutes());
         await screen.findByRole('heading', { name: 'Pick up' });
-        const pad = screen.getByRole('application', { name: 'Pharmacy signature' });
+        const pad = screen.getByRole('application', { name: 'Your signature, taking custody' });
         pad.setPointerCapture = () => { throw new DOMException('InvalidPointerId'); };
         sign();
         expect(screen.getByRole('button', { name: 'Clear' })).toBeEnabled();
+        sayWhyNoForm();
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
+        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
         await waitFor(() => expect(screen.getByRole('button', { name: /Take custody/ })).toBeEnabled());
     });
 
     it('clears the signature when asked, so a wrong one is not submitted', async () => {
-        renderPickup();
+        renderPickup(controlledRoutes());
         await screen.findByRole('heading', { name: 'Pick up' });
         sign();
         const clear = screen.getByRole('button', { name: 'Clear' });
         expect(clear).toBeEnabled();
         fireEvent.click(clear);
         await waitFor(() => expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled());
+    });
+
+    it('asks the courier to countersign a controlled collection', async () => {
+        /* THE GAP THIS CLOSES, found on 18 October while removing the
+           pharmacy's pad. The server refuses a collection holding ANY
+           controlled item without countersignStrokes (pickup.
+           countersignatureRequired), and this screen had no pad for it at
+           all -- it never read the `controlled` flag the payload has always
+           carried. So a courier collecting a controlled tote could not
+           complete a pickup from a browser, which is the same shape as the
+           ID Required delivery found the day before, and it mattered for the
+           same reason: drivers are moving to the browser while Apple
+           enrolment is late. */
+        renderPickup(controlledRoutes());
+        await screen.findByRole('heading', { name: 'Pick up' });
+
+        expect(screen.getByText(/includes a controlled drug/)).toBeInTheDocument();
+        sayWhyNoForm();
+        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
+        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
+
+        /* Everything else answered, and it still will not go: §6 promises a
+           documented two-signature handoff, and this half has no escape. */
+        expect(screen.getByRole('button', { name: /Take custody/ })).toBeDisabled();
+        expect(screen.getByText(/Add your own signature/)).toBeInTheDocument();
+
+        sign();
+        await waitFor(() => expect(screen.getByRole('button', { name: /Take custody/ })).toBeEnabled());
+    });
+
+    it('does not ask for a countersignature when nothing is controlled', async () => {
+        /* A second mark demanded at every counter is one nobody reads. */
+        renderPickup();
+        await screen.findByRole('heading', { name: 'Pick up' });
+        expect(screen.queryByRole('application', { name: 'Your signature, taking custody' })).not.toBeInTheDocument();
     });
 
     it('says there is nothing left rather than showing an empty form', async () => {
