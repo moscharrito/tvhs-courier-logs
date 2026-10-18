@@ -181,10 +181,26 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-row-bad > td { background: var(--izy-danger-soft); }
 
 .izy-table th[scope], .izy-table tbody th { font-size: 12px; color: var(--izy-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; width: 130px; }
-.izy-board { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
-/* The right-hand side of the board: the run starter, then the lanes. The
-   starter used to be a cell inside the grid below, which put it after every
-   courier who already had a run. */
+/* ONE COLUMN, ONE SHAPE, IN THE ORDER THE DAY HAPPENS.
+ *
+ * This was a two-column grid: the unassigned pool pinned left, everything
+ * else stacked right. With nothing waiting it read as a tall empty card
+ * beside three narrow strips, and the four things a dispatcher actually
+ * uses -- the pool, the run starter, the wave planner and the feed -- were
+ * three different shapes in two columns. The pool was a plain card with its
+ * own heading, two were collapsible sections, and the feed was a cell
+ * INSIDE the lanes grid, so it laid itself out among the courier runs.
+ *
+ * Now they are one list of the same control, full width, in the order the
+ * work happens: what is waiting, put somebody on the road, plan the whole
+ * wave, the runs themselves, then what has just been recorded.
+ *
+ * The pool losing its column costs the drag from a pool card onto a lane
+ * when both are not on screen at once. That drag was never the only way --
+ * every card carries an "Assign to..." select, which is also what made
+ * paging the pool acceptable -- and the sections fold, so a dispatcher can
+ * close what they are not using instead of scrolling past it. */
+.izy-board { display: flex; flex-direction: column; gap: 16px; }
 .izy-lanes-col { min-width: 0; }
 .izy-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .izy-pool-group { margin-bottom: 14px; }
@@ -198,7 +214,6 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-assign select { width: 100%; padding: 5px 8px; border: 1px solid var(--izy-line); border-radius: 6px; background: #fff; }
 .izy-stat-warn { color: #92400e; }
 .izy-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@media (max-width: 900px) { .izy-board { grid-template-columns: 1fr; } }
 .izy-call { display: inline-block; margin-bottom: 14px; text-decoration: none; }
 .izy-next { border-color: var(--izy-green); }
 .izy-next-name { font-size: 20px; font-weight: 600; margin: 6px 0 2px; }

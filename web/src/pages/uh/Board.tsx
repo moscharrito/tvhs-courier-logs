@@ -489,8 +489,20 @@ export function Board() {
             {project.role === 'admin' && <Escalation projectCode={code} />}
 
             <div className="izy-board">
-                <section className="izy-card izy-pool" aria-label="Unassigned pool">
-                    <h2>Unassigned ({s.unassigned})</h2>
+                <Section
+                    id="uh.board.pool"
+                    title="Unassigned"
+                    /* The count in the summary, not the title, so it reads
+                       the same way as every other section on this page. The
+                       whole number stays visible when the section is folded,
+                       which is the one fact a dispatcher must never lose. */
+                    summary={s.unassigned === 0 ? 'nothing waiting' : `${s.unassigned} waiting`}
+                >
+                  {/* Still a labelled region, not a plain div: a section
+                      with an aria-label is a landmark a screen reader can
+                      jump to, and "the unassigned pool" is one of the two
+                      places on this page somebody navigates straight to. */}
+                  <section aria-label="Unassigned pool">
                     {data.pool.length === 0 ? <div className="izy-muted">Nothing waiting.</div> : data.pool.map((group) => (
                         <PoolGroup
                             key={group.site.id}
@@ -502,9 +514,9 @@ export function Board() {
                             assign={assign}
                         />
                     ))}
-                </section>
+                  </section>
+                </Section>
 
-                <div className="izy-lanes-col">
                     {/* Above the lanes, not after them. It was the last cell
                         of a wrapping grid, so the control that starts a
                         courier's day drifted further down the page with every
@@ -763,6 +775,9 @@ export function Board() {
                         </section>
                     ))}
 
+
+                    </div>
+
                     <Section
                         id="board-activity"
                         title="What just happened"
@@ -796,8 +811,6 @@ export function Board() {
                         <Pager of={pagedFeed} noun="events" />
                     </Section>
 
-                    </div>
-                </div>
             </div>
         </>
     );
