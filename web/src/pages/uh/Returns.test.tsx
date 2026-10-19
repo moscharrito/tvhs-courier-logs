@@ -54,6 +54,20 @@ function renderReturns(r: Record<string, unknown> = routes()) {
     return mocked;
 }
 
+/* Part 3 of the docket, photographed. The pharmacy's pad went on 19 October:
+   they sign the paper, the courier photographs it. */
+function attachForm() {
+    const input = screen.getByLabelText(/Photo of the signed form/) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([1, 2, 3])], 'part3.jpg', { type: 'image/jpeg' })] } });
+}
+
+/** The three steps the uploader takes, so a test can reach a bucket. */
+const fileRoutes = {
+    'POST /api/projects/uh/uh/files': { id: 77, upload: { url: 'https://bucket.test/put', method: 'PUT', headers: {} } },
+    'PUT https://bucket.test/put': { ok: true },
+    'POST /api/projects/uh/uh/files/77/stored': { ok: true },
+};
+
 function sign() {
     const pad = screen.getByRole('application', { name: 'Pharmacy signature' });
     pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
@@ -104,7 +118,7 @@ describe('Returns', () => {
         expect((screen.getByLabelText('Packages counted') as HTMLInputElement).value).toBe('');
     });
 
-    it('will not hand anything back without a name and a signature', async () => {
+    it('will not hand anything back without a name and the signed form', async () => {
         renderReturns();
         await screen.findByRole('heading', { name: 'Take back' });
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
@@ -115,7 +129,7 @@ describe('Returns', () => {
 
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Night Pharmacist' } });
         expect(screen.getByRole('button', { name: /Hand back/ })).toBeDisabled();
-        sign();
+        attachForm();
         expect(screen.getByRole('button', { name: /Hand back/ })).toBeEnabled();
     });
 
@@ -123,7 +137,7 @@ describe('Returns', () => {
         renderReturns();
         await screen.findByRole('heading', { name: 'Take back' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Night Pharmacist' } });
-        sign();
+        attachForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
 
         expect(screen.getByText(/These orders cover 3/)).toBeInTheDocument();
@@ -136,11 +150,12 @@ describe('Returns', () => {
     it('sends the orders the courier was looking at, with the position', async () => {
         const { fn } = renderReturns({
             ...routes(),
+            ...fileRoutes,
             [`POST ${RETURNS}`]: { status: 201, body: { returned: [21, 22], refused: [], discrepancy: 0, notes: [] } },
         });
         await screen.findByRole('heading', { name: 'Take back' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Night Pharmacist' } });
-        sign();
+        attachForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
         fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
 
@@ -150,17 +165,22 @@ describe('Returns', () => {
             siteId: 7, signedName: 'Night Pharmacist', countedPackages: 3,
             orderIds: [21, 22], lat: 29.5, lng: -98.6,
         });
-        expect(body.strokes[0].length).toBeGreaterThan(2);
+        /* The photograph of part 3 is the proof now; strokes go empty
+           rather than absent, so every return already recorded with a drawn
+           signature still means what it meant. */
+        expect(body.courierFormFileId).toBe(77);
+        expect(body.strokes).toEqual([]);
     });
 
     it('shows the server refusal rather than a generic failure', async () => {
         renderReturns({
             ...routes(),
+            ...fileRoutes,
             [`POST ${RETURNS}`]: { status: 400, body: { error: '2 of these should have gone somewhere else. Add a note saying why they came here.', code: 'returns.offRule' } },
         });
         await screen.findByRole('heading', { name: 'Take back' });
         fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Night Pharmacist' } });
-        sign();
+        attachForm();
         fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
         fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
 
@@ -170,6 +190,7 @@ describe('Returns', () => {
     it('warns when no after-hours pharmacy is configured', async () => {
         renderReturns({
             ...routes(),
+            ...fileRoutes,
             [`GET ${RETURNS}`]: load({
                 destinations: [{
                     site: { id: 9, code: 'pavilion', name: 'Pavilion Pharmacy' },
@@ -188,6 +209,7 @@ describe('Returns', () => {
     it('says plainly when the van is empty', async () => {
         renderReturns({
             ...routes(),
+            ...fileRoutes,
             [`GET ${RETURNS}`]: load({ destinations: [], totals: { orders: 0, packages: 0 }, notes: ['Nothing undelivered is still with you.'] }),
         });
         await screen.findByRole('heading', { name: 'Take back' });

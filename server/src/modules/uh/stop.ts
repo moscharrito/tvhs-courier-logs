@@ -405,13 +405,30 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
            says a two-party transfer happened when the system only ever saw
            one party, and it is the record a DEA question would be answered
            from. */
-        if (needsCountersignature(handling) && body.countersignStrokes.length === 0) {
+        /* BOTH SIGNATURES ARE ON THE PAPER, so the photograph is what
+         * documents them.
+         *
+         * This demanded countersignStrokes -- the courier's own mark drawn on
+         * glass -- until 19 October. University Health sign and countersign
+         * the physical form at every point, and the driver photographs the
+         * completed form at the final delivery. Asking for a drawn mark as
+         * well was asking the courier to sign a second time, in a second
+         * place, for the same handover.
+         *
+         * SO THE PHOTOGRAPH IS NOT OPTIONAL HERE, and this is the one place
+         * the "say why there is no form" escape does not apply. §6 of the
+         * offer letter promises every driver a documented two-signature
+         * handoff on controlled items; with the signatures on paper, a
+         * controlled delivery recorded without the photograph is a delivery
+         * with no evidence of either signature. The escape exists for an
+         * ordinary handover because a counter may genuinely have no form; a
+         * controlled item does not move without one. */
+        if (needsCountersignature(handling) && body.courierFormFileId === undefined) {
             res.status(400).json({
-                error: 'This is a controlled drug, so both of you sign for it: '
-                    + `${body.signedName || 'the person receiving it'} and you. `
-                    + 'Add your own signature before recording the delivery.',
-                code: 'deliver.countersignatureRequired',
-                need: ['countersignStrokes'],
+                error: 'This is a controlled drug. Photograph the signed form -- it carries both signatures, '
+                    + `${body.signedName || 'the person receiving it'} and yours -- before recording the delivery.`,
+                code: 'deliver.formPhotographRequired',
+                need: ['courierFormFileId'],
             });
             return;
         }

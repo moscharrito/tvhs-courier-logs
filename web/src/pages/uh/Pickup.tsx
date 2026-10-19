@@ -67,7 +67,6 @@ export function Pickup() {
     /* §6 of the offer letter: a documented two-signature handoff on anything
        controlled. This one stays on glass and has no photograph and no
        escape, because the courier is the person holding the phone. */
-    const [countersign, setCountersign] = useState<SignatureStrokes>([]);
     const [counted, setCounted] = useState('');
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
@@ -100,7 +99,6 @@ export function Pickup() {
     const controlled = group?.controlled === true;
     const ready = group !== null && signedName.trim() !== '' && countedNumber !== null
         && (formPhoto !== null || noFormReason.trim().length >= 3)
-        && (!controlled || pointCount(countersign) > 2)
         && (!mismatch || note.trim() !== '');
 
     const submit = async (e: FormEvent) => {
@@ -147,7 +145,6 @@ export function Pickup() {
                     strokes,
                     ...(courierFormFileId === undefined ? {} : { courierFormFileId }),
                     ...(formPhoto === null ? { noSignatureReason: noFormReason.trim() } : {}),
-                    ...(controlled ? { countersignStrokes: countersign } : {}),
                     countedPackages: countedNumber,
                     note: note.trim(),
                     ...(position ?? {}),
@@ -161,7 +158,6 @@ export function Pickup() {
                 setQueued(true);
             }
             setStrokes([]);
-            setCountersign([]);
             setFormPhoto(null);
             setNoFormReason('');
             setSignedName('');
@@ -310,34 +306,15 @@ export function Pickup() {
                                     </label>
                                 )}
 
-                                {/* CONTROLLED: BOTH PARTIES SIGN, and this
-                                    half stays on glass. §6 of the offer
-                                    letter promises every driver a documented
-                                    two-signature handoff. One countersignature
-                                    covers the whole tote and is required as
-                                    soon as ANY item in it is controlled: the
-                                    handover is one act, and signing for part
-                                    of what you are carrying is not one.
-
-                                    No photograph and no escape here, unlike
-                                    the pharmacy's half. That escape exists
-                                    because persuading somebody ELSE to scrawl
-                                    on a phone stops the round; the courier is
-                                    the person holding it. */}
-                                {controlled && (
-                                    <>
-                                        <div className="izy-alert warn" role="status">
-                                            This collection includes a controlled drug. You sign for it too.
-                                            Your name is taken from your account.
-                                        </div>
-                                        <SignaturePad
-                                            label="Your signature, taking custody"
-                                            strokes={countersign}
-                                            onChange={setCountersign}
-                                            disabled={busy}
-                                        />
-                                    </>
-                                )}
+                                {/* THE PAD WENT ON 19 OCTOBER. Both signatures
+                                    are on the physical form, and the driver
+                                    photographs it at the final delivery --
+                                    stop.ts refuses a controlled delivery
+                                    without that photograph. Asking the
+                                    courier to draw a mark here as well was
+                                    asking them to sign twice for one
+                                    handover, in a place the paper had not
+                                    reached yet. */}
                             </div>
 
                             <div className="izy-card">
@@ -348,7 +325,6 @@ export function Pickup() {
                                     <p className="izy-muted">
                                         {signedName.trim() === '' && 'Add the printed name. '}
                                         {formPhoto === null && noFormReason.trim().length < 3 && 'Photograph the signed form, or say why there is none. '}
-                                        {controlled && pointCount(countersign) <= 2 && 'Add your own signature: this collection is controlled. '}
                                         {countedNumber === null && 'Count the packages. '}
                                         {mismatch && note.trim() === '' && 'Say why the count is different.'}
                                     </p>

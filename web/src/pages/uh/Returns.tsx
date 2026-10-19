@@ -17,7 +17,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
-import { sendOrQueue } from '../../lib/outbox';
+import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
 interface CarriedOrder {
     orderId: number; recipientName: string; externalRef: string;
@@ -62,7 +62,9 @@ export function Returns() {
     const [load, setLoad] = useState<Load | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
     const [signedName, setSignedName] = useState('');
-    const [strokes, setStrokes] = useState<SignatureStrokes>([]);
+    const [strokes] = useState<SignatureStrokes>([]);
+    /* Part 3, photographed. One form covers everything going back. */
+    const [formPhoto, setFormPhoto] = useState<File | null>(null);
     const [counted, setCounted] = useState('');
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
@@ -88,7 +90,7 @@ export function Returns() {
     const expected = group?.packages ?? 0;
     const countedNumber = counted === '' ? null : Number(counted);
     const mismatch = countedNumber !== null && countedNumber !== expected;
-    const ready = group !== null && signedName.trim() !== '' && pointCount(strokes) > 2 && countedNumber !== null
+    const ready = group !== null && signedName.trim() !== '' && formPhoto !== null && countedNumber !== null
         && (!mismatch || note.trim() !== '');
 
     const submit = async (e: FormEvent) => {
@@ -97,6 +99,29 @@ export function Returns() {
         setBusy(true);
         setMsg(null);
         const position = await currentPosition();
+
+        /* Uploaded before the return is recorded, and a failure records
+           nothing: the same rule the door and the counter follow. */
+        let courierFormFileId: number | undefined;
+        try {
+            courierFormFileId = await uploadPhotoNow({
+                module: `/api/projects/${code}/uh`,
+                orderId: null,
+                blob: formPhoto!,
+                contentType: formPhoto!.type,
+                kind: 'courier_form',
+                idemKey: `return-${group.site.id}-${formPhoto!.size}-${formPhoto!.lastModified}`,
+            });
+        } catch (err) {
+            setBusy(false);
+            setMsg({
+                kind: 'error',
+                text: `The photo of the form could not be sent: ${err instanceof Error ? err.message : 'unknown error'}. `
+                    + 'Nothing was recorded. Try again.',
+            });
+            return;
+        }
+
         try {
             const outcome = await sendOrQueue({
                 url: base,
@@ -106,6 +131,7 @@ export function Returns() {
                     siteId: group.site.id,
                     signedName: signedName.trim(),
                     strokes,
+                    courierFormFileId,
                     countedPackages: countedNumber,
                     /* The orders are named explicitly. The courier is looking
                        at a list and handing over that list; letting the server
@@ -118,7 +144,7 @@ export function Returns() {
             });
             if (outcome.sent) setDone(outcome.body as unknown as ReturnResult);
             else setQueued(true);
-            setStrokes([]);
+            setFormPhoto(null);
             setSignedName('');
             setCounted('');
             setNote('');
@@ -246,15 +272,36 @@ export function Returns() {
                             </div>
 
                             <div className="izy-card">
-                                <h2>Pharmacy signature</h2>
+                                <h2>The signed form</h2>
                                 <p className="izy-muted">
-                                    The printed name and signature of the person taking them back. The contract asks
-                                    for both on every handover, not only at delivery.
+                                    The printed name of the person taking them back, and a photograph of part 3
+                                    of the docket they signed. One photograph covers everything going back.
                                 </p>
                                 <label className="izy-field">Printed name
                                     <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required placeholder="Name of the pharmacy staff member" />
                                 </label>
-                                <SignaturePad label="Pharmacy signature" strokes={strokes} onChange={setStrokes} disabled={busy} />
+
+                                {/* THE PAD WENT ON 19 OCTOBER. Part 3 of the
+                                    docket carries "PHARMACY USE ONLY - IF THIS
+                                    DELIVERY WAS NOT COMPLETED" with the staff
+                                    signature, date and time. That is what the
+                                    counter signs when medication comes back,
+                                    so a drawn mark here was a second
+                                    signature for one handover. */}
+                                <label className="izy-field">Photo of the signed form
+                                    <input
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp"
+                                        capture="environment"
+                                        disabled={busy}
+                                        onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
+                                    />
+                                    <span className="izy-muted izy-field-note">
+                                        {formPhoto === null
+                                            ? 'Part 3, signed by the pharmacy.'
+                                            : `Ready to send: ${formPhoto.name}`}
+                                    </span>
+                                </label>
                             </div>
 
                             <div className="izy-card">
@@ -264,7 +311,7 @@ export function Returns() {
                                 {!ready && (
                                     <p className="izy-muted">
                                         {signedName.trim() === '' && 'Add the printed name. '}
-                                        {pointCount(strokes) <= 2 && 'Add the signature. '}
+                                        {formPhoto === null && 'Photograph the signed form. '}
                                         {countedNumber === null && 'Count the packages. '}
                                         {mismatch && note.trim() === '' && 'Say why the count is different.'}
                                     </p>

@@ -105,7 +105,6 @@ export function Stop() {
        one dispatch uses when a phone has died, so whoever is signed in here
        is the person attesting; the server takes the printed name from their
        session rather than from this page. */
-    const [countersign, setCountersign] = useState<SignatureStrokes>([]);
     const [noSignatureReason, setNoSignatureReason] = useState('');
     const [photo, setPhoto] = useState<File | null>(null);
     const photoInput = useRef<HTMLInputElement>(null);
@@ -270,7 +269,6 @@ export function Stop() {
                 strokes,
                 ...(formPhoto === null ? { noSignatureReason: noFormReason.trim() } : {}),
                 ...ids,
-                ...(order.controlled === true ? { countersignStrokes: countersign } : {}),
             }, 'Delivered and recorded.');
         })();
     };
@@ -475,19 +473,21 @@ export function Stop() {
                                 in here attesting to it, and the printed name
                                 comes from their session rather than from a
                                 box on this page that could say anybody. */}
+                            {/* CONTROLLED: THE PHOTOGRAPH IS NOT OPTIONAL.
+                                Both signatures are on the paper, so the photo
+                                of it is what documents the two-signature
+                                handoff §6 promises. This is the one place the
+                                "say why there is no form" escape does not
+                                apply: an ordinary counter may genuinely have
+                                no form, a controlled item does not move
+                                without one. The pad that stood here asked the
+                                courier to sign a second time for the same
+                                handover. */}
                             {order.controlled === true && (
-                                <>
-                                    <div className="izy-alert warn" role="status">
-                                        This is a controlled drug. Both parties sign for it: the person
-                                        receiving it, and you. Your name is taken from your account.
-                                    </div>
-                                    <SignaturePad
-                                        label="Your signature, releasing it"
-                                        strokes={countersign}
-                                        onChange={setCountersign}
-                                        disabled={busy}
-                                    />
-                                </>
+                                <div className="izy-alert warn" role="status">
+                                    This is a controlled drug. The photograph of the signed form is
+                                    required: it carries both signatures, the person receiving it and yours.
+                                </div>
                             )}
 
                             <div className="izy-row">
@@ -503,7 +503,7 @@ export function Stop() {
                                     disabled={busy || signedName.trim() === ''
                                         || (formPhoto === null && noFormReason.trim().length < 3)
                                         || (order.idRequired === true && idPhoto === null)
-                                        || (order.controlled === true && pointCount(countersign) <= 2)}
+                                        || (order.controlled === true && formPhoto === null)}
                                 >
                                     {busy ? 'Saving' : 'Record the delivery'}
                                 </button>

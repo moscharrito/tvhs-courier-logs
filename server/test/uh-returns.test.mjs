@@ -266,12 +266,23 @@ describe('handing a load back', () => {
         expect(res.body.details.join(' ')).toMatch(/signedName/);
     });
 
-    it('will not record a return with a name and no signature', async () => {
+    it('records a return on the printed name, with the signature on paper', async () => {
+        /* INVERTED ON 19 OCTOBER. `strokes` was mandatory here, which was
+           right while the counter signed on glass.
+
+           Part 3 of the docket -- the patient's copy -- carries a "PHARMACY
+           USE ONLY - IF THIS DELIVERY WAS NOT COMPLETED" block with the staff
+           signature, date and time. That is what the counter signs when
+           undelivered medication comes back, and the courier photographs it.
+           Demanding a drawn mark as well asked them to sign twice for one
+           handover.
+
+           Strokes are still ACCEPTED, so every return already recorded with
+           a drawn signature still means what it meant. */
         const order = await failedOrder();
         const ada = await courierAgent();
         const res = await ada.post(RETURNS).send({ siteId: dischargeId, signedName: 'Night Pharmacist', countedPackages: 1, orderIds: [order.id] });
-        expect(res.status).toBe(400);
-        expect(res.body.details.join(' ')).toMatch(/strokes/);
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 
     it('asks why when the count does not match, and records it once answered', async () => {

@@ -230,110 +230,19 @@ describe('Pickup', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent(/Nothing on this run is waiting/);
     });
 
-    it('keeps every point of a fast stroke, not just the ends', async () => {
-        /* pointermove fires faster than React re-renders and the updates are
-           batched, so reading the prop in each handler collapses the stroke to
-           its first and last point per batch: a signature recorded as straight
-           lines. This fires a burst synchronously, which is what a real finger
-           produces. */
-        const { fn, calls } = renderPickup(routes({
-            'GET /api/projects/uh/uh/runs/10/pickup': controlledWaiting(),
-            'POST /api/projects/uh/uh/runs/10/pickup': {
-                collected: [21], refused: [], expectedPackages: 2, countedPackages: 2,
-                discrepancy: 0, notes: [], remaining: [],
-            },
-        }));
-        await screen.findByRole('heading', { name: 'Pick up' });
-        sayWhyNoForm();
-        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
 
-        const pad = screen.getByRole('application', { name: 'Your signature, taking custody' });
-        pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
-        pad.setPointerCapture = () => {};
-        pad.releasePointerCapture = () => {};
-        const point = (type: 'pointerDown' | 'pointerMove' | 'pointerUp', clientX: number, clientY: number) => {
-            const evt = (createEvent as unknown as Record<string, (el: Element, init: object) => Event>)[type]!(pad, { pointerId: 1 });
-            Object.defineProperty(evt, 'clientX', { value: clientX });
-            Object.defineProperty(evt, 'clientY', { value: clientY });
-            fireEvent(pad, evt);
-        };
-        point('pointerDown', 10, 50);
-        for (let i = 1; i <= 20; i += 1) point('pointerMove', 10 + i * 8, 50 + (i % 2 === 0 ? 20 : -20));
-        point('pointerUp', 170, 50);
 
-        fireEvent.click(screen.getByRole('button', { name: /Take custody/ }));
-        await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs/10/pickup'));
 
-        const post = fn.mock.calls.find(([, init]) => init?.method === 'POST');
-        const body = JSON.parse(String(post?.[1]?.body));
-        /* The courier's own mark now, not the pharmacy's: theirs moved onto
-           paper. Same pad, same capture bug this test exists for. */
-        expect(body.countersignStrokes).toHaveLength(1);
-        // One down plus twenty moves; the up ends the stroke without adding a
-        // point. Before the fix this collapsed to 2.
-        expect(body.countersignStrokes[0].length).toBe(21);
-    });
-
-    it('still records the stroke when the browser refuses pointer capture', async () => {
-        // Capture throws on a pointer the browser does not recognise. Losing
-        // it costs an edge case; letting it throw would abort the signature
-        // before a single point was kept.
+    it('asks nobody to sign on glass, even for a controlled collection', async () => {
+        /* 19 October: both signatures are on the physical form at every
+           point, and the driver photographs the completed form at the final
+           delivery. A pad here asked the courier to sign a second time for
+           one handover, in a place the paper had not reached yet. §6 is kept
+           where the paper stops moving -- stop.ts refuses a controlled
+           DELIVERY without the photograph of the signed form. */
         renderPickup(controlledRoutes());
         await screen.findByRole('heading', { name: 'Pick up' });
-        const pad = screen.getByRole('application', { name: 'Your signature, taking custody' });
-        pad.setPointerCapture = () => { throw new DOMException('InvalidPointerId'); };
-        sign();
-        expect(screen.getByRole('button', { name: 'Clear' })).toBeEnabled();
-        sayWhyNoForm();
-        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
-        await waitFor(() => expect(screen.getByRole('button', { name: /Take custody/ })).toBeEnabled());
-    });
-
-    it('clears the signature when asked, so a wrong one is not submitted', async () => {
-        renderPickup(controlledRoutes());
-        await screen.findByRole('heading', { name: 'Pick up' });
-        sign();
-        const clear = screen.getByRole('button', { name: 'Clear' });
-        expect(clear).toBeEnabled();
-        fireEvent.click(clear);
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled());
-    });
-
-    it('asks the courier to countersign a controlled collection', async () => {
-        /* THE GAP THIS CLOSES, found on 18 October while removing the
-           pharmacy's pad. The server refuses a collection holding ANY
-           controlled item without countersignStrokes (pickup.
-           countersignatureRequired), and this screen had no pad for it at
-           all -- it never read the `controlled` flag the payload has always
-           carried. So a courier collecting a controlled tote could not
-           complete a pickup from a browser, which is the same shape as the
-           ID Required delivery found the day before, and it mattered for the
-           same reason: drivers are moving to the browser while Apple
-           enrolment is late. */
-        renderPickup(controlledRoutes());
-        await screen.findByRole('heading', { name: 'Pick up' });
-
-        expect(screen.getByText(/includes a controlled drug/)).toBeInTheDocument();
-        sayWhyNoForm();
-        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Pharmacy Tech' } });
-        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '2' } });
-
-        /* Everything else answered, and it still will not go: §6 promises a
-           documented two-signature handoff, and this half has no escape. */
-        expect(screen.getByRole('button', { name: /Take custody/ })).toBeDisabled();
-        expect(screen.getByText(/Add your own signature/)).toBeInTheDocument();
-
-        sign();
-        await waitFor(() => expect(screen.getByRole('button', { name: /Take custody/ })).toBeEnabled());
-    });
-
-    it('does not ask for a countersignature when nothing is controlled', async () => {
-        /* A second mark demanded at every counter is one nobody reads. */
-        renderPickup();
-        await screen.findByRole('heading', { name: 'Pick up' });
-        expect(screen.queryByRole('application', { name: 'Your signature, taking custody' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('application')).not.toBeInTheDocument();
     });
 
     it('says there is nothing left rather than showing an empty form', async () => {

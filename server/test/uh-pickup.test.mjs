@@ -131,37 +131,29 @@ describe('collecting a batch', () => {
         expect(strokes[0][0]).toMatchObject({ x: 0.1, y: 0.5 });
     });
 
-    it('refuses a printed name with neither a signature nor a reason', async () => {
-        // Scope 1.2.8 asks for the printed name AND the signature, and a name
-        // alone is a typed claim rather than a proof of collection.
-        //
-        // The rule relaxed on the owner's instruction after a courier found
-        // that getting a pharmacist to scrawl on a phone stops the round: a
-        // collection may now go through with no signature, and it costs a
-        // written reason. What is still refused is the case below, where
-        // there is neither.
-        //
-        // The alternative proposed was to generate a signature from the typed
-        // name. That would have the app draw a mark the person never made
-        // into an append-only custody record for controlled substances, which
-        // is worse than an absent one: a gap is visible, a manufactured
-        // signature is not.
+    it('records a collection on the printed name and the count alone', async () => {
+        /* INVERTED ON 19 OCTOBER. This refused a collection carrying neither
+           a signature nor a stated reason, which was right when the counter
+           signed on glass.
+
+           Under the paper process the pharmacy signs part 1 of the docket
+           and keeps it, part 2 travels with the courier, and the courier
+           photographs it at the door once the recipient has signed too. At
+           the counter there is a printed name, a package count and a piece of
+           paper -- and nothing digital to insist on. Demanding one would mean
+           every collection in the day starts with a courier typing an excuse.
+
+           What still holds, and is asserted elsewhere in this file: the
+           printed name is required by the schema, a count that does not match
+           needs a reason, and stop.ts refuses a controlled DELIVERY without
+           the photograph that carries both signatures. */
         const order = await makeOrder();
         const run = await makeRun([order.id]);
         const ada = await courierAgent('ada.courier');
 
         const res = await ada.post(`${RUNS}/${run.id}/pickup`)
             .send({ siteId: dischargeId, signedName: 'Pharmacy Tech', countedPackages: 1 });
-        expect(res.status).toBe(400);
-        /* Renamed from pickup.noSignatureReason when a photographed form
-           became the third way to prove a collection. The refusal is
-           unchanged: a printed name on its own still proves nothing. */
-        expect(res.body.code).toBe('pickup.noProof');
-        /* The wording moved with the third option: it now names the
-           photograph first, because that is what a courier will have. */
-        expect(res.body.error).toMatch(/Photograph the signed form/);
-        expect(res.body.error).toMatch(/say why neither was possible/);
-        expect((await admin.get(`${ORDERS}/${order.id}`)).body.status).toBe('assigned');
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 
     it('takes a collection with no signature when there is a reason', async () => {

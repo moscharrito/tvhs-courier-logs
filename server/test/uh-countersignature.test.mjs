@@ -55,6 +55,20 @@ const deliver = (order, body) => ada.post(`${ORDERS}/${order.id}/deliver`).send(
     signedName: 'Ines Vargas', strokes: STROKES, ...body,
 });
 
+/* A stored photograph of part 2 of the docket. order_id stays NULL the way
+   the uploader leaves it; the handler binds it when the delivery is
+   recorded. */
+async function storedForm() {
+    const at = new Date().toISOString();
+    const rs = await sql(
+        `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+         VALUES ((SELECT id FROM projects WHERE code = 'uh'), NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', 'ada.courier', ?, ?)
+         RETURNING id`,
+        [`uh/test/form/${Math.random()}.jpg`, at, at],
+    );
+    return Number(rs.rows[0].id);
+}
+
 beforeAll(async () => {
     srv = await startServer();
     admin = await srv.login('admin');
@@ -80,13 +94,18 @@ describe('an ordinary delivery', () => {
 });
 
 describe('a controlled drug at the door', () => {
-    it('is refused when only the recipient signs', async () => {
+    it('is refused without the photograph of the signed form', async () => {
+        /* BOTH SIGNATURES ARE ON PART 2 OF THE DOCKET. The recipient signs
+           the courier's copy at the door and the courier photographs it, so
+           the photograph is what documents the two-signature handoff. This
+           used to demand countersignStrokes, a mark drawn on glass, which
+           asked the courier to sign a second time for one handover. */
         const order = await pickedUpOrder({ controlled: true });
         const res = await deliver(order);
         expect(res.status).toBe(400);
-        expect(res.body.code).toBe('deliver.countersignatureRequired');
+        expect(res.body.code).toBe('deliver.formPhotographRequired');
         /* It says what to do, not just that it will not. */
-        expect(res.body.error).toMatch(/both of you sign/i);
+        expect(res.body.error).toMatch(/Photograph the signed form/i);
     });
 
     it('takes the courier name from the session, never from the request', async () => {
@@ -96,6 +115,7 @@ describe('a controlled drug at the door', () => {
            typing their own name at a door in the rain. */
         const order = await pickedUpOrder({ controlled: true });
         const res = await deliver(order, {
+            courierFormFileId: await storedForm(),
             countersignStrokes: STROKES,
             countersignedName: 'Somebody Else Entirely',
         });
@@ -108,24 +128,33 @@ describe('a controlled drug at the door', () => {
         expect(rs.rows[0].countersigned_name).toBe('Ada Courier');
     });
 
-    it('offers no "could not be obtained" escape, unlike an ordinary delivery', async () => {
-        /* An ordinary delivery may record that nobody signed, at the cost of
-           a written reason, because a screen that will not move stops the
-           round. The courier is the person holding the phone, so that
-           argument does not reach their own hand. */
+    it('offers no "there was no form" escape, unlike an ordinary delivery', async () => {
+        /* An ordinary delivery may record that there was no signed form, at
+           the cost of a written reason, because a counter may genuinely not
+           have produced one and a screen that will not move stops the round.
+           A controlled item does not move without a docket, so that argument
+           does not reach it: with the signatures on paper, a controlled
+           delivery recorded without the photograph has no evidence of
+           either. */
         const order = await pickedUpOrder({ controlled: true });
         const res = await deliver(order, {
-            countersignStrokes: [],
-            noSignatureReason: 'Could not get a second signature',
+            strokes: [],
+            noSignatureReason: 'The pharmacy sent no form with this one',
         });
         expect(res.status).toBe(400);
-        expect(res.body.code).toBe('deliver.countersignatureRequired');
+        expect(res.body.code).toBe('deliver.formPhotographRequired');
     });
 
-    it('goes through when both parties sign, and keeps both', async () => {
+    it('goes through on the photograph alone, and keeps it against the order', async () => {
         const order = await pickedUpOrder({ controlled: true });
-        const res = await deliver(order, { countersignStrokes: STROKES });
+        const fileId = await storedForm();
+        const res = await deliver(order, { courierFormFileId: fileId, countersignStrokes: STROKES });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+        /* Bound to the order, so the portal and the proof-of-delivery
+           document can find the picture that carries both signatures. */
+        const file = await sql('SELECT order_id FROM files WHERE id = ?', [fileId]);
+        expect(Number(file.rows[0].order_id)).toBe(Number(order.id));
 
         const rs = await sql(
             `SELECT signed_name, signature_key, countersigned_name, countersignature_key
@@ -146,7 +175,11 @@ describe('a controlled drug at the door', () => {
            scrawl on a phone stops the round. It does not apply to the person
            holding it, and "the courier signed" has to mean one thing. */
         const order = await pickedUpOrder({ controlled: true });
-        await deliver(order, { countersignStrokes: STROKES, captureMethod: 'initials' });
+        await deliver(order, {
+            courierFormFileId: await storedForm(),
+            countersignStrokes: STROKES,
+            captureMethod: 'initials',
+        });
 
         const rs = await sql(
             `SELECT capture_method FROM signatures WHERE signed_name = 'Ada Courier' ORDER BY id DESC LIMIT 1`,
@@ -177,11 +210,21 @@ describe('a controlled drug at the counter', () => {
         siteId: dischargeId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 1, ...body,
     });
 
-    it('is refused when only the pharmacy signs', async () => {
+    it('is NOT refused at the counter, because the paper is still travelling', async () => {
+        /* INVERTED ON 19 OCTOBER, deliberately, and this is the test that
+           says why rather than a deleted one that says nothing.
+        
+           The counter signs part 1 of the docket and keeps it; part 2 goes
+           with the courier and collects the recipient's signature at the
+           door, where it is photographed. So at the counter there is no
+           digital artefact to demand: the evidence for this handover is a
+           piece of paper that has not finished being signed.
+        
+           §6 is kept where the paper stops moving. The delivery is refused
+           without the photograph, and that photograph carries both marks. */
         const { runId } = await waitingRun({ controlled: true });
         const res = await collect(runId);
-        expect(res.status).toBe(400);
-        expect(res.body.code).toBe('pickup.countersignatureRequired');
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 
     it('goes through when the courier signs too', async () => {
@@ -196,7 +239,7 @@ describe('a controlled drug at the counter', () => {
         expect(rs.rows[0].countersigned_name).toBe('Ada Courier');
     });
 
-    it('asks once for a whole tote, not once per order', async () => {
+    it('covers the whole tote when a mark is offered, not just the controlled part', async () => {
         /* The handover is one act: a lead hands over a tote and the courier
            takes it. A signature per order would be the same mark recorded
            several times, and asking only for the controlled part would mean
@@ -218,13 +261,11 @@ describe('a controlled drug at the counter', () => {
             orderIds: [plain.body.id, controlled.body.id],
         });
 
-        /* One controlled item in the tote makes the whole collection need it. */
-        const refused = await ada.post(`${RUNS}/${run.body.id}/pickup`).send({
-            siteId: dischargeId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 2,
-        });
-        expect(refused.status).toBe(400);
-        expect(refused.body.code).toBe('pickup.countersignatureRequired');
-
+        /* No longer refused here: see the test above for why the counter
+           demands nothing. What is still asserted is the half that matters
+           when a mark IS offered -- it covers the whole tote rather than the
+           controlled part of it, because the handover is one act and signing
+           for part of what you are carrying is not one. */
         const ok = await ada.post(`${RUNS}/${run.body.id}/pickup`).send({
             siteId: dischargeId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 2,
             countersignStrokes: STROKES,

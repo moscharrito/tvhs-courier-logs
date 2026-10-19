@@ -46,8 +46,19 @@ const RecordReturn = z.object({
     siteId: z.number().int().positive(),
     /** Printed name of the person taking them back (Scope 1.2.8). */
     signedName: z.string().trim().min(1).max(160),
-    /** The signature itself. A name alone is not a signature. */
-    strokes: Strokes,
+    /* THE SIGNATURE IS ON PART 3 OF THE DOCKET, NOT ON GLASS.
+     *
+     * The patient's copy carries a "PHARMACY USE ONLY - IF THIS DELIVERY WAS
+     * NOT COMPLETED" block with the staff signature, date and time, and that
+     * is what the counter signs when undelivered medication comes back.
+     * Demanding a drawn mark here as well asked them to sign twice for one
+     * handover.
+     *
+     * Was mandatory until 19 October, so it stays accepted: every return
+     * already recorded with a drawn signature still means what it meant. */
+    strokes: Strokes.or(z.array(z.never()).length(0)).default([]),
+    /** Photograph of the signed part 3. */
+    courierFormFileId: z.number().int().positive().optional(),
     /** What the courier actually handed over the counter. */
     countedPackages: z.number().int().min(0).max(5000),
     /** Required on any discrepancy, and on returning somewhere unexpected. */
@@ -347,15 +358,39 @@ export function createReturnsRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        const sigRs = await client.execute({
-            sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
-                  VALUES (?, 'return', ?, ?, ?, ?, ?, ?) RETURNING id`,
-            args: [
-                project.id, body.signedName, JSON.stringify(body.strokes), actorOf(req),
-                at.toISOString(), body.lat ?? null, body.lng ?? null,
-            ],
-        });
-        const signatureKey = `local:signature:${Number(sigRs.rows[0]!['id'])}`;
+        /* A signature row only when there is a mark to put in it. An empty
+           strokes array written as a signature is a row claiming somebody
+           signed, which is the thing the photograph replaced. */
+        let signatureKey = '';
+        if (body.strokes.length > 0) {
+            const sigRs = await client.execute({
+                sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, captured_by, captured_at, lat, lng)
+                      VALUES (?, 'return', ?, ?, ?, ?, ?, ?) RETURNING id`,
+                args: [
+                    project.id, body.signedName, JSON.stringify(body.strokes), actorOf(req),
+                    at.toISOString(), body.lat ?? null, body.lng ?? null,
+                ],
+            });
+            signatureKey = `local:signature:${Number(sigRs.rows[0]!['id'])}`;
+        }
+
+        /* The photograph of part 3, checked the same way pickup checks its
+           own: stored, the kind it claims, and unbound, because one form can
+           cover several orders coming back together. */
+        if (body.courierFormFileId !== undefined) {
+            const found = await client.execute({
+                sql: `SELECT id FROM files WHERE project_id = ? AND id = ? AND kind = 'courier_form'
+                        AND status = 'stored' AND order_id IS NULL`,
+                args: [project.id, body.courierFormFileId],
+            });
+            if (found.rows.length === 0) {
+                res.status(400).json({
+                    error: 'That photograph is not one this return can use.',
+                    details: ['courierFormFileId: no stored courier_form file with that id'],
+                });
+                return;
+            }
+        }
 
         const returned: number[] = [];
         const refused: unknown[] = [];
@@ -372,6 +407,7 @@ export function createReturnsRouter({ client }: { client: Client }): Router {
                         at,
                         signedName: body.signedName,
                         signatureKey,
+                        ...(body.courierFormFileId === undefined ? {} : { fileId: body.courierFormFileId }),
                         returnedToSiteId: body.siteId,
                         ...(body.lat !== undefined ? { lat: body.lat } : {}),
                         ...(body.lng !== undefined ? { lng: body.lng } : {}),

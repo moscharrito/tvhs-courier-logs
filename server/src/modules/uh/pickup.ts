@@ -241,14 +241,25 @@ export function createPickupRouter({ client }: { client: Client }): Router {
            the same rule this route has always had underneath them: a
            collection with nothing on it and no explanation is a gap nobody
            can account for a year later. */
-        if (body.courierFormFileId === undefined && body.strokes.length === 0 && body.noSignatureReason === '') {
-            res.status(400).json({
-                error: 'Nothing proves this collection. Photograph the signed form, capture a signature, '
-                    + 'or say why neither was possible.',
-                code: 'pickup.noProof',
-            });
-            return;
-        }
+        /* NOTHING IS DEMANDED HERE ANY MORE, and that is a deliberate
+         * weakening with a reason.
+         *
+         * This refused a collection that carried neither a signature nor a
+         * stated reason. Under the paper process the pharmacy signs a form
+         * the courier carries away and photographs at the final delivery, so
+         * at the counter there is a printed name, a package count and a piece
+         * of paper -- and no digital artefact to insist on. Demanding one
+         * would mean every collection in the day starts with a courier
+         * typing an excuse.
+         *
+         * What still holds: the printed name is required by the schema, the
+         * count is confirmed against what was expected with a reason on any
+         * mismatch, and the custody event records who took what from whom and
+         * when. The signature evidence arrives with the photograph at the
+         * door, where stop.ts refuses a controlled delivery without it.
+         *
+         * A photograph taken at the counter is still accepted, and still
+         * lands on every custody event in the batch. */
 
         /* The file has to exist, be stored, and be the kind it claims. The
            caller could otherwise pass any integer and every custody event in
@@ -288,15 +299,21 @@ export function createPickupRouter({ client }: { client: Client }): Router {
            order would be the same mark recorded several times, and asking
            for it only for part of a tote would mean the courier signs for
            some of what they are carrying. */
-        if (rows.some((r) => Number(r['controlled']) === 1) && body.countersignStrokes.length === 0) {
-            res.status(400).json({
-                error: 'This collection includes a controlled drug, so both of you sign for it: '
-                    + 'the pharmacy and you. Add your own signature before recording the collection.',
-                code: 'pickup.countersignatureRequired',
-                need: ['countersignStrokes'],
-            });
-            return;
-        }
+        /* THE COUNTERSIGNATURE REQUIREMENT WAS HERE, and it has moved to the
+         * paper and to the door.
+         *
+         * Until 19 October a collection holding anything controlled was
+         * refused without the courier's drawn mark. The counters sign and
+         * countersign the physical form at every point and the driver
+         * photographs the completed form at the FINAL DELIVERY, so there is
+         * no digital artefact to demand at the counter: the evidence for this
+         * handover is a piece of paper that is still travelling.
+         *
+         * §6 is kept at the point where the paper stops moving. stop.ts now
+         * refuses a controlled DELIVERY without the photograph of the signed
+         * form, and that photograph carries both signatures. Demanding
+         * something here as well would stop a round for a record that does
+         * not exist yet. */
 
         const expectedPackages = rows.reduce((n, r) => n + Number(r['package_count']), 0);
         const discrepancy = body.countedPackages - expectedPackages;
