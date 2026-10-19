@@ -35,8 +35,6 @@ import { newId, type OutboxEntry } from '../lib/outbox';
 import { queueAndSend } from '../lib/queue';
 import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/pod';
 import { SignatureMark } from './SignatureMark';
-import { SignaturePad } from './SignaturePad';
-import { type Stroke } from '../lib/strokes';
 import { handwrittenInitials } from '../lib/handwriting';
 import { readablePhone } from '../lib/phone';
 import { needsSignerExplanation } from '../lib/handling';
@@ -80,8 +78,6 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
        derived: the typed-initials route above exists because persuading
        somebody ELSE to scrawl on a phone stops the round, and the courier is
        the person holding the phone. */
-    const [countersign, setCountersign] = useState<Stroke[]>([]);
-    const [countersigned, setCountersigned] = useState(false);
     /* ─────────────────────────────────────────────────────────────────
      * TYPED INITIALS ARE THE ONLY WAY TO SIGN HERE, by request.
      *
@@ -258,7 +254,6 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                    the server, because a countersignature is by whoever is
                    signed in and an app saying who that is could say somebody
                    else. */
-                ...(needsCountersign ? { countersignStrokes: countersign } : {}),
             },
             `Delivery for ${stop.recipientName}`,
         );
@@ -315,10 +310,22 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const blockedByStorage = needsId && !canPhotograph;
     /* Not just "some strokes": looksSigned rejects a tap, which is what a
        phone handed over and poked produces. */
+    /* CONTROLLED: THE PHOTOGRAPH, NOT A SECOND MARK ON GLASS.
+     *
+     * Part 2 of the docket carries both signatures -- the recipient's at the
+     * door and the courier's -- so photographing it IS §6's documented
+     * two-signature handoff. A pad here asked the courier to sign a second
+     * time for one handover.
+     *
+     * And it is the one place the "no form" fallback does not apply: an
+     * ordinary counter may genuinely produce no docket, a controlled item
+     * does not move without one. The server refuses this with
+     * deliver.formPhotographRequired; the gate is here so a courier learns
+     * it before the medication has changed hands rather than after. */
     const needsCountersign = stop.controlled === true;
-    const countersignSatisfied = !needsCountersign || countersigned;
+    const controlledSatisfied = !needsCountersign || formPhoto !== null;
     const canDeliver = signedName.trim().length > 1 && proofSatisfied && idSatisfied
-        && signerExplained && countersignSatisfied && !blockedByStorage && !busy;
+        && signerExplained && controlledSatisfied && !blockedByStorage && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
     const knowsPackages = (detail?.packages.length ?? 0) > 0;
@@ -548,16 +555,12 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                     {needsCountersign && (
                         <>
                             <Text style={[styles.label, styles.warnLabel]}>
-                                CONTROLLED  ·  your signature too
+                                CONTROLLED  ·  photograph the signed form
                             </Text>
-                            <SignaturePad
-                                label={`Your signature, releasing this to ${stop.recipientName}`}
-                                onChange={(strokes, signed) => { setCountersign(strokes); setCountersigned(signed); }}
-                            />
                             <Text style={styles.photoNote}>
-                                Your name is taken from the account you are signed in to, so there is
-                                nothing to type. This is recorded beside their signature and cannot be
-                                changed afterwards.
+                                Part 2 carries both signatures, theirs and yours. The photograph of it
+                                is the record for a controlled item, so this one cannot be recorded
+                                without it.
                             </Text>
                         </>
                     )}

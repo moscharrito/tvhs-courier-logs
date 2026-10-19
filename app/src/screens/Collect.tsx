@@ -28,8 +28,6 @@ import { queueAndSend } from '../lib/queue';
 import { canCollect, checkCount, pickupLabel, type PickupBoard, type PickupSite } from '../lib/pickup';
 import { handwrittenInitials } from '../lib/handwriting';
 import { SignatureMark } from './SignatureMark';
-import { SignaturePad } from './SignaturePad';
-import { type Stroke } from '../lib/strokes';
 
 export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     token: string;
@@ -44,8 +42,6 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const [counted, setCounted] = useState('');
     const [note, setNote] = useState('');
     const [signedName, setSignedName] = useState('');
-    const [countersign, setCountersign] = useState<Stroke[]>([]);
-    const [countersigned, setCountersigned] = useState(false);
     /* ─────────────────────────────────────────────────────────────────
      * TYPED INITIALS ARE THE ONLY WAY TO SIGN HERE, by request.
      *
@@ -81,12 +77,11 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     /* Derived from the name as it is typed, so the courier sees the mark
        before they record it, with the person handing over stood there. */
     const auto = handwrittenInitials(signedName);
-    /* The courier's own mark, when the tote holds a controlled drug (7.13).
-       §6 of the offer letter promises a documented two-signature handoff,
-       and the server refuses the collection without it. */
+    /* Shown as a warning, not asked for. The tote holding a controlled drug
+       is what tells the courier to photograph part 2 at the door; nothing is
+       demanded here, because part 2 has not finished being signed yet. */
     const needsCountersign = site?.controlled === true;
-    const ready = site !== null && canCollect(check, signedName, auto.length)
-        && (!needsCountersign || countersigned);
+    const ready = site !== null && canCollect(check, signedName, auto.length);
 
     const submit = async () => {
         if (site === null || !ready) return;
@@ -111,7 +106,6 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                     /* Only the mark: the printed name is taken from the
                        session on the server, because a countersignature is
                        by whoever is signed in. */
-                    ...(needsCountersign ? { countersignStrokes: countersign } : {}),
                     at: new Date().toISOString(),
                 },
                 label: pickupLabel(site),
@@ -254,20 +248,22 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             One mark covers the tote, because the handover is
                             one act: a lead hands it over and the courier
                             drives off with all of it. */}
+                        {/* THE COUNTERSIGNATURE PAD WENT ON 19 OCTOBER.
+                            University Health run on a three-part paper
+                            docket: part 1 is signed at the counter and stays
+                            with the site lead, part 2 travels with you and
+                            collects the recipient's signature at the door,
+                            and you photograph part 2 there. Both signatures
+                            are on that one sheet.
+
+                            So there is nothing to sign here. §6's documented
+                            two-signature handoff is kept where the paper
+                            stops moving: a controlled DELIVERY is refused
+                            without the photograph of the signed form. */}
                         {needsCountersign && (
-                            <>
-                                <Text style={[styles.label, styles.warnLabel]}>
-                                    CONTROLLED  ·  your signature too
-                                </Text>
-                                <SignaturePad
-                                    label="Your signature, taking this collection"
-                                    onChange={(strokes, signed) => { setCountersign(strokes); setCountersigned(signed); }}
-                                />
-                                <Text style={styles.hint}>
-                                    Your name comes from the account you are signed in to. This is
-                                    recorded beside the pharmacy signature and cannot be changed after.
-                                </Text>
-                            </>
+                            <Text style={[styles.label, styles.warnLabel]}>
+                                CONTROLLED  ·  photograph part 2 at the door
+                            </Text>
                         )}
 
                         <View style={styles.actions}>
