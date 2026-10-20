@@ -84,6 +84,11 @@ ${message}
         },
         plugins: [
             ...(config.plugins ?? []),
+            /* A release build must be signed with the upload key, not the
+               debug certificate the template ships. Play refuses the latter,
+               and the only feedback is a rejected upload fifty minutes
+               later. See plugins/with-release-signing.js. */
+            './plugins/with-release-signing',
             /* The camera, for a proof of delivery photo. iOS refuses to open
                it without a usage string and the store refuses the build, so
                this is not optional furniture.
