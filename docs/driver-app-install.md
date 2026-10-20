@@ -4,9 +4,13 @@
 
 You do not need the App Store or Google Play. The app runs in your phone's
 browser and you add it to your home screen, where it opens full screen and
-behaves like any other app.
+behaves like any other app. On Android the office may send you an installer
+file instead — same app, and the steps for it are below.
 
 Takes about two minutes. Do it once, before your first shift.
+
+Ring dispatch if any of this does not go the way it reads here. Do not spend
+your own time fighting it.
 
 ---
 
@@ -26,6 +30,11 @@ Safari: opened that way it fills the screen and keeps you signed in.
 
 ## Android
 
+Two ways in, depending on what the office sent you. It is the same app either
+way.
+
+### If you were sent a link to the website
+
 1. Open **Chrome**.
 2. Go to **logs.izyglobalservices.com**
 3. Sign in with the username and password you were given.
@@ -34,9 +43,30 @@ Safari: opened that way it fills the screen and keeps you signed in.
    or **Install app**.
 5. Tap **Install**.
 
-If you were sent an installer file (`.apk`) instead, use that — it is the same
-app. Your phone will warn you that it came from outside the Play Store; that is
-expected, choose to continue.
+### If you were sent an installer file (`.apk`)
+
+Your phone puts two warnings in the way, because the file did not come from
+the Play Store. Both are expected and neither means anything is wrong.
+
+1. Download the file in Chrome, then tap it.
+2. Android says Chrome is not allowed to install apps. Tap **Settings**, turn
+   on **Allow from this source**, then tap back.
+3. Tap the file again. A red screen may say **"unsafe app blocked"** or
+   **"harmful app"**. Tap **More details**, then **Install anyway** — it is
+   hidden until you tap More details, which is where most people give up.
+4. Tap **Install**, then **Open**.
+
+**If the app later arrives on the Play Store, delete this one first.** To your
+phone the Play version is a different app and it will refuse to install over
+the top of this one. Delete this, install from Play, sign in again.
+
+Before you delete it: **make sure nothing is still waiting to send.** If you
+have been working without signal, what you recorded is held on the phone until
+it can be sent, and deleting the app deletes it with no way to get it back.
+
+Somewhere with signal, open the app and look at your run screen. If anything is
+still waiting it says so at the top, and your profile page gives the count —
+*"2 things are still waiting to send."* Wait until that is gone, then delete.
 
 ---
 
@@ -47,6 +77,11 @@ collection or a delivery. It attaches where you were to that delivery, which is
 how the office can prove a package reached the right address if a patient ever
 says it did not. It does **not** follow you around between stops, and it never
 records anything when you are off shift.
+
+**Allow the camera when asked.** You photograph the signed paper form at the
+door, and on some stops you cannot finish the delivery without it. See *The
+paper form* below. The app only ever opens the camera — it never looks at the
+photos already on your phone.
 
 **Go on shift when you start.** The button is at the top of your run. Until you
 do, the office cannot give you any work — you will not appear on their board at
@@ -68,6 +103,49 @@ day, before you go home.
   anything — you will not lose it.
 - **Every delivery is handed to a person and signed for.** Nothing is left at a
   door. If nobody is there, record the attempt with a reason.
+
+---
+
+## The paper form
+
+**The paper is the record. The app photographs it.**
+
+Every order has its paper form, and the signatures are done by hand on paper
+at every point — yours and theirs. That does not change.
+
+What the app wants from you is a **photograph of the completed form**, taken at
+the door, after both of you have signed it. On the delivery screen, under
+**Handed over**, you will see:
+
+> **Photo of the signed courier form** · Take a photo · **required**
+
+Tap it, photograph the form, then **Record the delivery**.
+
+### On a controlled drug you cannot finish without it
+
+These stops are flagged from the moment you collect them —
+**CONTROLLED · photograph part 2 at the door**. If you try to record the
+delivery with no photograph, the app stops you and says so.
+
+**That is not a fault. Take the photograph and record it again.** There is no
+way round it and there is not meant to be: that photograph is the only proof
+that both signatures were taken, and it is what protects you if the pharmacy
+ever asks.
+
+### ID Required
+
+Some stops say **ID REQUIRED · photograph their identification**. There is a
+second camera button for the ID, and it is required the same way. Check the
+details against the person in front of you before you photograph anything.
+
+### Photo of the doorstep
+
+This one says **optional**, and it is. Use it when something about the handover
+is worth a picture — an unusual drop point, a door nobody answered.
+
+Both required photographs are attached to the proof of delivery for that order.
+The office can pull up the signed paper for any delivery without going near a
+filing cabinet, which is the whole point.
 
 ## If something goes wrong
 
