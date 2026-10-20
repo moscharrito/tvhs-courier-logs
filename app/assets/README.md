@@ -119,3 +119,21 @@ plugin and extend `resolveIcons` the same way.
 **A notification icon.** Android draws push notification icons as a white
 silhouette on a transparent background, so the app icon cannot be reused. Only
 needed when push notifications ship (ticket 7.4).
+
+
+## Why SYSTEM_ALERT_WINDOW is blocked
+
+`app.json` carries `android.blockedPermissions` for
+`android.permission.SYSTEM_ALERT_WINDOW` -- "display over other apps".
+
+Nothing in this app draws over another app. It arrives from the Expo/React
+Native template, where the debug source sets use it for the floating dev
+overlay, and it was reaching the SHIPPED manifest through `main` as well.
+Verified in the merged manifest of the first real Gradle build on 19 October,
+which is the only place a template's permissions become visible.
+
+Google Play treats it as a sensitive permission and asks what it is for. "It
+came with the framework" is the answer nobody wants to give a reviewer about
+an app that handles patient addresses, so it is removed at the source rather
+than explained. `blockedPermissions` is the same mechanism that keeps
+RECORD_AUDIO out, and that one is confirmed absent from the merged manifest.
