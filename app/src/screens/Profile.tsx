@@ -19,11 +19,12 @@
 
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { CardButton, Chip, Ground, Notice, Panel } from '../ui/Glass';
+import { CardButton, Chip, Confirm, Ground, Notice, Panel } from '../ui/Glass';
 import { BackPill } from '../ui/Nav';
 import { ShiftIcon } from '../ui/Icons';
 import { SPACE, TYPE, theme } from '../theme';
 import type { Project } from '../lib/api';
+import { signOutQuestion, type SignOutQuestion } from '../lib/outbox';
 import { ChangePassword } from './ChangePassword';
 
 export function Profile({ token, username, project, queued, onBack, onSwitchContract, onSignOut }: {
@@ -40,6 +41,12 @@ export function Profile({ token, username, project, queued, onBack, onSwitchCont
     /* Shown on the way back, because a password screen that simply vanishes
        leaves somebody unsure whether it took. */
     const [changed, setChanged] = useState(false);
+    /* HELD, NOT DERIVED. Deriving it from `queued` meant the dialog
+       unmounted the moment the queue drained while it was open: the courier
+       taps Sign out, reads half a sentence, and the dialog disappears
+       without signing them out. Captured on the tap it stays put, and its
+       count can only overstate what is at risk, never understate it. */
+    const [asking, setAsking] = useState<SignOutQuestion | null>(null);
 
     if (changing) {
         return (
@@ -106,7 +113,13 @@ export function Profile({ token, username, project, queued, onBack, onSwitchCont
                         title="Sign out"
                         detail="Ends this session on this phone and empties anything still queued."
                         tone="danger"
-                        onPress={onSignOut}
+                        onPress={() => {
+                            /* Nothing queued is nothing to lose, and sign
+                               out stays one tap: see lib/outbox.ts. */
+                            const q = signOutQuestion(queued);
+                            if (q) { setAsking(q); return; }
+                            onSignOut();
+                        }}
                     />
                 </Panel>
 
@@ -114,6 +127,21 @@ export function Profile({ token, username, project, queued, onBack, onSwitchCont
                     Sign out if somebody else is taking this phone. Deliveries are recorded against whoever is
                     signed in, and there is no way to correct that afterwards.
                 </Text>
+
+                {/* The count is in the title because that is the number the
+                    courier has to weigh, and the warning above the button
+                    says it in prose they have already scrolled past. */}
+                {asking && (
+                    <Confirm
+                        open
+                        title={asking.title}
+                        body={asking.body}
+                        confirmLabel={asking.confirmLabel}
+                        tone="calmDanger"
+                        onConfirm={() => { setAsking(null); onSignOut(); }}
+                        onCancel={() => setAsking(null)}
+                    />
+                )}
             </ScrollView>
         </Ground>
     );

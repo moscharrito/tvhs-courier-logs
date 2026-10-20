@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
     EMPTY, MAX_REJECTIONS, REJECTION_TTL_MS,
-    drain, enqueue, newId, pendingLabel, prune,
+    drain, enqueue, newId, pendingLabel, prune, signOutQuestion,
     type OutboxEntry, type OutboxState, type SendResult,
 } from './outbox';
 
@@ -163,5 +163,64 @@ describe('what the courier is told', () => {
            fold for. */
         expect(pendingLabel(queued('a'))).toMatch(/saved on this phone/);
         expect(pendingLabel(queued('a', 'b'))).toMatch(/2 things/);
+    });
+});
+
+describe('asking before a sign-out throws the queue away', () => {
+    /** The question, insisting there is one, so the assertions stay readable. */
+    function asked(queuedCount: number) {
+        const q = signOutQuestion(queuedCount);
+        if (q === null) throw new Error(`expected a question for ${queuedCount} queued`);
+        return q;
+    }
+
+    it('does not ask when there is nothing to lose', () => {
+        /* Sign out is also the shared-phone safety action. A dialog in front
+           of every one of them trains couriers to tap through it, and that
+           habit is what would carry them through the one below. */
+        expect(signOutQuestion(0)).toBeNull();
+    });
+
+    it('does not ask on a negative count either', () => {
+        /* Nothing produces one today. A guard that only reads `=== 0` turns
+           a bad count into a dialog a courier cannot explain, in front of
+           the one action they need in a hurry. */
+        expect(signOutQuestion(-1)).toBeNull();
+    });
+
+    it('asks as soon as one record is only on the phone', () => {
+        const q = asked(1);
+        expect(q.title).toBe('Sign out and lose 1 record?');
+        expect(q.confirmLabel).toBe('Sign out, lose it');
+    });
+
+    it('puts the count in the title, because that is what is being weighed', () => {
+        /* The prose warning above the button already says "4 things are
+           still waiting". It gets scrolled past. The number has to be in
+           the question itself. */
+        expect(asked(4).title).toBe('Sign out and lose 4 records?');
+        expect(asked(12).title).toContain('12');
+    });
+
+    it('never says "1 records" or "lose them" for a single one', () => {
+        /* A courier reads the plural as "more than I thought" and cancels a
+           sign-out they needed, or the reverse. */
+        expect(asked(1).title).not.toMatch(/1 records/);
+        expect(asked(2).title).not.toMatch(/2 record\?/);
+        expect(asked(2).confirmLabel).toBe('Sign out, lose them');
+    });
+
+    it('says the records cannot be recovered, in the body', () => {
+        /* The whole point of asking. "Are you sure?" with no consequence
+           named is a dialog people dismiss without reading. */
+        expect(asked(3).body).toMatch(/cannot be recovered/);
+        expect(asked(3).body).toMatch(/have not reached the office/);
+    });
+
+    it('names the destructive outcome on the confirming button', () => {
+        /* Confirm puts Cancel first and an accidental tap outside lands on
+           it; the other button has to say what it does, because "OK" next
+           to a count does not. */
+        expect(asked(5).confirmLabel).toMatch(/lose/);
     });
 });

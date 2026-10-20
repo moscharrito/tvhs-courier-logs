@@ -159,3 +159,43 @@ export function pendingLabel(state: OutboxState): string {
         ? '1 thing is waiting to send. It is saved on this phone.'
         : `${n} things are waiting to send. They are saved on this phone.`;
 }
+
+/** The question to put in front of a sign-out, or null to go straight through. */
+export interface SignOutQuestion {
+    title: string;
+    body: string;
+    confirmLabel: string;
+}
+
+/**
+ * Whether signing out needs to be asked about, and what to ask.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * SIGNING OUT EMPTIES THE QUEUE, AND THE QUEUE IS THE ONLY COPY.
+ *
+ * A courier who works a run with no signal is carrying the whole run on the
+ * phone. Sign out is a single tap, sits on the account screen under a thumb,
+ * and discards all of it with nothing on the server to restore from. The
+ * warning above the button has always said so in prose, which is read once
+ * and scrolled past.
+ *
+ * NOTHING QUEUED MEANS NO QUESTION, DELIBERATELY. Sign out is also what
+ * stops one courier filing deliveries under another's name on a shared
+ * phone, and a dialog in front of every sign-out teaches people to tap
+ * through it -- the habit that would then carry them through this one.
+ *
+ * Here rather than in the screen so it can be tested: the count, the
+ * singular, and the decision itself are what matter, and a screen is not
+ * where any of that can be checked.
+ */
+export function signOutQuestion(queued: number): SignOutQuestion | null {
+    if (queued <= 0) return null;
+    const one = queued === 1;
+    return {
+        title: one ? 'Sign out and lose 1 record?' : `Sign out and lose ${queued} records?`,
+        body: 'These are deliveries and collections you recorded with no signal. They are on this phone '
+            + 'only and have not reached the office. Signing out deletes them and they cannot be '
+            + 'recovered.\n\nFind signal and let them send first if you possibly can.',
+        confirmLabel: one ? 'Sign out, lose it' : 'Sign out, lose them',
+    };
+}
