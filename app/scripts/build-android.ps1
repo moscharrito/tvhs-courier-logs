@@ -186,7 +186,13 @@ if (-not (Test-Path (Join-Path $androidDir 'gradlew.bat'))) {
 if ($Release) {
     $props = Join-Path $androidDir 'gradle.properties'
     $hasSigning = (Test-Path $props) -and
-        ((Get-Content $props -Raw) -match 'IZY_UPLOAD_STORE_FILE')
+        # A LIVE PROPERTY, NOT A MENTION OF ONE. Matching the raw file meant
+        # the commented block documenting these four lines satisfied the
+        # check, so the script went on to build a release AAB signed with the
+        # DEBUG key, silently: Gradle's hasProperty is false for a commented
+        # line while a -match on the whole file is true. Only an anchored,
+        # uncommented assignment counts.
+        ((Get-Content $props) -match '^\s*IZY_UPLOAD_STORE_FILE\s*=\s*\S')
     if (-not $hasSigning) {
         Fail 'A release build needs a signing key, and there is none configured.' @(
             'THIS KEY IS THE APP. Lose it and the Play listing can never be'
