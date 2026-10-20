@@ -43,3 +43,9 @@ credentials.txt
 # invented patients does not belong in the history.
 docs/forms/mock-list-*.xlsx
 docs/forms/mock-list-*.csv
+
+# Signing keys. Never. The upload key is the app: in a public repository it
+# is a key anyone can sign a build with.
+*.jks
+*.keystore
+!app/android/app/debug.keystore
