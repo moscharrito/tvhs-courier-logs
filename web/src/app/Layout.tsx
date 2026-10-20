@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
 import { initials } from '../lib/initials';
+import { confirmSignOut } from '../lib/outbox';
 import { counterName, isPharmacyOnly, projectHref } from '../lib/pharmacy';
 import { rememberedFlag, rememberFlag } from '../lib/remember';
 
@@ -52,6 +53,9 @@ export function Layout() {
     if (!user) return null;
 
     const onSignOut = async () => {
+        /* Signing out empties the offline queue, and this is the last point
+           at which that can be stopped: see lib/outbox.ts. */
+        if (!(await confirmSignOut())) return;
         await signOut();
         navigate('/', { replace: true });
     };

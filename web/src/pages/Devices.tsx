@@ -49,6 +49,7 @@ import { api, ApiError, fmtWhen, type SessionSummary, type EnrolledDevice, type 
 import { useAuth } from '../app/auth';
 import { Pager, usePaged } from '../app/Pager';
 import { SecretInput } from '../app/SecretInput';
+import { confirmSignOut } from '../lib/outbox';
 
 export function Devices() {
     const { user, signOut } = useAuth();
@@ -92,6 +93,14 @@ export function Devices() {
 
     const revoke = async (url: string, label_: string, endsThisSession = false) => {
         setMsg(null);
+        /* ASKED BEFORE THE DELETE, NOT BEFORE THE SIGN-OUT BELOW.
+         *
+         * Removing THIS phone ends this session, and the sign-out that
+         * follows empties the offline queue. By then the DELETE has already
+         * happened and the session is gone, so anything queued could no
+         * longer be sent whatever the answer -- a question asked at that
+         * point offers a choice that no longer exists. */
+        if (endsThisSession && !(await confirmSignOut())) return;
         try {
             await api(url, { method: 'DELETE' });
             /* Signing THIS phone out removes its PIN and ends the session it

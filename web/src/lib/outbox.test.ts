@@ -11,6 +11,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import {
     enqueue, queued, flush, sendOrQueue, rejections, dismissRejection, clearOutbox,
     pendingFor, subscribe, newEventId, resetOutboxForTests, setOutboxUser,
+    signOutPrompt, confirmSignOut,
 } from './outbox';
 
 const url = (n: number) => `/api/projects/uh/uh/orders/${n}/arrive`;
@@ -313,5 +314,84 @@ describe('a phone that changed hands', () => {
         await flush();
         expect(fn).toHaveBeenCalledTimes(1);
         expect(await queued()).toHaveLength(0);
+    });
+});
+
+describe('asking before a sign-out throws the queue away', () => {
+    /* The guard exists because clearOutbox runs on every sign-out, AFTER
+       /api/logout -- so by the time the queue is emptied nothing in it could
+       have been sent anyway. Before the click is the only moment. */
+
+    it('goes straight through when nothing is queued', async () => {
+        /* Sign-out is also the shared-phone safety action. A prompt in front
+           of every one of them teaches couriers to click through it, and
+           that habit is what would carry them through the one below. */
+        const asked = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        expect(await confirmSignOut()).toBe(true);
+        expect(asked).not.toHaveBeenCalled();
+    });
+
+    it('asks once something is only on this device, and obeys a refusal', async () => {
+        setOnline(false);
+        await enqueue({ url: url(1), body: {}, label: 'Delivery for Ines Vargas', orderId: 1 });
+        const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        expect(await confirmSignOut()).toBe(false);
+        expect(asked).toHaveBeenCalledTimes(1);
+        /* And the refusal must not have been destructive on its own. */
+        expect(await queued()).toHaveLength(1);
+    });
+
+    it('lets the sign-out through when the courier accepts the loss', async () => {
+        setOnline(false);
+        await enqueue({ url: url(1), body: {}, label: 'Delivery', orderId: 1 });
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        expect(await confirmSignOut()).toBe(true);
+    });
+
+    it('puts the count in the question', async () => {
+        /* "Sign out?" and "sign out and lose 3 records?" are different
+           questions and only the second can be answered honestly. Same
+           reasoning as the device count in Users.tsx. */
+        setOnline(false);
+        for (const n of [1, 2, 3]) await enqueue({ url: url(n), body: {}, label: `Event ${n}`, orderId: n });
+        const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        await confirmSignOut();
+        expect(asked.mock.calls[0]![0]).toContain('3 records are');
+        expect(asked.mock.calls[0]![0]).toContain('cannot be recovered');
+    });
+
+    it('does not let an unreadable queue trap somebody in a session', async () => {
+        /* A courier handing the phone back must be able to sign out. Refusing
+           to release a session because IndexedDB is unavailable is the worse
+           failure, so an unreadable queue reads as empty. */
+        vi.stubGlobal('indexedDB', undefined);
+        resetOutboxForTests();
+        const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        expect(await confirmSignOut()).toBe(true);
+        expect(asked).not.toHaveBeenCalled();
+    });
+});
+
+describe('the sign-out question itself', () => {
+    it('says nothing when there is nothing to lose', () => {
+        expect(signOutPrompt(0)).toBeNull();
+        expect(signOutPrompt(-1)).toBeNull();
+    });
+
+    it('never reads "1 records" or "delete them" for a single one', () => {
+        const one = signOutPrompt(1)!;
+        expect(one).toContain('1 record is');
+        expect(one).not.toMatch(/1 records/);
+        expect(one).toContain('deletes it');
+        expect(one).toContain('it cannot be recovered');
+    });
+
+    it('is plural from two upwards', () => {
+        const two = signOutPrompt(2)!;
+        expect(two).toContain('2 records are');
+        expect(two).toContain('deletes them');
+        expect(two).toContain('they cannot be recovered');
     });
 });

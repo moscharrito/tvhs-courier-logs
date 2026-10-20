@@ -238,6 +238,53 @@ export async function clearOutbox(): Promise<void> {
     await notify();
 }
 
+/** What to say before a sign-out discards the queue, or null to go straight through. */
+export function signOutPrompt(queuedCount: number): string | null {
+    if (queuedCount <= 0) return null;
+    const one = queuedCount === 1;
+    return `${one ? '1 record is' : `${queuedCount} records are`} still on this device `
+        + 'and have not reached the office.\n\n'
+        + 'These are deliveries and collections recorded with no signal. Signing out deletes '
+        + `${one ? 'it' : 'them'} and ${one ? 'it cannot' : 'they cannot'} be recovered.\n\n`
+        + 'Wait for signal and let them send first if you possibly can.';
+}
+
+/**
+ * Ask before signing out would throw the queue away. True means go ahead.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * SIGNING OUT EMPTIES THE QUEUE, AND THE QUEUE IS THE ONLY COPY.
+ *
+ * clearOutbox above runs on every sign-out, and it runs AFTER /api/logout:
+ * by then the session is gone and nothing queued could be sent even if it
+ * were kept. So the only moment this can be caught is before the click, and
+ * until now nothing caught it. A courier who works a run in a basement car
+ * park and signs out at the end of it loses the run.
+ *
+ * NOTHING QUEUED MEANS NO QUESTION, DELIBERATELY. Sign-out is also what
+ * stops one courier filing deliveries under another's name on a shared
+ * phone, and a prompt in front of every sign-out teaches people to click
+ * through it -- the habit that would then carry them through this one.
+ *
+ * window.confirm rather than a modal, matching Users.tsx and Sites.tsx: the
+ * established pattern here is worth more than a nicer dialog. The count goes
+ * in the question for the same reason it does there -- "sign out?" and "sign
+ * out and lose 4 records?" are different questions and only the second can
+ * be answered honestly.
+ *
+ * The phone carries the same guard in app/src/lib/outbox.ts. A promise kept
+ * in one shell and broken in the other is worse than not making it.
+ */
+export async function confirmSignOut(): Promise<boolean> {
+    /* A queue that cannot be read is not a reason to block a sign-out: the
+       courier may be handing the phone over, and refusing to let go of a
+       session because IndexedDB is unavailable is the worse failure. */
+    const pending = await queued().catch(() => []);
+    const prompt = signOutPrompt(pending.length);
+    if (prompt === null) return true;
+    return window.confirm(prompt);
+}
+
 /** Is something queued for this order? Screens use it to stop offering an
  *  action the courier has already taken. */
 export async function pendingFor(orderId: number): Promise<boolean> {

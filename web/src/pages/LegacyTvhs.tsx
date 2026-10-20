@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/auth';
 import { Loading } from '../app/Loading';
+import { confirmSignOut } from '../lib/outbox';
 
 const LEGACY_BASE = '/legacy/';
 const LEGACY_STYLE_ID = 'izy-legacy-style';
@@ -92,6 +93,9 @@ export function LegacyTvhs() {
 
             // Shell owns sign-out. Inline onclick="logout()" resolves this global at call time.
             window.logout = async () => {
+                /* Same guard as the shell's own rail: sign-out empties the
+                   offline queue. See lib/outbox.ts. */
+                if (!(await confirmSignOut())) return;
                 await signOut();
                 navigate('/', { replace: true });
             };
