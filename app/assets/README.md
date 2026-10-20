@@ -121,7 +121,7 @@ silhouette on a transparent background, so the app icon cannot be reused. Only
 needed when push notifications ship (ticket 7.4).
 
 
-## Why SYSTEM_ALERT_WINDOW is blocked
+## Why three permissions are blocked
 
 `app.json` carries `android.blockedPermissions` for
 `android.permission.SYSTEM_ALERT_WINDOW` -- "display over other apps".
@@ -137,3 +137,21 @@ came with the framework" is the answer nobody wants to give a reviewer about
 an app that handles patient addresses, so it is removed at the source rather
 than explained. `blockedPermissions` is the same mechanism that keeps
 RECORD_AUDIO out, and that one is confirmed absent from the merged manifest.
+
+USE_BIOMETRIC and USE_FINGERPRINT are blocked for the same reason, added on
+20 October. They are not in any manifest in this repository: they arrive
+merged in from a library AAR, which is why they were invisible until the
+release manifest was read.
+
+Nothing here asks for a fingerprint. `lib/session.ts` stores the token with
+expo-secure-store under WHEN_UNLOCKED_THIS_DEVICE_ONLY and never passes
+`requireAuthentication`, so no biometric prompt exists to support. Checked
+before removing them, because a permission something quietly depends on is
+worse gone than present: stripping it would have broken the credential store
+that keeps a driver signed in.
+
+Eleven permissions ship now and every one is used. The two to be careful with
+if this list is ever pruned again are ACCESS_BACKGROUND_LOCATION and
+FOREGROUND_SERVICE_LOCATION, plus `foregroundServiceType="location"` on
+expo-location's service -- Android 14 refuses to start the tracker without
+them, and the failure is silent.
