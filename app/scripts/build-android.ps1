@@ -33,9 +33,9 @@
     It does not sign. Signing needs the keystore, and the keystore does not
     belong in a repository. See -Release below.
 
-        .pp\scriptsuild-android.ps1              # debug APK, sideloadable
-        .pp\scriptsuild-android.ps1 -Release     # AAB for the Play Console
-        .pp\scriptsuild-android.ps1 -Apk         # APK instead of an AAB
+        .\app\scripts\build-android.ps1              # debug APK, sideloadable
+        .\app\scripts\build-android.ps1 -Release     # AAB for the Play Console
+        .\app\scripts\build-android.ps1 -Apk         # APK instead of an AAB
         ... -ApiUrl https://staging.example.com         # something other than production
 #>
 
@@ -177,7 +177,7 @@ if (-not (Test-Path (Join-Path $androidDir 'gradlew.bat'))) {
     Fail 'android/ exists but has no gradlew.bat.' @(
         'Regenerate it:'
         ''
-        '  .pp\scriptsuild-android.ps1 -Prebuild'
+        '  .\app\scripts\build-android.ps1 -Prebuild'
     )
 }
 
@@ -230,6 +230,10 @@ $task = if (-not $Release) { 'assembleDebug' }
 Write-Host "  gradlew $task"
 Write-Host ''
 
+# Noted before the build so the summary below can tell an artifact this run
+# wrote from one that was already sitting there.
+$started = Get-Date
+
 Push-Location $androidDir
 try {
     # Its own statement. PowerShell has no `FOO=bar cmd` form, and this is the
@@ -249,19 +253,41 @@ if ($code -ne 0) {
     )
 }
 
-$out = Get-ChildItem -Path $androidDir -Recurse -Include *.apk, *.aab `
-    -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match 'build\\outputs' } |
-    Sort-Object LastWriteTime -Descending
+# ─────────────────────────────────────────────────────── what it produced
+#
+# ONLY THIS TASK'S OWN OUTPUT. This used to sweep build\outputs for every
+# .apk and .aab on disk and print the three most recently written, which is
+# not the same question. `-Release -Apk` runs assembleRelease and produces no
+# .aab at all, so the footer listed a bundle from an earlier build -- in one
+# case nine hours earlier, from before a day's commits -- under the heading
+# "Built:". An artifact named by the thing that built it is the one somebody
+# uploads.
+#
+# Reporting whether the file was written by this run is the other half. A
+# task that is legitimately UP-TO-DATE leaves an older timestamp on a correct
+# artifact, so an old date is not by itself a fault; what matters is that the
+# summary never implies freshness it has not checked.
+
+$outDir = switch ($task) {
+    'assembleDebug'   { Join-Path $androidDir 'app\build\outputs\apk\debug' }
+    'assembleRelease' { Join-Path $androidDir 'app\build\outputs\apk\release' }
+    'bundleRelease'   { Join-Path $androidDir 'app\build\outputs\bundle\release' }
+}
+$ext = if ($task -eq 'bundleRelease') { '*.aab' } else { '*.apk' }
+
+$out = @(Get-ChildItem -Path $outDir -Filter $ext -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending)
 
 Write-Host ''
-if ($out) {
-    Write-Host '  Built:' -ForegroundColor Green
-    foreach ($f in $out | Select-Object -First 3) {
-        Write-Host ("    {0}  ({1:N1} MB)" -f $f.FullName, ($f.Length / 1MB))
+if ($out.Count -gt 0) {
+    Write-Host "  Built by this run ($task):" -ForegroundColor Green
+    foreach ($f in $out) {
+        $note = if ($f.LastWriteTime -ge $started) { '' } else { '   [unchanged: Gradle had nothing to redo]' }
+        Write-Host ("    {0}  ({1:N1} MB){2}" -f $f.FullName, ($f.Length / 1MB), $note)
     }
 } else {
-    Write-Host '  Gradle reported success but no .apk or .aab was found under build\outputs.' -ForegroundColor Yellow
+    Write-Host "  Gradle reported success but produced no $ext in" -ForegroundColor Yellow
+    Write-Host "  $outDir" -ForegroundColor Yellow
 }
 Write-Host ''
 if ($Release -and -not $Apk) {
