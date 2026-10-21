@@ -210,13 +210,14 @@ Things that are not, and are not code:
       app, which is why the icon being done does not cover them.
 - [ ] **A privacy policy at a public URL.** Both stores require one, and it
       has to describe the location collection above in the same terms.
-      **Half done, and the half that is left is the one a reviewer sees.**
+      **Half done, and the half that is left is not a code change.**
       `https://logs.izyglobalservices.com/privacy` is live and serves the real
-      policy, written from the code. Its own first line still reads *"DRAFT.
-      NOT YET REVIEWED BY AN ATTORNEY, AND NOT YET PUBLISHED."* That is the
-      URL that goes in the Play Console, a reviewer opens it, and the page
-      says it is not published. The banner is accurate, so the fix is the
-      attorney review rather than deleting the sentence.
+      policy, written from the code. It used to also claim *"NOT YET
+      PUBLISHED"*, which was false of a page that had been serving publicly
+      all along and was the first thing a reviewer opening the URL would
+      read; that half is corrected. Its first line still reads *"DRAFT. NOT
+      YET REVIEWED BY AN ATTORNEY."*, which is true, so the fix is the review
+      rather than deleting the sentence.
 - [ ] **A demo account and a reachable server.** See above.
 - [ ] **Support contact details** that reach a person.
 
@@ -250,3 +251,102 @@ public signup, not an internal tool. If that changes, and driver onboarding
 moves off the app, the distribution question changes with it: Apple Business
 Manager and Google's managed distribution exist for exactly that case and
 avoid public review entirely.
+
+---
+
+## The store listing copy
+
+Written to be read by somebody deciding whether to install, and by a
+reviewer checking the description against what the app does. Every claim
+here is one the Data Safety table above also makes: a listing that promises
+more than the form declares is a rejection, and a listing that promises more
+than the code does is worse than a rejection.
+
+**IT SAYS IT IS NOT A CONSUMER APP, TWICE AND EARLY.** Anyone who installs
+this without an account sees a sign-in screen and nothing else. Said plainly
+in the short description and again at the end, that is a listing doing its
+job; left unsaid, it is a one-star review saying "doesn't work" and a
+support call for the office.
+
+### Short description (80 characters maximum)
+
+> For Izy Global Services couriers. Today's run, proof of delivery, on shift.
+
+75 characters. Two alternatives, if the tone is wrong:
+
+> Delivery app for Izy Global Services couriers. An issued account is needed.
+
+(75) — blunter about access, says less about the work.
+
+> Pharmacy courier app: runs, collections, deliveries, proof. Staff only.
+
+(71) — leads with the work, "Staff only" does the gatekeeping.
+
+### Full description (4000 characters maximum)
+
+> Izy Courier is the working app for couriers contracted to Izy Global
+> Services LLC, delivering prescription medication from hospital pharmacies
+> to patients at home. It is not a consumer app. Accounts are issued by the
+> office, and there is nothing to see without one.
+>
+> A courier signs in, goes on shift, and sees the day's run in the order it
+> should be driven, with the current stop first and large enough to read at a
+> glance. Each stop says what matters before the door opens: whether the
+> medication is refrigerated, whether it is a controlled drug, whether
+> identification has to be checked, and whether only the named patient may
+> sign for it.
+>
+> THE PAPER IS THE RECORD. THE APP PHOTOGRAPHS IT.
+>
+> Every order travels with its own paper form, signed by hand at the pharmacy
+> counter and again at the patient's door. The app does not replace those
+> signatures. At the final delivery the courier photographs the completed
+> form, and on controlled medication the app will not record the delivery
+> without that photograph. Where the pharmacy has marked an order ID
+> Required, a photograph of the recipient's identification is required too.
+> Both are attached to the proof of delivery for that order, so the office can
+> produce the signed paperwork for any delivery without going near a filing
+> cabinet.
+>
+> WHAT A COURIER DOES WITH IT
+>
+> - Today's run, in driving order, the next stop first
+> - Collection from a pharmacy, counted and signed for at the counter
+> - Delivery recorded against a printed name, with the details shown to check
+>   against the person at the door
+> - A failed attempt recorded with a reason, when nobody is there
+> - Directions handed to the phone's own maps app
+> - A shift the courier starts and ends themselves
+>
+> LOCATION, AND ONLY ON SHIFT
+>
+> Dispatch has to know roughly where a courier is while they are working, to
+> tell whether a delivery is going to meet its deadline and to move it to
+> somebody else if it is not. Location is collected only between the moment a
+> courier starts a shift in the app and the moment they end it. Outside that
+> window the app sends nothing, and the server refuses anything sent outside
+> it. The app shows its tracking state in plain words whenever it is open and
+> runs a visible notification for as long as it is running. Location is never
+> used for advertising or analytics.
+>
+> NO SIGNAL, NO PROBLEM
+>
+> Pharmacies have basements and so do apartment blocks. A delivery recorded
+> without signal is held on the phone and sent, in the order it happened, as
+> soon as there is a bar again. Nothing is lost and nothing has to be redone.
+>
+> PRIVACY
+>
+> There is no advertising in this app and no third-party analytics. It
+> collects what the work requires and nothing else: the courier's own account
+> details, their position while they are on shift, and photographs of the
+> signed paperwork. The full policy is at
+> https://logs.izyglobalservices.com/privacy
+>
+> ACCESS
+>
+> Accounts are issued by Izy Global Services LLC to its own contracted
+> couriers. If you are not one, this app will not do anything for you.
+
+3,003 characters, inside the 4,000 limit with room for a line about a
+second contract later.
