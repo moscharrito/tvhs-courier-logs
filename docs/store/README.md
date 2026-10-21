@@ -50,10 +50,23 @@ brand font. It is legible and it is not yours. This is the largest piece of
 brand surface in the whole listing, so it is worth redoing in a design tool
 if there is ever a house face.
 
+## App icon
+
+`app-icon-512.png`, downscaled from `app/assets/icon.png` (1024x1024) with
+high-quality bicubic resampling rather than redrawn, so the store icon and
+the one on the phone are the same mark.
+
+Saved as 32-bit PNG because that is what Play asks for, and every pixel is
+opaque -- including the corners -- so it also satisfies the iOS rule in
+`app/assets/README.md` that the square is filled edge to edge with no alpha
+channel. 12 KB against a 1 MB limit.
+
+The vector is `app/assets/icon.svg` if it ever needs changing; edit that and
+re-export rather than touching the PNG, which is the whole reason the SVG is
+in the repository.
+
 ## Still missing
 
-- **App icon at 512x512.** The launcher icon exists in `app/assets`; the
-  Console wants a 512 square PNG of it.
 - **The background-location screen recording**, which is the item that gates
   every track including internal testing. It is a video, not a screenshot,
   and it has to show the disclosure, the system permission prompt and
