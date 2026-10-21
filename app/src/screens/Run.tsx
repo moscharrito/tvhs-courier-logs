@@ -111,6 +111,31 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         setRefreshing(false);
     };
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * EVERY HOOK ABOVE EVERY EARLY RETURN, AND usePaged IS A HOOK.
+     *
+     * usePaged holds the page number in useState (ui/Pager.tsx), and it used
+     * to be called further down, below the three returns for loading, Collect
+     * and Stop. So the first render -- data null, spinner, return -- ran nine
+     * hooks, and the render after the run arrived ran ten.
+     *
+     * React counts them. "Rendered more hooks than during the previous
+     * render" is thrown, the screen goes white, and it happens to every
+     * courier on every shift the moment their run loads: the main screen of
+     * the app, in the signed release build. Found on an emulator reading
+     * logcat, because the failure leaves a blank screen and no message on the
+     * phone itself.
+     *
+     * `stops` is computed here for the same reason -- usePaged takes it, so
+     * it cannot wait until after the returns either. It reads from `data`
+     * with a null guard, which is exactly what it did below.
+     * ───────────────────────────────────────────────────────────────────── */
+    const stops: StopRow[] = data?.runs.flatMap((r) => r.stops) ?? [];
+    /* "All stops" only. The NEXT stop is rendered above this on its own and
+       the header says "x of y done" on every page, so the two numbers a
+       driver plans their afternoon from are never the ones that got paged. */
+    const paged = usePaged(stops);
+
     if (data === null && error === null) {
         return <View style={styles.centre}><ActivityIndicator color={theme.green} /></View>;
     }
@@ -140,14 +165,9 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         );
     }
 
-    const stops: StopRow[] = data?.runs.flatMap((r) => r.stops) ?? [];
     const remaining = stops.filter((s) => !DONE.includes(s.status));
     const next = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
-    /* "All stops" only. The NEXT stop is rendered above this on its own and
-       the header says "x of y done" on every page, so the two numbers a
-       driver plans their afternoon from are never the ones that got paged. */
-    const paged = usePaged(stops);
     const zone = data?.timezone ?? project.timezone;
     /* Anything still to be collected lives on a run, and a courier with two
        runs in a day (a second wave) collects against the current one. */
