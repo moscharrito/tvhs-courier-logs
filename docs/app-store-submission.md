@@ -139,18 +139,35 @@ code: `modules/uh/tracking.ts` and `core/onboarding/routes.ts`.
 | Name | Yes | Yes | No | The driver's own account and their signature on a handover |
 | Email | Yes | Yes | No | Sign-in identity |
 | Phone | Yes | Yes | No | Dispatch calls drivers |
-| Other user content | Yes | Yes | No | Signatures captured at a doorstep |
+| **Photos** | **Yes** | **Yes** | **No** | The signed courier form on every controlled handover; a patient's identification where the pharmacy marked the order ID Required; an optional doorstep photograph |
+| Other user content | Yes | Yes | No | Historic signature strokes, captured before the move to paper forms |
 
-**"Used for tracking" is No, and that answer has to stay No.** In both stores
+**"Used for tracking" is No on every row, Photos included, and that answer has
+to stay No.** In both stores
 it means following a user across other companies' apps and websites for
 advertising. Nothing here does that, there is no third-party SDK in the app,
 and adding an analytics library later would change this answer and the
 submission with it.
 
-**Patient data is not in this table because the app does not collect it.** It
-displays a patient's name and address to the assigned courier and sends
-neither anywhere except back to our own server. The claimable board carries
-neither, by design (ticket 6.4).
+**PHOTOS IS WHERE PATIENT DATA ENTERS THIS TABLE, AND IT HAS TO BE DECLARED.**
+
+This table said "Other user content: signatures captured at a doorstep" and
+then that the app collects no patient data. Both were true when written and
+neither survived the move to paper: `lib/pod.ts` now declares
+`PhotoKind = 'doorstep' | 'courier_form' | 'patient_id'`, the manifest declares
+CAMERA, and `modules/uh/stop.ts` refuses a controlled delivery without the form
+photograph.
+
+So the app photographs a form carrying the patient's name and both signatures,
+and on ID Required orders it photographs the patient's identification. That is
+patient data collected and transmitted, not displayed. Declaring Photos and
+saying what is in them is the accurate answer; the earlier wording would have
+been a false statement about a third party's sensitive data on a form Google
+requires to match the app.
+
+What remains true: the app never types patient details anywhere, sends nothing
+except to our own server, and the claimable board carries neither name nor
+address, by design (ticket 6.4).
 
 ---
 

@@ -2,7 +2,13 @@
 
 **Izy Global Services LLC**
 
-**DRAFT. NOT YET REVIEWED BY AN ATTORNEY, AND NOT YET PUBLISHED.**
+**DRAFT. NOT YET REVIEWED BY AN ATTORNEY.**
+
+Published at <https://logs.izyglobalservices.com/privacy>, which is the URL
+given to the app stores. That page is rendered from this file, so there is no
+second copy to fall out of date: see `server/src/core/http/privacy.ts`. The
+retention periods marked undecided below are still undecided, and the attorney
+review has still not happened.
 
 Every factual claim below was written from the code that implements it, and
 the file is named beside each one so a reviewer can check rather than trust.
@@ -36,8 +42,10 @@ other than making and proving your delivery.
 |---|---|---|
 | Name, email, phone | At sign-up | The account, dispatch contact, and the name recorded against a handover |
 | Precise location | **Only while on shift** | So dispatch can tell whether a delivery will meet its deadline |
-| Photographs | At a doorstep, when taken | Proof that a delivery was made |
-| Signatures | At a doorstep, when captured | Proof of who received a delivery |
+| Photograph of the signed courier form | At the door, on handover | The form carries both signatures. It is the proof of a controlled-substance handover, and the app will not record one of those without it |
+| Photograph of a patient's identification | At the door, **only where the pharmacy marked the order ID Required** | To evidence that the medication went to the named patient |
+| Photograph of a doorstep | At a doorstep, optional | Proof that a delivery was made |
+| Signatures | Historic records only | Captured on screen before the move to paper forms; kept because a handover recorded with one still means what it meant |
 | Device and session records | While signed in | So an administrator can see and revoke access to a lost phone |
 
 ### Location, specifically
@@ -67,12 +75,22 @@ change this policy first.
 
 ## What the app does not collect
 
-- **No patient information is collected by the app from a courier.** The app
+- **A courier's phone does not type patient details into anything.** The app
   *displays* a patient's name and address to the courier assigned to that
-  delivery, and sends neither anywhere except back to our own server. The
-  pool of unassigned work carries neither.
+  delivery, and sends neither anywhere except back to our own server. The pool
+  of unassigned work carries neither.
+- **It does, however, photograph two documents that concern the patient**, and
+  those images come back to our server:
+  - the **signed courier form**, which carries the patient's name and both
+    signatures, on every controlled-substance handover;
+  - the patient's **identification**, on the orders a pharmacy marked ID
+    Required.
+
+  These are handled as patient information: stored encrypted, covered by the
+  Business Associate Agreements below, and never used for anything but
+  evidencing the handover they belong to.
 - No contacts, no photo library, no microphone, no health data, no motion
-  data. The app asks the camera for a doorstep photograph and never opens the
+  data. The app opens the camera for those photographs and never opens the
   photo library, because a picture chosen from a gallery is not evidence that
   somebody stood at a door.
 - No advertising identifier.
@@ -85,7 +103,9 @@ We use a small number of service providers, each under contract and, where
 they touch health information, under a Business Associate Agreement:
 
 - **Hosting and database.** Application hosting and the operational database.
-- **File storage.** Doorstep photographs and signature images.
+- **File storage.** Photographs of signed courier forms and of patient
+  identification, doorstep photographs, and historic signature images. Under a
+  Business Associate Agreement, because these carry patient information.
 - **Email and SMS.** Notifications to staff, and delivery notices to patients
   where the healthcare organisation has asked for them.
 - **Maps and geocoding.** Used for **facility addresses only.** The system
@@ -108,10 +128,12 @@ decided**:
 - **Replies held for a retrying phone: 7 days.** Decided.
 - **Audit records: kept indefinitely.** Decided. These record who did what and
   never contain patient information.
-- **Delivery records, proof-of-delivery photographs, signatures, invoices:
-  undecided.** The code carries a seven-year placeholder that is explicitly
-  marked undecided, and the purge refuses to act on it. Nothing is being
-  deleted on that basis.
+- **Delivery records, photographs of signed forms and of patient
+  identification, doorstep photographs, signatures, invoices: undecided.** The
+  code carries a seven-year placeholder that is explicitly marked undecided,
+  and the purge refuses to act on it. Nothing is being deleted on that basis.
+  A photograph of somebody's identification is the item here that most needs a
+  real period rather than a placeholder.
 - **Courier location traces: undecided, and nothing is collected until it is
   decided.** The system refuses to store a single position until a retention
   period is set. This is deliberate: a trail of an identified employee has
