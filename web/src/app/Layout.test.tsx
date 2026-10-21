@@ -6,28 +6,36 @@
  * down to two letters.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from './auth';
 import { App } from './App';
 import { mockFetch } from '../test/setup';
+import { enqueue, queued, setOutboxUser } from '../lib/outbox';
 
 const session = { id: 1, username: 'dee.dispatch', name: 'Dee Dispatch', role: 'staff', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
 
 function renderAt(path: string, routes: Record<string, unknown> = {}) {
-    mockFetch({
+    /* `calls` comes back alongside the render result so a test can assert
+       what was NOT requested -- that a refused sign-out never reached
+       /api/logout, for one. Additive: the callers that only want `unmount`
+       are untouched. */
+    const { calls } = mockFetch({
         'GET /api/session': session,
         'GET /api/me/projects': projects,
         'GET /api/login/device': { enrolled: false },
         ...routes,
     });
-    return render(
-        <MemoryRouter initialEntries={[path]}>
-            <AuthProvider><App /></AuthProvider>
-        </MemoryRouter>,
-    );
+    return {
+        ...render(
+            <MemoryRouter initialEntries={[path]}>
+                <AuthProvider><App /></AuthProvider>
+            </MemoryRouter>,
+        ),
+        calls,
+    };
 }
 
 const rail = () => document.querySelector('.izy') as HTMLElement;
@@ -124,5 +132,53 @@ describe('the side rail', () => {
         renderAt('/users', { 'GET /api/users': [] });
         const link = await screen.findByRole('link', { name: 'UH Pharmacy Courier' });
         expect(link).not.toHaveClass('active');
+    });
+});
+
+describe('signing out when the queue is not empty', () => {
+    /* The rail's Sign out used to go straight to signOut(), which empties the
+       offline queue -- and empties it AFTER /api/logout, so by then nothing
+       in it could be sent whatever happened. A courier who worked a run with
+       no signal lost the run to one click. These two prove the guard is
+       actually wired to the button, against the real queue rather than a
+       mock of it: lib/outbox.test.ts already covers the decision itself. */
+
+    const offline = () => {
+        Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    };
+
+    it('asks first, and a refusal signs nobody out', async () => {
+        const { calls } = renderAt('/', { 'POST /api/logout': { ok: true } });
+        await screen.findByRole('button', { name: 'Sign out' });
+
+        offline();
+        setOutboxUser('dee.dispatch');
+        await enqueue({ url: '/api/projects/uh/uh/orders/1/arrive', body: {}, label: 'Delivery for Ines Vargas', orderId: 1 });
+
+        const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+        await waitFor(() => expect(asked).toHaveBeenCalled());
+        expect(asked.mock.calls[0]![0]).toContain('1 record is');
+        /* The point of the whole change: the session survives a refusal, and
+           so does the record. */
+        expect(calls).not.toContain('POST /api/logout');
+        expect(await queued()).toHaveLength(1);
+    });
+
+    it('still signs out when the courier accepts the loss', async () => {
+        /* A guard that cannot be got past is a courier stuck in a session on
+           a phone they are handing back. */
+        const { calls } = renderAt('/', { 'POST /api/logout': { ok: true } });
+        await screen.findByRole('button', { name: 'Sign out' });
+
+        offline();
+        setOutboxUser('dee.dispatch');
+        await enqueue({ url: '/api/projects/uh/uh/orders/2/arrive', body: {}, label: 'Delivery', orderId: 2 });
+
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+        await waitFor(() => expect(calls).toContain('POST /api/logout'));
     });
 });
