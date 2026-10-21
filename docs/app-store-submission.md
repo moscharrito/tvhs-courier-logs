@@ -285,9 +285,18 @@ support call for the office.
 ### Full description (4000 characters maximum)
 
 > Izy Courier is the working app for couriers contracted to Izy Global
-> Services LLC, delivering prescription medication from hospital pharmacies
-> to patients at home. It is not a consumer app. Accounts are issued by the
-> office, and there is nothing to see without one.
+> Services LLC. It is not a consumer app. Accounts are issued by the office,
+> and there is nothing to see without one.
+>
+> It carries two contracts, and a courier picks theirs on the first screen.
+> On the University Health contract in San Antonio, couriers deliver
+> prescription medication from hospital pharmacies to patients at home, and
+> the app walks the run stop by stop. On the Tennessee Valley Healthcare
+> System contract, the work is a daily log rather than a doorstep: route
+> legs, times, tote counts and mileage, filed for the week. A courier only
+> ever sees the contract they drive for.
+>
+> WHAT A COURIER SEES ON A PHARMACY RUN
 >
 > A courier signs in, goes on shift, and sees the day's run in the order it
 > should be driven, with the current stop first and large enough to read at a
@@ -348,5 +357,8 @@ support call for the office.
 > Accounts are issued by Izy Global Services LLC to its own contracted
 > couriers. If you are not one, this app will not do anything for you.
 
-3,003 characters, inside the 4,000 limit with room for a line about a
-second contract later.
+3,431 characters, inside the 4,000 limit. The second contract is now in
+it: TVHS is a weekly log of route legs, times, totes and mileage rather
+than a doorstep, and a listing that described only the pharmacy work
+would read as the wrong app to a reviewer who opened the contract
+picker and saw two.
