@@ -65,9 +65,61 @@ The vector is `app/assets/icon.svg` if it ever needs changing; edit that and
 re-export rather than touching the PNG, which is the whole reason the SVG is
 in the repository.
 
+## Internal testing: the testers list
+
+Testing -> Internal testing -> Testers -> Create email list. Named
+`Izy drivers — internal`.
+
+    smallgajiadams@gmail.com
+    moscharito@gmail.com
+    contracts@izymovers.com
+
+**EVERY ADDRESS HAS TO BE A GOOGLE ACCOUNT.** A Gmail address always is. One
+on our own domain is only a Google account if it is a Workspace mailbox or
+somebody registered it as one. Play takes a non-Google address into the list
+without complaining and that person then never gets access: no error, no
+bounce, nothing to diagnose. `contracts@izymovers.com` is the one to check.
+
+**THE OPT-IN LINK IS NOT OPTIONAL.** Copy it from the Testers tab and send it
+to all three. Each person opens it and taps "Become a tester" before Play
+will show them anything. Until they do, the Play Store says "item not found",
+which reads as a broken build rather than as a step nobody took.
+
+**The account on the phone has to be the account in the list.** A tester whose
+Play Store is signed in as their personal account will not see a build
+listed against their work address.
+
+### Versions uploaded
+
+| versionCode | What happened |
+|---|---|
+| 1 | Never uploaded. It was Expo's default, not a decision. |
+| 2 | Never uploaded. Built, verified, superseded. |
+| 3 | **Uploaded to internal testing.** Spent; Play will not take it again. |
+| 4 | Current in `app.json`. The next build. |
+
+A versionCode is consumed by any track, internal testing included, so the
+bump happens after an upload rather than before the next one.
+
 ## Still missing
 
 - **The background-location screen recording**, which is the item that gates
   every track including internal testing. It is a video, not a screenshot,
   and it has to show the disclosure, the system permission prompt and
-  tracking running, in one take, off a real build.
+  tracking running, in one take, off a real build. Until it is approved the
+  testers above can be listed, can accept the opt-in, and still cannot
+  install.
+
+## Warnings the Console shows, and which to ignore
+
+**"There is no deobfuscation file associated with this App Bundle."**
+Ignore it. `android.enableMinifyInReleaseBuilds` defaults to false, nothing
+sets it, and no mapping directory is produced -- R8 never runs, so nothing
+is obfuscated and there is nothing to deobfuscate. Crash traces arrive
+readable already. Google shows this on every bundle without a mapping file
+whether or not minification is on.
+
+The same warning suggests R8 would reduce app size, which is true and still
+the wrong trade before go-live: it is a new failure mode in a build that has
+been verified end to end on a device, to save maybe a tenth of a 53 MB
+download. After 1 November, not before.
