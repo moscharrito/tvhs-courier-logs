@@ -140,10 +140,24 @@ describe('the renderer', () => {
         const markdown = readFileSync(POLICY_FILE, 'utf8');
         const html = privacyPage(markdown);
 
+        /* THIS LIST HELD A SENTENCE THAT WAS NO LONGER TRUE.
+         *
+         * It asserted "No patient information is collected by the app from a
+         * courier", which b7fe5b1 removed from the policy on purpose: the app
+         * photographs the signed courier form and, on ID Required orders, the
+         * patient's identification, and both come back to the server. The
+         * policy was corrected and this test went red still demanding the
+         * false claim -- a renderer canary guarding a sentence nobody should
+         * want rendered.
+         *
+         * Replaced with the clause that took its place. It is the one with
+         * the most riding on it: a privacy policy that silently loses the
+         * paragraph admitting it photographs identification is worse than one
+         * that never had it. */
         for (const phrase of [
             'Izy Global Services LLC',
             'Only while on shift',
-            'No patient information is collected by the app from a courier',
+            "photograph two documents that concern the patient",
             'We do not sell personal information',
             'contracts@izyglobalservices.com',
         ]) {
