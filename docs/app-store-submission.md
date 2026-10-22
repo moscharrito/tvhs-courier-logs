@@ -362,3 +362,84 @@ it: TVHS is a weekly log of route legs, times, totes and mileage rather
 than a doorstep, and a listing that described only the pharmacy work
 would read as the wrong app to a reviewer who opened the contract
 picker and saw two.
+
+---
+
+## The Play background location declaration
+
+**THE TEXT ABOVE IS APPLE'S.** App Store Connect asks one open question about
+`UIBackgroundModes: location` and takes an essay. Google asks several narrow
+ones in separate boxes, each with its own limit, and a reviewer reads them as
+answers rather than as prose. Pasting the Apple paragraph into Google's form
+answers a question it did not ask.
+
+Policy -> App content -> Location permissions. Four answers and a video.
+
+### Which feature requires background location?
+
+> Driver shift tracking. While a courier is on shift, dispatch sees their
+> position on the delivery board so it can tell whether each prescription
+> delivery will meet its contractual deadline, and reassign it to another
+> courier if it will not. Deliveries carry two-hour and one-hour deadlines
+> set by the healthcare contract.
+
+### Why can the feature not use foreground location?
+
+> A courier drives between stops with the phone in a pocket or a cradle and
+> the screen off, and carries packages to a door with the app closed. Those
+> are exactly the minutes dispatch needs the position for. Foreground-only
+> location would update while the courier is looking at the app -- standing
+> still, reading their next stop -- and stop updating as soon as they drive,
+> which inverts when the data is useful. A position that is last known from
+> the previous doorstep cannot tell dispatch whether the next delivery is
+> going to be late.
+
+### Is background location core to the app's functionality?
+
+> Yes for the dispatch feature, no for the courier's own work. A courier can
+> complete every delivery with the permission declined: collections,
+> deliveries, photographs and proof of delivery all work. What is lost is
+> dispatch's ability to see the run in progress and move work before a
+> deadline is missed.
+
+### How is the user told, and how is it limited?
+
+> The app shows a prominent in-app disclosure explaining background
+> collection and why, BEFORE the system permission prompt, the first time a
+> courier goes on shift. Declining opens the shift untracked and the courier
+> keeps working.
+>
+> Collection runs only between the courier explicitly starting a shift and
+> explicitly ending it. Outside that window the app sends nothing and the
+> server rejects anything sent outside it. While it runs, Android shows a
+> foreground-service notification for the whole duration and the app's own
+> banner states the tracking state in plain words whenever it is open.
+>
+> Location is never used for advertising or analytics, and is never shared
+> with a third party. These are couriers employed under contract, tracked
+> only during their paid shift.
+
+### The video
+
+Required, and the thing most likely to send this back. One take, no cuts,
+off the release build:
+
+1. Open the app, signed out or on the contract picker.
+2. Sign in and reach the run.
+3. Tap **Go on shift**. Let the DISCLOSURE sit on screen long enough to read
+   -- this is the frame the reviewer is looking for.
+4. Accept the system permission prompt, including "Allow all the time" if
+   Android asks a second time.
+5. Show the banner changing to the on-shift tracking state.
+6. Pull down the notification shade and show the foreground-service
+   notification.
+7. Back in the app, record something against a stop.
+
+Upload it, or put it somewhere with a public link that does not expire.
+An unlisted YouTube video is what most submissions use.
+
+**Why this is the likeliest rejection.** Two things reduce the odds and both
+are true of the app rather than claims in a form: the permission is requested
+when the courier goes on shift rather than at launch (`lib/shift.ts` orders
+`disclose` before `askPermission`), and the tracking state is on screen the
+whole time. Budget for one round anyway.
