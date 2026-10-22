@@ -30,6 +30,7 @@
  * allowed.
  */
 
+import { Platform } from 'react-native';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { baseUrl } from './api';
@@ -107,11 +108,28 @@ TaskManager.defineTask(TASK, async ({ data, error }: TaskManager.TaskManagerTask
 
 export type PermissionState = 'granted' | 'denied' | 'undetermined';
 
+/* ANDROID DOES NOT ASK FOR "ALL THE TIME" (build 4).
+ *
+ * startTracking runs as a foreground service with a permanent notification,
+ * started from the Go on shift tap. expo-location starts that with the
+ * while-in-use permission alone (LocationModule.kt, startLocationUpdatesAsync:
+ * "a user-initiated foreground service with notification ... does NOT
+ * require the background location permission"), and it keeps reporting with
+ * the screen locked. So ACCESS_BACKGROUND_LOCATION is blocked in app.json,
+ * which removes Play's background location declaration entirely.
+ *
+ * With it gone from the manifest, get/requestBackgroundPermissionsAsync THROW
+ * on Android. Calling them would make permissionState() answer 'undetermined'
+ * forever and askPermission() answer 'denied' every time, so Android stops at
+ * the foreground answer. iOS is unchanged: it still needs "Always". */
+const needsBackground = Platform.OS !== 'android';
+
 /** What the phone has already agreed to, without asking again. */
 export async function permissionState(): Promise<PermissionState> {
     try {
         const foreground = await Location.getForegroundPermissionsAsync();
         if (!foreground.granted) return foreground.canAskAgain ? 'undetermined' : 'denied';
+        if (!needsBackground) return 'granted';
         const background = await Location.getBackgroundPermissionsAsync();
         if (background.granted) return 'granted';
         return background.canAskAgain ? 'undetermined' : 'denied';
@@ -132,6 +150,7 @@ export async function askPermission(): Promise<PermissionState> {
     try {
         const foreground = await Location.requestForegroundPermissionsAsync();
         if (!foreground.granted) return 'denied';
+        if (!needsBackground) return 'granted';
         const background = await Location.requestBackgroundPermissionsAsync();
         return background.granted ? 'granted' : 'denied';
     } catch {

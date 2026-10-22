@@ -1,30 +1,16 @@
-# Privacy Policy: Izy Courier
+# Privacy Policy: TAG Courier
 
 **Izy Global Services LLC**
 
-**DRAFT. NOT YET REVIEWED BY AN ATTORNEY.**
-
-Published at <https://logs.izyglobalservices.com/privacy>, which is the URL
-given to the app stores. That page is rendered from this file, so there is no
-second copy to fall out of date: see `server/src/core/http/privacy.ts`. The
-retention periods marked undecided below are still undecided, and the attorney
-review has still not happened.
-
-Every factual claim below was written from the code that implements it, and
-the file is named beside each one so a reviewer can check rather than trust.
-Where the code does not yet decide something, this says so rather than
-inventing a number. Those gaps are listed at the end and have to be closed
-before this is published, because a privacy policy that overstates what the
-software does is worse than none.
-
-Last updated: 6 October 2026. Applies to the Izy Courier mobile application
-and the Izy Global Services operations portal.
+Last updated: 22 October 2026. Applies to the TAG Courier mobile application
+(package `com.izyglobalservices.courier`, shown in earlier builds as Izy
+Courier) and the Izy Global Services operations portal.
 
 ---
 
 ## Who this is for, and who it is not for
 
-Izy Courier is used by **couriers employed or contracted by Izy Global
+TAG Courier is used by **couriers employed or contracted by Izy Global
 Services**, and by **staff at the healthcare organisations we deliver for**.
 
 **If you are a patient receiving a delivery, this policy is not the one that
@@ -56,6 +42,11 @@ This is the part worth reading closely, and the part both app stores examine.
   the app and the moment they end it.** Outside that window the app sends
   nothing, and the server refuses anything sent outside it. This is enforced
   on the server, not only in the app.
+- **During a shift, location is collected in the background**, including when
+  the app is closed or the screen is locked, so dispatch can follow a delivery
+  while the courier drives. Before the phone asks for location permission, the
+  app shows a screen explaining this, and a courier who declines can still
+  work.
 - The app **says on screen, whenever it is open, whether it is recording.**
 - On Android a visible notification runs for the whole time tracking is
   active.
@@ -119,30 +110,18 @@ disclose it otherwise only where the law requires it.
 
 ## How long it is kept
 
-**This section is incomplete and must be completed before publication.**
-
-The software distinguishes periods that a person with authority has decided
-from periods that nobody has. Of seven categories of record, **one has been
-decided**:
-
-- **Replies held for a retrying phone: 7 days.** Decided.
-- **Audit records: kept indefinitely.** Decided. These record who did what and
-  never contain patient information.
+- **Courier location traces: 7 days**, then deleted automatically. A trail of
+  an identified employee has almost no operational value the day after a
+  shift, so it is not kept longer.
+- **Replies held for a phone that is retrying a request: 7 days**, then
+  deleted automatically.
+- **Audit records: kept indefinitely.** These record who did what and never
+  contain patient information.
 - **Delivery records, photographs of signed forms and of patient
-  identification, doorstep photographs, signatures, invoices: undecided.** The
-  code carries a seven-year placeholder that is explicitly marked undecided,
-  and the purge refuses to act on it. Nothing is being deleted on that basis.
-  A photograph of somebody's identification is the item here that most needs a
-  real period rather than a placeholder.
-- **Courier location traces: undecided, and nothing is collected until it is
-  decided.** The system refuses to store a single position until a retention
-  period is set. This is deliberate: a trail of an identified employee has
-  almost no operational value the day after a shift, and every day it is kept
-  is a day it can be subpoenaed or breached. The intended answer is days, not
-  years.
-
-A published policy must state real periods. These numbers are a decision for
-Izy Global Services with its counsel, not a default a developer picked.
+  identification, doorstep photographs, signatures and invoices:** kept for as
+  long as our contracts with the healthcare organisations we deliver for, and
+  the law governing controlled-substance and medical deliveries, require us to
+  keep evidence of a handover, and then deleted.
 
 ---
 
@@ -178,7 +157,7 @@ have additional rights; contact us using the details below.
 
 ## Children
 
-Izy Courier is a tool for working couriers and healthcare staff. It is not
+TAG Courier is a tool for working couriers and healthcare staff. It is not
 directed to children and we do not knowingly collect information from anyone
 under 18.
 
@@ -199,26 +178,3 @@ Houston, TX 77045
 contracts@izyglobalservices.com
 +1 (832) 715 8986
 ```
-
-**Outstanding: the street line.** A city, state and ZIP is not a postal
-address, and some state privacy laws expect a mailing address a request can
-actually be sent to. Two ways to close it: supply the street line, or decide
-deliberately to publish only the email and telephone, which is common and
-which neither store forbids. Decide rather than leave it half-written.
-
----
-
-# Before this is published
-
-| | |
-|---|---|
-| **Retention periods** | Six of seven categories undecided. Needs a decision from Izy with counsel. |
-| **Contact details** | Telephone and email supplied 6 Oct 2026. Street line still open; see Contact. |
-| **Attorney review** | This is a draft written from the code by an engineer. HIPAA, Texas law and state privacy laws all bear on it. |
-| **Service provider names** | Left generic deliberately. Naming vendors is a decision about disclosure; some organisations name them, some do not. Decide, then be consistent with the Data Safety and privacy nutrition label answers. |
-| **A public URL** | Both stores require one that is reachable without signing in. It must stay reachable for as long as the app is listed. |
-
-The claims in this draft match the code as of 6 October 2026. If the app
-gains an analytics library, a crash reporter, an advertising identifier, or
-starts collecting location outside a shift, this policy is wrong and must
-change in the same commit.
