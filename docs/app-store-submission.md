@@ -540,3 +540,84 @@ does not count as sharing.
 following a user across other companies' apps for advertising. Nothing here
 does that, and there is no third-party SDK in the app. Adding an analytics
 library later changes this form and the submission with it.
+
+---
+
+## Content rating, target audience, health apps
+
+Three more cards under Policy -> App content. None is hard; two have a
+question that reads wrong for this app and gets answered wrong by reflex.
+
+### Content rating (the IARC questionnaire)
+
+Category: **Utility, Productivity, Communication or Other**.
+
+| Question, in substance | Answer |
+|---|---|
+| Violence, blood, sexual content, crude humour, horror | No to all |
+| Gambling, simulated gambling, contests | No |
+| **References to or depictions of illegal drugs** | **No** |
+| Promotes alcohol, tobacco, or drug use | No |
+| Profanity | No |
+| Allows users to interact or communicate with each other | **No** |
+| Allows users to share their location with other users | **No** |
+| Allows users to exchange user-generated content | **No** |
+| Shares the user's location with third parties | No |
+| Allows purchases | No |
+
+**THE DRUGS QUESTION IS THE ONE THAT GETS ANSWERED WRONG.** The app is for
+couriers carrying controlled substances, and the honest reflex is to tick
+yes. IARC means depiction, reference or glamorisation of ILLEGAL drug use --
+the thing that raises an age rating. Prescription medication logistics is
+not that, and answering yes rates the app 17+ for no reason and invites
+questions that have nothing to do with it.
+
+**USER INTERACTION IS NO, AND THAT WAS CHECKED.** There is no chat, no
+thread, no compose box and no way for one courier to send anything to
+another anywhere in the app -- `app/src/screens/` has no messaging surface.
+The web portal has staff threads; the phone app does not, and this
+questionnaire is about this app.
+
+**LOCATION SHARING WITH OTHER USERS IS ALSO NO**, which is a different
+question from the Data Safety one and worth reading twice. A courier posts
+their own position and cannot read anybody's: `modules/uh/tracking.ts` has
+`POST /` for couriers and `GET /live` for staff only. Dispatch is the
+employer, not another user. Yes here would imply couriers can see each
+other, which they cannot.
+
+Expect a rating of **Everyone / PEGI 3** or equivalent. An app for employees
+with no content in it rates low, which is correct and not a mistake.
+
+### Target audience and content
+
+Age groups: **18 and over** only.
+
+Nothing else ticked. Selecting any under-18 band pulls the app into the
+Families policy, which brings a different ads and content regime and a
+second review, for an app only contracted couriers can sign into.
+
+"Could your app be unintentionally appealing to children?" -- **No**.
+
+### Health apps
+
+Expect this card, and do not try to duck it. The app carries prescription
+medication for a healthcare system.
+
+| Question, in substance | Answer |
+|---|---|
+| Is this a health app? | **Yes** |
+| Does it handle Protected Health Information? | **Yes** -- patient names, addresses, photographs of signed forms and of identification |
+| Is it a medical device, or does it make diagnostic or treatment claims? | **No**. It is logistics: it moves a package and records who took it |
+| Does it provide medical advice? | **No** |
+| Clinical trials, research, or health measurements from the user | **No** |
+
+**Answering "not a health app" would be false and checkable.** The listing
+says prescription medication, the privacy policy says Business Associate
+Agreements, and the Data Safety form declares photographs of patient
+identification. A reviewer who reads two of those and then sees "no" on
+this card has found an inconsistency, and inconsistency is what gets an app
+pulled rather than rejected.
+
+Have the BAA position straight before filing this one. Google may ask what
+legal basis covers the health information, and "the BAAs are not filed yet"
+is an answer with consequences.
