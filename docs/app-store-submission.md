@@ -443,3 +443,100 @@ are true of the app rather than claims in a form: the permission is requested
 when the courier goes on shift rather than at launch (`lib/shift.ts` orders
 `disclose` before `askPermission`), and the tracking state is on screen the
 whole time. Budget for one round anyway.
+
+---
+
+## The Play Data Safety answers
+
+Policy -> App content -> Data safety. Answered in the order the Console
+asks, and checked against the code rather than against what the app feels
+like it does. Google requires the form to match the app; a reviewer can
+decline the location prompt, watch the network, and find out.
+
+### Overview
+
+| Question | Answer |
+|---|---|
+| Does your app collect or share any of the required user data types? | **Yes** |
+| Is all of the user data collected by your app encrypted in transit? | **Yes** -- HTTPS only; `src/lib/apiUrl.cjs` refuses to build a release pointed at plain HTTP |
+| Do you provide a way for users to request that their data is deleted? | **Yes** -- a courier asks the office; see the policy's rights section. Delivery evidence is exempt under contract and the policy says so |
+
+### Location -> Precise location
+
+Collected **yes**, shared **no**, processed ephemerally **no**, **required**,
+purpose **App functionality** only.
+
+**Precise, not Approximate.** `lib/tracking.ts` uses
+`Location.Accuracy.Balanced`, which is roughly a hundred metres. That is
+coarser than a navigation fix and still far inside Google's threshold for
+Precise, which is any area under three square kilometres. Declaring
+Approximate because the app does not ask for the finest available fix would
+be wrong.
+
+### Personal info -> Name
+
+Collected **yes**, shared **no**, **required**, **App functionality** and
+**Account management**.
+
+Two names, and the second is the one that gets forgotten: the courier's own
+name on their account, AND the printed name of whoever took the delivery,
+typed at the door (`screens/Stop.tsx`, `signedName`). The second is a third
+party's name captured on the device and sent to our server.
+
+### Personal info -> Email address
+
+Collected **yes**, shared **no**, **required**, **Account management**.
+
+### Personal info -> Phone number
+
+Collected **yes**, shared **no**, **required**, **App functionality**.
+
+The courier's own number, for dispatch to call them. A patient's number is
+displayed to the assigned courier but travels from the server to the phone,
+not from the phone to us, so it is not collected in this form's sense.
+
+### Personal info -> User IDs
+
+Collected **yes**, shared **no**, **required**, **Account management**.
+
+The username a courier signs in with.
+
+### Photos and videos -> Photos
+
+Collected **yes**, shared **no**, processed ephemerally **no**,
+**required**, **App functionality**.
+
+Three kinds, from `lib/pod.ts`: `'doorstep' | 'courier_form' | 'patient_id'`.
+The signed courier form on every controlled handover, a photograph of the
+patient's identification where the pharmacy marked the order ID Required,
+and an optional doorstep photograph. The camera is the only source; the
+photo library is never opened.
+
+### Everything else: not collected
+
+Ticking nothing is also an answer, and these are the ones worth being able
+to defend:
+
+- **Device or other IDs: NO.** There is no advertising ID, no Android ID and
+  no hardware identifier anywhere in the app. Device enrolment stores a
+  label and the user agent string (`core/auth/devices.ts`), and the row's id
+  is a hash of the session token. Nothing that follows a handset.
+- **Health and fitness: NO.** The app carries prescriptions; it records no
+  health measurements about the person using it.
+- **Financial info: NO.** Courier pay is calculated on the server from
+  completed work. The app shows no money and collects none.
+- **Messages, Contacts, Calendar, Audio, Files, Web browsing: NO.**
+- **App activity / App info and performance: NO.** There is no analytics
+  SDK and no crash reporter in the app.
+
+### The two answers that must stay No
+
+**"Shared with third parties" is No on every row.** Shared has a specific
+meaning here: transferred to another company. Our hosting, storage and SMS
+providers are service providers under contract and under BAAs, which Google
+does not count as sharing.
+
+**"Used for tracking" / advertising purposes: No on every row.** It means
+following a user across other companies' apps for advertising. Nothing here
+does that, and there is no third-party SDK in the app. Adding an analytics
+library later changes this form and the submission with it.
