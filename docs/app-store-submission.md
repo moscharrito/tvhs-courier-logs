@@ -284,7 +284,7 @@ support call for the office.
 
 ### Full description (4000 characters maximum)
 
-> Izy Courier is the working app for couriers contracted to Izy Global
+> TAG Courier is the working app for couriers contracted to Izy Global
 > Services LLC. It is not a consumer app. Accounts are issued by the office,
 > and there is nothing to see without one.
 >

@@ -51,7 +51,7 @@ ${message}
 
     return {
         ...config,
-        name: config.name ?? 'Izy Courier',
+        name: config.name ?? 'TAG Courier',
         slug: config.slug ?? 'izy-courier',
         ...(icons.icon === undefined ? {} : { icon: icons.icon }),
         /* Merged, not replaced: app.json carries the package name and the
@@ -99,7 +99,7 @@ ${message}
                access to a courier's personal photos to deliver a parcel is a
                permission we should not hold. */
             ['expo-image-picker', {
-                cameraPermission: 'Izy Courier uses the camera to photograph a doorstep as proof that a delivery was made.',
+                cameraPermission: 'TAG Courier uses the camera to photograph the signed delivery form, a recipient’s identification where the pharmacy requires it, and a doorstep as proof that a delivery was made.',
                 photosPermission: false,
                 microphonePermission: false,
             }],

@@ -18,4 +18,4 @@ and must change in the same commit.
 | **Street address** | Contact shows city, state and ZIP only. Either add the street line or decide deliberately to publish email and telephone only. |
 | **Deletion request process** | No stated response time or verification step. |
 | **Service provider names** | Left generic deliberately. Decide, then keep consistent with Data Safety and the App Store privacy label. |
-| **App name** | Play listing is TAG Courier; app.json `name` is still Izy Courier. Pick one before production. |
+| **App name** | Settled 22 Oct 2026: **TAG Courier** everywhere. app.json, app.config.ts, the camera usage string and the listing copy all say it; the package stays `com.izyglobalservices.courier`, which users never see and which cannot change after the first upload. |
