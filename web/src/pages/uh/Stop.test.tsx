@@ -14,7 +14,7 @@ import { Stop } from './Stop';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
 import { IDBFactory } from 'fake-indexeddb';
-import { queued, resetOutboxForTests } from '../../lib/outbox';
+import { queued, rejections, resetOutboxForTests } from '../../lib/outbox';
 
 const session = { id: 4, username: 'ada.courier', name: 'Ada Courier', role: 'driver', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
@@ -81,14 +81,12 @@ function renderStop(r: Record<string, unknown> = routes()) {
    Kept as a helper rather than inlined, because the courier's own
    countersignature on a controlled handover IS still drawn and uses the
    same pointer dance. */
-/* The server takes a photographed form, OR a stated reason for not having
-   one. This is the reason branch: it needs no bucket, so a test about what
-   the screen SAYS is not also a test of the file service. attachForm() is
-   the other branch, used where the photograph is the point. */
+/* THERE IS ONLY ONE BRANCH NOW. This used to type a reason instead of
+   attaching a photograph, because the server took either. It takes only the
+   photograph, on every delivery, so proving a handover means attaching one
+   and every test that proves one pays the cost of the file service. */
 function proveHandover() {
-    fireEvent.change(screen.getByLabelText(/If there is no signed form, say why/), {
-        target: { value: 'the pharmacy sent no form with this one' },
-    });
+    attachForm();
 }
 
 function attachForm() {
@@ -231,7 +229,7 @@ describe('Stop', () => {
         expect(screen.getByRole('button', { name: 'Record the delivery' })).toBeEnabled();
     });
 
-    it('sends the photographed form as the proof, and no strokes', async () => {
+    it('sends the photographed form as the proof, and nothing else', async () => {
         const { fn } = renderStop({ ...routes(), ...fileRoutes, [`POST ${ORDER}/deliver`]: { status: 201, body: { status: 'delivered' } } });
         await screen.findByRole('heading', { name: 'Stop' });
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
@@ -239,14 +237,22 @@ describe('Stop', () => {
         attachForm();
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
-        await waitFor(() => expect(screen.getByText('Delivered and recorded.')).toBeInTheDocument());
+        /* THROUGH THE QUEUE, EVEN ON FULL SIGNAL. A photograph has to reach
+           the bucket before the delivery that references it, so the entry is
+           queued and drained immediately rather than posted inline. The
+           screen says so in those words. */
+        await waitFor(() => expect(screen.getByText(/Saved on this phone and sending now/)).toBeInTheDocument());
+        await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/deliver`)).toBeDefined());
         const body = bodyOf(fn, `POST ${ORDER}/deliver`);
         expect(body.signedName).toBe('Ines Vargas');
-        /* THE PHOTOGRAPH IS THE PROOF NOW. The file id is what the server
-           reads; strokes go empty rather than absent, so every delivery
-           already recorded with a drawn signature still means what it meant. */
+        /* THE PHOTOGRAPH IS THE PROOF, AND THE ONLY THING SENT.
+           `strokes: []` used to ride along so the column kept its shape.
+           Nothing draws a delivery signature any more, so sending an empty
+           array every time was a field that could only ever be empty --
+           and a reader of the request could not tell "captured nothing"
+           from "cannot capture". It is absent now; the server defaults it. */
         expect(body.courierFormFileId).toBe(99);
-        expect(body.strokes).toEqual([]);
+        expect(body.strokes).toBeUndefined();
         /* And no reason, because there WAS a form. A reason beside a
            photograph would be a contradiction in the record. */
         expect(body.noSignatureReason).toBeUndefined();
@@ -357,8 +363,9 @@ describe('Stop', () => {
     });
 
     it('shows the server refusal instead of a generic failure', async () => {
-        renderStop({
+        const { fn } = renderStop({
             ...routes(),
+            ...fileRoutes,
             [`POST ${ORDER}/deliver`]: { status: 409, body: { error: 'A delivered order cannot be delivered again', code: 'transition.invalid' } },
         });
         await screen.findByRole('heading', { name: 'Stop' });
@@ -367,7 +374,14 @@ describe('Stop', () => {
         proveHandover();
         fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
 
-        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('A delivered order cannot be delivered again'));
+        /* The refusal arrives through the queue now rather than inline,
+           because the delivery is queued behind its photograph. What must
+           not happen is the courier being told it saved: a 409 is a refusal
+           and the entry is rejected, not retried forever. */
+        await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/deliver`)).toBeDefined());
+        await waitFor(async () => expect(await rejections()).toHaveLength(1));
+        const [rejected] = await rejections();
+        expect(rejected?.error).toMatch(/A delivered order cannot be delivered again/);
     });
 
     it('accepts the delivery with no signal and says it is on the phone', async () => {

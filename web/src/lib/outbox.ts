@@ -37,6 +37,15 @@ const REJECTED = 'rejected';
 /** A rejection is kept only long enough for a courier to read it. */
 export const REJECTION_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** A photograph waiting to reach the bucket, and where its id belongs. */
+export interface QueuedPhoto {
+    blob: Blob;
+    contentType: string;
+    kind: string;
+    /** Where to put the resulting file id in the body. */
+    bodyKey: string;
+}
+
 export interface OutboxEntry {
     /** Also the clientEventId sent to the server. */
     id: string;
@@ -60,14 +69,19 @@ export interface OutboxEntry {
     sequence: number;
     tries: number;
     lastError: string;
-    /** A photo that has to reach the bucket before the event is sent. */
-    photo?: {
-        blob: Blob;
-        contentType: string;
-        kind: string;
-        /** Where to put the resulting file id in the body. */
-        bodyKey: string;
-    };
+    /** A photo that has to reach the bucket before the event is sent.
+     *  Singular, and kept: entries written before `photos` existed are still
+     *  in somebody's IndexedDB and must still drain. */
+    photo?: QueuedPhoto;
+    /** MORE THAN ONE, BECAUSE A DELIVERY CAN NEED TWO.
+     *
+     *  The signed courier form is required on every delivery and a
+     *  photograph of identification on the ones a pharmacy stamped. One
+     *  field could carry the form and left the ID to be uploaded eagerly,
+     *  which is exactly the thing that cannot be done without a signal --
+     *  so an ID Required delivery in a stairwell would still have been
+     *  impossible while an ordinary one queued fine. Both ride together. */
+    photos?: QueuedPhoto[];
 }
 
 export interface Rejection {
@@ -184,7 +198,8 @@ export interface EnqueueInput {
     body: Record<string, unknown>;
     label: string;
     orderId?: number | null;
-    photo?: OutboxEntry['photo'];
+    photo?: QueuedPhoto;
+    photos?: QueuedPhoto[];
     id?: string;
     /** Defaults to whoever is signed in now (see setOutboxUser). */
     username?: string;
@@ -209,6 +224,7 @@ export async function enqueue(input: EnqueueInput): Promise<OutboxEntry> {
         tries: 0,
         lastError: '',
         ...(input.photo ? { photo: input.photo } : {}),
+        ...(input.photos?.length ? { photos: input.photos } : {}),
     };
     await run(QUEUE, 'readwrite', (s) => s.put(entry));
     await notify();
@@ -346,15 +362,18 @@ export async function uploadPhotoNow(input: {
 }
 
 /** Put the photo in the bucket, then answer with the file id. */
-async function sendPhoto(entry: OutboxEntry): Promise<number> {
-    const photo = entry.photo!;
+async function sendPhoto(entry: OutboxEntry, photo: QueuedPhoto, suffix = ''): Promise<number> {
     /* The project and module prefix of the entry's own URL, so the file
        service is found without the caller repeating it. Matched rather than
        split on '/uh/': this contract's project code and module name are both
        "uh", and a split would stop at the first of them. */
     const module = /^(\/api\/projects\/[^/]+\/[^/]+)\//.exec(entry.url)?.[1];
     if (!module) throw Object.assign(new Error('That upload has nowhere to go'), { status: 400 });
-    return putPhoto(module, entry.orderId, photo.blob, photo.contentType, photo.kind, entry.id);
+    /* The idempotency key is per PHOTOGRAPH, not per entry. Two pictures on
+       one delivery sharing a key meant the second upload was answered with
+       the first one's file, so an ID Required delivery carried the signed
+       form twice and no identification. */
+    return putPhoto(module, entry.orderId, photo.blob, photo.contentType, photo.kind, `${entry.id}${suffix}`);
 }
 
 /** The three steps, in one place: create, PUT, confirm. */
@@ -425,7 +444,13 @@ export async function flush(): Promise<void> {
 
             try {
                 const body: Record<string, unknown> = { ...entry.body, clientEventId: entry.id };
-                if (entry.photo) body[entry.photo.bodyKey] = await sendPhoto(entry);
+                /* Normalised, because `photo` predates `photos` and an
+                   entry queued by an older build is still somebody's
+                   undelivered round. */
+                const pending = entry.photos ?? (entry.photo ? [entry.photo] : []);
+                for (const [i, shot] of pending.entries()) {
+                    body[shot.bodyKey] = await sendPhoto(entry, shot, i === 0 ? '' : `-${shot.kind}`);
+                }
 
                 const res = await postJson(entry.url, body);
                 if (res.status >= 500 || res.status === 429 || res.status === 408) {
@@ -488,7 +513,7 @@ export async function sendOrQueue(input: EnqueueInput): Promise<
 
     /* Queue first when anything is already waiting, even with a signal:
        jumping the queue would record this event before older ones. */
-    if (offline || waiting > 0 || input.photo) {
+    if (offline || waiting > 0 || input.photo || input.photos?.length) {
         const entry = await enqueue({ ...input, id });
         if (!offline) void flush();
         return { sent: false, entry };
