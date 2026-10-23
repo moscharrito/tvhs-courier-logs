@@ -93,12 +93,13 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                 body: {
                     siteId: site.site.id,
                     signedName: signedName.trim(),
-                    /* NO STROKES. The app used to generate a mark from the
-                       typed name and send it as a signature; nobody signed
-                       it. The printed name is the record here, and the
-                       signed paper is photographed at the door. */
-                    strokes: [],
-                    captureMethod: 'initials',
+                    /* NO STROKES AND NO CAPTURE METHOD. The app used to
+                       generate a mark from the typed name and send it as a
+                       signature; nobody signed it. Sending an empty array
+                       instead was a field that could only ever be empty --
+                       it told a reader of the request nothing and hid the
+                       difference between "captured none" and "cannot
+                       capture". The server defaults both. */
                     noSignatureReason: '',
                     countedPackages: check.kind === 'incomplete' ? 0 : check.counted,
                     note: note.trim(),

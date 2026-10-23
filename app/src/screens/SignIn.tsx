@@ -25,9 +25,13 @@ interface Props {
     /** Ticket 7.2: signing up is a first-class thing to do from this screen,
      *  not a link somebody has to be sent. */
     onApply: () => void;
+    /** And so is forgetting a password, for the same reason: the phone is
+     *  what a courier has in their hand when the one they were read out
+     *  does not work. */
+    onForgot: () => void;
 }
 
-export function SignIn({ contractName, onBack, onSignedIn, onApply }: Props) {
+export function SignIn({ contractName, onBack, onSignedIn, onApply, onForgot }: Props) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [busy, setBusy] = useState(false);
@@ -108,6 +112,16 @@ export function SignIn({ contractName, onBack, onSignedIn, onApply }: Props) {
                     disabled={!ready}
                     busy={busy}
                     tone="primary"
+                />
+                {/* BEFORE "apply to drive", because a courier who cannot
+                    sign in is far likelier to have forgotten a password
+                    than to be a new driver. They were given a generated one
+                    at a counter; this is where that goes wrong. */}
+                <CardButton
+                    title="Forgotten your password?"
+                    detail="We can email you a code to set a new one."
+                    onPress={onForgot}
+                    tone="secondary"
                 />
                 <CardButton
                     title="Apply to drive for Izy"

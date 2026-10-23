@@ -237,11 +237,11 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
             `${base}/deliver`,
             {
                 signedName: signedName.trim(),
-                /* Never. The photograph is the proof and the server
-                   refuses a delivery without it; a generated mark alongside
-                   it would be a second signature nobody made. */
-                strokes: [],
-                captureMethod: 'initials',
+                /* No strokes and no capture method. The photograph is the
+                   proof and the server refuses a delivery without it; an
+                   empty array alongside it described a signature nobody
+                   made and nobody could have made. The server defaults
+                   both. */
                 noSignatureReason: '',
                 note: note.trim(),
                 ...(signerReason.trim() === '' ? {} : { signerNotPatientReason: signerReason.trim() }),

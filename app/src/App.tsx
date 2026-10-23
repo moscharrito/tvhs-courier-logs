@@ -36,6 +36,7 @@ import { clearQueue } from './lib/queue';
 import { baseUrl, forgetServer, get, signOut, useContractServer, useServer, type Project } from './lib/api';
 import { SignIn } from './screens/SignIn';
 import { Apply } from './screens/Apply';
+import { ForgotPassword } from './screens/ForgotPassword';
 import { Onboarding } from './screens/Onboarding';
 import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
@@ -62,6 +63,7 @@ export function App() {
     const [token, setToken] = useState<string | null | undefined>(undefined);
     const [project, setProject] = useState<Project | null>(null);
     const [applying, setApplying] = useState(false);
+    const [forgot, setForgot] = useState(false);
     /* Undefined until the project list comes back. Null once it has and there
        is nothing on it, which is what sends somebody to their application. */
     const [hasProjects, setHasProjects] = useState<boolean | undefined>(undefined);
@@ -204,12 +206,15 @@ export function App() {
                         onDone={() => setApplying(false)}
                         onCancel={() => setApplying(false)}
                       />
-                    : <SignIn
-                        contractName={chosen.name}
-                        onBack={() => chooseContract(null)}
-                        onSignedIn={onSignedIn}
-                        onApply={() => setApplying(true)}
-                      />
+                    : forgot
+                        ? <ForgotPassword onBack={() => setForgot(false)} />
+                        : <SignIn
+                            contractName={chosen.name}
+                            onBack={() => chooseContract(null)}
+                            onSignedIn={onSignedIn}
+                            onApply={() => setApplying(true)}
+                            onForgot={() => setForgot(true)}
+                          />
             /* THERE WAS A GATE HERE, and it is worth knowing what it was.
                An account whose password an administrator had chosen was
                refused everything by the server until it was replaced, so the

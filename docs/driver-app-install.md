@@ -121,16 +121,26 @@ the door, after both of you have signed it. On the delivery screen, under
 
 Tap it, photograph the form, then **Record the delivery**.
 
-### On a controlled drug you cannot finish without it
+### You cannot finish a delivery without it
 
-These stops are flagged from the moment you collect them —
-**CONTROLLED · photograph part 2 at the door**. If you try to record the
+**Every delivery. Not just the controlled ones.** If you try to record a
 delivery with no photograph, the app stops you and says so.
 
-**That is not a fault. Take the photograph and record it again.** There is no
+**That is not a fault.** Take the photograph and record it again. There is no
 way round it and there is not meant to be: that photograph is the only proof
-that both signatures were taken, and it is what protects you if the pharmacy
-ever asks.
+that both signatures were taken, and it is what protects you if anybody ever
+asks what happened at that door.
+
+Controlled drugs are flagged from the moment you collect them —
+**CONTROLLED · photograph part 2 at the door** — so you know before you set
+off which ones the pharmacy will be strictest about. The rule is the same on
+all of them.
+
+**If you genuinely cannot photograph it** — the camera will not open, the
+phone has no space — do not hand the medication over and then work it out.
+Record it as **Could not deliver**, say why, and ring dispatch. A delivery
+with no photograph cannot be recorded at all, and an undelivered package goes
+back to the pharmacy the same day.
 
 ### ID Required
 
@@ -143,9 +153,15 @@ details against the person in front of you before you photograph anything.
 This one says **optional**, and it is. Use it when something about the handover
 is worth a picture — an unusual drop point, a door nobody answered.
 
-Both required photographs are attached to the proof of delivery for that order.
-The office can pull up the signed paper for any delivery without going near a
+The photographs are attached to the proof of delivery for that order. The
+office can pull up the signed paper for any delivery without going near a
 filing cabinet, which is the whole point.
+
+### No signal? Still fine
+
+The photograph goes in the queue with the delivery. You record it as normal,
+the phone holds both, and they go up together the moment you have a bar
+again. You do not have to find signal before you can write a delivery down.
 
 ## If something goes wrong
 

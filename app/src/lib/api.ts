@@ -146,6 +146,35 @@ export async function signIn(username: string, password: string): Promise<Sessio
     });
 }
 
+/* ── Forgetting a password ───────────────────────────────────────────────
+ *
+ * Unauthenticated by necessity: somebody who cannot sign in cannot be asked
+ * to sign in first. Both answer identically whether or not the address has
+ * an account, so there is nothing here to interpret -- the screen shows what
+ * the server said and nothing more. See core/auth/password-reset.ts.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Ask for a six digit code. 202 whether or not the address is known. */
+export async function requestPasswordReset(email: string): Promise<{ message: string }> {
+    return request<{ message: string }>(fetch, baseUrl(), '/api/password-reset/request', {
+        method: 'POST',
+        json: { email },
+        asApp: true,
+    });
+}
+
+/** Use the code. Every session on the account is revoked, including this
+ *  phone's, which is the point: whoever asked could not sign in. */
+export async function confirmPasswordReset(
+    email: string, code: string, password: string,
+): Promise<{ username: string; revokedSessions: number }> {
+    return request<{ username: string; revokedSessions: number }>(fetch, baseUrl(), '/api/password-reset/confirm', {
+        method: 'POST',
+        json: { email, code, password },
+        asApp: true,
+    });
+}
+
 /** The roster on the side of the vans. Unauthenticated, like the web
  *  sign-in page: it carries no PIN and no password hash. */
 export interface DriverPick {
