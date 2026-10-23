@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startServer } from './helpers/server.mjs';
+import { startServer, storedForm } from './helpers/server.mjs';
 
 const ORDERS = '/api/projects/uh/uh/orders';
 const RUNS = '/api/projects/uh/uh/runs';
@@ -80,7 +80,7 @@ describe('an ordinary delivery', () => {
     it('is unaffected: anybody at the address may sign, with no explanation', async () => {
         const { order, ada } = await atTheDoor();
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'A Neighbour', strokes: STROKES });
+            .send({ signedName: 'A Neighbour', courierFormFileId: await storedForm(srv) });
         expect(res.status, res.text).toBe(201);
     });
 });
@@ -89,14 +89,14 @@ describe('a Medicare delivery', () => {
     it('is recorded without comment when the patient signs', async () => {
         const { order, ada } = await atTheDoor({ signatureRule: 'patient_only' });
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: order.recipientName, strokes: STROKES });
+            .send({ signedName: order.recipientName, courierFormFileId: await storedForm(srv) });
         expect(res.status, res.text).toBe(201);
     });
 
     it('forgives how the name was typed, but not who it is', async () => {
         const { order, ada } = await atTheDoor({ signatureRule: 'patient_only' });
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: `  ${order.recipientName.toUpperCase()}  `, strokes: STROKES });
+            .send({ signedName: `  ${order.recipientName.toUpperCase()}  `, courierFormFileId: await storedForm(srv) });
         expect(res.status, res.text).toBe(201);
     });
 
@@ -106,7 +106,7 @@ describe('a Medicare delivery', () => {
            to see the mismatch rather than be told there is one. */
         const { order, ada } = await atTheDoor({ signatureRule: 'patient_only' });
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'A Neighbour', strokes: STROKES });
+            .send({ signedName: 'A Neighbour', courierFormFileId: await storedForm(srv) });
         expect(res.status, res.text).toBe(400);
         expect(res.body.code).toBe('deliver.notThePatient');
         expect(res.body.error).toContain(order.recipientName);
@@ -118,7 +118,7 @@ describe('a Medicare delivery', () => {
            check: the pharmacy would see it delivered and the courier would
            see an error. */
         const { order, ada } = await atTheDoor({ signatureRule: 'patient_only' });
-        await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'A Neighbour', strokes: STROKES });
+        await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'A Neighbour', courierFormFileId: await storedForm(srv) });
         const after = await admin.get(`${ORDERS}/${order.id}`);
         expect(after.body.status).not.toBe('delivered');
         expect(after.body.deliveredAt).toBeFalsy();
@@ -128,7 +128,7 @@ describe('a Medicare delivery', () => {
         const { order, ada } = await atTheDoor({ signatureRule: 'patient_only' });
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
             signedName: 'A Neighbour',
-            strokes: STROKES,
+            courierFormFileId: await storedForm(srv),
             signerNotPatientReason: 'Patient bedbound; daughter produced the patient ID at the door.',
         });
         expect(res.status, res.text).toBe(201);
@@ -140,7 +140,7 @@ describe('a Medicare delivery', () => {
            already ask for rather than having to ask us for a log. */
         const { order, ada } = await atTheDoor({ signatureRule: 'patient_only' });
         await ada.post(`${ORDERS}/${order.id}/deliver`).send({
-            signedName: 'A Neighbour', strokes: STROKES,
+            signedName: 'A Neighbour', courierFormFileId: await storedForm(srv),
             signerNotPatientReason: 'Daughter produced the patient ID.',
         });
         const rs = await srv.core.client.execute({
@@ -162,7 +162,7 @@ describe('a Medicare delivery', () => {
             authorisedSigners: 'Delphine Okonkwo (daughter)',
         });
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'Delphine Okonkwo', strokes: STROKES });
+            .send({ signedName: 'Delphine Okonkwo', courierFormFileId: await storedForm(srv) });
         expect(res.status, res.text).toBe(201);
     });
 
@@ -172,7 +172,7 @@ describe('a Medicare delivery', () => {
             authorisedSigners: 'Delphine Okonkwo (daughter)',
         });
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'Marcus Ibarra', strokes: STROKES });
+            .send({ signedName: 'Marcus Ibarra', courierFormFileId: await storedForm(srv) });
         expect(res.status).toBe(400);
         expect(res.body.code).toBe('deliver.notThePatient');
     });

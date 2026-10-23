@@ -7,7 +7,7 @@
  * somebody's flatmate they are ill. */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startServer } from './helpers/server.mjs';
+import { startServer, storedForm } from './helpers/server.mjs';
 import { STAGE_NAMES } from '../src/core/notify/sms-template.ts';
 import { assertMinimal, toE164, createTexter, OPTED_OUT } from '../src/core/notify/twilio.ts';
 import {
@@ -336,7 +336,7 @@ describe('a text at each stage', () => {
         await clear();
         const o = await atTheDoor();
         const res = await ada.post(`${ORDERS}/${o.id}/deliver`).send({
-            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+            signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
 
@@ -373,10 +373,10 @@ describe('a text at each stage', () => {
         await clear();
         const o = await atTheDoor();
         await ada.post(`${ORDERS}/${o.id}/deliver`).send({
-            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+            signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
         await ada.post(`${ORDERS}/${o.id}/deliver`).send({
-            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+            signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
         /* The unique index on (order_id, kind), not the caller remembering. */
         expect(await queued(o.id)).toHaveLength(1);
@@ -386,7 +386,7 @@ describe('a text at each stage', () => {
         await clear();
         const o = await atTheDoor({ recipientPhone: '' });
         await ada.post(`${ORDERS}/${o.id}/deliver`).send({
-            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+            signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
         expect(await queued(o.id)).toEqual([]);
     });
@@ -395,7 +395,7 @@ describe('a text at each stage', () => {
         await clear();
         const o = await atTheDoor();
         await ada.post(`${ORDERS}/${o.id}/deliver`).send({
-            signedName: 'Recipient', noSignatureReason: 'Left with recipient',
+            signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
 
         const texter = fakeTexter();

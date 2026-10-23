@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startServer } from './helpers/server.mjs';
+import { startServer, storedForm } from './helpers/server.mjs';
 
 const ORDERS = '/api/projects/uh/uh/orders';
 const RUNS = '/api/projects/uh/uh/runs';
@@ -246,7 +246,7 @@ describe('a contract that forbids leaving a package', () => {
            is a completed delivery. Nobody was there is not. */
         const handed = await pickedUpOrder({ signatureRequired: false });
         const res = await admin.post(`${ORDERS}/${handed.id}/deliver`).send({
-            signedName: 'Recipient', noSignatureReason: 'Received at the door; declined to sign.',
+            signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
     });

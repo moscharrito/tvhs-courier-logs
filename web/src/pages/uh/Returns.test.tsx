@@ -169,7 +169,12 @@ describe('Returns', () => {
            rather than absent, so every return already recorded with a drawn
            signature still means what it meant. */
         expect(body.courierFormFileId).toBe(77);
-        expect(body.strokes).toEqual([]);
+        /* ABSENT, NOT EMPTY. `strokes: []` used to ride along to keep the
+           column's shape. Nothing captures a signature here any more, so a
+           field that could only ever be empty told a reader of the request
+           nothing, and hid the difference between "captured none" and
+           "cannot capture". The server defaults it. */
+        expect(body.strokes).toBeUndefined();
     });
 
     it('shows the server refusal rather than a generic failure', async () => {

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startServer } from './helpers/server.mjs';
+import { startServer, storedForm } from './helpers/server.mjs';
 import { sweepClientEvents, CLIENT_EVENT_RETENTION_DAYS } from '../src/core/http/idempotency.ts';
 
 const ORDERS = '/api/projects/uh/uh/orders';
@@ -60,7 +60,7 @@ describe('a retry carrying the id the phone chose', () => {
         const order = await pickedUpOrder();
         const ada = await courierAgent();
         const clientEventId = key();
-        const body = { clientEventId, signedName: 'Ines Vargas', strokes: STROKES };
+        const body = { clientEventId, signedName: 'Ines Vargas', courierFormFileId: await storedForm(srv) };
 
         const first = await ada.post(`${ORDERS}/${order.id}/deliver`).send(body);
         expect(first.status).toBe(201);

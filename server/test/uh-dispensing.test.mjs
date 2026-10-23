@@ -85,19 +85,27 @@ describe('the signed paper form', () => {
         expect(Number(file.order_id)).toBe(order.id);
     });
 
-    it('refuses a handover with no form, no signature and no reason', async () => {
+    it('refuses a handover with no photograph of the form', async () => {
         const { order, ada } = await atTheDoor();
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas' });
         expect(res.status).toBe(400);
-        expect(res.body.code).toBe('deliver.noProof');
+        expect(res.body.code).toBe('deliver.formPhotographRequired');
         expect((await orderRow(order.id)).status).not.toBe('delivered');
     });
 
-    it('still accepts a stated reason when neither was possible', async () => {
+    it('no longer accepts a stated reason in place of the photograph', async () => {
+        /* THIS TEST USED TO ASSERT THE OPPOSITE, AND THE CHANGE IS THE POINT.
+           "Recipient was behind a screen door" was a reason for an absent
+           SIGNATURE, from when a signature was what proved a handover. The
+           signature is on paper now and the photograph is the proof, and no
+           sentence stands in for a photograph -- a courier who cannot take
+           one has not completed the handover, and the record for that is a
+           failed attempt. */
         const { order, ada } = await atTheDoor();
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
             .send({ signedName: 'Ines Vargas', noSignatureReason: 'Recipient was behind a screen door and would not open it.' });
-        expect(res.status).toBe(201);
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('deliver.formPhotographRequired');
     });
 
     it('refuses a photograph that never finished uploading', async () => {

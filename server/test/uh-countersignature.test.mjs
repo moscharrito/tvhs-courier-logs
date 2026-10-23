@@ -51,8 +51,12 @@ async function pickedUpOrder(over = {}) {
     return order;
 }
 
+/* No strokes. Nothing captures a delivery signature any more, so a helper
+   that quietly added one would be testing a request no client sends. Callers
+   that need the delivery to succeed pass courierFormFileId, which is now the
+   proof on every delivery rather than only on controlled ones. */
 const deliver = (order, body) => ada.post(`${ORDERS}/${order.id}/deliver`).send({
-    signedName: 'Ines Vargas', strokes: STROKES, ...body,
+    signedName: 'Ines Vargas', ...body,
 });
 
 /* A stored photograph of part 2 of the docket. order_id stays NULL the way
@@ -88,7 +92,7 @@ describe('an ordinary delivery', () => {
            every door would be a second signature nobody reads, and the one
            place it means something would stop meaning anything. */
         const order = await pickedUpOrder({ controlled: false });
-        const res = await deliver(order);
+        const res = await deliver(order, { courierFormFileId: await storedForm() });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 });
@@ -105,7 +109,7 @@ describe('a controlled drug at the door', () => {
         expect(res.status).toBe(400);
         expect(res.body.code).toBe('deliver.formPhotographRequired');
         /* It says what to do, not just that it will not. */
-        expect(res.body.error).toMatch(/Photograph the signed form/i);
+        expect(res.body.error).toMatch(/Photograph the signed courier form/i);
     });
 
     it('takes the courier name from the session, never from the request', async () => {

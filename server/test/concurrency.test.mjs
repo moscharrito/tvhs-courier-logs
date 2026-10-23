@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startServer } from './helpers/server.mjs';
+import { startServer, storedForm } from './helpers/server.mjs';
 import { asScreen } from './helpers/board.mjs';
 
 const ORDERS = '/api/projects/uh/uh/orders';
@@ -62,7 +62,7 @@ describe('the same phone sending twice at once', () => {
            still in flight. Both carry the same id, as the outbox guarantees. */
         const order = await pickedUpOrder();
         const ada = await agentFor('race.courier1');
-        const body = { clientEventId: `race-${Date.now()}-aaaaaaaa`, signedName: 'Recipient', strokes: STROKES };
+        const body = { clientEventId: `race-${Date.now()}-aaaaaaaa`, signedName: 'Recipient', courierFormFileId: await storedForm(srv) };
 
         const [first, second] = await Promise.all([
             ada.post(`${ORDERS}/${order.id}/deliver`).send(body),
@@ -103,10 +103,13 @@ describe('different people writing at the same moment', () => {
         const order = await pickedUpOrder('race.courier1');
         const one = await agentFor('race.courier1');
         const two = await agentFor('race.courier2');
+        /* One photograph. Both couriers are racing for the same order and
+           only one delivery can bind it, which is the point of the race. */
+        const formId = await storedForm(srv);
 
         const [a, b] = await Promise.all([
-            one.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Recipient', strokes: STROKES }),
-            two.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Recipient', strokes: STROKES }),
+            one.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Recipient', courierFormFileId: formId }),
+            two.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Recipient', courierFormFileId: formId }),
         ]);
         expect([a.status, b.status].filter((s) => s === 201)).toHaveLength(1);
         expect([a.status, b.status].some((s) => s === 403 || s === 409)).toBe(true);

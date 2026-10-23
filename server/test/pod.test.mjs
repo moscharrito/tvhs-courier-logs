@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startServer, tempDb, removeDir } from './helpers/server.mjs';
+import { startServer, tempDb, removeDir, storedForm } from './helpers/server.mjs';
 import { buildPdf, Page, PAGE, toLatin, wrap, textWidth } from '../src/core/pdf/writer.ts';
 import { renderPod, fitStrokes, stamp, podFilename } from '../src/modules/uh/pod.ts';
 
@@ -62,7 +62,7 @@ async function deliveredOrder(over = {}) {
         siteId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 2, lat: 29.5, lng: -98.5,
     });
     await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
-    await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', strokes: STROKES });
+    await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm(srv) });
     return order;
 }
 
@@ -272,15 +272,24 @@ describe('the proof of delivery', () => {
         expect(text).toContain('Pharmacy Tech');
     });
 
-    it('draws both signatures rather than describing them', async () => {
+    it('draws a stored signature rather than describing it', async () => {
+        /* ONE SIGNATURE NOW, NOT TWO, AND BOTH NUMBERS ARE THE POINT.
+           This expected a pickup signature and a delivery signature. Nothing
+           captures a delivery signature any more -- the paper is signed at
+           the door and photographed -- so the delivery half of that pair is
+           gone for every record made from now on.
+           What must not change is that a signature which IS stored still
+           renders as strokes. Historic deliveries carry them, and a proof of
+           delivery that quietly stopped drawing them would be rewriting the
+           evidence for handovers that already happened. The pickup in this
+           fixture still sends strokes, which is what a pre-change record
+           looks like. */
         const order = await deliveredOrder();
         const res = await admin.get(`${ORDERS}/${order.id}/pod.pdf`);
         const body = Buffer.from(res.body).toString('latin1');
-        /* Each captured stroke becomes a move and a run of lines. Four points
-           per signature, two signatures. */
         const lineOps = [...body.matchAll(/^\d+(\.\d+)? \d+(\.\d+)? l$/gm)].length;
-        expect(lineOps).toBeGreaterThanOrEqual(6);
-        expect([...body.matchAll(/^\d+(\.\d+)? \d+(\.\d+)? m$/gm)].length).toBeGreaterThanOrEqual(2);
+        expect(lineOps, 'stroke segments').toBeGreaterThanOrEqual(3);
+        expect([...body.matchAll(/^\d+(\.\d+)? \d+(\.\d+)? m$/gm)].length, 'pen-down moves').toBeGreaterThanOrEqual(1);
     });
 
     it('keeps the separators between fields legible', async () => {
@@ -453,9 +462,16 @@ describe('our copy and the client copy', () => {
         for (const text of [ours, theirs]) expect(text).not.toMatch(/No photograph was taken/i);
     });
 
-    it('both say there is none when none was uploaded', async () => {
-        /* The other direction, so the fix cannot be "always claim a photo". */
+    it('both say there is none when the photograph is gone', async () => {
+        /* The other direction, so the fix cannot be "always claim a photo".
+           A delivery cannot be recorded without one now, so the way a POD
+           legitimately has no photograph is that the file went: the
+           retention sweep walks the files table by date and takes the image
+           while the delivery record stays. Deleting the row reproduces that,
+           and the document must then say there is none rather than promising
+           a picture nobody can produce. */
         const order = await deliveredOrder();
+        await client.execute({ sql: 'DELETE FROM files WHERE order_id = ?', args: [order.id] });
         const ours = pdfText(Buffer.from((await admin.get(`${ORDERS}/${order.id}/pod.pdf`)).body));
         const theirs = pdfText(Buffer.from((await (await asUh()).get(`${CLIENT}/orders/${order.id}/pod.pdf`)).body));
 

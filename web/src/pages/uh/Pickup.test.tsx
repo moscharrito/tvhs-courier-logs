@@ -185,7 +185,12 @@ describe('Pickup', () => {
            stated reason and strokes go empty rather than absent -- every
            collection already recorded with a drawn one still means what it
            meant. */
-        expect(body.strokes).toEqual([]);
+        /* ABSENT, NOT EMPTY. `strokes: []` used to ride along to keep the
+           column's shape. Nothing captures a signature here any more, so a
+           field that could only ever be empty told a reader of the request
+           nothing, and hid the difference between "captured none" and
+           "cannot capture". The server defaults it. */
+        expect(body.strokes).toBeUndefined();
         expect(body.noSignatureReason).toMatch(/no form ready/);
         expect(await screen.findByText(/Collected 2 orders/)).toBeInTheDocument();
     });

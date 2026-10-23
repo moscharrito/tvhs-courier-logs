@@ -169,3 +169,27 @@ export function binaryParser(res, cb) {
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => cb(null, Buffer.concat(chunks)));
 }
+
+/**
+ * A stored photograph of the signed courier form, for a delivery that needs
+ * one — which, since every delivery does, is most of them.
+ *
+ * HERE RATHER THAN IN EACH FILE. The rule that the photograph is the proof
+ * landed across seven suites at once, and the alternative was seven copies of
+ * the same INSERT drifting apart. Tests that care about the photograph
+ * itself (uh-countersignature) keep their own, closer to what they assert.
+ *
+ * order_id stays NULL the way the uploader leaves it: the deliver handler
+ * binds it, and a test that pre-bound it would not notice if the handler
+ * stopped.
+ */
+export async function storedForm(srv, uploader = 'ada.courier', projectCode = 'uh') {
+    const at = new Date().toISOString();
+    const rs = await srv.core.client.execute({
+        sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+              VALUES ((SELECT id FROM projects WHERE code = ?), NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', ?, ?, ?)
+              RETURNING id`,
+        args: [projectCode, `${projectCode}/test/form/${Math.random()}.jpg`, uploader, at, at],
+    });
+    return Number(rs.rows[0].id);
+}

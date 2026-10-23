@@ -30,7 +30,21 @@ beforeAll(async () => {
 afterAll(async () => { await srv.stop(); });
 
 const sql = (q, args = []) => srv.core.client.execute({ sql: q, args });
-const STROKES = [[{ x: 0.1, y: 0.5, t: 0 }, { x: 0.5, y: 0.2, t: 40 }, { x: 0.8, y: 0.6, t: 90 }]];
+
+/* A stored photograph of the signed courier form. Every delivery needs one
+   now, not only controlled ones, so this is the price of admission to the
+   deliver route rather than a detail of one test. order_id stays NULL the way
+   the uploader leaves it; the handler binds it when the delivery lands. */
+async function storedForm() {
+    const at = new Date().toISOString();
+    const rs = await sql(
+        `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+         VALUES ((SELECT id FROM projects WHERE code = 'uh'), NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', 'ada.courier', ?, ?)
+         RETURNING id`,
+        [`uh/test/form/${Math.random()}.jpg`, at, at],
+    );
+    return Number(rs.rows[0].id);
+}
 
 let seq = 0;
 /** An order in a courier's hands, ready for the door. */
@@ -109,55 +123,34 @@ describe('delivering', () => {
        and which a doorstep needs more, not less: the person receiving may
        have their hands full, may be elderly, may be behind a screen door. */
 
-    it('records how the mark was made, so a drawn one is not a typed one', async () => {
+    it('refuses every delivery without the photographed form, not just controlled ones', async () => {
+        /* THE RULE THAT REPLACED THREE OTHERS.
+           This route used to take a photograph OR strokes OR a typed reason,
+           and ordinary deliveries almost always took the middle branch --
+           not because anyone signed a screen, but because the app drew a mark
+           from the typed name and sent it. The clients no longer generate
+           one, so the photograph is the proof on every order. */
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
         await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
-        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'Ines Vargas', strokes: STROKES });
-        expect(res.status, res.text).toBe(201);
 
-        const row = await sql("SELECT capture_method FROM signatures WHERE kind = 'delivery' ORDER BY id DESC LIMIT 1");
-        expect(String(row.rows[0].capture_method)).toBe('drawn');
-    });
-
-    it('takes typed initials, and says they were typed', async () => {
-        /* A real electronic signature. What must never happen is it being
-           stored so nobody can tell it from a finger on glass, because then
-           "the patient signed" means two different things in two rows. */
-        const order = await pickedUpOrder();
-        const ada = await courierAgent('ada.courier');
-        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
-        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'James Madison', strokes: STROKES, captureMethod: 'initials' });
-        expect(res.status, res.text).toBe(201);
-
-        const row = await sql("SELECT capture_method, signed_name FROM signatures WHERE kind = 'delivery' ORDER BY id DESC LIMIT 1");
-        expect(String(row.rows[0].capture_method)).toBe('initials');
-        /* The full name is kept, not just the initials: the record says who
-           it was, and the mark is only how they marked it. */
-        expect(String(row.rows[0].signed_name)).toBe('James Madison');
-    });
-
-    it('refuses a handover with nothing proving it', async () => {
-        const order = await pickedUpOrder();
-        const ada = await courierAgent('ada.courier');
-        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
             .send({ signedName: 'Ines Vargas' });
         expect(res.status).toBe(400);
-        /* Renamed from deliver.noSignatureReason when University Health moved
-           the signature onto their own paper form: a photographed form now
-           satisfies this too, so the refusal is about proof in general rather
-           than about a signature specifically. */
-        expect(res.body.code).toBe('deliver.noProof');
+        expect(res.body.code).toBe('deliver.formPhotographRequired');
+        expect(res.body.need).toContain('courierFormFileId');
         /* Arriving stamps arrived_at without moving the status off
            picked_up, so the property here is that it did NOT become
            delivered rather than what it did become. */
         expect((await detail(order.id)).body.status).not.toBe('delivered');
     });
 
-    it('takes no signature when there is a reason', async () => {
+    it('is not satisfied by a typed reason any more', async () => {
+        /* "Hands full; asked me to leave it on the table" used to be enough.
+           It is an explanation for an absent signature, and there is no
+           signature to explain -- what is missing now is the photograph of
+           the paper both parties signed, and no sentence substitutes for it.
+           A courier who cannot photograph it records a failed attempt. */
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
         await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
@@ -165,6 +158,16 @@ describe('delivering', () => {
             signedName: 'Ines Vargas',
             noSignatureReason: 'Hands full with a child; asked me to leave it on the table.',
         });
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('deliver.formPhotographRequired');
+    });
+
+    it('takes the delivery once the form is photographed', async () => {
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm() });
         expect(res.status, res.text).toBe(201);
         expect((await detail(order.id)).body.status).toBe('delivered');
     });
@@ -186,7 +189,7 @@ describe('delivering', () => {
         const ada = await courierAgent('ada.courier');
         await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
         const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
-            .send({ signedName: 'Ines Vargas', strokes: STROKES, lat: 29.42, lng: -98.49 });
+            .send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm(), lat: 29.42, lng: -98.49 });
         expect(res.status).toBe(201);
         expect(res.body).toMatchObject({ status: 'delivered', receivedBy: 'Ines Vargas' });
         expect(res.body.inferredArrival).toBe(false);
@@ -204,7 +207,7 @@ describe('delivering', () => {
            us to. Inferring it can only make us look worse, never better. */
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
-        const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', strokes: STROKES });
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm() });
         expect(res.body.inferredArrival).toBe(true);
         expect(res.body.notes.join(' ')).toMatch(/No arrival was recorded separately/);
 
@@ -218,24 +221,38 @@ describe('delivering', () => {
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
         expect((await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas' })).status).toBe(400);
-        expect((await ada.post(`${ORDERS}/${order.id}/deliver`).send({ strokes: STROKES })).status).toBe(400);
+        expect((await ada.post(`${ORDERS}/${order.id}/deliver`).send({ courierFormFileId: await storedForm() })).status).toBe(400);
         expect((await detail(order.id)).body.status).toBe('picked_up');
     });
 
-    it('stores the signature as strokes, marked as a delivery', async () => {
+    it('binds the photographed form to the order it proves', async () => {
+        /* REPLACES A TEST THAT ASSERTED A STROKE ROW. Nothing draws strokes
+           any more, so the question is no longer "was the signature stored"
+           but "can this delivery be tied to the paper that was signed". The
+           uploader leaves order_id NULL and the handler binds it; an
+           unbound photograph is an image nobody can attribute, and the
+           retention sweep walks files by date rather than by owner. */
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
-        await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', strokes: STROKES });
-        const row = (await sql("SELECT kind, signed_name, strokes FROM signatures WHERE kind = 'delivery' ORDER BY id DESC LIMIT 1")).rows[0];
-        expect(row).toMatchObject({ kind: 'delivery', signed_name: 'Ines Vargas' });
-        expect(JSON.parse(String(row.strokes))[0]).toHaveLength(3);
+        const fileId = await storedForm();
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas', courierFormFileId: fileId });
+        expect(res.status, res.text).toBe(201);
+
+        const file = (await sql('SELECT order_id, kind FROM files WHERE id = ?', [fileId])).rows[0];
+        expect(Number(file.order_id)).toBe(order.id);
+        expect(String(file.kind)).toBe('courier_form');
+
+        /* And the name is still on the record: the photograph says what was
+           signed, the custody event says who took it. */
+        expect((await detail(order.id)).body.receivedBy ?? 'Ines Vargas').toBe('Ines Vargas');
     });
 
     it('cannot deliver something that is not in a courier\'s hands', async () => {
         const created = await admin.post(ORDERS).send({
             siteId: dischargeId, serviceType: 'stat', recipientName: 'Nobody', addressLine: '1 Nowhere', zip: '78215', quantity: 1,
         });
-        const res = await admin.post(`${ORDERS}/${created.body.id}/deliver`).send({ signedName: 'X', strokes: STROKES });
+        const res = await admin.post(`${ORDERS}/${created.body.id}/deliver`).send({ signedName: 'X', courierFormFileId: await storedForm() });
         expect(res.status).toBe(409);
     });
 });
@@ -383,7 +400,7 @@ describe('access control and the record', () => {
         const bo = await courierAgent('bo.courier');
         for (const [path, body] of [
             ['arrive', {}],
-            ['deliver', { signedName: 'X', strokes: STROKES }],
+            ['deliver', { signedName: 'X' }],
             ['attempt', { packages: [{ packageId: 1, reasonCode: 'no_access' }] }],
         ]) {
             expect((await bo.post(`${ORDERS}/${order.id}/${path}`).send(body)).status, path).toBe(403);
@@ -393,7 +410,7 @@ describe('access control and the record', () => {
 
     it('lets staff record it when a phone has died', async () => {
         const order = await pickedUpOrder();
-        const res = await admin.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', strokes: STROKES });
+        const res = await admin.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm() });
         expect(res.status).toBe(201);
         expect((await detail(order.id)).body.custody.find((e) => e.type === 'delivered').actor).toBe('admin');
     });
@@ -410,7 +427,7 @@ describe('access control and the record', () => {
     it('keeps the receiver name and the strokes out of the audit trail', async () => {
         const order = await pickedUpOrder();
         const ada = await courierAgent('ada.courier');
-        await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', strokes: STROKES });
+        await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm() });
 
         const audit = await admin.get('/api/audit?action=stop&limit=10');
         expect(audit.body.events.some((e) => e.action === 'stop.delivered')).toBe(true);
