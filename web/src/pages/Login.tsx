@@ -30,9 +30,10 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { SecretInput } from '../app/SecretInput';
+import { PasswordReset } from './PasswordReset';
 import { Loading } from '../app/Loading';
 
-type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'device';
+type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'device' | 'reset';
 interface LoginProject { code: string; name: string }
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -252,6 +253,27 @@ export function Login() {
                         <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
                         <div className="izy-muted" style={{ textAlign: 'center' }}>Your projects appear after you sign in.</div>
                     </form>
+                )}
+
+                {mode === 'reset' && (
+                    <PasswordReset onBack={() => { setMode('project'); setError(null); }} />
+                )}
+
+                {/* OFFERED FROM EVERY WAY IN THAT USES A PASSWORD, and from
+                    the first screen, because somebody who has forgotten
+                    theirs does not know which of these screens they were
+                    supposed to reach. Not offered on the PIN screens: a PIN
+                    is device-bound and resetting a password does not bring
+                    one back -- "Sign in another way" is the route out of
+                    those, and it leads here. */}
+                {mode !== 'reset' && mode !== 'device' && mode !== 'pin' && (
+                    <button
+                        className="izy-link"
+                        type="button"
+                        onClick={() => { setMode('reset'); setError(null); }}
+                    >
+                        Forgotten your password?
+                    </button>
                 )}
             </div>
         </div>
