@@ -18,8 +18,7 @@ import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
-import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
-import { sendOrQueue, pendingFor, uploadPhotoNow } from '../../lib/outbox';
+import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
 
 interface Package {
     id: number; description: string; quantity: number;
@@ -100,7 +99,6 @@ export function Stop() {
     const [handoverOnly, setHandoverOnly] = useState<boolean | null>(null);
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
-    const [strokes, setStrokes] = useState<SignatureStrokes>([]);
     /* The courier's own mark, on a controlled drug (7.13). This form is the
        one dispatch uses when a phone has died, so whoever is signed in here
        is the person attesting; the server takes the printed name from their
@@ -108,17 +106,17 @@ export function Stop() {
     const [noSignatureReason, setNoSignatureReason] = useState('');
     const [photo, setPhoto] = useState<File | null>(null);
     const photoInput = useRef<HTMLInputElement>(null);
-    /* THE SIGNATURE MOVED ONTO PAPER, and this screen was the last place
-       still asking for it on glass. The pharmacy's own form is signed at the
-       door and photographed; the strokes below stay as optional history.
+    /* THE SIGNATURE MOVED ONTO PAPER, and then off the screen entirely.
+       The pharmacy's own form is signed at the door and photographed, and
+       that photograph is now the only proof a delivery can carry: no pad,
+       no generated mark, no typed reason in place of one.
        Identification is its own photograph and only where the form was
-       stamped. Both are uploaded BEFORE the delivery is recorded -- see
-       uploadPhotoNow for why that differs from the doorstep photo. */
+       stamped. Both ride in the outbox with the delivery, so a courier with
+       no signal records the handover and the evidence together. */
     const [formPhoto, setFormPhoto] = useState<File | null>(null);
     const [idPhoto, setIdPhoto] = useState<File | null>(null);
     /* Its own, not the doorstep branch's: two forms sharing one box means
        typing in one silently fills the other. */
-    const [noFormReason, setNoFormReason] = useState('');
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
     const [busy, setBusy] = useState(false);
     const [queuedHere, setQueuedHere] = useState(false);
@@ -184,7 +182,7 @@ export function Stop() {
      * signal and try again" would mean doing it again later from memory, or
      * not at all.
      */
-    async function post(path: string, body: Record<string, unknown>, ok: string, photo?: File) {
+    async function post(path: string, body: Record<string, unknown>, ok: string, photo?: File, photos?: QueuedPhoto[]) {
         setBusy(true);
         setMsg(null);
         const position = await currentPosition();
@@ -195,6 +193,7 @@ export function Stop() {
                 label: `${LABELS[path] ?? path} for ${order!.recipientName}`,
                 orderId: order!.id,
                 ...(photo ? { photo: { blob: photo, contentType: photo.type, kind: 'doorstep', bodyKey: 'fileId' } } : {}),
+                ...(photos?.length ? { photos } : {}),
             });
             if (result.sent) {
                 setMsg({ kind: 'ok', text: ok });
@@ -212,7 +211,6 @@ export function Stop() {
                 setQueuedHere(true);
             }
             setChoice(null);
-            setStrokes([]);
             setSignedName('');
             setPhoto(null);
             setNoSignatureReason('');
@@ -235,42 +233,27 @@ export function Stop() {
             setMsg({ kind: 'error', text: 'This delivery is marked ID Required. Photograph the identification before recording it.' });
             return;
         }
-        void (async () => {
-            setBusy(true);
-            setMsg(null);
-            const ids: Record<string, number> = {};
-            try {
-                for (const [file, kind, key, label] of [
-                    [formPhoto, 'courier_form', 'courierFormFileId', 'signed form'],
-                    [idPhoto, 'patient_id', 'patientIdFileId', 'identification'],
-                ] as const) {
-                    if (file === null) continue;
-                    ids[key] = await uploadPhotoNow({
-                        module: `/api/projects/${code}/uh`, orderId: order.id, blob: file,
-                        contentType: file.type, kind,
-                        idemKey: `${order.id}-${kind}-${file.size}-${file.lastModified}`,
-                    });
-                }
-            } catch (err) {
-                setBusy(false);
-                /* NOTHING IS RECORDED. A handover whose proof did not upload
-                   is one we cannot evidence, and where the form was stamped
-                   it is one the pharmacy forbade outright. */
-                setMsg({
-                    kind: 'error',
-                    text: `The photo could not be sent: ${err instanceof Error ? err.message : 'unknown error'}. `
-                        + 'Nothing was recorded. Try again, or record this as could not deliver.',
-                });
-                return;
-            }
-            setBusy(false);
-            void post('deliver', {
-                signedName: signedName.trim(),
-                strokes,
-                ...(formPhoto === null ? { noSignatureReason: noFormReason.trim() } : {}),
-                ...ids,
-            }, 'Delivered and recorded.');
-        })();
+        /* ─────────────────────────────────────────────────────────────────
+         * THE PHOTOGRAPHS GO THROUGH THE QUEUE, NOT AHEAD OF IT.
+         *
+         * They used to be uploaded here, before the delivery was sent, and a
+         * failure recorded nothing. Once the photograph became compulsory on
+         * every delivery that made a courier with no signal unable to record
+         * one at all -- in a system whose whole offline promise is "keep
+         * working, nothing is lost", and whose own install sheet says so.
+         *
+         * The outbox already knew how to put a picture in the bucket and
+         * drop the file id into the body before sending; it just had to be
+         * handed both of them. Offline, the delivery and its evidence wait
+         * together and go up in order when the signal returns. ────────── */
+        const photos: QueuedPhoto[] = [];
+        if (formPhoto !== null) {
+            photos.push({ blob: formPhoto, contentType: formPhoto.type, kind: 'courier_form', bodyKey: 'courierFormFileId' });
+        }
+        if (idPhoto !== null) {
+            photos.push({ blob: idPhoto, contentType: idPhoto.type, kind: 'patient_id', bodyKey: 'patientIdFileId' });
+        }
+        void post('deliver', { signedName: signedName.trim() }, 'Delivered and recorded.', undefined, photos);
     };
 
     const doorstep = (e: FormEvent) => {
@@ -392,14 +375,14 @@ export function Stop() {
                             <label className="izy-field">Printed name of the person receiving it
                                 <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required />
                             </label>
-                            {/* THE PAPER IS THE PROOF NOW. The pharmacy's own
-                                form is signed at the door and photographed;
-                                these strokes are optional history. That is a
-                                downgrade in evidence quality -- a photograph
-                                of a form is a photograph, where strokes were
-                                the movement of the pen -- made knowingly
-                                because the client's own document is the
-                                record. See the Deliver schema in stop.ts. */}
+                            {/* THE PAPER IS THE PROOF, AND THE ONLY ONE.
+                                A photograph of a signed form is weaker
+                                evidence than the movement of a pen, and it
+                                is what the client's own document gives us.
+                                The trade was made knowingly; what is not
+                                acceptable is a generated mark standing in
+                                for either. See the Deliver schema in
+                                stop.ts. */}
                             <label className="izy-field">Photo of the signed form
                                 <input
                                     type="file"
@@ -437,33 +420,20 @@ export function Stop() {
                                 </div>
                             )}
 
-                            {/* THE RECIPIENT'S SIGNATURE PAD IS GONE.
-                                The pharmacy's form is signed on paper and
-                                photographed above, so asking for a scrawl on
-                                glass as well was asking the same person to
-                                sign twice. The server accepts a photographed
-                                form, strokes, or a stated reason -- see
-                                deliver.noProof in stop.ts -- and this screen
-                                now offers the first and the third.
+                            {/* NO SIGNATURE, AND NO WAY ROUND THE PHOTOGRAPH.
+                                The pad went when the pharmacy's own form
+                                became the thing that gets signed. What has
+                                gone now is the escape beside it: a typed
+                                reason used to stand in for the photograph,
+                                and `strokes` was still being sent empty.
 
-                                `strokes` is still sent, always empty, rather
-                                than removed: the column and the capture
-                                method are history for every delivery already
-                                recorded with one. */}
-                            {formPhoto === null && (
-                                <label className="izy-field">If there is no signed form, say why
-                                    <input
-                                        value={noFormReason}
-                                        onChange={(e) => setNoFormReason(e.target.value)}
-                                        placeholder="e.g. the pharmacy sent no form with this one"
-                                        disabled={busy}
-                                    />
-                                    <span className="izy-muted izy-field-note">
-                                        A delivery with no proof and no explanation is a gap nobody can
-                                        account for a year later.
-                                    </span>
-                                </label>
-                            )}
+                                The server requires courierFormFileId on
+                                every delivery, controlled or not, so there
+                                is nothing for this screen to offer instead.
+                                A courier who cannot photograph the form has
+                                not missed a field -- they cannot evidence
+                                the handover, and "could not deliver" with a
+                                reason is the honest record of that. */}
 
                             {/* CONTROLLED DRUG: BOTH PARTIES SIGN.
 
@@ -501,9 +471,8 @@ export function Stop() {
                                        courier's own mark on a controlled
                                        handover, which has no escape. */
                                     disabled={busy || signedName.trim() === ''
-                                        || (formPhoto === null && noFormReason.trim().length < 3)
-                                        || (order.idRequired === true && idPhoto === null)
-                                        || (order.controlled === true && formPhoto === null)}
+                                        || formPhoto === null
+                                        || (order.idRequired === true && idPhoto === null)}
                                 >
                                     {busy ? 'Saving' : 'Record the delivery'}
                                 </button>

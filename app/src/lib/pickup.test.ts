@@ -65,29 +65,29 @@ describe('counting packages into the van', () => {
 describe('whether the handover can be sent', () => {
     const ok = checkCount(3, '3', '');
 
-    it('needs a count, a name and a signature', () => {
-        expect(canCollect(ok, 'A Pharmacist', 12)).toBe(true);
-        expect(canCollect(ok, '', 12), 'no printed name').toBe(false);
-        expect(canCollect(checkCount(3, '', ''), 'A Pharmacist', 12), 'no count').toBe(false);
+    /* THE SIGNATURE ARGUMENT IS GONE. These tests used to describe a gate
+       that counted strokes, and every caller fed it a mark the app drew
+       from the typed name -- so "did somebody sign" really asked "did the
+       name produce glyphs". The printed name is the record here; the signed
+       paper is photographed at the door. */
+
+    it('needs a count and a printed name', () => {
+        expect(canCollect(ok, 'A Pharmacist')).toBe(true);
+        expect(canCollect(ok, ''), 'no printed name').toBe(false);
+        expect(canCollect(ok, '   '), 'whitespace is not a name').toBe(false);
+        expect(canCollect(checkCount(3, '', ''), 'A Pharmacist'), 'no count').toBe(false);
     });
 
-    it('takes no signature when there is a reason, and refuses when there is not', () => {
-        /* Relaxed on the owner’s instruction: getting a pharmacist to
-           scrawl on a phone stops the round. What is refused is a handover
-           with neither a signature nor an explanation. */
-        expect(canCollect(ok, 'A Pharmacist', 0), 'nothing at all').toBe(false);
-        expect(canCollect(ok, 'A Pharmacist', 0, '   '), 'whitespace is not a reason').toBe(false);
-        expect(canCollect(ok, 'A Pharmacist', 0, 'Counter unattended.')).toBe(true);
-    });
-
-    it('still needs the printed name even when nobody signs', () => {
-        /* Somebody handed the packages over. The record says who. */
-        expect(canCollect(ok, '', 0, 'Counter unattended.')).toBe(false);
+    it('does not ask anybody to sign a screen', () => {
+        /* The regression this guards: a collection must go through on the
+           name alone. Re-introducing any signature requirement here strands
+           a courier at a counter where nobody will scrawl on a phone. */
+        expect(canCollect(ok, 'A Pharmacist')).toBe(true);
     });
 
     it('stays blocked while a mismatch is unexplained', () => {
         const short = checkCount(3, '1', '');
-        expect(canCollect(short, 'A Pharmacist', 12)).toBe(false);
+        expect(canCollect(short, 'A Pharmacist')).toBe(false);
     });
 });
 

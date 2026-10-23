@@ -37,7 +37,7 @@ import { recordOrderEvent, insertCustodyEvent, type OrderStateRow } from './orde
 import { TransitionError } from './lifecycle';
 import { DRY_RUN_REASONS } from '../../db/schema/uh';
 import type { FileStorage } from '../../core/files/storage';
-import { presentHandling, isNamedSigner, matchesName, needsCountersignature } from './handling';
+import { presentHandling, isNamedSigner, matchesName } from './handling';
 
 const Point = z.object({
     x: z.number().min(0).max(1),
@@ -338,17 +338,28 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
 
         /* ── The paper form, which is now the proof ──────────────────────
          *
-         * Either a photograph of the signed form, or strokes, or a stated
-         * reason for neither. Refusing all three is the same rule this route
-         * has always had: a proof of delivery with nothing on it and no
-         * explanation is a gap nobody can account for a year later. What
-         * changed is that a photographed form now satisfies it, because
-         * University Health signs their own document. */
-        if (body.courierFormFileId === undefined && body.strokes.length === 0 && body.noSignatureReason === '') {
+         * THE PHOTOGRAPH, ON EVERY DELIVERY. Not only controlled ones.
+         *
+         * This rule used to accept a photograph OR strokes OR a stated
+         * reason for neither, and almost every ordinary delivery took the
+         * middle branch -- not because anybody signed a screen, but because
+         * the app generated a mark from the typed name and sent that. A
+         * synthesised signature on a proof of delivery is worse than an
+         * empty space: it looks like evidence and it is not.
+         *
+         * So the marks are gone from every client and the photograph is the
+         * proof, which is also what the process actually is: the paper is
+         * signed at the counter and again at the door, and the app
+         * photographs it. A courier who cannot photograph it has not failed
+         * to fill in a field, they have failed to complete the handover --
+         * and "Could not deliver" is the honest record of that, with a
+         * reason, rather than a delivery with a gap in it. */
+        if (body.courierFormFileId === undefined) {
             res.status(400).json({
-                error: 'Nothing proves this handover. Photograph the signed courier form, capture a signature, '
-                    + 'or say why neither was possible.',
-                code: 'deliver.noProof',
+                error: 'Photograph the signed courier form before recording this delivery. '
+                    + 'If you cannot, record it as a failed attempt and say why.',
+                code: 'deliver.formPhotographRequired',
+                need: ['courierFormFileId'],
             });
             return;
         }
@@ -423,15 +434,13 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
          * with no evidence of either signature. The escape exists for an
          * ordinary handover because a counter may genuinely have no form; a
          * controlled item does not move without one. */
-        if (needsCountersignature(handling) && body.courierFormFileId === undefined) {
-            res.status(400).json({
-                error: 'This is a controlled drug. Photograph the signed form -- it carries both signatures, '
-                    + `${body.signedName || 'the person receiving it'} and yours -- before recording the delivery.`,
-                code: 'deliver.formPhotographRequired',
-                need: ['courierFormFileId'],
-            });
-            return;
-        }
+        /* NOTHING LEFT TO CHECK HERE. This refused a controlled delivery
+           without the photograph, which the universal check above now
+           refuses for every delivery. Kept as a note rather than deleted
+           silently, because §6 of the offer letter is the reason the
+           stricter rule exists and that reasoning should not vanish with
+           the branch: a controlled handover carries two signatures, both on
+           the paper, and the photograph is the only record of either. */
 
         if (handling.signatureRequired
             && handling.signatureRule === 'patient_only'

@@ -16,7 +16,6 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
-import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
 interface CarriedOrder {
@@ -62,7 +61,6 @@ export function Returns() {
     const [load, setLoad] = useState<Load | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
     const [signedName, setSignedName] = useState('');
-    const [strokes] = useState<SignatureStrokes>([]);
     /* Part 3, photographed. One form covers everything going back. */
     const [formPhoto, setFormPhoto] = useState<File | null>(null);
     const [counted, setCounted] = useState('');
@@ -130,7 +128,6 @@ export function Returns() {
                 body: {
                     siteId: group.site.id,
                     signedName: signedName.trim(),
-                    strokes,
                     courierFormFileId,
                     countedPackages: countedNumber,
                     /* The orders are named explicitly. The courier is looking

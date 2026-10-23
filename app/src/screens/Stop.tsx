@@ -34,8 +34,6 @@ import { isUnauthorized } from '../lib/http';
 import { newId, type OutboxEntry } from '../lib/outbox';
 import { queueAndSend } from '../lib/queue';
 import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/pod';
-import { SignatureMark } from './SignatureMark';
-import { handwrittenInitials } from '../lib/handwriting';
 import { readablePhone } from '../lib/phone';
 import { needsSignerExplanation } from '../lib/handling';
 
@@ -239,10 +237,10 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
             `${base}/deliver`,
             {
                 signedName: signedName.trim(),
-                /* Only when there is no photographed form: the initials are
-                   the fallback for a handset that cannot upload, not a
-                   second signature sitting beside the paper one. */
-                strokes: courierFormFileId === undefined ? auto : [],
+                /* Never. The photograph is the proof and the server
+                   refuses a delivery without it; a generated mark alongside
+                   it would be a second signature nobody made. */
+                strokes: [],
                 captureMethod: 'initials',
                 noSignatureReason: '',
                 note: note.trim(),
@@ -274,9 +272,6 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     };
 
     const arrived = stop.status === 'picked_up' || stop.status === 'assigned';
-    /* Derived as the name is typed, so the courier sees the mark before
-       recording it, with the person it belongs to stood in front of them. */
-    const auto = handwrittenInitials(signedName);
     /* The name never stops being required: a delivery with nobody's name
        against it is an anonymous handover of a prescription. */
     /* WHAT THE PHARMACY REQUIRES, IN THE ORDER IT MATTERS.
@@ -306,10 +301,13 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     );
     const signerExplained = !mustExplainSigner || signerReason.trim().length > 2;
     const idSatisfied = !needsId || idPhoto !== null;
-    const proofSatisfied = canPhotograph ? formPhoto !== null : auto.length > 0;
-    const blockedByStorage = needsId && !canPhotograph;
-    /* Not just "some strokes": looksSigned rejects a tap, which is what a
-       phone handed over and poked produces. */
+    /* The photograph, and nothing else. There is no longer a second way to
+       satisfy this: the generated mark that used to stand in when storage
+       was unavailable was never signed by anybody. */
+    const proofSatisfied = canPhotograph && formPhoto !== null;
+    /* Storage down now blocks EVERY delivery, not only ID Required ones,
+       because the form photograph is the proof on all of them. */
+    const blockedByStorage = !canPhotograph;
     /* CONTROLLED: THE PHOTOGRAPH, NOT A SECOND MARK ON GLASS.
      *
      * Part 2 of the docket carries both signatures -- the recipient's at the
@@ -504,12 +502,24 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                             )}
                         </>
                     ) : (
+                        /* NO FALLBACK ANY MORE, BECAUSE THERE IS NOTHING TO
+                           FALL BACK ON. This drew a mark from the typed name
+                           and recorded it as the signature when photo storage
+                           was unavailable. Nobody signed it, and a proof of
+                           delivery carrying a generated signature is worse
+                           than one carrying none.
+                           The photograph is the proof now, so a courier who
+                           cannot take one has not failed to fill in a field --
+                           they cannot complete the handover, and the honest
+                           record of that is a failed attempt with a reason. */
                         <>
-                            <Text style={styles.label}>Their signature</Text>
-                            <SignatureMark strokes={auto} />
+                            <Text style={[styles.label, styles.warnLabel]}>
+                                Photo storage is unavailable
+                            </Text>
                             <Text style={styles.photoNote}>
-                                Photo storage is unavailable, so the signed form cannot be captured.
-                                Their initials are being recorded instead.
+                                The signed form cannot be photographed, so this delivery cannot be
+                                recorded here. Hand the medication over only if you are sure, then
+                                record it as Could not deliver with the reason, and ring dispatch.
                             </Text>
                         </>
                     )}

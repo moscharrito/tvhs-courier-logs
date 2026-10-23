@@ -117,18 +117,18 @@ export function checkCount(expected: number, counted: string, note: string): Cou
  * allowed and it costs a written reason. The printed name is still required
  * either way: somebody handed the packages over and the record says who.
  * ───────────────────────────────────────────────────────────────────────── */
-export function canCollect(
-    check: CountCheck,
-    signedName: string,
-    strokeCount: number,
-    noSignatureReason = '',
-): boolean {
+/* THE SIGNATURE ARGUMENT IS GONE, AND SO IS THE REASON FOR IT.
+ *
+ * This took a stroke count and let a collection through when it was above
+ * zero. Every caller passed the output of handwrittenInitials, which draws a
+ * mark from the typed name -- so the gate was "did they type a name that
+ * produced glyphs", dressed up as "did somebody sign". The printed name is
+ * what this screen actually records, and the signed paper is photographed at
+ * the door, so the name is the whole check. */
+export function canCollect(check: CountCheck, signedName: string): boolean {
     if (check.kind === 'incomplete' || check.kind === 'needsNote') return false;
     /* Still required. A handover with nobody's name on it is anonymous. */
-    if (signedName.trim().length === 0) return false;
-    if (strokeCount > 0) return true;
-    /* Nobody signed. That is allowed, and it costs a sentence. */
-    return noSignatureReason.trim().length > 0;
+    return signedName.trim().length > 0;
 }
 
 /** What goes on screen and into the outbox label, so both say the same thing. */

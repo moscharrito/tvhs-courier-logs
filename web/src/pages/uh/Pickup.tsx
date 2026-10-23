@@ -15,7 +15,6 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
-import { SignaturePad, pointCount, type SignatureStrokes } from './SignaturePad';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
 interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled?: boolean }
@@ -58,7 +57,6 @@ export function Pickup() {
     const [waiting, setWaiting] = useState<Waiting | null>(null);
     const [siteId, setSiteId] = useState<number | ''>(params.get('siteId') ? Number(params.get('siteId')) : '');
     const [signedName, setSignedName] = useState('');
-    const [strokes, setStrokes] = useState<SignatureStrokes>([]);
     /* THE COUNTER SIGNS PAPER NOW, same as the door. One photograph covers
        the batch, exactly as one signature did: a technician handing over
        forty packages signs one form. */
@@ -142,7 +140,6 @@ export function Pickup() {
                 body: {
                     siteId: group.site.id,
                     signedName: signedName.trim(),
-                    strokes,
                     ...(courierFormFileId === undefined ? {} : { courierFormFileId }),
                     ...(formPhoto === null ? { noSignatureReason: noFormReason.trim() } : {}),
                     countedPackages: countedNumber,
@@ -157,7 +154,6 @@ export function Pickup() {
             } else {
                 setQueued(true);
             }
-            setStrokes([]);
             setFormPhoto(null);
             setNoFormReason('');
             setSignedName('');

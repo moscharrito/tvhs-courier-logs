@@ -26,8 +26,6 @@ import { get } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { queueAndSend } from '../lib/queue';
 import { canCollect, checkCount, pickupLabel, type PickupBoard, type PickupSite } from '../lib/pickup';
-import { handwrittenInitials } from '../lib/handwriting';
-import { SignatureMark } from './SignatureMark';
 
 export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     token: string;
@@ -74,14 +72,11 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
     const check = site === null
         ? checkCount(0, '', '')
         : checkCount(site.packages, counted, note);
-    /* Derived from the name as it is typed, so the courier sees the mark
-       before they record it, with the person handing over stood there. */
-    const auto = handwrittenInitials(signedName);
     /* Shown as a warning, not asked for. The tote holding a controlled drug
        is what tells the courier to photograph part 2 at the door; nothing is
        demanded here, because part 2 has not finished being signed yet. */
     const needsCountersign = site?.controlled === true;
-    const ready = site !== null && canCollect(check, signedName, auto.length);
+    const ready = site !== null && canCollect(check, signedName);
 
     const submit = async () => {
         if (site === null || !ready) return;
@@ -98,7 +93,11 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                 body: {
                     siteId: site.site.id,
                     signedName: signedName.trim(),
-                    strokes: auto,
+                    /* NO STROKES. The app used to generate a mark from the
+                       typed name and send it as a signature; nobody signed
+                       it. The printed name is the record here, and the
+                       signed paper is photographed at the door. */
+                    strokes: [],
                     captureMethod: 'initials',
                     noSignatureReason: '',
                     countedPackages: check.kind === 'incomplete' ? 0 : check.counted,
@@ -231,12 +230,6 @@ export function Collect({ token, code, runId, onDone, onCancel, onSignedOut }: {
                             accessibilityLabel="Name of the person handing over"
                         />
 
-                        <Text style={styles.label}>Their signature</Text>
-                        {/* Drawn from the name as it is typed. The courier
-                            can see exactly what is being recorded, which
-                            matters because the person it belongs to is
-                            standing in front of them. */}
-                        <SignatureMark strokes={auto} />
 
                         {/* CONTROLLED DRUG IN THIS TOTE: BOTH OF YOU SIGN.
                             
