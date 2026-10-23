@@ -186,8 +186,35 @@ export async function startTracking(projectCode: string): Promise<PermissionStat
                 notificationColor: '#14532d',
             },
         });
+
+        /* ─────────────────────────────────────────────────────────────────
+         * ASKING WHETHER IT ACTUALLY STARTED, BECAUSE IT DID NOT ONCE.
+         *
+         * startLocationUpdatesAsync resolving is not the same as updates
+         * running. On build 4 it resolved, and no foreground service was
+         * running, no notification was posted, and no provider had a
+         * request registered -- while the shift bar told the courier
+         * dispatch could see them.
+         *
+         * So the promise is not taken as proof. hasStartedLocationUpdatesAsync
+         * asks the platform, and a no is recorded as 'didNotStart' rather
+         * than returned as a permission answer, which is what buried it the
+         * first time: 'denied' reads as "the courier said no". ────────── */
+        if (!(await Location.hasStartedLocationUpdatesAsync(TASK))) {
+            lastStop = 'didNotStart';
+            console.warn('[tracking] startLocationUpdatesAsync resolved but the task is not running');
+            return 'denied';
+        }
+        lastStop = null;
         return 'granted';
-    } catch {
+    } catch (err) {
+        /* NOT A BARE CATCH ANY MORE. This swallowed whatever
+           startLocationUpdatesAsync threw and returned 'denied', so a
+           failure to start was indistinguishable from a courier declining
+           the prompt -- and there was nothing in logcat either way. The
+           message is the only thread anybody gets to pull on. */
+        lastStop = 'didNotStart';
+        console.warn('[tracking] startLocationUpdatesAsync threw:', err instanceof Error ? err.message : String(err));
         return 'denied';
     }
 }

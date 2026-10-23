@@ -62,12 +62,31 @@ describe('what the courier is told', () => {
         const permissions = ['granted', 'denied', 'undetermined'] as const;
         for (const onShift of [true, false]) {
             for (const permission of permissions) {
-                for (const stopped of [null, 'notOnShift', 'retentionUndecided', 'signedOut'] as const) {
+                for (const stopped of [null, 'notOnShift', 'retentionUndecided', 'signedOut', 'didNotStart'] as const) {
                     const state = trackingState({ onShift, permission, stopped });
                     expect(state.text.length, `${onShift} ${permission} ${stopped}`).toBeGreaterThan(10);
                 }
             }
         }
+    });
+
+    it('does not claim dispatch can see a courier whose tracking never started', () => {
+        /* THE STATE THIS WHOLE BRANCH EXISTS FOR. On build 4 the permission
+           was granted, the shift was open, and startLocationUpdatesAsync had
+           resolved without starting anything: no foreground service, no
+           notification, no provider request. The bar read "Dispatch can see
+           where you are" because nothing had recorded a stop.
+
+           A courier who believes they are visible does not ring dispatch,
+           and dispatch reads a pin that stopped moving as a driver who
+           stopped moving. */
+        const state = trackingState({ onShift: true, permission: 'granted', stopped: 'didNotStart' });
+        expect(state.on).toBe(false);
+        expect(state.text).not.toMatch(/can see where you are until/);
+        expect(state.text).toMatch(/did not start/i);
+        /* Tells them what to do about it, since they cannot fix this one by
+           changing a permission. */
+        expect(state.text).toMatch(/ring them/i);
     });
 
     it('says plainly when it is on, and when it stops', () => {

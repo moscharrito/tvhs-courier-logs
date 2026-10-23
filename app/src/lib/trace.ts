@@ -91,7 +91,20 @@ export function nextBatch(queue: Fix[]): { batch: Fix[]; rest: Fix[] } {
     return { batch: ordered.slice(0, MAX_BATCH), rest: ordered.slice(MAX_BATCH) };
 }
 
-export type StopReason = 'notOnShift' | 'retentionUndecided' | 'signedOut';
+/* 'didNotStart' IS NOT A STOP, IT IS A START THAT NEVER HAPPENED.
+ *
+ * It exists because of the state this file was written to make impossible.
+ * On build 4, with the permission granted and the shift open, the bar read
+ * "On shift. Dispatch can see where you are" while no foreground service was
+ * running, no notification was posted and no provider had a request
+ * registered. startLocationUpdatesAsync had been called and had not taken,
+ * and the catch around it returned 'denied' without recording anything, so
+ * trackingState fell through to the reassuring branch.
+ *
+ * A courier told they are visible when they are not is worse than one told
+ * nothing: they do not ring dispatch, and dispatch reads a pin that stopped
+ * moving as a driver who stopped moving. */
+export type StopReason = 'notOnShift' | 'retentionUndecided' | 'signedOut' | 'didNotStart';
 
 /**
  * Whether a failed send means stop for good, or try again later.
@@ -139,6 +152,15 @@ export function trackingState(input: {
     }
     if (input.permission === 'undetermined') {
         return { on: false, text: 'Location has not been allowed yet.' };
+    }
+    /* Said before the generic stop, and worded as a fault rather than as a
+       setting, because this one is not the courier's doing and they cannot
+       fix it by changing their mind about a permission. */
+    if (input.stopped === 'didNotStart') {
+        return {
+            on: false,
+            text: 'Location did not start. Dispatch cannot see where you are — ring them, and say the app could not start tracking.',
+        };
     }
     if (input.stopped !== null) {
         return { on: false, text: 'Location stopped. Go off shift and on again if you are still working.' };
