@@ -173,6 +173,16 @@ const MATRIX = [
     ['GET', '/api/login/device', EVERYONE, 'is this phone enrolled', SIGN_IN],
     ['POST', '/api/login/device', EVERYONE, 'PIN sign-in from an enrolled phone, throttled', SIGN_IN],
     ['POST', '/api/devices/enrol', EVERYONE, 'password required in the body', SIGN_IN],
+    /* PUBLIC BY NECESSITY AND BY DESIGN. Somebody who cannot sign in cannot
+       be asked to sign in first. Both are throttled on the caller and the
+       request route is throttled on the address asked about as well, and
+       both answer identically whether or not an account exists -- the
+       property that stops this being a staff directory. See
+       core/auth/password-reset.ts and server/test/password-reset.test.mjs,
+       which is where that behaviour is actually proved; this row records
+       only that being open was a decision. */
+    ['POST', '/api/password-reset/request', EVERYONE, 'ask for a reset code by email', SIGN_IN],
+    ['POST', '/api/password-reset/confirm', EVERYONE, 'use a code to set a new password', SIGN_IN],
     ['GET', '/api/session', EVERYONE, 'who am I, or nobody', SIGN_IN],
     ['POST', '/api/logout', EVERYONE, 'ending a session needs no permission', LOGOUT],
     ['GET', '/api/drivers/list', EVERYONE, 'names and whether a PIN is set, for the picker'],
@@ -582,6 +592,7 @@ describe('the matrix covers the application', () => {
             p = p.replace(/^\/api\/projects\/[a-z]+\/uh\/[a-z-]+(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+\/settings(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+\/driver-applications(?=\/|$)/, '');
+            p = p.replace(/^\/api\/password-reset(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+$/, '/api/projects/:p');
             // A parameter is a parameter, however it is named or filled in.
             p = p.replace(/\/memberships\/[a-z]+/g, '/memberships/:p');
