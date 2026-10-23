@@ -677,3 +677,33 @@ export const pushDevices = sqliteTable(
 );
 
 export type PushDevice = typeof pushDevices.$inferSelect;
+
+/* A code emailed to somebody who cannot sign in. See drizzle/0055.
+ *
+ * `email` rather than a user id as the lookup key, because the request route
+ * must answer identically for an address that has an account and one that
+ * does not. A row is written either way; user_id is null for the second and
+ * the confirm route finds nothing to reset. */
+export const passwordResets = sqliteTable(
+    'password_resets',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        email: text('email').notNull(),
+        userId: integer('user_id').references(() => users.id),
+        /** bcrypt, like a password. A live code opens an account. */
+        codeHash: text('code_hash').notNull(),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+        expiresAt: text('expires_at').notNull(),
+        /** Set the moment a code is accepted: single use, so a code left in
+         *  an inbox cannot be replayed. */
+        usedAt: text('used_at'),
+        requestedIp: text('requested_ip').notNull().default(''),
+        /** Guesses against this row. A code is six digits; without a cap per
+         *  row the throttle alone would let somebody grind one down. */
+        attempts: integer('attempts').notNull().default(0),
+    },
+    (t) => [
+        index('password_resets_email_idx').on(t.email, t.createdAt),
+        index('password_resets_expires_idx').on(t.expiresAt),
+    ],
+);

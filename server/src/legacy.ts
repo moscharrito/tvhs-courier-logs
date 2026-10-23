@@ -62,6 +62,7 @@ import { createPickupRouter } from './modules/uh/pickup';
 import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
 import { createApplicationsRouter, createPublicApplicationsRouter } from './core/onboarding/routes';
+import { createPasswordResetRouter } from './core/auth/password-reset';
 import { createShiftsRouter } from './modules/uh/shifts';
 import { createEscalationRouter } from './modules/uh/escalation';
 import { createTrackingRouter } from './modules/uh/tracking';
@@ -434,6 +435,15 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        stranger and can only write an application, and the admin one lives
        behind requireProject like everything else. */
     legacy.app.use(createPublicApplicationsRouter({ client: database.client }));
+
+    /* Resetting a forgotten password (see core/auth/password-reset.ts).
+       Public and unauthenticated by necessity -- somebody who cannot sign in
+       cannot be asked to sign in first -- so it is written to say the same
+       thing whether or not an address has an account, and throttled on both
+       the address asked about and the caller. */
+    legacy.app.use('/api/password-reset', createPasswordResetRouter({
+        client: database.client, mailer, store,
+    }));
     legacy.app.use('/api/projects/:pid/driver-applications', requireProject, createApplicationsRouter({ client: database.client }));
 
     if (config.nodeEnv === 'test') {
