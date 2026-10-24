@@ -180,12 +180,38 @@ export function createMailer(config: Config): Mailer {
             if (!res.ok) {
                 /* The response text can name the recipient, which is an
                    address and not patient data, but it has no business in a
-                   log line either. Status and the AWS error type only. */
-                let type = '';
-                try {
-                    const parsed = await res.json() as { __type?: string; message?: string };
-                    type = parsed.__type ?? '';
-                } catch { /* not JSON; the status is enough */ }
+                   log line either. Status and the AWS error type only.
+
+                   THE HEADER IS READ FIRST, AND THAT IS NOT A DETAIL. SES v2
+                   is REST-JSON: it puts the error name in x-amzn-errortype
+                   and only sometimes repeats it in the body as __type. The
+                   first version of this read the body alone, so a real 403
+                   in production surfaced as the bare words "SES refused the
+                   message: 403" -- and 403 is three completely different
+                   faults with three different fixes:
+
+                     UnrecognizedClientException  the access key does not
+                                                  exist (or not in SES)
+                     SignatureDoesNotMatch        the secret is wrong, or
+                                                  this signer has a bug
+                     AccessDeniedException        the key is fine and its
+                                                  IAM policy has no
+                                                  ses:SendEmail
+
+                   Telling them apart from the status alone is impossible,
+                   which left the one person who could fix it guessing. An
+                   AWS error type is a fixed string from a published list: it
+                   names no recipient and carries no patient data, so the
+                   rule above is satisfied by keeping it. */
+                let type = res.headers.get('x-amzn-errortype') ?? '';
+                /* The header can arrive as "AccessDeniedException:http://..." */
+                type = type.split(':')[0]!.trim();
+                if (type === '') {
+                    try {
+                        const parsed = await res.json() as { __type?: string; message?: string };
+                        type = parsed.__type ?? '';
+                    } catch { /* not JSON; the status is enough */ }
+                }
                 throw new Error(`SES refused the message: ${res.status}${type ? ` ${type}` : ''}`);
             }
         },

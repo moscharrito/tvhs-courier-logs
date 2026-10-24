@@ -5,7 +5,7 @@
  * order number, a pharmacy, a time and a link leave the building, and a
  * patient never does. */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 import { assertNoPatientData, signRequest, amzDates, createMailer } from '../src/core/notify/ses.ts';
 import { dispatchPending, EMAILED_KINDS, BATCH } from '../src/core/notify/dispatch.ts';
@@ -312,6 +312,77 @@ describe('turning notifications into email', () => {
 });
 
 /* ------------------------------------------------------------- the signer */
+
+describe('what a refusal from SES is allowed to say, and what it must say', () => {
+    /* A REAL 403 IN PRODUCTION READ AS "SES refused the message: 403".
+     *
+     * That is three different faults wearing one number -- a key that does
+     * not exist, a secret that does not match, and a key with no
+     * ses:SendEmail -- and the status alone cannot tell them apart. The one
+     * person able to fix it was left guessing, which is the whole reason
+     * these four tests exist.
+     *
+     * SES v2 is REST-JSON: the error name lives in the x-amzn-errortype
+     * HEADER and is only sometimes repeated in the body as __type. Reading
+     * the body alone is what lost it. */
+    const cfg = {
+        enabled: true,
+        portalUrl: 'https://logs.example.invalid',
+        ses: {
+            region: 'us-east-2',
+            accessKeyId: 'AKIDEXAMPLE',
+            secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+            from: 'no-reply@example.invalid',
+        },
+    };
+    const letter = { to: 'counter@example.invalid', subject: 'Delivery completed', text: 'Order 41 is done.' };
+    const refuse = (status, headers, body) => vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(body === undefined ? '' : JSON.stringify(body), { status, headers }),
+    );
+
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it('names the AWS error type from the header, because that is the fault', async () => {
+        refuse(403, { 'x-amzn-errortype': 'AccessDeniedException' });
+        await expect(createMailer({ mail: cfg }).send(letter))
+            .rejects.toThrow('SES refused the message: 403 AccessDeniedException');
+    });
+
+    it('keeps the name and drops the URL AWS staples to it', async () => {
+        /* The header arrives as "SignatureDoesNotMatch:http://internal..."
+           often enough that leaving it whole puts an AWS hostname in a log
+           line, and the part after the colon says nothing anybody needs. */
+        refuse(403, { 'x-amzn-errortype': 'SignatureDoesNotMatch:http://internal.amazon.com/coral/' });
+        await expect(createMailer({ mail: cfg }).send(letter))
+            .rejects.toThrow('SES refused the message: 403 SignatureDoesNotMatch');
+    });
+
+    it('falls back to __type in the body when there is no header', async () => {
+        refuse(400, {}, { __type: 'MessageRejected', message: 'Email address is not verified.' });
+        await expect(createMailer({ mail: cfg }).send(letter))
+            .rejects.toThrow('SES refused the message: 400 MessageRejected');
+    });
+
+    it('says the status alone rather than guessing, when neither is there', async () => {
+        refuse(502, {}, undefined);
+        await expect(createMailer({ mail: cfg }).send(letter))
+            .rejects.toThrow('SES refused the message: 502');
+    });
+
+    it('never repeats the message text, which names the recipient', async () => {
+        /* The rule at the top of ses.ts: an address is not patient data but
+           it has no business in a log line either. An error TYPE is a fixed
+           string from a published list; the message is prose about who we
+           tried to email. */
+        refuse(400, { 'x-amzn-errortype': 'MessageRejected' }, {
+            __type: 'MessageRejected',
+            message: 'Email address is not verified. The following identities failed: counter@example.invalid',
+        });
+        const err = await createMailer({ mail: cfg }).send(letter).catch((e) => e);
+        expect(err.message).not.toContain('counter@example.invalid');
+        expect(err.message).not.toMatch(/not verified/i);
+    });
+});
 
 describe('the SES request signature', () => {
     const cfg = {
