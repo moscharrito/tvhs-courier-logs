@@ -60,11 +60,48 @@ export interface Mail {
     text: string;
 }
 
+/**
+ * What SES has actually done with this process's sends.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS COUNTED AT ALL, WHICH IS A FAULT THAT HID FOR A DAY.
+ *
+ * `available` means the five configuration values are present. It is the
+ * same weak fact `files: "configured"` used to be, and it failed the same
+ * way: production ran for a day with a mailer reporting configured while
+ * SES answered 403 to every single send. /health said
+ *
+ *     mail: "configured, nothing sent yet"
+ *
+ * because outbox.ts counts notification ROWS that finished, a refused send
+ * leaves its row pending rather than finished, and a password reset is not
+ * a notification row at all. So the one field anybody could check could not
+ * distinguish a dead mailer from a quiet Sunday.
+ *
+ * Counted HERE, in the mailer, rather than from the rows, because this is
+ * the only place every send passes through: the notification sweep, the
+ * daily report, and the password reset codes that were the actual casualty.
+ *
+ * Per process and lost on restart, which is honest -- after a boot the true
+ * answer is "nothing attempted yet", and that is what it says.
+ */
+export interface MailAttempts {
+    /** Sends this process has put to SES since boot. */
+    attempted: number;
+    /** Consecutive refusals ending now. Back to zero as soon as one works. */
+    failing: number;
+    /** The last refusal. Status and AWS error type only, never a recipient
+     *  and never a hostname -- it is reported on a public endpoint. */
+    lastError: string | null;
+}
+
 export interface Mailer {
     readonly available: boolean;
     readonly reason: string | null;
     /** Resolves when SES accepted it. Throws otherwise; the caller decides. */
     send(mail: Mail, at?: Date): Promise<void>;
+    /** For /health. A function because it changes after boot. */
+    attempts(): MailAttempts;
 }
 
 /**
@@ -139,6 +176,9 @@ const unavailable = (reason: string): Mailer => ({
     available: false,
     reason,
     async send() { throw new Error(reason); },
+    /* Nothing is attempted, so nothing is failing. /health reports this
+       mailer as "off" from `available` and never reads these. */
+    attempts: () => ({ attempted: 0, failing: 0, lastError: null }),
 });
 
 export function createMailer(config: Config): Mailer {
@@ -152,12 +192,23 @@ export function createMailer(config: Config): Mailer {
     const host = `email.${cfg.region}.amazonaws.com`;
     const path = '/v2/email/outbound-emails';
 
+    /* See MailAttempts. Closure state rather than a field so nothing outside
+       can set it, and so `attempts()` cannot be stale. */
+    let attempted = 0;
+    let failing = 0;
+    let lastError: string | null = null;
+
     return {
         available: true,
         reason: null,
+        attempts: () => ({ attempted, failing, lastError }),
 
         async send(mail: Mail, at = new Date()): Promise<void> {
-            /* Before anything else, and before the body is even serialised. */
+            /* Before anything else, and before the body is even serialised.
+               DELIBERATELY NOT COUNTED as a send attempt: this throws before
+               anything reaches AWS, and it is a bug in a template rather
+               than a fact about the mailer. Counting it would have /health
+               announce that SES is refusing us when SES has not been asked. */
             assertNoPatientData(mail.subject);
             assertNoPatientData(mail.text);
 
@@ -172,11 +223,27 @@ export function createMailer(config: Config): Mailer {
                 },
             });
 
-            const res = await fetch(`https://${host}${path}`, {
-                method: 'POST',
-                headers: { ...signRequest(cfg, host, path, body, at), host },
-                body,
-            });
+            attempted += 1;
+
+            let res;
+            try {
+                res = await fetch(`https://${host}${path}`, {
+                    method: 'POST',
+                    headers: { ...signRequest(cfg, host, path, body, at), host },
+                    body,
+                });
+            } catch (err) {
+                /* DNS, a timeout, a dropped connection. Recorded as a fixed
+                   string rather than the error's own words, because those
+                   name the SES endpoint -- and a hostname is on the list at
+                   the top of core/http/health.ts of things that never appear
+                   on a public endpoint. The real message still goes to the
+                   caller and the log. */
+                failing += 1;
+                lastError = 'could not reach SES';
+                throw err;
+            }
+
             if (!res.ok) {
                 /* The response text can name the recipient, which is an
                    address and not patient data, but it has no business in a
@@ -212,8 +279,15 @@ export function createMailer(config: Config): Mailer {
                         type = parsed.__type ?? '';
                     } catch { /* not JSON; the status is enough */ }
                 }
-                throw new Error(`SES refused the message: ${res.status}${type ? ` ${type}` : ''}`);
+                failing += 1;
+                lastError = `${res.status}${type ? ` ${type}` : ''}`;
+                throw new Error(`SES refused the message: ${lastError}`);
             }
+
+            /* One success clears it. A mailer that sent something a moment
+               ago is not broken, whatever it did before. */
+            failing = 0;
+            lastError = null;
         },
     };
 }

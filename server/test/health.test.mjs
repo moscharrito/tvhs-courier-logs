@@ -61,6 +61,90 @@ describe('GET /health', () => {
         expect(res.body.files).toBe('configured');
     });
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE DAY A DEAD MAILER LOOKED LIKE A QUIET SUNDAY.
+     *
+     * Production ran with SES answering 403 to every send -- the credentials
+     * were refused, so no password reset code could reach anybody -- and
+     * this endpoint said "configured, nothing sent yet" the whole time.
+     * mailConfigured only means the values are present; mailRecent counts
+     * notification rows that FINISHED and a refused send leaves its row
+     * pending; and a reset code is not a notification row at all.
+     *
+     * What found it was somebody testing the reset form, which is the "one
+     * line in a log" problem the sms and tracking fields exist to end.
+     * ───────────────────────────────────────────────────────────────────── */
+    const withMail = (attempts, recent = 'configured, nothing sent yet', configured = true) => {
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client,
+            version: '1.2.3',
+            mailConfigured: configured,
+            mailRecent: async () => recent,
+            mailAttempts: () => attempts,
+        }));
+        return request(app).get('/health');
+    };
+
+    it('says a mailer SES is refusing is refusing, not quiet', async () => {
+        const res = await withMail({ attempted: 2, failing: 2, lastError: '403 AccessDeniedException' });
+        expect(res.body.scheduler.mail).toMatch(/^REFUSING EVERY SEND/);
+        /* The error TYPE, because it names the job: a wrong key id, a wrong
+           secret and a missing ses:SendEmail are all 403 and all different
+           work. The precedent is the files field reporting S3's own code. */
+        expect(res.body.scheduler.mail).toContain('403 AccessDeniedException');
+        expect(res.body.scheduler.mail).toContain('2 in a row');
+    });
+
+    it('puts the refusal ahead of the row count, which cannot know about it', async () => {
+        /* A reset code is not a notification row, so outbox.ts would answer
+           "nothing sent yet" however many resets SES had just thrown out. */
+        const res = await withMail(
+            { attempted: 9, failing: 9, lastError: '403 SignatureDoesNotMatch' },
+            'configured, nothing sent yet',
+        );
+        expect(res.body.scheduler.mail).not.toContain('nothing sent yet');
+        expect(res.body.scheduler.mail).toContain('SignatureDoesNotMatch');
+    });
+
+    it('stops saying it the moment one send works', async () => {
+        const res = await withMail({ attempted: 4, failing: 0, lastError: null });
+        expect(res.body.scheduler.mail).not.toMatch(/REFUSING/);
+        /* And "nothing sent yet" would now be false: this process has put
+           four through and they were accepted. */
+        expect(res.body.scheduler.mail).toBe('configured, 4 sent this boot');
+    });
+
+    it('leaves "nothing sent yet" alone when nothing has in fact been tried', async () => {
+        /* A quiet Sunday is still a real answer and must not read as a
+           fault. The whole point is telling the two apart. */
+        const res = await withMail({ attempted: 0, failing: 0, lastError: null });
+        expect(res.body.scheduler.mail).toBe('configured, nothing sent yet');
+    });
+
+    it('does not contradict itself when the sweep has sent something recently', async () => {
+        const res = await withMail({ attempted: 3, failing: 0, lastError: null }, 'sending');
+        expect(res.body.scheduler.mail).toBe('sending');
+    });
+
+    it('still says off when email is not configured at all', async () => {
+        /* available is checked first and nothing below can override it: a
+           mailer with no credentials has not been refused, it has not been
+           asked. */
+        const res = await withMail({ attempted: 0, failing: 0, lastError: null }, 'sending', false);
+        expect(res.body.scheduler.mail).toBe('off');
+    });
+
+    it('names the fault without naming the endpoint, the key or the recipient', async () => {
+        /* The rule at the top of health.ts. An AWS error type is a fixed
+           string from a published list; a hostname, a region, an address and
+           a key id are not allowed on a public endpoint at any time. */
+        const res = await withMail({ attempted: 1, failing: 1, lastError: 'could not reach SES' });
+        const body = JSON.stringify(res.body);
+        expect(res.body.scheduler.mail).toContain('could not reach SES');
+        expect(body).not.toMatch(/amazonaws|\.com|@|us-[a-z]+-\d|AKIA/i);
+    });
+
     it('says whether the query planner has the statistics it needs', async () => {
         /* Those statistics decide whether the order detail page reads four
            custody rows or walks every event in the project: 0.5 ms against

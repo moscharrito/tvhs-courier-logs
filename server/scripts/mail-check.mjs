@@ -147,9 +147,18 @@ async function main() {
         say('  Whoever asked saw that in words. Nothing else below will add to it.');
         return;
     }
-    say('           (Not a test send, and NOT proof SES accepts anything. This');
-    say('            counts the notification sweep only: "nothing sent yet" is');
-    say('            what a server whose SES key is rejected also says.)');
+    if (/^REFUSING/.test(String(mail))) {
+        /* /health now answers this itself, and that is new: for a day it
+           said "configured, nothing sent yet" over a mailer SES was
+           rejecting outright. Worth repeating here because it settles the
+           question before a single audit row is read. */
+        say('           SES is rejecting this server. No address can receive anything');
+        say('           until that is fixed; the rows below say who it cost.');
+    } else {
+        say('           (Not a test send. A send that SES refuses is reported on this');
+        say('            line as REFUSING EVERY SEND, so "nothing sent yet" now means');
+        say('            what it says -- but only for sends THIS process has made.)');
+    }
     say();
 
     const login = await call('/api/login', {

@@ -384,6 +384,87 @@ describe('what a refusal from SES is allowed to say, and what it must say', () =
     });
 });
 
+describe('what the mailer remembers about its own sends', () => {
+    /* FOR /health, AND BECAUSE `available` IS A WEAK FACT. It means the five
+     * configuration values are present -- the same thing files: "configured"
+     * meant for weeks over a bucket that refused every upload. Production
+     * then ran a day with SES answering 403 to everything while /health said
+     * "configured, nothing sent yet", because that line counts notification
+     * rows and a password reset code is not one.
+     *
+     * Counted in the mailer because that is the only place every send passes
+     * through: the sweep, the daily report, and the reset codes. */
+    const cfg = {
+        enabled: true,
+        portalUrl: 'https://logs.example.invalid',
+        ses: {
+            region: 'us-east-2',
+            accessKeyId: 'AKIDEXAMPLE',
+            secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+            from: 'no-reply@example.invalid',
+        },
+    };
+    const letter = { to: 'counter@example.invalid', subject: 'Delivery completed', text: 'Order 41 is done.' };
+
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it('starts with nothing attempted, which is the honest answer after a boot', () => {
+        expect(createMailer({ mail: cfg }).attempts()).toEqual({ attempted: 0, failing: 0, lastError: null });
+    });
+
+    it('counts a refusal and keeps the status and type, so /health can name it', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+            new Response('', { status: 403, headers: { 'x-amzn-errortype': 'AccessDeniedException' } }),
+        );
+        const mailer = createMailer({ mail: cfg });
+        await mailer.send(letter).catch(() => undefined);
+        await mailer.send(letter).catch(() => undefined);
+        expect(mailer.attempts()).toEqual({ attempted: 2, failing: 2, lastError: '403 AccessDeniedException' });
+    });
+
+    it('forgets the run of failures as soon as one send works', async () => {
+        /* A mailer that sent something a moment ago is not broken, whatever
+           it did before, and /health must not keep calling it broken. */
+        const fetching = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response('', { status: 403, headers: { 'x-amzn-errortype': 'AccessDeniedException' } }))
+            .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+        const mailer = createMailer({ mail: cfg });
+        await mailer.send(letter).catch(() => undefined);
+        expect(mailer.attempts().failing).toBe(1);
+        await mailer.send(letter);
+        expect(mailer.attempts()).toEqual({ attempted: 2, failing: 0, lastError: null });
+        expect(fetching).toHaveBeenCalledTimes(2);
+    });
+
+    it('records a network failure without naming the SES endpoint', async () => {
+        /* The error's own words carry the hostname, and a hostname is on the
+           list at the top of core/http/health.ts of things that never appear
+           on a public endpoint. The caller and the log still get the real
+           message; /health gets a fixed string. */
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('getaddrinfo ENOTFOUND email.us-east-2.amazonaws.com'));
+        const mailer = createMailer({ mail: cfg });
+        await expect(mailer.send(letter)).rejects.toThrow(/ENOTFOUND/);
+        expect(mailer.attempts()).toEqual({ attempted: 1, failing: 1, lastError: 'could not reach SES' });
+    });
+
+    it('does not count a refused template as SES refusing us', async () => {
+        /* assertNoPatientData throws before anything reaches AWS. Counting it
+           would have /health announce that SES is rejecting our credentials
+           when SES has not been asked -- a template bug wearing a
+           configuration bug's clothes. */
+        const fetching = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+        const mailer = createMailer({ mail: cfg });
+        await expect(mailer.send({ ...letter, text: 'Deliver to 420 Rosewood Street' })).rejects.toThrow(/street address/i);
+        expect(mailer.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null });
+        expect(fetching).not.toHaveBeenCalled();
+    });
+
+    it('reports nothing attempted when it is not configured, rather than throwing', async () => {
+        const off = createMailer({ mail: { enabled: false, ses: undefined, portalUrl: '' } });
+        expect(off.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null });
+    });
+});
+
 describe('the SES request signature', () => {
     const cfg = {
         region: 'us-east-2',

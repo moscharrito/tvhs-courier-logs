@@ -192,6 +192,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         /* What the sweep actually did with the last batch, rather than
            whether the SES values are filled in. See outbox.ts. */
         mailRecent: () => recentMailState(database.client),
+        /* And what SES did with every send, including the password reset
+           codes that are not notification rows and so were invisible to
+           the line above while SES refused all of them. See ses.ts. */
+        mailAttempts: mailer.attempts,
         filesConfigured: fileStorage.available,
         /* The probe starts here, so a bucket that refuses writes is in the
            boot log and on /health rather than waiting for somebody to run

@@ -46,14 +46,36 @@
 import { Router, type Request, type Response } from 'express';
 import type { Client } from '@libsql/client';
 import type { FilesHealth } from '../files/probe';
+import type { MailAttempts } from '../notify/ses';
 
 interface Deps {
     client: Client;
     version: string;
     /** Seconds between sweeps, or undefined when the timer is not running. */
     sweepIntervalSeconds?: number | undefined;
-    /** Whether outbound email is configured. Not where it goes. */
+    /** Whether outbound email is configured. Not where it goes.
+     *
+     *  A WEAK FACT, and it was read as a strong one for a day. See
+     *  mailAttempts below. */
     mailConfigured?: boolean | undefined;
+    /** What SES has done with this process's sends, which outranks both of
+     *  the fields around it.
+     *
+     *  THE FAULT THIS CLOSES. Production ran for a day with SES answering
+     *  403 to every send -- the credentials were refused, so no password
+     *  reset code could reach anybody -- and this endpoint said
+     *  "configured, nothing sent yet" throughout. Three reasons at once:
+     *  mailConfigured only means the values are present, mailRecent counts
+     *  notification rows that FINISHED and a refused send leaves its row
+     *  pending, and a reset code is not a notification row at all.
+     *
+     *  So the only field anybody could check read the same as a quiet
+     *  Sunday. What found it was somebody testing the reset form and the
+     *  audit trail, which is exactly the "one line in a log" problem the
+     *  sms, statistics and tracking fields above were added to end.
+     *
+     *  See core/notify/ses.ts for why it is counted in the mailer. */
+    mailAttempts?: (() => MailAttempts) | undefined;
     /** What the LAST notifications the sweep finished actually did.
      *
      *  Not a test send. The reason mail is not probed the way S3 is has not
@@ -94,7 +116,7 @@ interface Deps {
 export type StatisticsState = 'ok' | 'missing' | 'unknown';
 
 export function createHealthRouter({
-    client, version, sweepIntervalSeconds, mailConfigured, mailRecent, filesConfigured, smsConfigured,
+    client, version, sweepIntervalSeconds, mailConfigured, mailRecent, mailAttempts, filesConfigured, smsConfigured,
     statistics, filesHealth, trackingRetentionDays,
 }: Deps): Router {
     const router = Router();
@@ -114,9 +136,37 @@ export function createHealthRouter({
            500s because one extra query was slow is worse than one that says
            less. */
         const mailState = async (): Promise<string> => {
+            /* THE REFUSALS FIRST, and that order is the whole point of the
+               field. A mailer SES is rejecting is rejecting it for every
+               address, so no row-counting below can say anything more
+               useful -- and while it was said second, it was not said at
+               all. See the note on mailAttempts in Deps.
+            
+               The status and AWS error type are kept because they name the
+               job: 403 UnrecognizedClientException is a wrong key id, 403
+               SignatureDoesNotMatch is a wrong secret, 403
+               AccessDeniedException is a missing ses:SendEmail, and 400
+               MessageRejected is the sandbox refusing an unverified
+               recipient. The precedent is the files field, which already
+               reports S3's own error code for the same reason. Neither
+               carries a hostname, an address or a key. */
+            const tried = mailAttempts?.();
+            if (tried && tried.failing > 0) {
+                return `REFUSING EVERY SEND: ${tried.lastError ?? 'reason not recorded'}`
+                    + ` (${tried.failing} in a row)`;
+            }
             if (!mailRecent) return 'configured';
             try {
-                return await mailRecent();
+                const recent = await mailRecent();
+                /* "nothing sent yet" is true of a server that has never had
+                   a notification to send AND of one whose every send was
+                   refused, which is how a dead mailer looked like a quiet
+                   Sunday for a day. Where this process has actually put
+                   something to SES and it worked, say so. */
+                if (tried && tried.attempted > 0 && recent === 'configured, nothing sent yet') {
+                    return `configured, ${tried.attempted} sent this boot`;
+                }
+                return recent;
             } catch {
                 return 'configured';
             }
