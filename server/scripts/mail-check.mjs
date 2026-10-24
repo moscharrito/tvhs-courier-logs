@@ -97,17 +97,35 @@ if (adminPass === '' && !isLocal) {
     process.exit(1);
 }
 
+/* A NETWORK FAILURE IS NOT A BUG IN THIS SCRIPT, AND MUST NOT LOOK LIKE ONE.
+ *
+ * One run died on a flickering DNS lookup and printed twenty lines of undici
+ * stack ending in `TypeError: fetch failed`. The reader's reasonable
+ * conclusion is that the tool is broken, on the day they are using it to
+ * find out whether something else is -- so the diagnosis they came for is
+ * replaced by a second thing to diagnose. */
+class Unreachable extends Error {}
+
 let cookie = '';
 async function call(pathname, options = {}) {
-    const res = await fetch(base + pathname, {
-        ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            ...(cookie ? { Cookie: cookie } : {}),
-            ...(options.headers ?? {}),
-        },
-        redirect: 'manual',
-    });
+    let res;
+    try {
+        res = await fetch(base + pathname, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(cookie ? { Cookie: cookie } : {}),
+                ...(options.headers ?? {}),
+            },
+            redirect: 'manual',
+        });
+    } catch (err) {
+        const code = err?.cause?.code ?? '';
+        const host = (() => { try { return new URL(base).host; } catch { return base; } })();
+        throw new Unreachable(code === 'ENOTFOUND'
+            ? `Could not look up ${host}. Check your connection and the --base you passed; nothing was read.`
+            : `Could not reach ${base}${code ? ` (${code})` : ''}. Nothing was read.`);
+    }
     const set = res.headers.getSetCookie?.() ?? [];
     if (set.length > 0) cookie = set.map((c) => c.split(';')[0]).join('; ');
     const text = await res.text();
@@ -396,4 +414,16 @@ async function main() {
     }
 }
 
-await main();
+/* Nothing below main() is allowed to print a stack trace: see Unreachable. */
+try {
+    await main();
+} catch (err) {
+    if (err instanceof Unreachable) {
+        console.error('');
+        console.error(`  ${err.message}`);
+        console.error('');
+        process.exitCode = 2;
+    } else {
+        throw err;
+    }
+}
