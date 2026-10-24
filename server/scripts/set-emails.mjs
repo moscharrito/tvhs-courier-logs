@@ -132,9 +132,17 @@ function readPairs(file) {
 function readSetFlags() {
     const pairs = [];
     const problems = [];
-    for (const a of args) {
-        if (!a.startsWith('--set=') && a !== '--set') continue;
-        const raw = a.startsWith('--set=') ? a.slice('--set='.length) : value('set', '');
+    /* INDEXED, NOT LOOKED UP BY NAME. The first version called value('set')
+       for each --set it found, and value() always answers with the FIRST
+       match -- so `--set a=x --set b=y` read a=x twice, and the duplicate
+       check then refused the whole run with "both a and a". Two accounts in
+       one command looked like a clash that was not there. */
+    for (let i = 0; i < args.length; i += 1) {
+        const a = args[i];
+        let raw = null;
+        if (a.startsWith('--set=')) raw = a.slice('--set='.length);
+        else if (a === '--set') { raw = args[i + 1] ?? ''; i += 1; }
+        if (raw === null) continue;
         const [username, email] = raw.split('=').map((c) => (c ?? '').trim());
         if (!username || !email) { problems.push(`--set ${raw}: expected username=email`); continue; }
         if (!EMAIL.test(email)) { problems.push(`--set ${raw}: "${email}" is not an email address`); continue; }
