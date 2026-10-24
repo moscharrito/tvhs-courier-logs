@@ -156,6 +156,7 @@ export function Layout() {
                             <div className="izy-nav-title">Platform</div>
                             {item('/users', 'Users')}
                             {item('/audit', 'Audit log')}
+                            {item('/mail-queue', 'Mail queue')}
                         </>
                     )}
                 </nav>

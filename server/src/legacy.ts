@@ -71,6 +71,7 @@ import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createFilesProbe } from './core/files/probe';
 import { recentMailState } from './core/notify/outbox';
+import { createMailQueueRouter } from './core/notify/queue';
 import { createBoardRouter } from './modules/uh/board';
 import { createClientPortalRouter } from './modules/uh/client-portal';
 import { createPortalResetRouter } from './modules/uh/portal-reset';
@@ -217,6 +218,12 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createUsersRouter({ client: database.client, store }));
     legacy.app.use(createDevicesRouter({ client: database.client, config, throttles }));
     legacy.app.use(createAuditRouter({ log }));
+    /* What is waiting to go out by email, and what would happen to it.
+       Beside the audit router because it is the same kind of thing: a
+       question an administrator has to be able to answer without the
+       database credentials and a SQL prompt. See core/notify/queue.ts for
+       the day it was missing. */
+    legacy.app.use(createMailQueueRouter({ client: database.client }));
 
     // Project settings are core: every contract has operating parameters.
     // UH Pharmacy Courier module below. Project scoping is enforced here

@@ -210,6 +210,45 @@ async function main() {
         say();
     }
 
+    /* ----------------------------------------- what is waiting to go out */
+
+    /* THE QUESTION THAT FOLLOWS THE DIAGNOSIS. Once /health says SES is
+       refusing, the next thing anybody needs is what it is holding -- and
+       whether letting it go emails a hospital about dry-run orders. Same
+       endpoint as the Mail queue page in the web shell; here because this
+       is the command already in somebody's hand when they find out. */
+    const pending = await call('/api/mail-queue?limit=200');
+    if (pending.status === 200) {
+        const queue = pending.body;
+        say(`  WAITING  ${queue.total} delivery notification${queue.total === 1 ? '' : 's'} unsent`);
+        if (queue.total > 0) {
+            say(`           ${queue.wouldSend} would be emailed, ${queue.noAddress} have no address,`
+                + ` ${queue.suppressed} suppressed`);
+            if (queue.wouldSend > 0) {
+                say(`           FIXING THE MAILER SENDS ${queue.wouldSend} EMAIL${queue.wouldSend === 1 ? '' : 'S'}`
+                    + ' IMMEDIATELY. Check what');
+                say('           they are about first — an email cannot be recalled. The web');
+                say('           shell lists them under Platform / Mail queue.');
+                /* The oldest few, because a date is usually the whole answer:
+                   a notification from a dry-run week is recognisable at a
+                   glance and a notification from yesterday is not. */
+                for (const r of (queue.rows ?? []).filter((x) => x.outcome === 'would send').slice(0, 5)) {
+                    say(`               ${when(r.createdAt)}  ${String(r.username).padEnd(20)} ${r.email}`);
+                    say(`               ${' '.repeat(20)}  ${r.body}`);
+                }
+            }
+            if (queue.total > queue.batch) {
+                say(`           The sweep takes ${queue.batch} at a time, so the rest wait behind them.`);
+            }
+        }
+        say();
+    } else if (pending.status !== 404) {
+        /* 404 means a server older than the endpoint, which is not worth a
+           complaint. Anything else is. */
+        say(`  WAITING  could not read the queue: HTTP ${pending.status}`);
+        say();
+    }
+
     /* --------------------------------------------------- what happened */
 
     const q = new URLSearchParams({ action: 'password_reset', limit: String(limit * 5) });

@@ -8,6 +8,7 @@ import { Users } from '../pages/Users';
 import { UserDetail } from '../pages/UserDetail';
 import { Devices } from '../pages/Devices';
 import { Audit } from '../pages/Audit';
+import { MailQueue } from '../pages/MailQueue';
 import { LegacyTvhs } from '../pages/LegacyTvhs';
 import { ProjectHome } from '../pages/ProjectHome';
 import { Orders } from '../pages/uh/Orders';
@@ -78,6 +79,7 @@ export function App() {
                 <Route path="/users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="/users/:username" element={<AdminOnly><UserDetail /></AdminOnly>} />
                 <Route path="/audit" element={<AdminOnly><Audit /></AdminOnly>} />
+                <Route path="/mail-queue" element={<AdminOnly><MailQueue /></AdminOnly>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
         </Routes>

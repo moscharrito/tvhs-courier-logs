@@ -234,6 +234,11 @@ const MATRIX = [
     ['DELETE', '/api/users/nobody/sessions/nope', PLATFORM_ADMIN, 'revoke one'],
     ['GET', '/api/users/nobody/devices', PLATFORM_ADMIN, 'somebody else s phones'],
     ['GET', '/api/audit', PLATFORM_ADMIN, 'the audit log'],
+    /* Who is about to be emailed and what about. Platform admin for the same
+       reason as the audit log: it is a list of named staff and their
+       addresses, and reading it is a thing somebody may have to account for.
+       See core/notify/queue.ts. */
+    ['GET', '/api/mail-queue', PLATFORM_ADMIN, 'what is waiting to go out by email'],
 
     /* --- driver applications (tickets 6.1 and 6.2).
      *

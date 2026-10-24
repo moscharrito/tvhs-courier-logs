@@ -643,6 +643,13 @@ export const notifications = sqliteTable(
         sentAt: text('sent_at'),
         /** When the person actually saw it in the app. */
         readAt: text('read_at'),
+        /** What the sweep DID with it: sent, no_address, suppressed, or ''
+         *  while it is still waiting. Added by drizzle/0054 and missing from
+         *  this file until now, which mattered because this file is where
+         *  anybody reads what a notification row holds -- and /health's mail
+         *  line, core/notify/outbox.ts and core/notify/queue.ts are all
+         *  built on this column. */
+        dispatchResult: text('dispatch_result').notNull().default(''),
     },
     (t) => [
         index('notifications_user_idx').on(t.projectId, t.username, t.createdAt),
