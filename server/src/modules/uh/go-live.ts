@@ -159,12 +159,30 @@ export function createGoLiveRouter({ client, deployment, expectedMigrations, fil
              *
              * This used to check that two administrators held a SECOND FACTOR,
              * which was the same argument with a sharper edge. The factor went
-             * in ticket 5.10; the reason for having two people did not. */
+             * in ticket 5.10; the reason for having two people did not.
+             *
+             * ─────────────────────────────────────────────────────────────
+             * NO LONGER BLOCKING, ON THE OWNER'S DECISION, 23 OCTOBER 2026.
+             *
+             * Asked for directly: a second administrator is not wanted. The
+             * check stays and still reports, because the risk did not go
+             * away when the requirement did -- it is reported as something
+             * seen and accepted rather than deleted, so nobody reading this
+             * file in six months mistakes an absent check for an oversight.
+             *
+             * WHAT REPLACED IT as the recovery path: an email address on the
+             * admin account, so a forgotten password can be reset by the
+             * route in core/auth/password-reset.ts instead of by a second
+             * person. That makes whoever can read that mailbox able to take
+             * the administrator account over, which is a narrower boundary
+             * than two people and a deliberate one. It also means the reset
+             * route is now load-bearing for platform recovery, so email
+             * delivery stops being a convenience. */
             pass: admins >= 2,
             detail: admins >= 2
                 ? `${admins} active.`
-                : `${admins} active. With one, a forgotten password or a person leaving stops every account change until somebody reaches the database.`,
-            blocking: true,
+                : `${admins} active. One is the owner's decision (23 Oct 2026); recovery is the reset code sent to the admin account's email instead of a second person.`,
+            blocking: false,
         });
 
         const couriers = await count(

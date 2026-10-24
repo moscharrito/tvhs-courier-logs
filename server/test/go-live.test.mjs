@@ -59,16 +59,29 @@ describe('the readiness check', () => {
         expect(res.body.blocking).toContain('discrepancies.any');
     });
 
-    it('fails on a single administrator, because nobody else can fix an account', async () => {
+    it('still fails on a single administrator, but no longer blocks', async () => {
         /* This used to check for two administrators holding a SECOND FACTOR.
            The factor went in ticket 5.10; the reason for wanting two people
            did not, and it is the plainer one: with one, a forgotten password
-           or a person leaving stops every account change. */
+           or a person leaving stops every account change.
+
+           NOT BLOCKING SINCE 23 OCTOBER 2026, on the owner's decision: a
+           second administrator is not wanted. The check is still here and
+           still fails, which is the point of this test -- a risk that was
+           accepted should go on reporting that it was accepted, so nobody
+           later reads an absent check as an oversight.
+
+           What replaced it is the email address on the admin account: a
+           forgotten password is recovered by the reset code rather than by a
+           second person. So this failing check is now a pointer at that
+           dependency, and the detail says so. */
         const res = await admin.get(`${UH}/go-live`);
         const admins = check(res.body, 'admins.second');
-        expect(admins.pass).toBe(false);
-        expect(admins.detail).toMatch(/stops every account change/);
-        expect(admins.blocking).toBe(true);
+        expect(admins.pass, 'the risk has not gone away').toBe(false);
+        expect(admins.blocking, 'accepted, not enforced').toBe(false);
+        expect(admins.detail).toMatch(/owner's decision/);
+        /* And it must not drag the overall verdict down any more. */
+        expect(res.body.blocking).not.toContain('admins.second');
     });
 
     it('stops failing it once there is a second administrator', async () => {
