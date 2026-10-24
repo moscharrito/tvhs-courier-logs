@@ -242,14 +242,34 @@ async function main() {
         if (queue.total > 0) {
             say(`           ${queue.wouldSend} would be emailed, ${queue.noAddress} have no address,`
                 + ` ${queue.suppressed} suppressed`);
-            if (queue.wouldSend > 0) {
+            if ((queue.recipients ?? []).length > 0) {
+                /* THE LINE THAT ANSWERS THE QUESTION. Five sampled rows out of
+                   three hundred do not tell anybody whether a real address is
+                   in there. This does. */
+                say(`           Would go to: ${queue.recipients
+                    .map((r) => `${r.domain} ${r.count}${r.reserved ? ' (reserved)' : ''}`)
+                    .join(', ')}`);
+            }
+            const real = queue.wouldSend - (queue.wouldSendReserved ?? 0);
+            if (queue.wouldSend > 0 && real === 0) {
+                /* Nobody hears from us, which is the part somebody is afraid
+                   of -- but a doomed send is retried every sweep forever, so
+                   it is not nothing either. */
+                say(`           ALL ${queue.wouldSend} GO TO RESERVED TEST DOMAINS, which can never`);
+                say('           reach anybody. Releasing the queue emails no real person — but');
+                say('           every one is refused and retried each sweep until the rows go.');
+            } else if (queue.wouldSend > 0) {
                 say(`           FIXING THE MAILER SENDS ${queue.wouldSend} EMAIL${queue.wouldSend === 1 ? '' : 'S'}`
-                    + ' IMMEDIATELY. Check what');
-                say('           they are about first — an email cannot be recalled. The web');
-                say('           shell lists them under Platform / Mail queue.');
-                /* The oldest few, because a date is usually the whole answer:
-                   a notification from a dry-run week is recognisable at a
-                   glance and a notification from yesterday is not. */
+                    + ` IMMEDIATELY, ${real} TO REAL`);
+                say('           DOMAINS. Check what they are about first — an email cannot be');
+                say('           recalled. The web shell lists them under Platform / Mail queue.');
+            }
+            /* The oldest few, in BOTH cases. A date is usually the whole
+               answer -- a notification from a rehearsal week is recognisable
+               at a glance and one from yesterday is not -- and a queue that
+               can reach nobody is still a queue somebody has to decide what
+               to do with. */
+            if (queue.wouldSend > 0) {
                 for (const r of (queue.rows ?? []).filter((x) => x.outcome === 'would send').slice(0, 5)) {
                     say(`               ${when(r.createdAt)}  ${String(r.username).padEnd(20)} ${r.email}`);
                     say(`               ${' '.repeat(20)}  ${r.body}`);

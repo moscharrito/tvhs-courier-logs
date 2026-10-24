@@ -36,6 +36,8 @@ const queue = (over = {}) => ({
     oldest: '2026-10-21T14:05:00.000Z',
     rows: [row()],
     partial: false,
+    recipients: [{ domain: 'example.invalid', count: 1, reserved: false }],
+    wouldSendReserved: 0,
     ...over,
 });
 
@@ -128,6 +130,55 @@ describe('what is in it', () => {
     it('says how long the oldest has been waiting', async () => {
         show(queue());
         expect(await screen.findByText(/oldest has been waiting since/)).toBeInTheDocument();
+    });
+});
+
+describe('where it would go', () => {
+    /* Production's queue held 302 rows from a rehearsal week, and whether
+     * releasing it was safe turned entirely on whether a real address was
+     * among them. A page of the table does not answer that. */
+    it('lists every domain the sendable mail would reach, with counts', async () => {
+        show(queue({
+            total: 3, wouldSend: 3, wouldSendReserved: 2,
+            recipients: [
+                { domain: 'example.invalid', count: 2, reserved: true },
+                { domain: 'uhs-sa.com', count: 1, reserved: false },
+            ],
+            rows: [row(), row({ id: 2 }), row({ id: 3 })],
+        }));
+        expect(await screen.findByText('example.invalid')).toBeInTheDocument();
+        expect(screen.getByText('uhs-sa.com')).toBeInTheDocument();
+        expect(screen.getAllByText('reserved')).toHaveLength(1);
+    });
+
+    it('says how many of them are to real domains, so nobody has to subtract', async () => {
+        show(queue({
+            total: 3, wouldSend: 3, wouldSendReserved: 2,
+            recipients: [
+                { domain: 'example.invalid', count: 2, reserved: true },
+                { domain: 'uhs-sa.com', count: 1, reserved: false },
+            ],
+            rows: [row(), row({ id: 2 }), row({ id: 3 })],
+        }));
+        expect(await screen.findByRole('status')).toHaveTextContent('1 of them to real domains');
+    });
+
+    it('says plainly when nothing in it can reach anybody', async () => {
+        /* A DIFFERENT SITUATION AND A DIFFERENT SENTENCE. Nobody hears from
+           us, which is the part somebody is afraid of -- but a doomed send
+           retries every sweep, so it is not nothing either, and the warning
+           tone would be wrong while silence about the retries would be too. */
+        show(queue({
+            total: 2, wouldSend: 2, wouldSendReserved: 2,
+            recipients: [{ domain: 'example.invalid', count: 2, reserved: true }],
+            rows: [row(), row({ id: 2 })],
+        }));
+        const note = await screen.findByRole('status');
+        expect(note).toHaveTextContent('All 2 would go to reserved test domains');
+        expect(note).toHaveTextContent(/can never reach anybody/);
+        /* And it does not pretend that leaves nothing to do. */
+        expect(note).toHaveTextContent(/refused and retried/);
+        expect(note).not.toHaveTextContent(/cannot be recalled/);
     });
 });
 

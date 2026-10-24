@@ -41,6 +41,12 @@ interface QueuedMail {
     inNextBatch: boolean;
 }
 
+interface Recipients {
+    domain: string;
+    count: number;
+    reserved: boolean;
+}
+
 interface Queue {
     total: number;
     wouldSend: number;
@@ -50,6 +56,8 @@ interface Queue {
     oldest: string | null;
     rows: QueuedMail[];
     partial: boolean;
+    recipients: Recipients[];
+    wouldSendReserved: number;
 }
 
 const TONE: Record<QueuedMail['outcome'], string> = {
@@ -96,10 +104,25 @@ export function MailQueue() {
                     {/* THE SENTENCE SOMEBODY CAME HERE FOR. Said in words
                         rather than left to be worked out of four figures,
                         because the thing it decides cannot be undone. */}
-                    {queue.wouldSend > 0 ? (
+                    {queue.wouldSend > 0 && queue.wouldSend === queue.wouldSendReserved ? (
+                        /* ALL OF THEM TO ADDRESSES THAT CANNOT EXIST, which is
+                           a different situation and deserves a different
+                           sentence. Still not nothing -- a doomed send retries
+                           every couple of minutes forever -- but nobody hears
+                           from us, and that is the part somebody is afraid of. */
+                        <div className="izy-alert ok" role="status">
+                            <b>All {queue.wouldSend} would go to reserved test domains.</b>{' '}
+                            Those can never reach anybody — they are set aside by RFC so that
+                            software can be certain. Releasing the queue emails no real person,
+                            but each one will be refused and retried every sweep until the rows
+                            are cleared.
+                        </div>
+                    ) : queue.wouldSend > 0 ? (
                         <div className="izy-alert warn" role="status">
                             <b>Releasing this queue would send {queue.wouldSend} email
-                                {queue.wouldSend === 1 ? '' : 's'}.</b>{' '}
+                                {queue.wouldSend === 1 ? '' : 's'}
+                                {queue.wouldSendReserved > 0
+                                    && `, ${queue.wouldSend - queue.wouldSendReserved} of them to real domains`}.</b>{' '}
                             Check below what they are about before fixing whatever is
                             holding them. An email cannot be recalled.
                         </div>
@@ -120,6 +143,22 @@ export function MailQueue() {
                         <div><b>{queue.noAddress}</b><span>no address</span></div>
                         <div><b>{queue.suppressed}</b><span>suppressed</span></div>
                     </div>
+
+                    {queue.recipients.length > 0 && (
+                        /* THE LINE THAT ANSWERS THE QUESTION. Reading five rows
+                           of a table of three hundred does not tell anybody
+                           whether a real address is in there; this does. */
+                        <p className="izy-field-note">
+                            <b>Would go to:</b>{' '}
+                            {queue.recipients.map((r, i) => (
+                                <span key={r.domain}>
+                                    {i > 0 && ', '}
+                                    <code>{r.domain}</code> {r.count}
+                                    {r.reserved && <span className="izy-pill muted" style={{ marginLeft: 4 }}>reserved</span>}
+                                </span>
+                            ))}
+                        </p>
+                    )}
 
                     <p className="izy-muted izy-field-note">
                         {/* dispatch reads `ORDER BY id LIMIT batch`, so a queue

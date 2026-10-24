@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
-import { mailQueue } from '../src/core/notify/queue.ts';
+import { mailQueue, isReservedDomain } from '../src/core/notify/queue.ts';
 import { dispatchPending, BATCH } from '../src/core/notify/dispatch.ts';
 
 let srv, admin, courier;
@@ -28,6 +28,8 @@ beforeAll(async () => {
     await admin.post('/api/users').send({ username: 'queue.counter', name: 'Queue Counter', email: 'counter@example.invalid', password: 'client-pass-1', role: 'staff' });
     await admin.post('/api/users').send({ username: 'queue.noaddr', name: 'No Address', password: 'client-pass-2', role: 'staff' });
     await admin.post('/api/users').send({ username: 'queue.bounced', name: 'Bounced', email: 'bounced@example.invalid', password: 'client-pass-3', role: 'staff' });
+    await admin.post('/api/users').send({ username: 'queue.real', name: 'Real Domain', email: 'counter@izyglobalservices.test.invalid', password: 'client-pass-4', role: 'staff' });
+    await admin.post('/api/users').send({ username: 'queue.elsewhere', name: 'Elsewhere', email: 'somebody@izyglobalservices.com', password: 'client-pass-5', role: 'staff' });
     await admin.post('/api/users').send({ username: 'queue.courier', name: 'Queue Courier', password: 'courier-pass-1', role: 'driver' });
     await admin.put('/api/users/queue.courier/memberships/uh').send({ role: 'courier', settings: {} });
     /* By hand rather than srv.login, which only knows the preset accounts. */
@@ -203,6 +205,67 @@ describe('what is waiting to go out', () => {
         const q = await queue();
         expect(q.total).toBe(1);
         expect(q.rows[0]).toMatchObject({ username: 'somebody.who.left', email: '', outcome: 'no address' });
+    });
+});
+
+describe('where it would actually go', () => {
+    /* THE QUESTION FIVE SAMPLED ROWS CANNOT ANSWER. Production's queue held
+     * 302 rows from a rehearsal week, and whether releasing it was safe
+     * turned entirely on whether any real address was among them. Reading a
+     * page of the table does not tell anybody that; a count per domain does.
+     */
+    it('groups the sendable mail by domain, commonest first', async () => {
+        await clearQueue();
+        await queued('queue.counter');
+        await queued('queue.counter');
+        await queued('queue.real');
+        const q = await queue();
+        expect(q.recipients).toEqual([
+            { domain: 'example.invalid', count: 2, reserved: true },
+            { domain: 'izyglobalservices.test.invalid', count: 1, reserved: true },
+        ]);
+    });
+
+    it('counts how many could never reach anybody', async () => {
+        await clearQueue();
+        await queued('queue.counter');
+        await queued('queue.elsewhere');
+        const q = await queue();
+        expect(q.wouldSend).toBe(2);
+        expect(q.wouldSendReserved).toBe(1);
+        /* So the page can say "1 of them to real domains" rather than
+           leaving somebody to work it out. */
+        expect(q.wouldSend - q.wouldSendReserved).toBe(1);
+    });
+
+    it('leaves out the rows that would not be sent', async () => {
+        /* An account with no address has no domain worth counting, and a
+           suppressed one is not going anywhere either. Counting them would
+           inflate the only figure on the page that matters. */
+        await clearQueue();
+        await queued('queue.noaddr');
+        await run(
+            "INSERT INTO mail_suppressions (address, reason, detail, created_at) VALUES (?, 'bounce', 'hard', ?)",
+            ['bounced@example.invalid', '2026-10-20T09:00:00.000Z'],
+        );
+        await queued('queue.bounced');
+        const q = await queue();
+        expect(q.wouldSend).toBe(0);
+        expect(q.recipients).toEqual([]);
+        expect(q.wouldSendReserved).toBe(0);
+    });
+
+    it('knows which domains an RFC set aside, and does not guess about the rest', async () => {
+        /* .invalid exists precisely so software can be CERTAIN an address is
+           not real. An address outside the list is not therefore real, only
+           not provably fake -- which is why the figure is reported as
+           reserved against the rest and never as safe against unsafe. */
+        for (const d of ['example.invalid', 'EXAMPLE.INVALID', 'a.b.test', 'example.com', 'localhost', 'invalid']) {
+            expect(isReservedDomain(d), d).toBe(true);
+        }
+        for (const d of ['izyglobalservices.com', 'gmail.com', 'uhs-sa.com', 'invalid.com', 'notexample.org']) {
+            expect(isReservedDomain(d), d).toBe(false);
+        }
     });
 });
 

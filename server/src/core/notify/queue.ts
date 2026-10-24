@@ -59,6 +59,36 @@ import { normalizeAddress, suppressedAddresses } from './suppressions';
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
 
+/* Domains that RFC 2606 and RFC 6761 set aside so they can never be real.
+ *
+ * WHY A VIEW ABOUT SENDING EMAIL KNOWS ABOUT RFCs. The question this whole
+ * module exists to answer is "if I let this queue go, who hears from us" --
+ * and the answer that matters most is "nobody, these are test addresses".
+ * A queue of 246 messages to @example.invalid is safe to release in a way
+ * that a queue of 246 messages to a hospital is not, and the difference
+ * cannot be seen by reading five rows of a table of 302.
+ *
+ * These are guaranteed never to resolve, which is stronger than a guess
+ * from the look of an address: .invalid exists precisely so that software
+ * can be sure. An address outside this list is NOT therefore real -- it is
+ * only not provably fake, which is why the figure is reported as reserved
+ * against the rest rather than as safe against unsafe. */
+const RESERVED_TLDS = ['.invalid', '.test', '.example', '.localhost'];
+const RESERVED_DOMAINS = ['example.com', 'example.net', 'example.org'];
+
+export function isReservedDomain(domain: string): boolean {
+    const d = domain.trim().toLowerCase();
+    return RESERVED_DOMAINS.includes(d) || RESERVED_TLDS.some((tld) => d === tld.slice(1) || d.endsWith(tld));
+}
+
+/** Where the sendable mail would actually go, grouped. */
+export interface Recipients {
+    domain: string;
+    count: number;
+    /** Set aside by RFC so it can never reach anybody. See above. */
+    reserved: boolean;
+}
+
 /** What dispatch.ts would do with this row if the sweep ran now. */
 export type Outcome = 'would send' | 'no address' | 'suppressed';
 
@@ -94,6 +124,12 @@ export interface MailQueue {
     rows: QueuedMail[];
     /** Whether `rows` is a page rather than the whole queue. */
     partial: boolean;
+    /** Every domain the `wouldSend` rows would go to, commonest first, with
+     *  the reserved ones marked. The one line that answers "is it safe to
+     *  release this" without reading the table. */
+    recipients: Recipients[];
+    /** How many of `wouldSend` go to a domain that can never receive. */
+    wouldSendReserved: number;
 }
 
 const Query = z.object({
@@ -169,6 +205,37 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
     const wouldSend = total - suppressedCount - noAddress;
     const oldest = summary?.['oldest'] == null ? null : String(summary['oldest']);
 
+    /* WHERE THE SENDABLE MAIL WOULD GO, grouped, and only for the rows that
+       would actually be sent -- an address with nowhere to go has no domain
+       worth counting. Grouped in SQL for the same reason the totals are:
+       the answer must not depend on how many rows fitted on a page.
+
+       instr() rather than a split: SQLite has no split, and an address with
+       no @ cannot get this far because the empty-address test above already
+       took every row whose email is blank, and the schema's own validation
+       refuses an address without one. */
+    const emailExpr = "lower(trim(COALESCE(u.email, '')))";
+    const grouped = await client.execute({
+        sql: `SELECT substr(${emailExpr}, instr(${emailExpr}, '@') + 1) AS domain, COUNT(*) AS n
+                FROM notifications n
+                LEFT JOIN users u ON u.username = n.username
+               WHERE n.sent_at IS NULL AND n.kind IN (${marks})
+                 AND trim(COALESCE(u.email, '')) != ''
+                 AND ${suppressedCase} = 0
+               GROUP BY domain
+               ORDER BY n DESC, domain
+               LIMIT 25`,
+        args: list.length === 0 ? [...EMAILED_KINDS] : [...EMAILED_KINDS, ...list],
+    });
+    const recipients: Recipients[] = grouped.rows.map((r) => ({
+        domain: String(r['domain'] ?? ''),
+        count: Number(r['n'] ?? 0),
+        reserved: isReservedDomain(String(r['domain'] ?? '')),
+    }));
+    const wouldSendReserved = recipients
+        .filter((r) => r.reserved)
+        .reduce((sum, r) => sum + r.count, 0);
+
     const rs = await client.execute({
         sql: `SELECT n.id, n.kind, n.body, n.order_id, n.username, n.created_at, u.email
                FROM notifications n
@@ -206,6 +273,8 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
         oldest,
         rows,
         partial: rows.length < total,
+        recipients,
+        wouldSendReserved,
     };
 }
 
@@ -235,7 +304,10 @@ export function createMailQueueRouter({ client }: { client: Client }): Router {
            list of who is about to be emailed and what about, and a read of
            it is a thing somebody may later need to account for. */
         await req.audit('mail_queue.read', 'notifications', null, {
-            total: queue.total, wouldSend: queue.wouldSend,
+            total: queue.total,
+            wouldSend: queue.wouldSend,
+            /* The figure the reader acted on, not just the one they saw. */
+            reserved: queue.wouldSendReserved,
         });
         res.json(queue);
     }));
