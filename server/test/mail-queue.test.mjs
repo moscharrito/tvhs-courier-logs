@@ -269,6 +269,33 @@ describe('where it would actually go', () => {
     });
 });
 
+describe('whether anything can be sent at all', () => {
+    /* An administrator in the shell could not find out that SES had refused
+     * 19,126 consecutive sends, because the only place that said so was an
+     * unauthenticated endpoint reached with curl. The queue page is where
+     * somebody asking "why did my reset code never come" ends up. */
+    it('reports the mailer beside the queue', async () => {
+        await clearQueue();
+        const res = await admin.get('/api/mail-queue');
+        expect(res.status).toBe(200);
+        /* The test server has no SES credentials, so this is the honest
+           answer rather than a contrived one. */
+        expect(res.body.mailer).toMatchObject({ available: false, attempted: 0, failing: 0, lastError: null });
+        expect(String(res.body.mailer.reason)).toMatch(/not enabled|missing/i);
+    });
+
+    it('records whether mail was working when somebody read the queue', async () => {
+        /* The wouldSend figure means something different depending on it, so
+           an audit row that kept one without the other would be a figure
+           nobody could later interpret. */
+        await clearQueue();
+        await queued('queue.counter');
+        await admin.get('/api/mail-queue');
+        const trail = await rows("SELECT detail FROM audit_events WHERE action = 'mail_queue.read' ORDER BY id DESC LIMIT 1");
+        expect(JSON.parse(String(trail[0].detail))).toMatchObject({ total: 1, wouldSend: 1, mailerFailing: 0 });
+    });
+});
+
 describe('GET /api/mail-queue', () => {
     it('is admin only, because it is a list of who is about to be emailed', async () => {
         expect((await srv.agent().get('/api/mail-queue')).status).toBe(401);

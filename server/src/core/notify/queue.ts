@@ -54,6 +54,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client } from '@libsql/client';
 import { EMAILED_KINDS, BATCH } from './dispatch';
+import type { Mailer } from './ses';
 import { normalizeAddress, suppressedAddresses } from './suppressions';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -130,6 +131,41 @@ export interface MailQueue {
     recipients: Recipients[];
     /** How many of `wouldSend` go to a domain that can never receive. */
     wouldSendReserved: number;
+}
+
+/**
+ * Whether mail can leave at all, answered next to what is waiting.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS ON THIS ENDPOINT AND NOT ONLY ON /health.
+ *
+ * An administrator signed into the shell typed their own address into the
+ * reset form and waited for a code. They got "a code is on its way",
+ * because the route answers that to everybody on purpose. Meanwhile SES had
+ * refused 19,126 consecutive sends with 403 AccessDeniedException and
+ * /health had been saying so for a day.
+ *
+ * Everything needed to know was published. It was published somewhere
+ * nobody standing in front of the reset form was looking -- an
+ * unauthenticated JSON endpoint you reach with curl. The person who could
+ * act on it was in the web shell, which said nothing.
+ *
+ * So the queue page says it, loudly, above everything else: a queue is a
+ * question about what will be sent, and "nothing, and here is what AWS
+ * calls the reason" is the most important possible answer to it.
+ */
+export interface MailerState {
+    /** Whether the five configuration values are present. A weak fact. */
+    available: boolean;
+    /** Why not, when not. */
+    reason: string | null;
+    /** Sends this process has put to SES since boot. */
+    attempted: number;
+    /** Consecutive refusals ending now. Non-zero means nothing is getting
+     *  out, whatever the queue below says. */
+    failing: number;
+    /** The last refusal: status and AWS error type. Never a recipient. */
+    lastError: string | null;
 }
 
 const Query = z.object({
@@ -290,7 +326,7 @@ function requireAdmin(req: Request, res: Response, next: NextFunction): void {
     next();
 }
 
-export function createMailQueueRouter({ client }: { client: Client }): Router {
+export function createMailQueueRouter({ client, mailer }: { client: Client; mailer: Mailer }): Router {
     const router = Router();
 
     router.get('/api/mail-queue', requireAdmin, wrap(async (req, res) => {
@@ -300,6 +336,14 @@ export function createMailQueueRouter({ client }: { client: Client }): Router {
             return;
         }
         const queue = await mailQueue(client, parsed.data.limit);
+        const attempts = mailer.attempts();
+        const state: MailerState = {
+            available: mailer.available,
+            reason: mailer.reason,
+            attempted: attempts.attempted,
+            failing: attempts.failing,
+            lastError: attempts.lastError,
+        };
         /* Audited for the same reason reading the audit log is: this is the
            list of who is about to be emailed and what about, and a read of
            it is a thing somebody may later need to account for. */
@@ -308,8 +352,11 @@ export function createMailQueueRouter({ client }: { client: Client }): Router {
             wouldSend: queue.wouldSend,
             /* The figure the reader acted on, not just the one they saw. */
             reserved: queue.wouldSendReserved,
+            /* And whether anything could have gone out at the time they
+               looked, which is what the figure above means or does not. */
+            mailerFailing: state.failing,
         });
-        res.json(queue);
+        res.json({ ...queue, mailer: state });
     }));
 
     return router;

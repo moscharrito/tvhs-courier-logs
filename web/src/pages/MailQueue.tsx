@@ -47,7 +47,16 @@ interface Recipients {
     reserved: boolean;
 }
 
+interface MailerState {
+    available: boolean;
+    reason: string | null;
+    attempted: number;
+    failing: number;
+    lastError: string | null;
+}
+
 interface Queue {
+    mailer: MailerState;
     total: number;
     wouldSend: number;
     noAddress: number;
@@ -98,6 +107,42 @@ export function MailQueue() {
             </p>
 
             {error && <div className="izy-alert error" role="alert">{error}</div>}
+
+            {/* ABOVE EVERYTHING ELSE, AND THAT POSITION IS THE POINT.
+
+                An administrator typed their own address into the reset form
+                and waited for a code that could not come: SES had refused
+                19,126 consecutive sends and /health had been saying so for a
+                day. Everything needed to know was published -- on an
+                unauthenticated endpoint you reach with curl, which is not
+                where somebody standing in front of the reset form is
+                looking. The shell they were actually in said nothing.
+
+                A queue is a question about what will be sent. "Nothing, and
+                here is what AWS calls the reason" is the most important
+                answer it can have, so it goes first and it does not wait to
+                be clicked. */}
+            {queue && !queue.mailer.available && (
+                <div className="izy-alert error" role="alert">
+                    <b>Email is switched off on this server.</b>{' '}
+                    {queue.mailer.reason ?? 'No reason recorded.'}{' '}
+                    Nothing below can be sent, and a password reset asked for now is
+                    refused in words rather than silently accepted.
+                </div>
+            )}
+            {queue && queue.mailer.available && queue.mailer.failing > 0 && (
+                <div className="izy-alert error" role="alert">
+                    <b>SES is refusing every send: {queue.mailer.lastError ?? 'reason not recorded'}.</b>{' '}
+                    {queue.mailer.failing} in a row. Nothing has left this server, so a
+                    password reset code asked for now will not arrive — and whoever asked
+                    was told one was on its way, because the reset route answers that to
+                    everybody by design.
+                    {queue.mailer.lastError?.startsWith('403') === true && (
+                        <> A 403 is about this server's credentials, not about any
+                            recipient: no address can receive anything until it is fixed.</>
+                    )}
+                </div>
+            )}
 
             {queue && (
                 <div className="izy-card">

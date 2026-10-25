@@ -223,7 +223,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        question an administrator has to be able to answer without the
        database credentials and a SQL prompt. See core/notify/queue.ts for
        the day it was missing. */
-    legacy.app.use(createMailQueueRouter({ client: database.client }));
+    legacy.app.use(createMailQueueRouter({ client: database.client, mailer }));
 
     // Project settings are core: every contract has operating parameters.
     // UH Pharmacy Courier module below. Project scoping is enforced here

@@ -27,7 +27,10 @@ const row = (over = {}) => ({
     ...over,
 });
 
+const healthy = { available: true, reason: null, attempted: 3, failing: 0, lastError: null };
+
 const queue = (over = {}) => ({
+    mailer: healthy,
     total: 1,
     wouldSend: 1,
     noAddress: 0,
@@ -46,6 +49,62 @@ function show(body: unknown) {
     render(<MailQueue />);
     return mock;
 }
+
+describe('whether anything can be sent at all', () => {
+    /* THE FAULT THIS CLOSES. An administrator typed their own address into
+     * the reset form and waited for a code that could not come: SES had
+     * refused 19,126 consecutive sends with 403 AccessDeniedException and
+     * /health had been saying so for a day. Everything needed to know was
+     * published on an unauthenticated endpoint reachable with curl, which is
+     * not where somebody standing in front of a reset form is looking. The
+     * shell they were in said nothing at all. */
+    it('says so first when SES is refusing everything', async () => {
+        show(queue({
+            mailer: { available: true, reason: null, attempted: 19126, failing: 19126, lastError: '403 AccessDeniedException' },
+        }));
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent('SES is refusing every send: 403 AccessDeniedException');
+        expect(alert).toHaveTextContent('19126 in a row');
+    });
+
+    it('says a reset code asked for now will not arrive, which is the question', async () => {
+        /* Not "mail is degraded". The thing somebody came to find out is why
+           the code they asked for never came, and that they were told it was
+           on its way regardless. */
+        show(queue({
+            mailer: { available: true, reason: null, attempted: 40, failing: 40, lastError: '403 AccessDeniedException' },
+        }));
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent(/password reset code asked for now will not arrive/);
+        expect(alert).toHaveTextContent(/told one was on its way/);
+    });
+
+    it('explains that a 403 is not about the recipient', async () => {
+        /* Because the obvious next move on "the code did not arrive" is to
+           suspect the address, and on a 403 that is a day spent in the wrong
+           place. */
+        show(queue({
+            mailer: { available: true, reason: null, attempted: 2, failing: 2, lastError: '403 AccessDeniedException' },
+        }));
+        expect(await screen.findByRole('alert')).toHaveTextContent(/no address can receive anything/);
+    });
+
+    it('does not blame SES when email is simply switched off', async () => {
+        show(queue({
+            mailer: { available: false, reason: 'Email is not enabled on this server.', attempted: 0, failing: 0, lastError: null },
+        }));
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent('Email is switched off on this server');
+        expect(alert).toHaveTextContent('Email is not enabled on this server.');
+        expect(alert).not.toHaveTextContent(/refusing every send/);
+    });
+
+    it('stays quiet when mail is working, so the warning keeps its meaning', async () => {
+        show(queue());
+        await screen.findByRole('status');
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+});
 
 describe('the number somebody came for', () => {
     it('says in words how many emails releasing the queue would send', async () => {
