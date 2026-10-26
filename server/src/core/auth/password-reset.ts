@@ -297,12 +297,55 @@ export function createPasswordResetRouter(deps: {
         byAddress.reset(ipKey);
         const revoked = await deps.store.revokeAllForUser(userId);
 
-        await req.audit?.('password_reset.completed', 'user', String(user['username']), { revokedSessions: revoked });
+        /* AND EVERY PHONE'S PIN, WHICH IS NOT THE SAME THING AND WAS THE HOLE.
+         *
+         * Revoking sessions was all this did, and it read as enough. It was
+         * not: a courier's phone signs in with a 4-6 digit PIN held on the
+         * DEVICE row (core/auth/devices.ts), and POST /api/login/device never
+         * looks at users.password. So the sequence that matters went:
+         *
+         *   a courier's login is shared, or a phone is lost
+         *   they reset their password, believing the other phone is locked out
+         *   the other phone taps its old PIN and is straight back in
+         *
+         * The session was revoked and the device immediately made a new one.
+         * Couriers are the only role allowed a PIN, which put the whole of
+         * this squarely on the people the reset exists to protect -- and both
+         * shells were already promising, in writing, "signs out every device,
+         * including this phone. You will sign in again with the new
+         * password." The second sentence was false.
+         *
+         * REVOKED RATHER THAN JUST BLANKED, matching what the devices screen
+         * has always done to a phone somebody signs out by hand. A revoked
+         * row is invisible to liveDevice, so GET /api/login/device answers
+         * "not enrolled" and the phone shows the password box -- which is
+         * exactly what the sentence above promises. Blanking the PIN alone
+         * would leave the phone enrolled and the lock screen offering a PIN
+         * pad that could never open. The row stays for the history. */
+        const devices = await sql(
+            `UPDATE devices SET revoked_at = ?, revoked_by = 'password reset', pin = NULL
+              WHERE user_id = ? AND revoked_at IS NULL`,
+            [at.toISOString(), userId],
+        );
+        const revokedDevices = Number(devices.rowsAffected ?? 0);
+
+        await req.audit?.('password_reset.completed', 'user', String(user['username']), {
+            revokedSessions: revoked,
+            /* Separately from sessions, because they are separate credentials
+               and somebody reading this later needs to see both went. */
+            revokedDevices,
+        });
         res.json({
             ok: true,
             username: String(user['username']),
             revokedSessions: revoked,
-            message: 'Your password is changed and every device signed out. Sign in with the new password.',
+            revokedDevices,
+            message: revokedDevices > 0
+                /* Said only when it happened, so a pharmacist who has never
+                   had a phone PIN is not told about one. */
+                ? 'Your password is changed, every device signed out, and the PIN on '
+                    + 'your phone removed. Sign in with the new password, then set up a new PIN.'
+                : 'Your password is changed and every device signed out. Sign in with the new password.',
         });
     }));
 

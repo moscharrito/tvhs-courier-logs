@@ -60,7 +60,12 @@ export function ForgotPassword({ onBack }: { onBack: () => void }) {
         setBusy(true);
         setError(null);
         try {
-            await confirmPasswordReset(email.trim().toLowerCase(), code.trim(), password);
+            /* THE SERVER'S OWN SENTENCE. Only it knows whether this account
+               had a phone PIN, which the reset revokes along with the
+               sessions -- and on this shell the reader is usually the person
+               who had one. See core/auth/password-reset.ts. */
+            const res = await confirmPasswordReset(email.trim().toLowerCase(), code.trim(), password);
+            setNote(res?.message ?? null);
             setStep('done');
         } catch (err) {
             setError(err instanceof ApiError ? err.message : 'That did not go through. Check your signal and try again.');
@@ -162,8 +167,8 @@ export function ForgotPassword({ onBack }: { onBack: () => void }) {
                 {step === 'done' && (
                     <Panel>
                         <Text style={styles.note}>
-                            Every device signed in as you has been signed out. Sign in with
-                            the new password.
+                            {note ?? 'Every device signed in as you has been signed out. '
+                                + 'Sign in with the new password.'}
                         </Text>
                         <View style={styles.actions}>
                             <CardButton title="Back to sign in" onPress={onBack} tone="primary" />

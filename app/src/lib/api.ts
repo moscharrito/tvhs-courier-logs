@@ -164,11 +164,16 @@ export async function requestPasswordReset(email: string): Promise<{ message: st
 }
 
 /** Use the code. Every session on the account is revoked, including this
- *  phone's, which is the point: whoever asked could not sign in. */
+ *  phone's, which is the point: whoever asked could not sign in.
+ *
+ *  AND EVERY PHONE PIN WITH THEM. A courier's phone signs in on a PIN held
+ *  on the device rather than on the password, so revoking sessions alone
+ *  left a lost phone able to tap its way back in. `message` is composed by
+ *  the server because only it knows whether that happened to this account. */
 export async function confirmPasswordReset(
     email: string, code: string, password: string,
-): Promise<{ username: string; revokedSessions: number }> {
-    return request<{ username: string; revokedSessions: number }>(fetch, baseUrl(), '/api/password-reset/confirm', {
+): Promise<{ username: string; revokedSessions: number; revokedDevices: number; message: string }> {
+    return request<{ username: string; revokedSessions: number; revokedDevices: number; message: string }>(fetch, baseUrl(), '/api/password-reset/confirm', {
         method: 'POST',
         json: { email, code, password },
         asApp: true,

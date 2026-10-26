@@ -70,10 +70,16 @@ export function PasswordReset({ onBack }: { onBack: () => void }) {
         setBusy(true);
         setError(null);
         try {
-            await api('/api/password-reset/confirm', {
+            /* THE SERVER'S OWN SENTENCE, because it is the only one that
+               knows whether a phone PIN was removed. A courier's phone signs
+               in on a PIN that the reset revokes (core/auth/password-reset.ts)
+               and a pharmacist has never had one, so a fixed line here is
+               wrong for one of them whichever way it is written. */
+            const res = await api<{ message?: string }>('/api/password-reset/confirm', {
                 method: 'POST',
                 json: { email: email.trim().toLowerCase(), code: code.trim(), password },
             });
+            setNote(res.message ?? null);
             setStep('done');
         } catch (err) {
             setError(err instanceof ApiError ? err.message : 'That did not go through. Try again.');
@@ -87,8 +93,8 @@ export function PasswordReset({ onBack }: { onBack: () => void }) {
             <div>
                 <h2>Password changed</h2>
                 <p className="izy-muted">
-                    Every device signed in as you has been signed out, including any phone
-                    you set up. Sign in with the new password.
+                    {note ?? 'Every device signed in as you has been signed out, including any phone '
+                        + 'you set up. Sign in with the new password.'}
                 </p>
                 <button className="izy-btn" type="button" onClick={onBack}>Back to sign in</button>
             </div>

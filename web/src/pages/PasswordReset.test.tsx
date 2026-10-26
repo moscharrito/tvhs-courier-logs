@@ -124,6 +124,49 @@ describe('using the code', () => {
         expect(bodies[CONFIRM]).toMatchObject({ email: 'counter@example.invalid', code: '123456' });
     });
 
+    it('repeats what the server says it did, including a removed phone PIN', async () => {
+        /* A courier's phone signs in on a PIN held on the device, not on the
+           password, so the reset revokes it too -- and the courier is about
+           to find their PIN pad gone. Only the server knows whether that
+           happened to this account, so the sentence is its own rather than a
+           fixed line here that would be wrong for a pharmacist. */
+        renderReset({
+            [REQUEST]: { status: 202, body: accepted },
+            [CONFIRM]: {
+                status: 200,
+                body: {
+                    ok: true, username: 'uh.courier', revokedSessions: 1, revokedDevices: 1,
+                    message: 'Your password is changed, every device signed out, and the PIN on '
+                        + 'your phone removed. Sign in with the new password, then set up a new PIN.',
+                },
+            },
+        });
+        await askFor('courier@example.invalid');
+        fireEvent.change(screen.getByLabelText(/The six digit code/), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText(/New password/), { target: { value: 'a-brand-new-password' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Set the new password' }));
+
+        await waitFor(() => expect(screen.getByText('Password changed')).toBeInTheDocument());
+        expect(screen.getByText(/PIN on your phone removed/)).toBeInTheDocument();
+        expect(screen.getByText(/set up a new PIN/)).toBeInTheDocument();
+    });
+
+    it('falls back to its own words when the server sends none', async () => {
+        /* An older server, or one that answered without a message. The screen
+           still has to say what happened rather than show an empty space. */
+        renderReset({
+            [REQUEST]: { status: 202, body: accepted },
+            [CONFIRM]: { status: 200, body: { ok: true, username: 'uh.counter', revokedSessions: 2 } },
+        });
+        await askFor('counter@example.invalid');
+        fireEvent.change(screen.getByLabelText(/The six digit code/), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText(/New password/), { target: { value: 'a-brand-new-password' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Set the new password' }));
+
+        await waitFor(() => expect(screen.getByText('Password changed')).toBeInTheDocument());
+        expect(screen.getByText(/signed out/i)).toBeInTheDocument();
+    });
+
     it('shows the refusal and stays put so the code can be retyped', async () => {
         renderReset({
             [REQUEST]: { status: 202, body: accepted },

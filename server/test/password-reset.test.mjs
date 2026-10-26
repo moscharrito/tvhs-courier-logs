@@ -72,6 +72,12 @@ beforeAll(async () => {
         password: 'gone-pass-1', role: 'driver',
     });
     await admin.patch('/api/users/gone.courier').send({ status: 'disabled' });
+    /* A courier, because couriers are the only role allowed a phone PIN and
+       so the only people the device half of this can go wrong for. */
+    await admin.post('/api/users').send({
+        username: 'pin.courier', name: 'Pin Courier', email: 'pin@example.invalid',
+        password: 'pin-pass-12345', role: 'driver',
+    });
 });
 afterAll(async () => { await srv.stop(); });
 
@@ -307,5 +313,136 @@ describe('the code itself', () => {
         newCode((min, max) => { low = min; high = max; return 1; });
         expect(low).toBe(0);
         expect(high).toBe(1_000_000);
+    });
+});
+
+describe('the phone PIN, which is a second credential and was being left behind', () => {
+    /* THE HOLE THIS CLOSES, IN THE ORDER IT HAPPENED.
+     *
+     *   a courier's login is shared, or a phone goes missing
+     *   they reset their password, believing the other phone is locked out
+     *   the other phone taps its old PIN and is straight back in
+     *
+     * Revoking sessions was all the confirm route did. A courier's phone
+     * signs in against a PIN held on the DEVICE row, and POST
+     * /api/login/device never reads users.password -- so the revoked session
+     * was simply replaced by a new one. Couriers are the only role allowed a
+     * PIN, which put all of this on exactly the people the reset protects.
+     *
+     * Both shells were already promising "signs out every device, including
+     * this phone. You will sign in again with the new password." These tests
+     * are that sentence, made true.
+     */
+    const PIN = '4821';
+    const PASSWORD = 'pin-pass-12345';
+
+    /* EACH TEST STARTS FROM THE SAME PHONE AND THE SAME PASSWORD. Every case
+       in here resets that courier's password, which is the whole point, so
+       without this the second test tries to enrol with a password the first
+       one changed and the failures read as bugs in the thing under test. */
+    beforeEach(async () => {
+        const admin = await srv.login('admin');
+        const back = await admin.post('/api/users/pin.courier/password').send({ password: PASSWORD });
+        expect(back.status, back.text).toBe(200);
+        await sql('DELETE FROM devices WHERE user_id = (SELECT id FROM users WHERE username = ?)', ['pin.courier']);
+    });
+
+    /** A phone enrolled the way a courier's phone really is. */
+    async function enrolPhone() {
+        const phone = srv.agent();
+        const enrolled = await phone.post('/api/devices/enrol').send({
+            username: 'pin.courier', password: PASSWORD, pin: PIN, label: 'Test phone',
+        });
+        expect(enrolled.status, enrolled.text).toBe(201);
+        return phone;
+    }
+
+    /** Drive a whole reset for that courier, start to finish. */
+    async function resetTheirPassword(app, newPassword = 'a-brand-new-password') {
+        await request(app).post('/api/password-reset/request').send({ email: 'pin@example.invalid' });
+        const code = codeFromMail();
+        const done = await request(app).post('/api/password-reset/confirm')
+            .send({ email: 'pin@example.invalid', code, password: newPassword });
+        expect(done.status, done.text).toBe(200);
+        return done;
+    }
+
+    it('refuses the PIN that worked a moment earlier', async () => {
+        /* THE LOAD-BEARING TEST. Everything else here is detail. */
+        const phone = await enrolPhone();
+        expect((await phone.post('/api/login/device').send({ pin: PIN })).status,
+            'the PIN should work before the reset').toBe(200);
+
+        await resetTheirPassword(appWith());
+
+        const after = await phone.post('/api/login/device').send({ pin: PIN });
+        expect(after.status, 'the same PIN, after the reset').toBe(401);
+    });
+
+    it('tells the phone it is not enrolled, so it shows the password box', async () => {
+        /* Not a PIN pad that can never open. liveDevice ignores revoked rows,
+           which is what sends the courier to the place they can actually get
+           in -- the password box, exactly as the reset screen promised. */
+        const phone = await enrolPhone();
+        expect((await phone.get('/api/login/device')).body.enrolled).toBe(true);
+
+        await resetTheirPassword(appWith());
+
+        expect((await phone.get('/api/login/device')).body.enrolled).toBe(false);
+    });
+
+    it('lets them back on with the new password and a new PIN', async () => {
+        /* The courier is not locked out of their own phone -- they re-enrol,
+           which needs the password they just chose. That is the whole point:
+           the PIN stops being a way in for anyone who does not have it. */
+        const phone = await enrolPhone();
+        await resetTheirPassword(appWith(), 'the-newest-password');
+
+        const again = await phone.post('/api/devices/enrol').send({
+            username: 'pin.courier', password: 'the-newest-password', pin: '9930', label: 'Test phone',
+        });
+        expect(again.status, again.text).toBe(201);
+        expect((await phone.post('/api/login/device').send({ pin: '9930' })).status).toBe(200);
+    });
+
+    it('will not take the old password to enrol a phone again', async () => {
+        const phone = await enrolPhone();
+        await resetTheirPassword(appWith(), 'the-newest-password');
+
+        const stale = await phone.post('/api/devices/enrol').send({
+            username: 'pin.courier', password: PASSWORD, pin: '1111', label: 'Test phone',
+        });
+        expect(stale.status).toBe(401);
+    });
+
+    it('counts the phones it signed out, and says so to the person', async () => {
+        /* Counted separately from sessions because they are separate
+           credentials, and a courier who is about to find their PIN pad gone
+           should be told why before they ring dispatch about it.
+        
+           The audit trail carries the same figure, and that is NOT asserted
+           here: these tests mount the router on a bare app with no audit
+           middleware (see the header), so req.audit is absent and no row is
+           written. A test that queried for one would be asserting against
+           this harness rather than against the route. */
+        await enrolPhone();
+        const done = await resetTheirPassword(appWith());
+
+        expect(done.body.revokedDevices).toBe(1);
+        expect(done.body.message).toMatch(/PIN on your phone removed/i);
+    });
+
+    it('does not mention a PIN to somebody who has never had one', async () => {
+        /* A pharmacist has no phone PIN and should not be told to set one up.
+           The sentence is earned by the rows that were actually revoked. */
+        const app = appWith();
+        await request(app).post('/api/password-reset/request').send({ email: 'counter@example.invalid' });
+        const code = codeFromMail();
+        const done = await request(app).post('/api/password-reset/confirm')
+            .send({ email: 'counter@example.invalid', code, password: 'counter-pass-2' });
+
+        expect(done.status).toBe(200);
+        expect(done.body.revokedDevices).toBe(0);
+        expect(done.body.message).not.toMatch(/PIN/i);
     });
 });
