@@ -621,3 +621,49 @@ pulled rather than rejected.
 Have the BAA position straight before filing this one. Google may ask what
 legal basis covers the health information, and "the BAAs are not filed yet"
 is an answer with consequences.
+
+---
+
+## Keeping the source map for a release that shipped
+
+**A Hermes build's JavaScript crashes come back as bytecode offsets.** The
+only thing that turns one into a stack trace anybody can read is the source
+map produced by the build that shipped — and Gradle writes that into
+`app/android/app/build/`, which the next build overwrites.
+
+So the map survives exactly until somebody rebuilds. After that a crash
+report from a courier's phone is unreadable for ever. **Archive it at the
+moment a build goes to Play**, not later, because later is already too late.
+
+The archive lives outside this repository:
+
+```
+..\tag-release-archive\android-<versionCode>\
+    index.android.bundle          the bytecode that shipped
+    index.android.bundle.map      what makes a crash readable
+    MANIFEST.txt                  versionCode, hashes, the commit, what changed
+```
+
+Outside the repo deliberately: it is megabytes per build, it is an output
+rather than a source, and this repository is public. The `.aab` is not
+copied there either — Play holds it, App Bundle Explorer hands it back, and
+the SHA-256 in MANIFEST.txt is what proves a copy found later is the one
+that shipped.
+
+**Nothing consumes the map yet.** Reading a crash with it means
+`npx metro-symbolicate index.android.bundle.map < stack.txt`, or wiring a
+crash reporter that understands Hermes. That is a real piece of work and
+it is not done.
+
+### It is NOT the deobfuscation file Play asks for
+
+Play Console warns on every upload that no deobfuscation file is attached.
+That warning is conditional on using R8, and this app does not:
+`android.enableMinifyInReleaseBuilds` is unset, `minifyEnabled` is false,
+and no `mapping/` directory is produced. Java and Kotlin frames are already
+unobfuscated, so there is nothing to upload and the warning can be ignored.
+
+**Do not switch minification on to silence it.** React Native relies on
+reflection in places that need Proguard keep-rules, and getting those wrong
+produces crashes that appear only in release builds — on couriers' phones,
+not in testing.
