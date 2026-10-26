@@ -272,7 +272,10 @@ export function createOrdersRouter(
     const readers = requireProjectRole('admin', 'lead', 'courier');
     /* Everyone who may record any event at all. Which event is a second
      * question, answered per type below against EVENT_RULES. */
-    const records = requireProjectRole('admin', 'courier');
+    /* 'lead' carries a load when a driver does not turn up. See the note
+       on `operate` in modules/uh/stop.ts for why one person cannot have a
+       second login for it. */
+    const records = requireProjectRole('admin', 'lead', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
     const isCourier = (req: Request) => roleOf(req) === 'courier';

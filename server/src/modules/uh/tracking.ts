@@ -81,7 +81,10 @@ export function createTrackingRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
     const run = (sql: string, args: InValue[] = []) => client.execute({ sql, args });
     const staff = requireProjectRole('admin');
-    const couriers = requireProjectRole('admin', 'courier');
+    /* 'lead' carries a load when a driver does not turn up. See the note
+       on `operate` in modules/uh/stop.ts for why one person cannot have a
+       second login for it. */
+    const couriers = requireProjectRole('admin', 'lead', 'courier');
     const actorOf = (req: Request) => req.session.user?.username ?? '';
 
     const minutesSince = (iso: string, now: number) =>

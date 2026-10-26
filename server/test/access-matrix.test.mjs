@@ -60,7 +60,20 @@ const UH_MEMBER = ['pharmacy', 'lead', 'courier', 'projectAdmin', 'platformAdmin
  * them. The merge in 5.12 made those the same set of people, so there is one
  * name for it now rather than two identical lists pretending otherwise. */
 const UH_STAFF = ['projectAdmin', 'platformAdmin'];
-const UH_STAFF_AND_COURIER = ['courier', 'projectAdmin', 'platformAdmin'];
+/* WHOEVER IS ACTUALLY CARRYING A LOAD, which is no longer only a courier.
+ *
+ * A site manager covers a route when a driver does not turn up -- "collect
+ * package from any site where drivers fail to show up unannounced, and run
+ * as cover to the drivers if possible" (Izy Business, 26 October 2026) --
+ * and the same person verifies everybody else's proof of delivery and
+ * counts the drivers daily, which is `lead`. A membership carries one role
+ * per project, so the alternative was a second login for the same human,
+ * and a proof of delivery signed by an identity that is not theirs.
+ *
+ * It grants no new SIGHT: a lead already reads every order, address and
+ * proof of delivery on the board. See the note on operate in
+ * modules/uh/stop.ts. `pharmacy` is still nowhere near any of these. */
+const UH_OPERATES = ['lead', 'courier', 'projectAdmin', 'platformAdmin'];
 /* A site lead reads their own pharmacies' work and nothing else. The guard
  * only says who may knock; what they actually see is narrowed by
  * modules/uh/lead-scope.ts, which has its own tests. */
@@ -292,7 +305,7 @@ const MATRIX = [
     /* --- project settings: business hours, SLA windows, the operating
        parameters of the contract. Read by the people who run it. A client
        viewer has no business knowing what our internal goal is. */
-    ['GET', '/api/projects/uh/settings', UH_STAFF_AND_COURIER, 'the courier app reads business hours'],
+    ['GET', '/api/projects/uh/settings', UH_OPERATES, 'the courier app reads business hours'],
     ['PATCH', '/api/projects/uh/settings', UH_MANAGE, ''],
     /* Renders a candidate patient text without storing it. Management only:
        it reflects back whatever wording is posted, and the people who may
@@ -357,17 +370,17 @@ const MATRIX = [
     ['POST', `${UH}/orders/999999/out-of-area`, UH_STAFF, 'a courier cannot authorise their own long drive'],
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999/directions`, UH_LEAD_READ, ''],
-    ['POST', `${UH}/orders/999999/events`, UH_STAFF_AND_COURIER, 'which event is then gated by role again'],
+    ['POST', `${UH}/orders/999999/events`, UH_OPERATES, 'which event is then gated by role again'],
     /* Sending somebody back to a door. Dispatch only: a courier does not
        decide that a delivery is worth a second trip, and a pharmacy asking
        for one is a phone call that a dispatcher then acts on. */
     ['POST', `${UH}/orders/999999/reattempt`, UH_STAFF, ''],
 
     /* --- the door. */
-    ['POST', `${UH}/orders/999999/arrive`, UH_STAFF_AND_COURIER, ''],
-    ['POST', `${UH}/orders/999999/deliver`, UH_STAFF_AND_COURIER, ''],
-    ['POST', `${UH}/orders/999999/doorstep`, UH_STAFF_AND_COURIER, ''],
-    ['POST', `${UH}/orders/999999/attempt`, UH_STAFF_AND_COURIER, ''],
+    ['POST', `${UH}/orders/999999/arrive`, UH_OPERATES, ''],
+    ['POST', `${UH}/orders/999999/deliver`, UH_OPERATES, ''],
+    ['POST', `${UH}/orders/999999/doorstep`, UH_OPERATES, ''],
+    ['POST', `${UH}/orders/999999/attempt`, UH_OPERATES, ''],
 
     /* --- runs and the pharmacy counter. */
     ['POST', `${UH}/runs`, UH_DISPATCH, 'the Site Manager IS dispatch since 7.20'],
@@ -383,9 +396,9 @@ const MATRIX = [
     /* --- shifts (ticket 6.3). A courier starts and ends their own; only
        dispatch ends somebody else's, which is the escape hatch for a driver
        who cannot hand packages back because the pharmacy has shut. */
-    ['POST', `${UH}/shifts/start`, UH_STAFF_AND_COURIER, 'go on shift'],
-    ['POST', `${UH}/shifts/end`, UH_STAFF_AND_COURIER, 'go off shift'],
-    ['GET', `${UH}/shifts/mine`, UH_STAFF_AND_COURIER, 'am I on shift, and what am I still carrying'],
+    ['POST', `${UH}/shifts/start`, UH_OPERATES, 'go on shift'],
+    ['POST', `${UH}/shifts/end`, UH_OPERATES, 'go off shift'],
+    ['GET', `${UH}/shifts/mine`, UH_OPERATES, 'am I on shift, and what am I still carrying'],
     ['GET', `${UH}/shifts`, UH_STAFF, 'who is out there'],
     ['GET', `${UH}/shifts/export.xlsx`, UH_STAFF, 'hours, beside the drivers record'],
     ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
@@ -402,7 +415,7 @@ const MATRIX = [
     /* --- tracking (tickets 6.6 and 6.7). A courier posts their own fixes and
        can read nobody's track, not even their own: a map of where they were
        all day is a thing to be asked for, not a screen to browse. */
-    ['POST', `${UH}/tracking`, UH_STAFF_AND_COURIER, 'send my own fixes, only while on shift'],
+    ['POST', `${UH}/tracking`, UH_OPERATES, 'send my own fixes, only while on shift'],
     ['GET', `${UH}/tracking/live`, UH_STAFF, 'who is where, now, with the age of each fix'],
     ['GET', `${UH}/tracking/999999`, UH_STAFF, "one shift's track, and it writes an audit row"],
 
@@ -425,8 +438,8 @@ const MATRIX = [
     ['DELETE', `${UH}/runs/999999/stops/999999`, UH_REASSIGN, ''],
     ['PUT', `${UH}/runs/999999/sequence`, UH_DISPATCH, ''],
     ['POST', `${UH}/runs/999999/sequence/auto`, UH_DISPATCH, ''],
-    ['GET', `${UH}/runs/999999/pickup`, UH_STAFF_AND_COURIER, ''],
-    ['POST', `${UH}/runs/999999/pickup`, UH_STAFF_AND_COURIER, ''],
+    ['GET', `${UH}/runs/999999/pickup`, UH_OPERATES, ''],
+    ['POST', `${UH}/runs/999999/pickup`, UH_OPERATES, ''],
 
     /* --- medication coming back. */
     ['GET', `${UH}/returns`, UH_DISPATCH_AND_COURIER, 'handling what came back is half the site manager role'],
@@ -514,11 +527,11 @@ const MATRIX = [
     ['POST', `${UH}/invoices/999999/void`, UH_MANAGE, ''],
 
     /* --- doorstep photographs, which are PHI in a bucket. */
-    ['POST', `${UH}/files`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/files`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/files/999999`, UH_STAFF_AND_COURIER, ''],
-    ['POST', `${UH}/files/999999/stored`, UH_STAFF_AND_COURIER, ''],
-    ['GET', `${UH}/files/status/check`, UH_STAFF_AND_COURIER, ''],
+    ['POST', `${UH}/files`, UH_OPERATES, ''],
+    ['GET', `${UH}/files`, UH_OPERATES, ''],
+    ['GET', `${UH}/files/999999`, UH_OPERATES, ''],
+    ['POST', `${UH}/files/999999/stored`, UH_OPERATES, ''],
+    ['GET', `${UH}/files/status/check`, UH_OPERATES, ''],
 ];
 
 const REFUSED = [401, 403];

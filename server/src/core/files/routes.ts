@@ -85,7 +85,10 @@ const present = (f: FileRow) => ({
 
 export function createFilesRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
     const router = Router({ mergeParams: true });
-    const operate = requireProjectRole('admin', 'courier');
+    /* 'lead' carries a load when a driver does not turn up. See the note
+       on `operate` in modules/uh/stop.ts for why one person cannot have a
+       second login for it. */
+    const operate = requireProjectRole('admin', 'lead', 'courier');
 
     const unavailable = (res: Response) => {
         res.status(503).json({

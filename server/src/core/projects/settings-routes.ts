@@ -37,7 +37,15 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
      * 85% University Health measures us against, and a pharmacy contact
      * reading that learns what our own target is. Open to any member until
      * the access matrix in ticket 4.2 made the question explicit. */
-    const readers = requireProjectRole('admin', 'courier');
+    /* `lead` reads these too, and the reason above is why it always should
+       have: what this withholds is withheld from a CLIENT, so that a
+       pharmacy contact does not learn the internal target we hold ourselves
+       to. A lead is ours. They were left out when the matrix was drawn and
+       it did not show, because nothing a lead did needed to read settings --
+       until a site manager started covering runs, and the run screens read
+       the list release times. A 403 there would break the screen with no
+       sign of why. */
+    const readers = requireProjectRole('admin', 'lead', 'courier');
 
     function present(timezone: string, stored: Record<string, unknown>, canManage: boolean) {
         const settings = resolveSettings(stored);

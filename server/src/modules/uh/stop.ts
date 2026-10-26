@@ -190,7 +190,34 @@ interface OrderRow extends OrderStateRow {
 export function createStopRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
     const router = Router({ mergeParams: true });
     // A courier does this at the door; staff can record it when a phone dies.
-    const operate = requireProjectRole('admin', 'courier');
+    /* ─────────────────────────────────────────────── why `lead` is here
+     *
+     * A SITE MANAGER COVERS A ROUTE WHEN A DRIVER DOES NOT TURN UP, and
+     * that is a stated part of the job rather than an emergency: "collect
+     * package from any site where drivers fail to show up unannounced, and
+     * run as cover to the drivers if possible" (Izy Business, 26 October
+     * 2026). The same person also verifies everybody else's proof of
+     * delivery, counts the drivers daily and oversees the ground operation
+     * -- which is `lead`.
+     *
+     * A membership carries ONE role per project (memberships_user_project_
+     * unique), so without this they would need a second login to carry a
+     * load. That was the alternative and it was worse: the driver install
+     * sheet promises "every delivery is recorded against whoever is signed
+     * in, and that record is what protects you in a dispute", and two
+     * identities for one person breaks exactly that on the day somebody
+     * disputes a delivery the site manager covered.
+     *
+     * IT GRANTS NO NEW SIGHT OF ANYTHING. A lead already reads every order,
+     * every address and every proof of delivery on the dispatch board. This
+     * only lets them record an outcome against a stop they can already
+     * read, which is why it is a widening worth making and `pharmacy` is
+     * still nowhere near it.
+     *
+     * The same line is in pickup.ts, orders.ts, shifts.ts, tracking.ts and
+     * core/files/routes.ts, because carrying a load is all of them: go on
+     * shift, collect, photograph, deliver, be visible on the board. */
+    const operate = requireProjectRole('admin', 'lead', 'courier');
 
     const actorOf = (req: Request) => req.session.user?.username ?? '';
 

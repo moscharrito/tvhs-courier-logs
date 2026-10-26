@@ -387,7 +387,14 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                          MAX(CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END) AS on_shift,
                          MIN(sh.started_at) AS shift_started
                   FROM users u
-                  JOIN memberships m ON m.user_id = u.id AND m.project_id = ? AND m.role = 'courier'
+                  /* A lead appears here because a site manager covers a
+                     route when a driver does not turn up, and a dispatcher
+                     cannot drop a run on somebody the board will not show.
+                     Assignment itself never needed this -- courierIsMember
+                     in runs.ts checks membership and not role -- so the
+                     only thing missing was the name on the screen. See the
+                     note on operate in stop.ts. */
+                  JOIN memberships m ON m.user_id = u.id AND m.project_id = ? AND m.role IN ('courier', 'lead')
                   LEFT JOIN sessions s ON s.user_id = u.id
                   LEFT JOIN shifts sh ON sh.courier_username = u.username
                        AND sh.project_id = ? AND sh.ended_at IS NULL
