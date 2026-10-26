@@ -50,6 +50,39 @@
  *   node server/scripts/create-pharmacy-portals.mjs --i-mean-production  # the live site
  *   ... --only=green,manager                                      # just these
  *   ... --reset                                                   # new password for one that exists
+ *   ... --emails addresses.csv                                    # `key,email` per line
+ *   ... --set green=counter@example.com                           # one, without a file
+ *   ... --replace                                                 # change an address already on file
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * AN ADDRESS PER ACCOUNT, AND A PRODUCTION RUN WITHOUT ONE IS REFUSED.
+ *
+ * This script shipped without any notion of an email address, and the eight
+ * counter logins it made on production therefore have none. Which means the
+ * one recovery path they were told about does not work for them: password
+ * reset looks an account up by address, finds nothing, and answers "if that
+ * address belongs to an account, a code is on its way" -- the same thing it
+ * says to everybody, on purpose. So a pharmacist who forgets their password
+ * is told a code is coming and waits for ever, and nothing anywhere reports
+ * it. Nobody found out until somebody tried.
+ *
+ * The addresses are NOT in this file and must not be, because this
+ * repository is public and they are real people at a hospital. They come
+ * from a file at run time:
+ *
+ *     green,green.counter@uhs-sa.com
+ *     manager,pharmacy.contracts@uhs-sa.com
+ *
+ * LOCALLY a missing address is a warning: a developer rebuilding portals on
+ * their laptop does not need a mailbox. On a `--i-mean-production` run it is
+ * a refusal, because that run is the onboarding, and an account created
+ * there without an address is somebody handed an instruction that cannot
+ * work.
+ *
+ * AN ADDRESS ALREADY ON AN ACCOUNT IS NOT OVERWRITTEN without --replace, and
+ * then the old one is said out loud first. An address is where a reset code
+ * goes; quietly repointing one hands somebody else the ability to take that
+ * account over. The same rule, and the same reason, as set-emails.mjs.
  *
  * Credentials come from the environment and are never printed:
  *   SEED_ADMIN_USER (default "admin")   SEED_ADMIN_PASS
@@ -58,6 +91,8 @@
  * written anywhere: if the output is lost, run again with --reset.
  */
 
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 import { adminPassword } from './lib/secret.mjs';
@@ -136,6 +171,57 @@ const PORTALS = [
     },
 ];
 
+/* ------------------------------------------------------------ addresses */
+
+/* The same shape the server's own schema accepts, so a line it would refuse
+   is refused here instead -- with the line number. */
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** `key,email` per line, where key is a portal key above. */
+function readAddresses(filename) {
+    const text = readFileSync(path.resolve(filename), 'utf8');
+    const found = new Map();
+    const problems = [];
+    text.split(/\r?\n/).forEach((raw, i) => {
+        const line = raw.trim();
+        if (line === '' || line.startsWith('#')) return;
+        const at = `line ${i + 1}`;
+        const [key, email, ...rest] = line.split(',').map((c) => c.trim());
+        if (rest.length > 0) { problems.push(`${at}: more than two columns`); return; }
+        if (!key || !email) { problems.push(`${at}: expected key,email`); return; }
+        if (!EMAIL.test(email)) { problems.push(`${at}: "${email}" is not an email address`); return; }
+        if (found.has(key)) { problems.push(`${at}: ${key} appears twice`); return; }
+        found.set(key, email.toLowerCase());
+    });
+    return { found, problems };
+}
+
+/** --set key=email, indexed rather than looked up by name: value() always
+ *  answers with the FIRST match, so two --set flags would read the first one
+ *  twice. set-emails.mjs shipped exactly that bug. */
+function readSetFlags() {
+    const found = new Map();
+    const problems = [];
+    for (let i = 0; i < args.length; i += 1) {
+        const a = args[i];
+        let raw = null;
+        if (a.startsWith('--set=')) raw = a.slice('--set='.length);
+        else if (a === '--set') { raw = args[i + 1] ?? ''; i += 1; }
+        if (raw === null) continue;
+        const [key, email] = raw.split('=').map((c) => (c ?? '').trim());
+        if (!key || !email) { problems.push(`--set ${raw}: expected key=email`); continue; }
+        if (!EMAIL.test(email)) { problems.push(`--set ${raw}: "${email}" is not an email address`); continue; }
+        found.set(key, email.toLowerCase());
+    }
+    return { found, problems };
+}
+
+const emailsFile = value('emails', '');
+const fromFile = emailsFile ? readAddresses(emailsFile) : { found: new Map(), problems: [] };
+const fromFlags = readSetFlags();
+const addresses = new Map([...fromFile.found, ...fromFlags.found]);
+const addressProblems = [...fromFile.problems, ...fromFlags.problems];
+
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const wanted = only.length === 0
     ? PORTALS
@@ -206,6 +292,57 @@ async function main() {
     say(`  SERVER   ${base}`);
     say(`  PROJECT  ${projectCode}`);
     say(`  ${isLocal ? '** LOCAL server, not production **' : 'Remote server.'}`);
+
+    /* ───────────────────────────────── the addresses, before anything else
+
+       Checked before the login, because every one of these is a reason to
+       stop and none of them needs a server. A half-applied list is worse
+       than none: the accounts already made are already being handed out. */
+    if (addressProblems.length > 0) {
+        say('');
+        say('  REFUSING: the addresses have problems and nothing was written.');
+        say('');
+        for (const p of addressProblems) say(`      ${p}`);
+        throw new Stop();
+    }
+
+    /* A key that matches no portal is a typo doing nothing in silence --
+       `greeen` would simply never be applied, and the account would be
+       created without the address somebody thought they had supplied. */
+    const known = new Set(PORTALS.map((p) => p.key));
+    const strays = [...addresses.keys()].filter((k) => !known.has(k));
+    if (strays.length > 0) {
+        say('');
+        say(`  REFUSING: no portal is called ${strays.join(', ')}.`);
+        say(`  Known keys: ${PORTALS.map((p) => p.key).join(', ')}`);
+        throw new Stop();
+    }
+
+    /* AND ON PRODUCTION, AN ADDRESS FOR EVERY ACCOUNT. See the header: that
+       run is the onboarding, and an account made there without one is a
+       pharmacist who will be told a reset code is on its way and will wait
+       for ever. Locally it is only a warning -- a developer rebuilding
+       portals on a laptop has no mailbox and needs none. */
+    const unaddressed = wanted.filter((p) => !addresses.has(p.key));
+    if (unaddressed.length > 0 && !isLocal) {
+        say('');
+        say('  REFUSING: these have no email address, and without one they cannot');
+        say('  reset their own password — they would be told a code is on its way');
+        say('  and never get one.');
+        say('');
+        for (const p of unaddressed) say(`      ${p.key.padEnd(12)} ${p.username}`);
+        say('');
+        say('  Supply them with --emails addresses.csv (`key,email` per line) or');
+        say('  --set key=email. Nothing was written.');
+        throw new Stop();
+    }
+    if (unaddressed.length > 0) {
+        say('');
+        say(`  NOTE: ${unaddressed.length} of these will have no email address and so`);
+        say('  cannot reset their own password. Fine on a laptop; a production run');
+        say('  refuses it. Missing: ' + unaddressed.map((p) => p.key).join(', '));
+    }
+
     insist('login', await call('/api/login', {
         method: 'POST',
         body: JSON.stringify({ username: adminUser, password: adminPass }),
@@ -231,14 +368,22 @@ async function main() {
         const siteIds = portal.sites.map((code) => idByCode.get(code));
         const existing = await call(`/api/users/${portal.username}`);
 
+        const email = addresses.get(portal.key) ?? null;
+
         let pass = null;
         if (existing.status !== 200) {
             pass = password();
             insist(`create ${portal.username}`, await call('/api/users', {
                 method: 'POST',
                 /* The password below is the account's password from here on.
-                   Nothing forces a change; see the header for what replaced it. */
-                body: JSON.stringify({ username: portal.username, name: portal.name, password: pass, role: 'staff' }),
+                   Nothing forces a change; see the header for what replaced it.
+                   The ADDRESS is what makes that survivable: it is the only
+                   way this account ever replaces the password with one we
+                   have never seen. */
+                body: JSON.stringify({
+                    username: portal.username, name: portal.name, role: 'staff', password: pass,
+                    ...(email ? { email } : {}),
+                }),
             }), (s) => s === 201 || s === 200);
         } else if (has('reset')) {
             pass = password();
@@ -246,6 +391,34 @@ async function main() {
                 method: 'POST',
                 body: JSON.stringify({ password: pass }),
             }));
+        }
+
+        /* THE ADDRESS ON AN ACCOUNT THAT ALREADY EXISTED, which is the case
+           that matters: the eight counters on production were made before
+           this script knew what an email was.
+
+           Not overwritten in silence. An address is where a reset code goes,
+           so quietly repointing one hands somebody else the ability to take
+           the account over -- a typo in a file should cost a refusal, not an
+           account. Same rule and same reason as set-emails.mjs. */
+        if (email && existing.status === 200) {
+            const had = String(existing.body?.email ?? '').trim().toLowerCase();
+            if (had === email) {
+                /* Already right. Nothing to do and nothing to say. */
+            } else if (had !== '' && !has('replace')) {
+                say('');
+                say(`  REFUSING: ${portal.username} already has an address.`);
+                say(`      on file   ${had}`);
+                say(`      in list   ${email}`);
+                say('  Add --replace if the new one is right. Nothing further was written.');
+                throw new Stop();
+            } else {
+                insist(`address ${portal.username}`, await call(`/api/users/${portal.username}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ email }),
+                }));
+                if (had !== '') say(`  ${portal.username.padEnd(18)} address was ${had}`);
+            }
         }
 
         /* Written every time, new account or not: this is the line that carries
@@ -259,7 +432,7 @@ async function main() {
             body: JSON.stringify({ role: 'pharmacy', settings: { siteIds, ...(portal.capabilities ?? {}) } }),
         }));
 
-        made.push({ ...portal, pass, existed: existing.status === 200 });
+        made.push({ ...portal, pass, email, existed: existing.status === 200 });
         say(`  ${portal.username.padEnd(18)} ${portal.sites.length} ${portal.sites.length === 1 ? 'counter' : 'counters'}`);
     }
 
@@ -272,6 +445,10 @@ async function main() {
         say(`    ${portal.name}`);
         say(`      username  ${portal.username}`);
         say(`      password  ${portal.pass ?? '(unchanged; account already existed)'}`);
+        /* Said in the handover message, because the reset screen asks for the
+           address and not the username, and a pharmacist guessing at which of
+           their addresses we hold is a support call. */
+        say(`      email     ${portal.email ?? '(none — this account CANNOT reset its own password)'}`);
         say(`      sees      ${portal.sites.join(', ')}  — ${portal.note}`);
         say('');
     }
@@ -284,6 +461,11 @@ async function main() {
     say('  and uh.manager can set a new one for any of the eight counters from');
     say('  Pharmacy logins in the portal. That is the recovery path -- a forgotten');
     say('  password does not need us.');
+    say('');
+    say('  AND NOW SO IS THE RESET: "Forgot your password?" on the sign-in screen');
+    say('  emails a six digit code to the address above, so a counter whose manager');
+    say('  is unreachable is not stuck either. It needs the address to be right,');
+    say('  which is why this script refuses to create one on production without it.');
     say('');
     say('  They see their own counter and nothing else: deliveries, proof of delivery,');
     say('  performance, and the spreadsheet export. No other pharmacy, no pricing, no');

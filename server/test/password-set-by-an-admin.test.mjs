@@ -143,10 +143,19 @@ describe('a new pharmacy portal account, start to finish', () => {
         const sites = (await admin.get('/api/projects/uh/uh/sites')).body;
         siteId = sites.find((s) => s.code === 'discharge').id;
 
-        /* Exactly what scripts/create-pharmacy-portals.mjs sends. */
+        /* Exactly what scripts/create-pharmacy-portals.mjs sends.
+        
+           The email is part of that now, and deliberately so: the portal
+           accounts made before the script knew what an address was cannot
+           reset their own passwords, which is the fault this journey is
+           supposed to end. A portal account created without one is still
+           accepted by the API -- that is what the local development path
+           relies on -- so the script refuses it on production rather than
+           the server refusing it everywhere. */
         username = 'uh.portaltest';
         const made = await admin.post('/api/users').send({
             username, name: 'Discharge Pharmacy (portal)', password: FIRST, role: 'staff',
+            email: 'portaltest@example.invalid',
         });
         expect(made.status, made.text).toBe(201);
         await admin.put(`/api/users/${username}/memberships/uh`).send({
