@@ -211,11 +211,16 @@ const b = board.body;
 if (b?.summary) {
     console.log('');
     console.log(`Board ${b.serviceDate}: ${b.summary.total} orders, ${b.summary.unassigned} unassigned, ${b.summary.dueSoon} due soon, ${b.summary.overdue} overdue`);
+    /* THE BOARD SENDS IDS, NOT ORDERS. This read `group.orders` and threw
+       "group.orders is not iterable" at the end of every run -- after the
+       work had been created, so the orders existed and the script looked
+       like it had failed. The pool carries `orderIds` per site and the
+       detail is fetched per order by whoever needs it; a seeder printing a
+       receipt does not, so it prints the ids. */
     for (const group of b.pool ?? []) {
-        console.log(`  ${group.site.name}`);
-        for (const o of group.orders) {
-            console.log(`     #${o.id}  ${String(o.serviceType).toUpperCase().padEnd(6)} ${String(o.sla?.state ?? '').padEnd(9)} ${o.recipientName}`);
-        }
+        const ids = group.orderIds ?? [];
+        console.log(`  ${group.site?.name ?? group.site?.code ?? 'unknown site'}  (${ids.length})`);
+        if (ids.length > 0) console.log(`     #${ids.join('  #')}`);
     }
 }
 
