@@ -616,6 +616,11 @@ export const NOTIFICATION_KINDS = [
      * measures against a run sheet that does not exist. See
      * modules/uh/day-start.ts. */
     'dispatch.notStarted',
+    /* Email itself has stopped. Written in-app rather than emailed, for the
+     * obvious reason. See core/notify/mail-watch.ts: SES refused every send
+     * for twenty-five hours once and the only thing that noticed was
+     * somebody trying a password reset. */
+    'mail.failing',
     /* Addressed to the pharmacy that sent the work, not to our own staff.
      * Every kind above is about dispatch telling a courier something; these
      * two are the first that leave the company, which is why they are also

@@ -28,6 +28,7 @@ import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/escalation';
 import { sweepCheckIn } from '../modules/uh/check-in';
 import { sweepDayStart } from '../modules/uh/day-start';
+import { sweepMailWatch } from './notify/mail-watch';
 import { dispatchPending } from './notify/dispatch';
 import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
 import { sendDailyReport } from '../modules/uh/daily-report';
@@ -104,6 +105,20 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                listRelease.latest rather than the check-in time, because the
                lists are not late at ten. See modules/uh/day-start.ts. */
             await sweepDayStart({ client, projectId, timezone, now: new Date() });
+
+            /* And whether the thing that tells people has itself stopped.
+               In the per-project loop because the notification needs
+               somebody to address, and dispatchersOf is per project. It
+               reads the mailer's own counters rather than the database, so
+               it costs nothing on a working day. */
+            if (mailer) {
+                await sweepMailWatch({
+                    client, projectId,
+                    attempts: mailer.attempts(),
+                    available: mailer.available,
+                    now: new Date(),
+                });
+            }
 
             /* The morning notice to patients.
              *
