@@ -409,7 +409,7 @@ describe('what the mailer remembers about its own sends', () => {
     afterEach(() => { vi.restoreAllMocks(); });
 
     it('starts with nothing attempted, which is the honest answer after a boot', () => {
-        expect(createMailer({ mail: cfg }).attempts()).toEqual({ attempted: 0, failing: 0, lastError: null });
+        expect(createMailer({ mail: cfg }).attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
     });
 
     it('counts a refusal and keeps the status and type, so /health can name it', async () => {
@@ -419,7 +419,12 @@ describe('what the mailer remembers about its own sends', () => {
         const mailer = createMailer({ mail: cfg });
         await mailer.send(letter).catch(() => undefined);
         await mailer.send(letter).catch(() => undefined);
-        expect(mailer.attempts()).toEqual({ attempted: 2, failing: 2, lastError: '403 AccessDeniedException' });
+        expect(mailer.attempts()).toMatchObject({ attempted: 2, failing: 2, lastError: '403 AccessDeniedException' });
+        /* Stamped on every attempt, failed or not. /health reads it to tell
+           a refusal happening now from one that happened an hour ago with
+           nothing tried since -- without it a frozen count reads as a
+           mailer still failing. */
+        expect(mailer.attempts().lastAttemptAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
     it('forgets the run of failures as soon as one send works', async () => {
@@ -432,7 +437,8 @@ describe('what the mailer remembers about its own sends', () => {
         await mailer.send(letter).catch(() => undefined);
         expect(mailer.attempts().failing).toBe(1);
         await mailer.send(letter);
-        expect(mailer.attempts()).toEqual({ attempted: 2, failing: 0, lastError: null });
+        expect(mailer.attempts()).toMatchObject({ attempted: 2, failing: 0, lastError: null });
+        expect(mailer.attempts().lastAttemptAt, 'a success is still an attempt').toMatch(/^\d{4}/);
         expect(fetching).toHaveBeenCalledTimes(2);
     });
 
@@ -444,7 +450,8 @@ describe('what the mailer remembers about its own sends', () => {
         vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('getaddrinfo ENOTFOUND email.us-east-2.amazonaws.com'));
         const mailer = createMailer({ mail: cfg });
         await expect(mailer.send(letter)).rejects.toThrow(/ENOTFOUND/);
-        expect(mailer.attempts()).toEqual({ attempted: 1, failing: 1, lastError: 'could not reach SES' });
+        expect(mailer.attempts()).toMatchObject({ attempted: 1, failing: 1, lastError: 'could not reach SES' });
+        expect(mailer.attempts().lastAttemptAt).toMatch(/^\d{4}/);
     });
 
     it('does not count a refused template as SES refusing us', async () => {
@@ -455,13 +462,13 @@ describe('what the mailer remembers about its own sends', () => {
         const fetching = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
         const mailer = createMailer({ mail: cfg });
         await expect(mailer.send({ ...letter, text: 'Deliver to 420 Rosewood Street' })).rejects.toThrow(/street address/i);
-        expect(mailer.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null });
+        expect(mailer.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
         expect(fetching).not.toHaveBeenCalled();
     });
 
     it('reports nothing attempted when it is not configured, rather than throwing', async () => {
         const off = createMailer({ mail: { enabled: false, ses: undefined, portalUrl: '' } });
-        expect(off.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null });
+        expect(off.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
     });
 });
 

@@ -117,6 +117,21 @@ const CreateOrder = z.object({
      * moving between two University Health buildings: thirteen a day in their
      * own extract, Discharge and Pavilion to Business Center III. */
     deliveryKind: z.enum(['patient', 'facility']).default('patient'),
+    /* WHICH OF OUR OWN BUILDINGS, for a facility transfer. The site code
+     * rather than an id, because a dispatcher knows 'bc3' and nobody knows
+     * the primary key -- and because a code is what the pharmacies' own
+     * paperwork says.
+     *
+     * Supplying it fills recipient_name and address_line from the site, so
+     * the destination stops being a string somebody retypes. Before this,
+     * "Business Center III" and "BC3" were different places as far as the
+     * database was concerned. */
+    destinationSiteCode: z.string().trim().min(1).max(40).optional(),
+    /* The earliest the medication is there to collect. "Employee
+     * prescription, pickup ready 11AM" (Izy Business, 26 October 2026).
+     * Not a deadline: every other time on an order is a moment to beat and
+     * this is one to wait for. */
+    readyAt: z.string().datetime({ offset: true }).optional(),
     /* The pharmacy's form is stamped ID Required, so the courier must
      * photograph the recipient's identification before this can be recorded
      * as delivered (University Health, 29 September 2026). Defaults false:
@@ -187,6 +202,8 @@ interface OrderRow {
     signature_rule: string; authorised_signers: string;
     refrigerated: number; controlled: number;
     delivery_kind: string;
+    destination_site_id: number | null;
+    ready_at: string | null;
     out_of_area_authorised_by: string;
     out_of_area_authorised_at: string | null;
     out_of_area_reference: string;
@@ -224,6 +241,13 @@ const present = (o: OrderRow) => ({
     signingInstruction: signingInstruction(presentHandling(o), o.recipient_name),
     handlingFlags: handlingFlags(presentHandling(o)),
     deliveryKind: String(o.delivery_kind ?? 'patient'),
+    /* Which of our own buildings a transfer is going to, and the earliest
+       it is there to collect. Both null on a patient delivery, which is
+       every row but about thirteen a day. The run screen shows readyAt so
+       a courier is not sent to Pavilion at a quarter past ten for employee
+       prescriptions that do not exist until eleven. */
+    destinationSiteId: o.destination_site_id ?? null,
+    readyAt: o.ready_at ?? null,
     /* Addendum 2 clause 9. A destination outside every zone is a zone of
        null, and it may not be driven or billed until University Health have
        said yes. Reported on every order so a board can show the ones waiting
@@ -322,6 +346,51 @@ export function createOrdersRouter(
         const site = siteRs.rows[0];
         if (!site) { res.status(404).json({ error: 'Site not found in this project' }); return; }
 
+        /* ───────────────────────────── where a facility transfer is going
+         *
+         * Resolved before anything is written, so a code nobody recognises
+         * is a refusal rather than an order with a destination that does
+         * not exist. The recipient name and address come FROM THE SITE and
+         * not from the request: that is the whole point of referencing one.
+         * Two spellings of the same building were two buildings, and the
+         * only way to count the Pavilion-to-BC3 leg was to guess at them. */
+        let destination: { id: number; name: string; addressLine: string } | null = null;
+        if (body.destinationSiteCode !== undefined) {
+            if (body.deliveryKind !== 'facility') {
+                res.status(400).json({
+                    error: 'A destination site is for a facility transfer. A patient delivery goes to an address.',
+                    code: 'order.destinationNeedsFacility',
+                });
+                return;
+            }
+            const rs = await client.execute({
+                sql: 'SELECT id, name, address_line FROM sites WHERE project_id = ? AND code = ?',
+                args: [project.id, body.destinationSiteCode.toLowerCase()],
+            });
+            const row = rs.rows[0];
+            if (!row) {
+                res.status(404).json({
+                    error: `No site in this project has the code "${body.destinationSiteCode}".`,
+                    code: 'order.destinationUnknown',
+                });
+                return;
+            }
+            if (Number(row['id']) === Number(site['id'])) {
+                /* Pavilion to Pavilion is somebody picking the wrong code,
+                   and it would make a run with a stop at its own origin. */
+                res.status(400).json({
+                    error: 'A transfer cannot be delivered to the site it came from.',
+                    code: 'order.destinationIsOrigin',
+                });
+                return;
+            }
+            destination = {
+                id: Number(row['id']),
+                name: String(row['name']),
+                addressLine: String(row['address_line']),
+            };
+        }
+
         const receivedAt = body.requestedAt ? new Date(body.requestedAt) : new Date();
         if (rejectFuture(receivedAt, 'requestedAt', res)) return;
         // The day the work belongs to, where the work happens. A STAT call
@@ -345,11 +414,15 @@ export function createOrdersRouter(
                      delivery_notes, zone, signature_required, id_required,
                      signature_rule, authorised_signers, refrigerated, controlled,
                      received_at, due_at, dedupe_key,
-                     delivery_kind, status)
-                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
+                     delivery_kind, destination_site_id, ready_at, status)
+                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
             args: [
                 project.id, Number(site['id']), body.externalRef, body.serviceType, serviceDate,
-                body.recipientName, normalizePhone(body.recipientPhone), body.addressLine, body.addressLine2,
+                /* FROM THE SITE when there is one. See the resolution above:
+                   a referenced building spells its own name. */
+                destination ? destination.name : body.recipientName,
+                normalizePhone(body.recipientPhone),
+                destination ? destination.addressLine : body.addressLine, body.addressLine2,
                 body.city, body.state.toUpperCase(), zip, body.deliveryNotes,
                                 zone as InValue, body.signatureRequired ? 1 : 0,
                 /* NOBODY AT A GOODS-IN DESK CAN PRODUCE A PATIENT'S ID.
@@ -366,6 +439,8 @@ export function createOrdersRouter(
                 receivedAt.toISOString(),
                 due.dueAt ? due.dueAt.toISOString() : null, dedupeKey,
                 body.deliveryKind,
+                destination ? destination.id : null,
+                body.readyAt ?? null,
             ],
         });
         const created = Object.fromEntries(Object.entries(orderRs.rows[0]!)) as unknown as OrderRow;

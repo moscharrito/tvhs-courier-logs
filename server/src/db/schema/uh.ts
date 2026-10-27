@@ -329,6 +329,28 @@ export const orders = sqliteTable(
          * Pavilion to Business Center III. No patient means no morning text,
          * no identity check, and a different line on the report. */
         deliveryKind: text('delivery_kind', { enum: ['patient', 'facility'] }).notNull().default('patient'),
+        /** Which of OUR OWN buildings a facility transfer goes to.
+         *
+         *  Null for every patient delivery, for ever: a patient's address is
+         *  not a site. Before 0056 the destination was typed into
+         *  recipient_name and address_line like a patient's, so "Business
+         *  Center III" and "BC3" were different places as far as this
+         *  database was concerned and counting the leg meant guessing at
+         *  spellings. BC3 has been a row in `sites` since the nine locations
+         *  were seeded; this points at it. */
+        destinationSiteId: integer('destination_site_id').references(() => sites.id),
+        /** The earliest the medication exists to be collected.
+         *
+         *  NOT A DEADLINE, which makes it the odd one out on this table:
+         *  due_at and pickup_due_at are moments to beat, and this is a
+         *  moment to wait for. "Employee prescription, pickup ready 11AM"
+         *  is a fact about Pavilion's morning, and without it a courier is
+         *  sequenced there at a quarter past ten and sent away again.
+         *
+         *  Not enforced at the door. If the pharmacy hands the bag over
+         *  early then that is what happened, and a courier holding
+         *  medication is in no position to argue with a timestamp. */
+        readyAt: text('ready_at'),
         /* Addendum 2 clause 9: a destination outside every zone needs prior
          * University Health authorisation. Their reference, not ours, so the
          * person who approved it can be asked about months later. */

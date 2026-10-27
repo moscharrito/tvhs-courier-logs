@@ -93,6 +93,21 @@ export interface MailAttempts {
     /** The last refusal. Status and AWS error type only, never a recipient
      *  and never a hostname -- it is reported on a public endpoint. */
     lastError: string | null;
+    /** When this process last PUT something to SES, failed or not.
+     *
+     *  WITHOUT THIS THE COUNT ABOVE IS A LIE BY OMISSION. `failing` only
+     *  returns to zero when a send succeeds, so once the queue that was
+     *  failing is cleared away nothing is attempted at all and the number
+     *  freezes -- and /health goes on announcing "REFUSING EVERY SEND: 25
+     *  in a row" over a mailer that is not being asked to send anything.
+     *  It happened: a queue of doomed notifications was closed, the figure
+     *  did not move, and the obvious reading was that the clearing had not
+     *  worked.
+     *
+     *  A refusal that is minutes old is a fault. The same refusal hours
+     *  old with nothing tried since is history, and saying them the same
+     *  way is how a field stops being believed. */
+    lastAttemptAt: string | null;
 }
 
 export interface Mailer {
@@ -178,7 +193,7 @@ const unavailable = (reason: string): Mailer => ({
     async send() { throw new Error(reason); },
     /* Nothing is attempted, so nothing is failing. /health reports this
        mailer as "off" from `available` and never reads these. */
-    attempts: () => ({ attempted: 0, failing: 0, lastError: null }),
+    attempts: () => ({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null }),
 });
 
 export function createMailer(config: Config): Mailer {
@@ -197,11 +212,12 @@ export function createMailer(config: Config): Mailer {
     let attempted = 0;
     let failing = 0;
     let lastError: string | null = null;
+    let lastAttemptAt: string | null = null;
 
     return {
         available: true,
         reason: null,
-        attempts: () => ({ attempted, failing, lastError }),
+        attempts: () => ({ attempted, failing, lastError, lastAttemptAt }),
 
         async send(mail: Mail, at = new Date()): Promise<void> {
             /* Before anything else, and before the body is even serialised.
@@ -224,6 +240,7 @@ export function createMailer(config: Config): Mailer {
             });
 
             attempted += 1;
+            lastAttemptAt = new Date().toISOString();
 
             let res;
             try {

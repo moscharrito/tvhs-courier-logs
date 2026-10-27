@@ -87,7 +87,7 @@ describe('GET /health', () => {
     };
 
     it('says a mailer SES is refusing is refusing, not quiet', async () => {
-        const res = await withMail({ attempted: 2, failing: 2, lastError: '403 AccessDeniedException' });
+        const res = await withMail({ attempted: 2, failing: 2, lastError: '403 AccessDeniedException', lastAttemptAt: new Date().toISOString() });
         expect(res.body.scheduler.mail).toMatch(/^REFUSING EVERY SEND/);
         /* The error TYPE, because it names the job: a wrong key id, a wrong
            secret and a missing ses:SendEmail are all 403 and all different
@@ -100,15 +100,43 @@ describe('GET /health', () => {
         /* A reset code is not a notification row, so outbox.ts would answer
            "nothing sent yet" however many resets SES had just thrown out. */
         const res = await withMail(
-            { attempted: 9, failing: 9, lastError: '403 SignatureDoesNotMatch' },
+            { attempted: 9, failing: 9, lastError: '403 SignatureDoesNotMatch', lastAttemptAt: new Date().toISOString() },
             'configured, nothing sent yet',
         );
         expect(res.body.scheduler.mail).not.toContain('nothing sent yet');
         expect(res.body.scheduler.mail).toContain('SignatureDoesNotMatch');
     });
 
+    it('stops describing a cleared-away failure in the present tense', async () => {
+        /* `failing` only returns to zero when a send SUCCEEDS. Clear away
+           the queue that was failing and nothing is attempted at all, so
+           the count freezes and this line went on announcing "REFUSING
+           EVERY SEND: 25 in a row" over a mailer nobody was asking to send
+           anything. That happened, and the obvious reading was that the
+           clearing had not worked. */
+        const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const res = await withMail({
+            attempted: 25, failing: 25, lastError: '400 MessageRejected', lastAttemptAt: anHourAgo,
+        });
+        expect(res.body.scheduler.mail).not.toMatch(/REFUSING EVERY SEND/);
+        expect(res.body.scheduler.mail).toMatch(/last send refused 60 minutes ago/);
+        expect(res.body.scheduler.mail, 'still says what it was').toContain('400 MessageRejected');
+        expect(res.body.scheduler.mail, 'and that nothing has been tried since').toContain('nothing tried since');
+    });
+
+    it('still shouts while the refusals are actually happening', async () => {
+        /* The other half. A mailer failing right now must not be softened
+           into a historical note, which would be the same mistake wearing
+           the opposite hat. */
+        const justNow = new Date(Date.now() - 60 * 1000).toISOString();
+        const res = await withMail({
+            attempted: 25, failing: 25, lastError: '400 MessageRejected', lastAttemptAt: justNow,
+        });
+        expect(res.body.scheduler.mail).toMatch(/^REFUSING EVERY SEND/);
+    });
+
     it('stops saying it the moment one send works', async () => {
-        const res = await withMail({ attempted: 4, failing: 0, lastError: null });
+        const res = await withMail({ attempted: 4, failing: 0, lastError: null, lastAttemptAt: new Date().toISOString() });
         expect(res.body.scheduler.mail).not.toMatch(/REFUSING/);
         /* And "nothing sent yet" would now be false: this process has put
            four through and they were accepted. */
@@ -118,12 +146,12 @@ describe('GET /health', () => {
     it('leaves "nothing sent yet" alone when nothing has in fact been tried', async () => {
         /* A quiet Sunday is still a real answer and must not read as a
            fault. The whole point is telling the two apart. */
-        const res = await withMail({ attempted: 0, failing: 0, lastError: null });
+        const res = await withMail({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
         expect(res.body.scheduler.mail).toBe('configured, nothing sent yet');
     });
 
     it('does not contradict itself when the sweep has sent something recently', async () => {
-        const res = await withMail({ attempted: 3, failing: 0, lastError: null }, 'sending');
+        const res = await withMail({ attempted: 3, failing: 0, lastError: null, lastAttemptAt: new Date().toISOString() }, 'sending');
         expect(res.body.scheduler.mail).toBe('sending');
     });
 
@@ -131,7 +159,7 @@ describe('GET /health', () => {
         /* available is checked first and nothing below can override it: a
            mailer with no credentials has not been refused, it has not been
            asked. */
-        const res = await withMail({ attempted: 0, failing: 0, lastError: null }, 'sending', false);
+        const res = await withMail({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null }, 'sending', false);
         expect(res.body.scheduler.mail).toBe('off');
     });
 
@@ -139,7 +167,7 @@ describe('GET /health', () => {
         /* The rule at the top of health.ts. An AWS error type is a fixed
            string from a published list; a hostname, a region, an address and
            a key id are not allowed on a public endpoint at any time. */
-        const res = await withMail({ attempted: 1, failing: 1, lastError: 'could not reach SES' });
+        const res = await withMail({ attempted: 1, failing: 1, lastError: 'could not reach SES', lastAttemptAt: new Date().toISOString() });
         const body = JSON.stringify(res.body);
         expect(res.body.scheduler.mail).toContain('could not reach SES');
         expect(body).not.toMatch(/amazonaws|\.com|@|us-[a-z]+-\d|AKIA/i);

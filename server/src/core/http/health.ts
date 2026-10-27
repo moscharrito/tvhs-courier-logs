@@ -115,6 +115,13 @@ interface Deps {
  *  remove. */
 export type StatisticsState = 'ok' | 'missing' | 'unknown';
 
+/** How long a run of refusals stays news.
+ *
+ *  Ten minutes is five sweeps: long enough that a mailer genuinely failing
+ *  is still reported as failing, short enough that one cleared away stops
+ *  being described in the present tense. */
+export const STALE_AFTER_MINUTES = 10;
+
 export function createHealthRouter({
     client, version, sweepIntervalSeconds, mailConfigured, mailRecent, mailAttempts, filesConfigured, smsConfigured,
     statistics, filesHealth, trackingRetentionDays,
@@ -152,6 +159,28 @@ export function createHealthRouter({
                carries a hostname, an address or a key. */
             const tried = mailAttempts?.();
             if (tried && tried.failing > 0) {
+                /* HOW LONG AGO MATTERS, AND LEAVING IT OUT MISLED SOMEBODY.
+                
+                   `failing` only returns to zero when a send succeeds. Clear
+                   away the queue that was failing and nothing is attempted
+                   at all, so the count freezes and this line goes on
+                   announcing "REFUSING EVERY SEND: 25 in a row" over a
+                   mailer nobody is asking to send anything. That is exactly
+                   what happened after a queue of doomed notifications was
+                   closed: the figure did not move, and the obvious reading
+                   was that the clearing had not worked.
+                
+                   A refusal minutes old is a fault happening now. The same
+                   refusal an hour old with nothing tried since is history,
+                   and a field that says them identically stops being
+                   believed -- which is worse than saying nothing. */
+                const since = tried.lastAttemptAt === null
+                    ? null
+                    : Math.round((Date.now() - Date.parse(tried.lastAttemptAt)) / 60000);
+                if (since !== null && since >= STALE_AFTER_MINUTES) {
+                    return `last send refused ${since} minutes ago: ${tried.lastError ?? 'reason not recorded'}`
+                        + ` (${tried.failing} in a row, nothing tried since)`;
+                }
                 return `REFUSING EVERY SEND: ${tried.lastError ?? 'reason not recorded'}`
                     + ` (${tried.failing} in a row)`;
             }
