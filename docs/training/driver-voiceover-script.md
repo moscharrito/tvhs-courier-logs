@@ -1,12 +1,11 @@
 # Driver training — voiceover script
 
-Narration for the nine-slide deck "TAG Courier — Driver Training".
-One block per slide, in running order. Read as written; it has been checked
-against the running app on 27 October 2026.
+Narration for "TAG Courier — Driver Training". This is the script that is
+spoken in `driver-training.mp4`; the two are generated from the same source,
+so re-record the video if you edit this.
 
-Approximate running time: nine minutes.
-
-Still frames for each step are in `docs/training/screens/`.
+Checked against the running app on 27 October 2026. Still frames are in
+`docs/training/screens/`.
 
 ## cover — Your day on TAG Courier
 
@@ -116,17 +115,23 @@ Three. You have forgotten your password. Tap "Forgot password" on the sign-in sc
 
 Four. The camera will not open, or the phone is full, and you cannot photograph the form. Do not hand the medication over and plan to sort it out later. Record it as could not deliver, say why in the box, and ring dispatch. An honest failure is recoverable. An unrecorded controlled drug is not.
 
-## record — Turning this into the video
+## ready — Six things, in order
 
-Last slide, and this one is not for drivers.
+That is the whole day. Six things, in the order you will do them.
 
-Every slide in this deck carries its narration in the speaker notes, written to be read out loud rather than read off a page. End to end it runs about nine minutes. Read it as written — it has been checked line by line against what the app actually does, including the things that changed recently, like the signature pad being gone.
+One. Sign in, and check the contract at the top reads UH Pharmacy Courier.
 
-To record it: put the deck full screen, screen-record the window, and read the notes slide by slide. One take per slide is easier than one take for the whole thing, and cutting between slides hides the joins.
+Two. Go on shift before ten in the morning, and allow location when it asks.
 
-For the audio, a phone held at arm's length in a room with a sofa and curtains will beat a headset microphone in a car. Keep it close and keep it still.
+Three. Count what the pharmacy gives you, at the counter, before you leave.
 
-And remember where this gets watched. Drivers will open it on the same handset they work from, probably in a car park before a run. Export at ten-eighty, no music under the voice, and keep it short.
+Four. Tap as it happens. Arrived when you get there, handed over when it is in their hands.
 
-One honest gap: three screens in this deck are described rather than shown — the sign-in screen, going on shift, and the pay screen. Film those three off a real handset before this goes out.
+Five. Photograph the signed form. Every delivery, no exceptions, and the app will not let you record one without it.
+
+Six. Before you finish, somewhere with signal, check nothing is still waiting to send.
+
+Two last things. Set your PIN on your first day, on the You tab, while you have signal and patience — not at seven in the morning in a car park.
+
+And if the app ever shows you something this video did not, ring dispatch rather than guessing. Nobody has ever been in trouble for asking. Welcome aboard.
 
