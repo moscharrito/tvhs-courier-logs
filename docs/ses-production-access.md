@@ -54,12 +54,16 @@ Acceptable Use Policy.
 >    completion rates for the previous day. Sent once per day.
 >
 > **How we obtain addresses.** We do not collect them. Every recipient is a
-> named staff account created by an administrator of ours or of University
-> Health under the terms of the contract, and the address is entered by that
-> administrator. There is no public sign-up, no subscription form and no
-> imported list. An address can only receive mail from us while an active
-> account carries it; an administrator removing or changing it stops all mail
-> to the old address immediately.
+> named staff account created by an administrator of Izy Global Services
+> under the terms of the contract, and the address is entered by that
+> administrator. There is no subscription form and no imported list. An
+> address can only receive mail from us while an active account carries it;
+> an administrator removing or changing it stops all mail to the old address
+> immediately.
+>
+> Courier applicants reach us through a public application form. They are
+> not sent email by this system unless and until they become staff with an
+> account, so no address obtained that way receives anything.
 >
 > **Bounces and complaints.** We subscribe to the SES bounce and complaint
 > notifications over Amazon SNS. The receiving endpoint verifies Amazon's
@@ -99,17 +103,20 @@ Acceptable Use Policy.
 ## Before you send it, check these
 
 Everything above is drawn from the code and from
-[docs/volume-2026-h1.md](volume-2026-h1.md), except:
+[docs/volume-2026-h1.md](volume-2026-h1.md).
 
-- **"one or two people per location"** — true of the accounts that exist
-  today. If University Health adds several contacts per pharmacy, the volume
-  estimate rises with it. The figure is a ceiling you are giving AWS, so it
-  is better high than low.
-- **"an administrator of ours or of University Health"** — check this matches
-  what the contract actually says about who may create accounts.
-- The claim about **no public sign-up** is true of staff accounts. Courier
-  applications come in through a public form; those applicants are not
-  emailed by this system, but say so if you would rather be exact.
+**The three judgement calls were confirmed by the owner on 26 October 2026:**
+
+- **Volume** — under 3,000 on a normal weekday, under 5,000 on any day.
+  Comfortably inside the 50,000/day production default, so there is headroom
+  if University Health add contacts per counter.
+- **Who creates accounts** — Izy Global Services only. University Health's
+  contract manager can reset the eight counter passwords
+  (`mayResetPortalPasswords`) but does not create accounts.
+- **Courier applicants** — mentioned explicitly, because a reviewer who finds
+  a public form after reading "no sign-up" has a reason to doubt the rest.
+
+Nothing in the text now needs a decision. It can be pasted as it stands.
 
 ## After it is granted
 
