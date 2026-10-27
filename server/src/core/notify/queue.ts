@@ -172,6 +172,16 @@ const Query = z.object({
     limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
+/* Ids rather than a filter, so that what is closed is what somebody looked
+   at. A filter sent from a script would be evaluated against a queue that
+   may have moved since they read it. */
+const CloseBody = z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(500),
+    /* Goes into dispatch_result beside the sweep's own words, so a row says
+       why it was not sent rather than merely that it was not. */
+    reason: z.enum(['cleared', 'suppressed']).default('cleared'),
+});
+
 /**
  * What is waiting, and what would happen to it.
  *
@@ -357,6 +367,59 @@ export function createMailQueueRouter({ client, mailer }: { client: Client; mail
             mailerFailing: state.failing,
         });
         res.json({ ...queue, mailer: state });
+    }));
+
+    /* ───────────────────────────────── closing one without sending it
+     *
+     * THE TRAP THIS EXISTS TO DEFUSE FIRES ON THE GOOD NEWS. The queue
+     * holds rehearsal notifications addressed to `@example.invalid`. In the
+     * SES sandbox they are harmlessly refused. The moment production access
+     * is granted SES accepts them and every one hard bounces, because
+     * `.invalid` resolves to nothing by design -- some hundreds of bounces
+     * in minutes, on a sending domain whose reputation starts that day, and
+     * a bounce rate near a hundred per cent is how an account is put back
+     * in the sandbox or suspended outright.
+     *
+     * So there has to be a way to say "not this one" that is not a DELETE
+     * typed into a database at speed.
+     *
+     * IT CLOSES, IT DOES NOT DELETE. sent_at is stamped and dispatch_result
+     * records why, exactly as the sweep does for a row it decided not to
+     * send. The notification stays readable in the app by whoever it was
+     * for, and the record of the decision survives -- a courier asking why
+     * their app showed a notice for order 311 deserves a row that answers.
+     *
+     * ALREADY-SENT ROWS ARE NOT TOUCHED. The WHERE clause keeps
+     * `sent_at IS NULL`, so this can never rewrite the history of something
+     * that did go out, and running it twice closes nothing the second time.
+     *
+     * It does not choose WHICH rows: the caller passes ids it got from the
+     * view above. Deciding and doing are separate on purpose, because the
+     * deciding is where the filters live (see scripts/clear-mail-queue.mjs,
+     * which refuses to act without both a date and a domain). */
+    router.post('/api/mail-queue/close', requireAdmin, wrap(async (req, res) => {
+        const parsed = CloseBody.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: 'Invalid request',
+                details: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`),
+            });
+            return;
+        }
+        const { ids, reason } = parsed.data;
+        const at = new Date().toISOString();
+        const marks = ids.map(() => '?').join(',');
+        const done = await client.execute({
+            sql: `UPDATE notifications SET sent_at = ?, dispatch_result = ?
+                   WHERE id IN (${marks}) AND sent_at IS NULL`,
+            args: [at, reason, ...ids],
+        });
+        const closed = Number(done.rowsAffected ?? 0);
+
+        /* Audited loudly: this is somebody deciding that a person will not
+           be told something they were going to be told. */
+        await req.audit('mail_queue.close', 'notifications', null, { asked: ids.length, closed, reason });
+        res.json({ closed });
     }));
 
     return router;

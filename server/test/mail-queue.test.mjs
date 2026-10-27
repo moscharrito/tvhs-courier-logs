@@ -296,6 +296,106 @@ describe('whether anything can be sent at all', () => {
     });
 });
 
+describe('closing one without sending it', () => {
+    /* THE TRAP THIS DEFUSES FIRES ON THE GOOD NEWS. The queue holds
+     * rehearsal notifications addressed to @example.invalid. In the SES
+     * sandbox they are harmlessly refused; the moment production access is
+     * granted SES accepts them and every one hard bounces, because
+     * `.invalid` resolves to nothing by design. Hundreds of bounces in
+     * minutes, on a domain whose sending reputation starts that day, is how
+     * an account is put back in the sandbox or suspended.
+     *
+     * So there has to be a way to say "not this one" that is not a DELETE
+     * typed into a database at speed.
+     */
+    it('stops a row being sent without destroying it', async () => {
+        await clearQueue();
+        await queued('queue.counter', 'delivery.completed', 311);
+        const before = await queue();
+        expect(before.wouldSend).toBe(1);
+
+        const id = before.rows[0].id;
+        const saidBefore = before.rows[0].body;
+        const res = await admin.post('/api/mail-queue/close').send({ ids: [id] });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.closed).toBe(1);
+
+        /* Gone from the queue... */
+        expect((await queue()).total).toBe(0);
+        /* ...and still there, word for word, with a reason beside it. The
+           notification stays readable in the app by whoever it was for: a
+           courier asking why they saw a notice for an order deserves a row
+           that answers, and deleting it would delete the answer. */
+        const row = (await rows('SELECT sent_at, dispatch_result, body, order_id FROM notifications WHERE id = ?', [id]))[0];
+        expect(row.sent_at).toBeTruthy();
+        expect(String(row.dispatch_result)).toBe('cleared');
+        expect(String(row.body), 'unchanged').toBe(saidBefore);
+        expect(Number(row.order_id), 'still points at the order').toBe(311);
+    });
+
+    it('cannot rewrite the history of something that did go out', async () => {
+        /* sent_at IS NULL stays in the WHERE clause, so a row that was
+           really sent keeps saying so. */
+        await clearQueue();
+        await queued('queue.counter');
+        const id = (await queue()).rows[0].id;
+        await run("UPDATE notifications SET sent_at = ?, dispatch_result = 'sent' WHERE id = ?", ['2026-10-20T09:00:00.000Z', id]);
+
+        const res = await admin.post('/api/mail-queue/close').send({ ids: [id] });
+        expect(res.body.closed, 'nothing to close').toBe(0);
+        const row = (await rows('SELECT sent_at, dispatch_result FROM notifications WHERE id = ?', [id]))[0];
+        expect(String(row.dispatch_result), 'still says it was sent').toBe('sent');
+        expect(String(row.sent_at)).toBe('2026-10-20T09:00:00.000Z');
+    });
+
+    it('is safe to run twice', async () => {
+        await clearQueue();
+        await queued('queue.counter');
+        const id = (await queue()).rows[0].id;
+        expect((await admin.post('/api/mail-queue/close').send({ ids: [id] })).body.closed).toBe(1);
+        expect((await admin.post('/api/mail-queue/close').send({ ids: [id] })).body.closed).toBe(0);
+    });
+
+    it('closes only the ids it was given', async () => {
+        /* Ids rather than a filter, so what is closed is what somebody
+           looked at: a filter would be evaluated against a queue that may
+           have moved since they read it. */
+        await clearQueue();
+        await queued('queue.counter');
+        await queued('queue.counter');
+        const all = (await queue()).rows.map((r) => r.id);
+        await admin.post('/api/mail-queue/close').send({ ids: [all[0]] });
+
+        const left = await queue();
+        expect(left.total).toBe(1);
+        expect(left.rows[0].id).toBe(all[1]);
+    });
+
+    it('is admin only, because it decides somebody is not told', async () => {
+        await clearQueue();
+        await queued('queue.counter');
+        const id = (await queue()).rows[0].id;
+        expect((await srv.agent().post('/api/mail-queue/close').send({ ids: [id] })).status).toBe(401);
+        expect((await courier.post('/api/mail-queue/close').send({ ids: [id] })).status).toBe(403);
+    });
+
+    it('refuses a request with nothing in it rather than closing everything', async () => {
+        expect((await admin.post('/api/mail-queue/close').send({ ids: [] })).status).toBe(400);
+        expect((await admin.post('/api/mail-queue/close').send({})).status).toBe(400);
+    });
+
+    it('audits it, because it is a decision somebody may have to account for', async () => {
+        await clearQueue();
+        await queued('queue.counter');
+        const id = (await queue()).rows[0].id;
+        await admin.post('/api/mail-queue/close').send({ ids: [id] });
+
+        const trail = await rows("SELECT detail FROM audit_events WHERE action = 'mail_queue.close' ORDER BY id DESC LIMIT 1");
+        expect(trail).toHaveLength(1);
+        expect(JSON.parse(String(trail[0].detail))).toMatchObject({ asked: 1, closed: 1, reason: 'cleared' });
+    });
+});
+
 describe('GET /api/mail-queue', () => {
     it('is admin only, because it is a list of who is about to be emailed', async () => {
         expect((await srv.agent().get('/api/mail-queue')).status).toBe(401);

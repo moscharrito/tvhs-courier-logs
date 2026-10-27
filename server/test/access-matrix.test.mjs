@@ -252,6 +252,10 @@ const MATRIX = [
        addresses, and reading it is a thing somebody may have to account for.
        See core/notify/queue.ts. */
     ['GET', '/api/mail-queue', PLATFORM_ADMIN, 'what is waiting to go out by email'],
+    /* Deciding somebody will not be told what they were going to be told.
+       Platform admin, like reading the queue: a narrower role could close a
+       notification about a delivery they would rather nobody heard about. */
+    ['POST', '/api/mail-queue/close', PLATFORM_ADMIN, 'close a notification without sending it'],
 
     /* --- driver applications (tickets 6.1 and 6.2).
      *
