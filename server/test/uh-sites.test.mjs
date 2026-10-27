@@ -28,15 +28,28 @@ describe('seeded UH pharmacies', () => {
     it('loads the nine pickup locations from the bid table, scoped to the uh project', async () => {
         const res = await admin.get(UH);
         expect(res.status).toBe(200);
-        /* Eight. Business Center III was the ninth and is an office, not a
-           pharmacy: migration 0041 removes it and says why. Addendum 1 says
-           seven pick-up locations, and the eight here each took deliveries on
-           30 September 2026, so the contract's count is out of date rather
-           than this list being wrong. Exhibit E would settle it. */
-        expect(res.body).toHaveLength(8);
+        /* NINE ROWS, EIGHT OF THEM PHARMACIES, and the distinction is the
+           whole point rather than a detail of the count.
+
+           0041 deleted Business Center III -- an office, not a pharmacy --
+           and was right about that: Addendum 1 says seven pick-up
+           locations, the eight here each took deliveries on 30 September
+           2026, and BC3 was not among the sites University Health's
+           Assistant Director read out.
+
+           0056 puts it back as a DESTINATION, because Pavilion dispenses
+           their own employees' prescriptions and they are carried to BC3
+           for collection. type 'other' and releasesList false keep the
+           distinction 0041 drew: nobody collects here, and it must never
+           appear in a list of counters that send work. */
+        expect(res.body).toHaveLength(9);
+        expect(res.body.filter((s) => s.type === 'pharmacy')).toHaveLength(8);
 
         const byCode = Object.fromEntries(res.body.map((s) => [s.code, s]));
-        expect(Object.keys(byCode).sort()).toEqual(['discharge', 'green', 'pavilion', 'southeast', 'southwest', 'tdi', 'vida', 'wheatley']);
+        expect(Object.keys(byCode).sort()).toEqual(['bc3', 'discharge', 'green', 'pavilion', 'southeast', 'southwest', 'tdi', 'vida', 'wheatley']);
+        expect(byCode['bc3'], 'a place we deliver to, never collect from').toMatchObject({
+            name: 'Business Center III', type: 'other', releasesList: false, status: 'active',
+        });
 
         expect(byCode['pavilion']).toMatchObject({
             name: 'University Health Medical Center Pavilion Pharmacy',
@@ -45,14 +58,24 @@ describe('seeded UH pharmacies', () => {
         });
         expect(byCode['discharge']).toMatchObject({ name: 'University Hospital Discharge Pharmacy', zip: '78229' });
         expect(byCode['discharge'].notes).toMatch(/after-hours returns/i);
-        /* Open item 6 is closed: it asked whether this was a pickup location
-           and the answer is no. Nothing should reintroduce it. */
-        expect(byCode['bc3']).toBeUndefined();
+        /* THIS GUARD USED TO SAY bc3 MUST NOT EXIST AT ALL, and it was there
+           for a reason: open item 6 asked whether Business Center III was a
+           pickup location and the answer was no.
 
-        // The ZIPs match the five the bid table lists for pickup locations.
-        /* 78249 went with Business Center III, which is the ZIP printed on the
-           solicitation as University Health's own procurement address. */
-        expect([...new Set(res.body.map((s) => s.zip))].sort()).toEqual(['78207', '78220', '78223', '78224', '78229', '78237']);
+           The answer is still no. What changed is that we now DELIVER
+           there, so the row exists again (0056) and the guard has to pin
+           the thing it was actually protecting rather than the absence it
+           used as a proxy: BC3 is never a pharmacy and never releases a
+           list, so it can never be mistaken for a counter that sends work. */
+        expect(byCode['bc3'].type).not.toBe('pharmacy');
+        expect(byCode['bc3'].releasesList).toBe(false);
+
+        // The ZIPs the bid table lists for pickup locations, plus BC3's.
+        /* 78249 is Business Center III, the ZIP printed on the solicitation
+           as University Health's own procurement address. */
+        const pharmacyZips = [...new Set(res.body.filter((s) => s.type === 'pharmacy').map((s) => s.zip))].sort();
+        expect(pharmacyZips).toEqual(['78207', '78220', '78223', '78224', '78229', '78237']);
+        expect(byCode['bc3'].zip).toBe('78249');
     });
 
     it('leaves coordinates unset rather than inventing them, pending ticket 1.4', async () => {
@@ -69,7 +92,7 @@ describe('seeded UH pharmacies', () => {
 
     it('seeds sites only for the uh project, and re-running the migration adds no duplicates', async () => {
         const rows = (await sql(`SELECT p.code AS project, COUNT(*) AS n FROM sites s JOIN projects p ON p.id = s.project_id GROUP BY p.code`)).rows.map((r) => ({ ...r }));
-        expect(rows).toEqual([{ project: 'uh', n: 8 }]);
+        expect(rows).toEqual([{ project: 'uh', n: 9 }]);
     });
 });
 
@@ -160,10 +183,13 @@ describe('create, update, delete', () => {
     });
 
     it('filters by status and type', async () => {
-        expect((await admin.get(`${UH}?status=active`)).body).toHaveLength(8);
+        expect((await admin.get(`${UH}?status=active`)).body).toHaveLength(9);
         expect((await admin.get(`${UH}?status=inactive`)).body.map((s) => s.code)).toEqual(['palo.alto']);
         expect((await admin.get(`${UH}?type=hospital`)).body.map((s) => s.code)).toEqual(['palo.alto']);
+        /* STILL EIGHT. A filter for pharmacies must not start returning a
+           back office just because we now deliver to one. */
         expect((await admin.get(`${UH}?type=pharmacy`)).body).toHaveLength(8);
+        expect((await admin.get(`${UH}?type=other`)).body.map((s) => s.code)).toEqual(['bc3']);
     });
 
     it('refuses to delete a pharmacy that deliveries point at', async () => {
@@ -199,7 +225,7 @@ describe('create, update, delete', () => {
         const site = (await admin.get(UH)).body.find((s) => s.code === 'palo.alto');
         expect((await admin.delete(`${UH}/${site.id}`)).body).toEqual({ ok: true, deleted: 'palo.alto' });
         expect((await admin.get(`${UH}/${site.id}`)).status).toBe(404);
-        expect((await admin.get(UH)).body).toHaveLength(8);
+        expect((await admin.get(UH)).body).toHaveLength(9);
         expect((await admin.get(`${UH}/999999`)).status).toBe(404);
         expect((await admin.get(`${UH}/not-a-number`)).status).toBe(404);
     });
