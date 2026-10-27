@@ -14,18 +14,40 @@ order they should be uploaded, because read down they are a working day.
 | `1-contract-picker.png` | The first screen: UH and TVHS, a courier picks theirs |
 | `2-todays-run.png` | The run, next stop first, with its deadline and zone |
 | `3-stop-detail.png` | A stop flagged `Controlled` and `ID` |
-| `4-pharmacy-collection.png` | Counting packages out of a pharmacy, signed for |
+| `4-pharmacy-collection.png` | Counting packages out of a pharmacy, and who handed them over |
 | `5-proof-of-delivery.png` | Both required photographs at the door |
 
-**Every name and address in them is invented.** They were captured against
+**Every name and address in them is invented.** Four were captured against
 production with the mock list from `server/scripts/mock-list.mjs`: Test
 Patient Bravo at 11 Rehearsal Way. No University Health data, real or
 sampled, is in any of these images, and none may ever be: a store listing is
 public, permanent and indexed.
 
-Captured on an emulator running the signed **release** build at versionCode
-2, with the display forced to 1080x1920 so the aspect ratio is a clean 9:16
-rather than the 9:20 of the native Pixel profile.
+Captured on an emulator with the display forced to 1080x1920 so the aspect
+ratio is a clean 9:16 rather than the 9:20 of the native Pixel profile.
+Numbers 1, 2, 3 and 5 are the signed **release** build at versionCode 2.
+
+### 4 was recaptured on 27 October 2026, and why that had to happen
+
+THE LISTING WAS SHOWING A FEATURE THAT NO LONGER EXISTS. The original
+screenshot was captured while collection ended in a signature drawn on the
+screen -- "Their signature", with initials in a box. That pad is gone:
+`app/src/screens/Collect.tsx` says of the signature, "Both are gone." The
+paper form carries the signatures now and the app only asks who handed the
+packages over.
+
+So a driver who installed from the listing met a screen that did not match
+the one they had been shown, on the step where miscounting a controlled drug
+costs somebody an afternoon. A store listing is the first thing anybody sees
+and it had been wrong since the pad was removed.
+
+The replacement is Pavilion rather than Robert B. Green, and it carries no
+CONTROLLED flag, because it was captured against a LOCAL server seeded by
+`npm run seed:uh-day -w server` rather than against production -- the
+invented patients that script creates are not marked controlled. If this is
+ever recaptured, seeding a controlled order first puts the red
+`CONTROLLED - photograph part 2 at the door` line back, which is worth
+having in a shop window.
 
 ### If these are recaptured
 
