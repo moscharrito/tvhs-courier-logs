@@ -63,6 +63,31 @@ export interface BusinessHoursSettings {
     days: number[];
 }
 
+export interface CheckInSettings {
+    /**
+     * The time by which every courier with work today is expected to have
+     * gone on shift, and after which somebody is told that they have not.
+     *
+     * "Ensure every driver checks in on the App at 10AM" is the site
+     * manager's job (Izy Business, 26 October 2026). It is here rather than
+     * as a constant because it is an operating parameter of the contract,
+     * the same kind of thing as when the pharmacies hand over the list --
+     * and because a depot that starts at eight should not have to edit
+     * TypeScript to say so.
+     */
+    deadline: string;
+    /**
+     * Whether anybody is told at all.
+     *
+     * ON BY DEFAULT, deliberately. A watch nobody switched on is a watch
+     * that is not watching, and the failure it exists to catch -- a driver
+     * who simply does not appear -- is silent by nature: no error, no
+     * refusal, just a van that is not moving and deliveries whose deadlines
+     * are running. Off is for a project that does not work this way.
+     */
+    watch: boolean;
+}
+
 export interface ListReleaseSettings {
     /**
      * When the pharmacies hand over the day's list. Addendum 1: "the daily
@@ -317,6 +342,7 @@ export interface ProjectSettings {
     dryRun: DryRunSettings;
     businessHours: BusinessHoursSettings;
     listRelease: ListReleaseSettings;
+    checkIn: CheckInSettings;
     pricing: PricingSection;
     dispatch: DispatchSettings;
     returns: ReturnSettings;
@@ -340,6 +366,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     dryRun: { requireContactEffort: false, minimumWaitMinutes: 0 },
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00', allowPortalUpload: false },
+    checkIn: { deadline: '10:00', watch: true },
     /* All zero, i.e. nobody has set them. See DriverPaySettings for why that
        is reported as unset rather than as nothing. */
     driverPay: {
@@ -416,6 +443,10 @@ export const SettingsPatch = z.object({
         earliest: hhmm.optional(),
         latest: hhmm.optional(),
         allowPortalUpload: z.boolean().optional(),
+    }).strict().optional(),
+    checkIn: z.object({
+        deadline: hhmm.optional(),
+        watch: z.boolean().optional(),
     }).strict().optional(),
     driverPay: z.object({
         perDeliveryCents: z.object({
@@ -639,6 +670,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         dryRun: section(stored['dryRun'], DEFAULT_PROJECT_SETTINGS.dryRun),
         businessHours: section(stored['businessHours'], DEFAULT_PROJECT_SETTINGS.businessHours),
         listRelease: section(stored['listRelease'], DEFAULT_PROJECT_SETTINGS.listRelease),
+        checkIn: section(stored['checkIn'], DEFAULT_PROJECT_SETTINGS.checkIn),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),
         dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
         returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),

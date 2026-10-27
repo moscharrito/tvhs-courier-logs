@@ -26,6 +26,7 @@
 import type { Client } from '@libsql/client';
 import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/escalation';
+import { sweepCheckIn } from '../modules/uh/check-in';
 import { dispatchPending } from './notify/dispatch';
 import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
 import { sendDailyReport } from '../modules/uh/daily-report';
@@ -84,6 +85,17 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                 serviceDate: todayIn(timezone),
                 now: new Date(),
             });
+
+            /* A driver who has work today and never came on shift.
+             *
+             * In the same loop and on the same timer as the sweep above,
+             * because it is the same shape of promise: something that should
+             * have happened by a time, and nobody watching it. It reports
+             * once per courier per day and decides for itself whether the
+             * deadline has passed in the project's own timezone, so running
+             * it every two minutes costs a query and says nothing until
+             * there is something to say. See modules/uh/check-in.ts. */
+            await sweepCheckIn({ client, projectId, timezone, now: new Date() });
 
             /* The morning notice to patients.
              *

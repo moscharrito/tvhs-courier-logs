@@ -70,12 +70,20 @@ export async function notifyAll(client: Client, usernames: string[], input: Omit
     return written;
 }
 
-/** Everybody who could act on a dispatch problem, for this project. */
+/** Everybody who could act on a dispatch problem, for this project.
+ *
+ *  LEADS ARE IN THIS, and were not until the site manager's job was written
+ *  down. "Oversee entire ground operation and cover when necessary", and
+ *  "ensure every driver checks in on the App at 10AM" (Izy Business, 26
+ *  October 2026) -- a person who is told to notice a problem and who may
+ *  reassign work to fix it is exactly who this function claimed to return.
+ *  It returned project admins only, so the one person whose job it is heard
+ *  about neither an unclaimed STAT nor a driver who never arrived. */
 export async function dispatchersOf(client: Client, projectId: number): Promise<string[]> {
     try {
         const rs = await client.execute({
             sql: `SELECT u.username FROM memberships m JOIN users u ON u.id = m.user_id
-                   WHERE m.project_id = ? AND m.role = 'admin' AND u.status = 'active'
+                   WHERE m.project_id = ? AND m.role IN ('admin', 'lead') AND u.status = 'active'
                    ORDER BY u.username`,
             args: [projectId],
         });

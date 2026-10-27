@@ -606,6 +606,11 @@ export const NOTIFICATION_KINDS = [
     'request.superseded',
     'work.assigned',
     'work.unclaimed',
+    /* A courier who has a run today and had not come on shift by the
+     * check-in time. Addressed to whoever runs the board, never to the
+     * courier: it is not news to them that they are not at work. See
+     * modules/uh/check-in.ts. */
+    'shift.missed',
     /* Addressed to the pharmacy that sent the work, not to our own staff.
      * Every kind above is about dispatch telling a courier something; these
      * two are the first that leave the company, which is why they are also
