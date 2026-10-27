@@ -611,6 +611,11 @@ export const NOTIFICATION_KINDS = [
      * courier: it is not news to them that they are not at work. See
      * modules/uh/check-in.ts. */
     'shift.missed',
+    /* A day where the lists never arrived, or arrived and nobody built a
+     * run from them. The silence shift.missed cannot see, because that one
+     * measures against a run sheet that does not exist. See
+     * modules/uh/day-start.ts. */
+    'dispatch.notStarted',
     /* Addressed to the pharmacy that sent the work, not to our own staff.
      * Every kind above is about dispatch telling a courier something; these
      * two are the first that leave the company, which is why they are also

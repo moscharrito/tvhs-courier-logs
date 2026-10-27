@@ -63,6 +63,23 @@ export interface BusinessHoursSettings {
     days: number[];
 }
 
+export interface DayStartSettings {
+    /**
+     * Whether anybody is told when a day never started.
+     *
+     * ON BY DEFAULT for the same reason as the check-in watch: the thing it
+     * catches is an absence, and an absence announces itself to nobody. A
+     * morning where no list arrived and no run was built looks exactly like
+     * a quiet morning, right up until the afternoon.
+     *
+     * There is no time of its own here. The deadline is listRelease.latest,
+     * because that IS the moment the lists were supposed to have arrived by
+     * -- a second number to keep in step with the first would eventually
+     * disagree with it.
+     */
+    watch: boolean;
+}
+
 export interface CheckInSettings {
     /**
      * The time by which every courier with work today is expected to have
@@ -343,6 +360,7 @@ export interface ProjectSettings {
     businessHours: BusinessHoursSettings;
     listRelease: ListReleaseSettings;
     checkIn: CheckInSettings;
+    dayStart: DayStartSettings;
     pricing: PricingSection;
     dispatch: DispatchSettings;
     returns: ReturnSettings;
@@ -367,6 +385,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00', allowPortalUpload: false },
     checkIn: { deadline: '10:00', watch: true },
+    dayStart: { watch: true },
     /* All zero, i.e. nobody has set them. See DriverPaySettings for why that
        is reported as unset rather than as nothing. */
     driverPay: {
@@ -446,6 +465,9 @@ export const SettingsPatch = z.object({
     }).strict().optional(),
     checkIn: z.object({
         deadline: hhmm.optional(),
+        watch: z.boolean().optional(),
+    }).strict().optional(),
+    dayStart: z.object({
         watch: z.boolean().optional(),
     }).strict().optional(),
     driverPay: z.object({
@@ -671,6 +693,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         businessHours: section(stored['businessHours'], DEFAULT_PROJECT_SETTINGS.businessHours),
         listRelease: section(stored['listRelease'], DEFAULT_PROJECT_SETTINGS.listRelease),
         checkIn: section(stored['checkIn'], DEFAULT_PROJECT_SETTINGS.checkIn),
+        dayStart: section(stored['dayStart'], DEFAULT_PROJECT_SETTINGS.dayStart),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),
         dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
         returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),

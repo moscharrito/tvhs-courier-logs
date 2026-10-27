@@ -27,6 +27,7 @@ import type { Client } from '@libsql/client';
 import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/escalation';
 import { sweepCheckIn } from '../modules/uh/check-in';
+import { sweepDayStart } from '../modules/uh/day-start';
 import { dispatchPending } from './notify/dispatch';
 import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
 import { sendDailyReport } from '../modules/uh/daily-report';
@@ -96,6 +97,13 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
              * it every two minutes costs a query and says nothing until
              * there is something to say. See modules/uh/check-in.ts. */
             await sweepCheckIn({ client, projectId, timezone, now: new Date() });
+
+            /* And the day that never started at all, which the watch above
+               cannot see: it measures couriers against the run sheet, so a
+               morning with no run sheet reports nothing. Its own deadline is
+               listRelease.latest rather than the check-in time, because the
+               lists are not late at ten. See modules/uh/day-start.ts. */
+            await sweepDayStart({ client, projectId, timezone, now: new Date() });
 
             /* The morning notice to patients.
              *
