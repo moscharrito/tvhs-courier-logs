@@ -49,3 +49,11 @@ docs/forms/mock-list-*.csv
 *.jks
 *.keystore
 !app/android/app/debug.keystore
+
+# Address lists for set-emails.mjs. THIS REPOSITORY IS PUBLIC.
+# A `username,email` file is a staff directory: real mailboxes for couriers
+# and for University Health pharmacy staff. It is also the file that decides
+# where a password reset code is sent, so it is worth exactly as much to
+# somebody else as it is to us. Keep it on the machine that runs the script.
+emails.csv
+*.emails.csv
