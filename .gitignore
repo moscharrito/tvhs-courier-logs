@@ -57,3 +57,7 @@ docs/forms/mock-list-*.csv
 # somebody else as it is to us. Keep it on the machine that runs the script.
 emails.csv
 *.emails.csv
+
+# One-off credential tooling and its output. Public repository.
+reset-uh-portals.py
+*.docx
