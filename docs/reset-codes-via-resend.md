@@ -21,6 +21,39 @@ they break the other provider's mail with no obvious connection between the
 two. A separate subdomain keeps the two vendors from sharing a single record
 that either could break.
 
+## THE DNS RECORDS RESEND ASKS FOR
+
+Domain added to Resend on 28 October 2026 as `notify.izyglobalservices.com`.
+These are the records it wants. Four of them, and all four are needed before
+it will verify.
+
+| Type | Name | Value | TTL |
+|---|---|---|---|
+| TXT | `resend._domainkey.notify` | the DKIM key below | Auto |
+| CNAME | `rsend.notify` | `rsend.forge.rmta.net` | 3600 |
+| CNAME | `send.notify` | `send.forge.rmta.net` | 3600 |
+| MX | `notify` | `receive.forge.rmta.net` (priority 10) | 3600 |
+
+The DKIM value, which the console truncates on screen:
+
+    p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC4Y85o2E8AErL/zHT3HdUwI94y4IqrF8svqTaTFzjSBjwGIAzdVq9JBz+8YKSr9yIj5sL8aajHIMdnQTfrSPF0OyPkAwR7ymApyyUU0CnWfye73mP4mKypSObOLYdSfYryFCadrL0PNWcCGWo97yvb7ei41KFfdJ/KFlsn/RxffwIDAQAB
+
+**THE NAMES ARE WRITTEN FOR A HOST THAT APPENDS THE DOMAIN**, which is what
+Resend assumes and what most hosts do: `resend._domainkey.notify` becomes
+`resend._domainkey.notify.izyglobalservices.com`. If your host wants the
+whole name, append `.izyglobalservices.com` to each. Getting this backwards
+is the single most common reason verification never completes, and it cost
+us a check on the SES records this morning.
+
+Note these are `rmta.net`, not `amazonses.com`. Resend moved off SES for new
+domains; nothing to do with our own SES setup, and no conflict with it.
+
+## WHAT TO CHECK ONCE THEY ARE PUBLISHED
+
+    nslookup -type=TXT resend._domainkey.notify.izyglobalservices.com 8.8.8.8
+    nslookup -type=CNAME send.notify.izyglobalservices.com 8.8.8.8
+    nslookup -type=MX notify.izyglobalservices.com 8.8.8.8
+
 ## STEPS
 
 1. Create the Resend account. Add the domain `notify.izyglobalservices.com`.
