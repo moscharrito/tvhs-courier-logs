@@ -63,6 +63,7 @@ import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
 import { createApplicationsRouter, createPublicApplicationsRouter } from './core/onboarding/routes';
 import { createPasswordResetRouter } from './core/auth/password-reset';
+import { createHttpMailer } from './core/notify/http-mail';
 import { createShiftsRouter } from './modules/uh/shifts';
 import { createEscalationRouter } from './modules/uh/escalation';
 import { createTrackingRouter } from './modules/uh/tracking';
@@ -452,8 +453,21 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        cannot be asked to sign in first -- so it is written to say the same
        thing whether or not an address has an account, and throttled on both
        the address asked about and the caller. */
+    /* RESET CODES MAY TAKE A DIFFERENT ROAD OUT, and only reset codes.
+    
+       SES is in the sandbox, which delivers only to a verified recipient.
+       That is no use to a courier whose account carries a gmail address, so
+       when a fallback provider is configured the reset router gets it
+       instead. Everything else -- delivery notices, the daily summary --
+       stays on SES, where the volume and the agreement already are.
+    
+       Unconfigured, `createHttpMailer` returns an unavailable mailer and
+       this falls straight back to SES, which is the right behaviour the day
+       AWS grants production access: unset MAIL_FALLBACK_ENABLED and the
+       bridge is gone with no other change. See core/notify/http-mail.ts. */
+    const fallback = createHttpMailer(config);
     legacy.app.use('/api/password-reset', createPasswordResetRouter({
-        client: database.client, mailer, store,
+        client: database.client, mailer: fallback.available ? fallback : mailer, store,
     }));
     legacy.app.use('/api/projects/:pid/driver-applications', requireProject, createApplicationsRouter({ client: database.client }));
 

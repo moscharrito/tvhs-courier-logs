@@ -2,7 +2,17 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
     test: {
-        include: ['test/**/*.test.mjs'],
+        /* The suite is integration-style: every file under test/ boots a
+           server and talks to it over HTTP, which is the right shape for
+           almost everything here. The second pattern is for the few modules
+           worth exercising on their own -- core/notify/http-mail.ts is one,
+           because stubbing an external mail provider through a booted server
+           is more scaffolding than the thing being tested.
+        
+           NOTE the glob is not written in this comment: a path containing a
+           star followed by a slash closes the comment early, which is what
+           it did the first time and cost a confusing esbuild parse error. */
+        include: ['test/**/*.test.mjs', 'src/**/*.test.ts'],
         globalSetup: ['./test/helpers/global-setup.mjs'],
         /* EVERY RUN IS UTC, INCLUDING ON A LAPTOP IN TEXAS.
          *

@@ -112,6 +112,17 @@ export interface Config {
             secretAccessKey: string;
             from: string;
         } | undefined;
+        /** A second transport, for reset codes only, while SES is in the
+         *  sandbox and will not deliver to an unverified recipient. Absent
+         *  or disabled means reset codes go through SES like everything
+         *  else, which is correct the moment production access lands.
+         *  See core/notify/http-mail.ts. */
+        http: {
+            enabled: boolean;
+            endpoint: string | undefined;
+            apiKey: string | undefined;
+            from: string | undefined;
+        } | undefined;
         /** Where every notification tells the reader to go. https only. */
         portalUrl: string;
         /** SNS topic for bounces and complaints. Undefined disables the webhook. */
@@ -249,6 +260,14 @@ const EnvSchema = z.object({
      * ownership check cannot be made, and a valid AWS signature alone
      * proves only that SOMEBODY's topic sent it. */
     SES_SNS_TOPIC_ARN: optionalString,
+    /* THE SANDBOX BRIDGE. Reset codes only, through a provider with no
+     * recipient allow-list, because SES in the sandbox will not deliver a
+     * code to the gmail address on a courier's account. Off by default and
+     * meant to be turned off again once AWS grants production access. */
+    MAIL_FALLBACK_ENABLED: boolish,
+    MAIL_FALLBACK_ENDPOINT: optionalString,
+    MAIL_FALLBACK_API_KEY: optionalString,
+    MAIL_FALLBACK_FROM: optionalString,
     /* Texting patients, through Twilio, under their BAA. The message names no
      * pharmacy, medication or prescription: see modules/uh/patient-sms.ts. */
     SMS_ENABLED: boolish,
@@ -571,6 +590,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             ses,
             /* Trailing slash trimmed once here rather than at every call site
                that builds a link. */
+            http: {
+                enabled: e.MAIL_FALLBACK_ENABLED,
+                endpoint: e.MAIL_FALLBACK_ENDPOINT,
+                apiKey: e.MAIL_FALLBACK_API_KEY,
+                from: e.MAIL_FALLBACK_FROM,
+            },
             portalUrl: (e.MAIL_PORTAL_URL ?? '').replace(/\/+$/, ''),
             snsTopicArn: e.SES_SNS_TOPIC_ARN,
         },
