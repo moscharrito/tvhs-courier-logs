@@ -1,94 +1,102 @@
-# Resetting your password
+# Getting back in
 
-For pharmacy counters, site managers and drivers. The same three steps on a
-phone and in a browser.
+For University Health pharmacy counters and the contract manager.
 
 Screens referenced here are in `portal-screens/`.
 
 ---
 
-## Before you start: do we have your address?
+## There are three ways, and the fastest is not email
 
-The reset finds your account **by email address**. If the office has not put
-an address on your account, this will not work — and it will not tell you so.
-You will be told a code is on its way, because that message is deliberately
-the same whether or not the address is known to us, and nothing is sent.
+| If you are | Do this |
+|---|---|
+| **A pharmacy counter** | Ask your **contract manager**. They set it themselves, on the spot. |
+| **The contract manager** | Reset it yourself if your account has an email address, or ring the Izy Global office. |
+| **Anyone, any time** | Ring the Izy Global office. We can set a password directly. |
 
-> **As of 29 October 2026 the nine University Health counter logins
-> (`uh.green`, `uh.vida`, and the rest) have no address on file.** Until they
-> do, ring the office for a reset. The office can set a password directly.
-
-Drivers created with `create-drivers.mjs` always have one: that script
-refuses a row without an address for exactly this reason.
+Only the middle one depends on email, and email is the slowest of the three.
 
 ---
 
-## Step 1 — "Forgotten your password?"
+## For the contract manager: setting a counter's password
 
-`r1-signin.png`
+`c3-manager-logins.png`
 
-On the sign-in screen, choose your project, then **Forgotten your password?**
-underneath the box.
+**Pharmacy logins** in your portal lists every counter you cover, with its
+username and a **Set a new password** button.
 
-## Step 2 — type the address, not the username
+Use it when somebody has forgotten theirs, when a member of staff leaves, or
+when a password has been sent to the wrong person.
+
+- Changing it **signs that pharmacy out everywhere, immediately**. That is
+  usually the reason for doing it.
+- Every change is recorded against your name and the pharmacy.
+- **The password itself is never recorded**, by us or anywhere in the system.
+  Hand it over, and ask them to change it once they are in.
+- Your own password is not changed from this screen. Use **Your account**.
+
+---
+
+## Resetting your own, by email
+
+### Step 1 — "Forgotten your password?"
+
+On the sign-in screen, underneath the box.
+
+### Step 2 — the address, not the username
 
 `r2-forgot.png`
 
 > Your email address
 > *The address the office has for you. Not your username.*
 
-This catches people out, so it is worth saying twice:
+This is the step people get wrong:
 
-| Who | Username | Address to type |
+| | Username | Address to type |
 |---|---|---|
-| Driver | usually their email | the same address |
 | Pharmacy counter | `uh.vida`, `uh.green` … | the pharmacy's mailbox, **not** `uh.vida` |
-| Site manager | `uh.sitemanager` | their own work address |
+| Contract manager | `uh.manager` | your own work address |
 
-Press **Send me a code**. You will see:
+You will see:
 
 > If that address belongs to an account, a six digit code is on its way. It
 > expires in 15 minutes. If nothing arrives, ring the office.
 
-That wording is on purpose. It is the same answer either way, so this page
-cannot be used to find out who has an account.
+That wording is the same whether or not we recognise the address — on
+purpose, so the page cannot be used to find out who has an account.
 
-## Step 3 — the code and the new password
+### Step 3 — the code and the new password
 
 `r3-code.png`
 
-The email contains six digits. It **expires in fifteen minutes and works
-once**. Type it in, choose a new password on the same screen, press **Set the
-new password**.
+Six digits, **expires in fifteen minutes, works once**. Type it in, choose a
+new password on the same screen, press **Set the new password**. Every device
+is signed out.
 
 ---
 
-## What happens next
+## Today, this will not work for a counter
 
-- **Every device is signed out.** That includes a driver's phone PIN, so a
-  driver sets the PIN up again the next time they open the app.
-- The old password stops working immediately.
-- Nobody at the office ever sees your new password. That is the point of the
-  reset existing at all: the password we generate when we create an account is
-  the one you sign in with until you replace it with something we have never
-  seen.
+> **The eight counter logins have no email address on them yet.**
 
-## If nothing arrives
+The reset finds an account by its address. With none on file there is nothing
+to match, and because the message above is deliberately identical either way,
+a counter that tries it **will be told a code is on its way and nothing will
+be sent**. Nothing anywhere reports that.
 
-1. Check the address you typed. The username is not always the address.
-2. Check junk mail.
-3. Wait a minute — it is sent immediately but mail is not always instant.
-4. Ring the office. They can set a password for you directly, and they can
-   also put an address on your account so that next time this works.
+Until it is fixed, a counter gets a new password from the **contract
+manager** — which is faster anyway — or by ringing the office.
 
-## For the office
+---
+
+## For the Izy Global office
 
 - `server/scripts/set-emails.mjs` puts addresses on accounts that lack them.
-  Run it before telling anybody to use this page.
-- Reset codes go out through a separate mail provider from everything else,
-  because AWS SES is still in its sandbox and will only deliver to verified
-  addresses. See `docs/reset-codes-via-resend.md`. When SES production access
-  lands, `MAIL_FALLBACK_ENABLED=false` puts reset codes back with the rest.
-- A reset code never contains a name, a link or any account detail. Six digits
-  and nothing else, so it is the one message that can go through a second
-  provider at the lowest cost.
+  Run it before telling any counter to use the email route.
+- Reset codes go out through a separate provider from everything else,
+  because AWS SES is still sandboxed and delivers only to verified addresses.
+  See `docs/reset-codes-via-resend.md`. When production access lands,
+  `MAIL_FALLBACK_ENABLED=false` puts them back with the rest.
+- A reset code carries six digits and nothing else: no name, no link, no
+  account detail. That is what makes it the one message safe to send through
+  a second vendor.

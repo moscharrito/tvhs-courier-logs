@@ -2,168 +2,173 @@
 
 Generated from the deck. The words beside each picture are the words spoken over it.
 
-### Two portals, two levels
+### Your two portals
 
-> University Health Pharmacy Courier has two portals. One is for the pharmacy, and one is for the site manager who runs dispatch. They are the same system, and they deliberately show different things. This goes through both, side by side, and finishes with how to reset a password.
+> University Health has two portals into the courier system. One is for the contract manager, who sees every counter. One is for a pharmacy, which sees its own. This goes through both, says what to do daily, weekly and monthly, and finishes with passwords.
 
-### The short version
+### Who sees what
 
-- A pharmacy sees its own counter. Only its own.
-- A site manager sees the whole contract: every counter, every driver, every delivery.
-- Neither sees what a driver is paid, except an administrator.
-- What each person can do is decided by the server, not by hiding buttons.
+- Contract manager — all eight counters, contract-wide numbers, the counter logins.
+- Pharmacy counter — its own deliveries only. It cannot see another counter.
+- Izy Global — dispatch, drivers and the board. Our side, not yours.
+- Nobody at University Health needs to open a dispatch screen to run this.
 
-> The short version is this. A pharmacy account sees its own counter and nothing else. A site manager sees the whole contract: every pharmacy, every driver, every delivery. And what each person is allowed to do is decided by the server, not by hiding a button on a screen. That matters, because a field a screen declines to draw is still in the response.
+> Three groups of people, two of them yours. The contract manager sees all eight counters, the numbers for the contract as a whole, and the logins for each pharmacy. A pharmacy counter sees only its own deliveries; it cannot see another counter, and another counter cannot see it. And Izy Global runs dispatch: the drivers, the routing, the board they are dispatched from. That is our side. Nobody at University Health needs to open a dispatch screen to run this.
 
-## The pharmacy portal
+## A pharmacy counter · daily
 
-### What a pharmacy opens on
-
-*Screen: `p1-deliveries.png`*
-
-- Four counters: sent to us, still out, delivered, not delivered.
-- Their own deliveries, live, refreshed while they watch.
-- Click any counter to see the deliveries behind it.
-
-> This is what the Vida pharmacy sees when they sign in. Four counters across the top: how many they sent us, how many are still out with a driver, how many are delivered, and how many were not. Those four add up to what they sent, so nothing is unaccounted for. Clicking any of them opens the deliveries behind it. The list is live; it refreshes while they are looking at it.
-
-### Sending the daily list
+### Send the list, then watch it
 
 *Screen: `p2-send-list.png`*
 
-- Their own counter is the only one in the dropdown.
-- Upload the spreadsheet they already produce — no new format.
-- Nothing is created until they have seen the rows and confirmed.
+- Upload the spreadsheet you already produce. No new format.
+- Your own pharmacy is the only one in the dropdown.
+- Nothing is created until you have seen the rows and confirmed.
+- The clock on every delivery starts when the upload finishes.
 
-> This is how the list reaches us. The pharmacy uploads the spreadsheet they already produce. Notice the pharmacy dropdown: Vida is the only entry in it. They cannot upload for another counter, and they cannot see another counter has uploaded. The file itself is never stored. It is read in memory, turned into deliveries, and discarded. And nothing is created until somebody has looked at the rows and confirmed them.
+> The daily job at a counter is one thing: send the list. Upload the spreadsheet you already produce; there is no new format to learn. Your own pharmacy is the only entry in the dropdown, so there is nothing to pick wrong. Nothing is created until you have looked at the rows and confirmed them, and the clock on every delivery starts when that upload finishes, not when we get round to it.
 
-### The columns are theirs, not ours
+## A pharmacy counter · daily
 
-- Nine pharmacies send nine different layouts. None is a specification.
-- The app guesses the mapping from the header row and asks you to check it.
-- Controlled, Photo ID and Signature flow all the way to the driver’s phone.
-- Change a column and the preview must be re-read before you can import.
+### Three columns worth checking every time
 
-> The columns are the pharmacy’s own. Nine counters send nine different layouts, and none of them is a specification, so the app guesses the mapping from the header row and asks a person to check it. The ones worth checking every time are Controlled, Photo I D, and Signature required. Those three travel from the spreadsheet all the way to the driver’s phone and onto the proof of delivery. If you change a column after the preview, the app will not let you import until it has re-read the file: otherwise you would be confirming one thing and creating another.
+- Controlled — the driver must photograph the signed form. No exceptions.
+- Photo ID — the driver must photograph identification at the door.
+- Signature required — it cannot be left on a doorstep.
+- The app guesses your columns and asks you to confirm. Change one and it re-reads before importing.
 
-### Their own numbers
+> Three columns are worth a glance every time, because they decide what the driver is made to do at the door. Controlled means the driver must photograph the signed form, with no way round it. Photo I D means they must photograph identification. Signature required means it cannot be left on a doorstep. The app guesses which of your columns is which and asks you to confirm. If you change one, it will not let you import until it has re-read the file, so that you are never confirming one thing and creating another.
 
-*Screen: `p3-performance.png`*
+## A pharmacy counter · daily
 
-- On time, late, failed — for their counter.
-- Downloadable, for their own records.
-- A proof of delivery for any delivery they sent.
+### Four numbers, all day
 
-> And they can see how we are doing for them: on time, late, failed, over whatever period they choose. They can download it, and they can pull the proof of delivery for any delivery they sent us. For a delivery another counter sent, the same page answers as if it did not exist. Not an error, not a refusal that confirms it is there. It simply is not theirs.
+*Screen: `p1-deliveries.png`*
 
-## The site manager portal
+- Sent to us · still out · delivered · not delivered.
+- They add up to what you sent. Nothing goes missing between them.
+- Click any one to see the deliveries behind it.
+- "Not delivered" is the one to look at before you go home.
 
-### What a site manager opens on
+> Then you watch four numbers: how many you sent us, how many are still out with a driver, how many are delivered, and how many were not. Those four always add up to what you sent, so nothing can quietly go missing between them. Click any number to see the deliveries behind it. The one to look at before you go home is not delivered: each of those is a patient who did not get their medication today, and each one has a reason recorded against it.
 
-*Screen: `m1-home.png`*
+## A pharmacy counter · weekly
 
-- The whole contract, not one counter.
-- Board, orders, performance, discrepancies, returns, drivers.
-- Importing a list needs the admin role — a site manager is told so plainly.
+### Once a week
 
-> The site manager sees something quite different. Their role is named at the top: site manager. From here they reach the dispatch board, every order on the contract, performance, discrepancies, returns, and the drivers record. One thing they cannot do is import a list on a pharmacy’s behalf, and the page says so in words rather than hiding the panel, so nobody wonders where it went.
+- Read the week on Performance: on time, late, failed.
+- Pull proofs of delivery for anything queried.
+- Tell us about anything that looks wrong — every delivery has a message thread.
 
-### The dispatch board
+> Once a week there are three things. Read the week on the performance page: on time, late, and failed, for your counter. Pull the proof of delivery for anything a patient or a colleague has queried — it is a PDF with the whole chain of custody on it. And tell us about anything that looks wrong. Every delivery has a message thread, and dispatch sees it.
 
-*Screen: `m2-board.png`*
+## The contract manager · daily
 
-- Unassigned work on the left, grouped by pharmacy.
-- One lane per driver, with every stop on it.
-- Counters for the day: in transit, delivered, failed, overdue.
+### Every counter, one screen
 
-> The dispatch board is where the day is run. On the left is work nobody has been given yet, grouped by the pharmacy it came from. Each driver gets a lane with their stops in the order they will drive them. Across the top are the counters for the whole day. A card can be dragged from the pool onto a lane, or moved between lanes, and every one of those moves is recorded.
+*Screen: `c1-manager-deliveries.png`*
 
-### Planning the wave
+- All eight counters together, or filtered to one.
+- The same four numbers, for the whole contract.
+- Daily: glance at "not delivered". That is the only number that needs a person.
 
-*Screen: `m7-wave.png`*
+> The contract manager sees the same screen, with every counter on it instead of one. Filter to a single pharmacy when somebody rings about theirs, or leave it on all eight. Day to day there is only one number that needs a person, and that is not delivered. Everything else is a count that will be right tomorrow whether or not anybody looked at it today.
 
-- Groups the unassigned work into drivable runs.
-- Suggests a driver for each — the one whose pharmacy it is.
-- It proposes and stops. Nothing is assigned until you accept it.
+## The contract manager · weekly
 
-> Rather than assigning five hundred deliveries by hand, the board can plan the wave. It groups the unassigned work into runs somebody can actually drive, keeps urgent work off the long loops, and puts a name against each run: the driver whose own pharmacy that run collects from. It says how many drivers are on shift and how many are on the roster, because those are different numbers. And it proposes and stops. Nothing is assigned until a person accepts it.
+### How the contract is actually doing
 
-### Who drives from where
+*Screen: `c2-manager-performance.png`*
 
-*Screen: `m3-roster.png`*
+- On time, late and failed across all eight counters.
+- Broken down by counter, so an outlier is obvious.
+- Downloadable, for your own reporting.
 
-- Drivers grouped by their home pharmacy.
-- A counter with nobody says so, in words.
-- A default, not a restriction — anybody can cover anybody.
+> Weekly, the performance page is the one that matters. On time, late and failed across all eight counters, broken down so that one counter running differently from the others is obvious rather than buried in a total. It downloads, so it can go straight into your own reporting without anybody retyping it.
 
-> This is the roster: which pharmacy each driver works from. It is grouped by counter on purpose, because the question you open it to answer is whether every counter is covered, and a list of twenty-three names in alphabetical order cannot answer that. A counter with nobody on it says so, in words. A home pharmacy is a default and not a fence: anybody can still be given any run, which is what covering a sick colleague looks like.
+## The contract manager · as needed
 
-### The chain of custody
+### You hold your own counter passwords
 
-*Screen: `m5-custody.png`*
+*Screen: `c3-manager-logins.png`*
 
-- Every hand-off, in the order it was recorded.
-- Append-only: these rows cannot be edited or deleted.
-- Who did it, who signed, and what was said about it.
+- Set a new password for any of your pharmacies, yourself.
+- For a forgotten password, a member of staff leaving, or a password sent to the wrong person.
+- That pharmacy is signed out everywhere, immediately.
+- Every change is recorded against your name. The password itself is never recorded.
 
-> Open any delivery and the chain of custody is underneath it. Created when the pharmacy sent it, assigned when dispatch gave it to somebody, collected at the counter, arrived at the door, handed over. Each row names the person and, where somebody signed, their printed name. These rows cannot be edited and cannot be deleted. That is enforced by the database itself, not by a rule somebody remembers, which is what makes this usable in an audit.
+> This is the screen worth knowing about. The contract manager can set a new password for any of their own pharmacies, without ringing us and without waiting. Use it when somebody has forgotten theirs, when a member of staff leaves, or when a password has been sent to the wrong person. Changing it signs that pharmacy out everywhere immediately, which is usually the reason for doing it. Every change is recorded against your name and the pharmacy. The password itself is never recorded anywhere.
 
-### The drivers record
+## The contract manager · monthly
 
-*Screen: `m6-drivers.png`*
+### Once a month
 
-- What each driver delivered, and what failed.
-- A site manager sees the work. An administrator also sees the money.
-- The money is removed by the server, not hidden by the screen.
+- Reconcile the month against the invoice: delivered, failed, out of area.
+- A dry run — a driver who reached the door and could not hand over — is billed per item. Every one has a reason.
+- Query anything on the thread of the delivery itself, not by email.
+- Tell us about counters opening, closing or changing hours.
 
-> The drivers record shows what each driver delivered and what did not get through. A site manager sees the work; an administrator also sees what it comes to. The difference is made by the server, which leaves the money out of the response entirely for anybody who may not see it. That is deliberate: a figure a screen is trusted not to draw is a figure that leaks the first time somebody exports the spreadsheet.
+> Monthly, there are four. Reconcile the month against the invoice: delivered, failed, and out of area. Remember that a dry run — a driver who reached the door and could not hand over — is billed per item under the contract, and every one of them has a reason recorded against it, so a line you do not recognise can always be traced back. Query anything on the thread of the delivery itself rather than by email, so the question and the delivery stay together. And tell us about counters opening, closing, or changing their hours.
 
-## Resetting a password
+### What happens on our side
 
-### Start at the sign-in screen
+- Your list arrives and is grouped into runs by pharmacy and area.
+- Izy Global dispatch assigns each run to a driver based at your counter.
+- The driver collects against a signed form, and photographs it.
+- Every hand-off is recorded and cannot be edited or deleted afterwards.
 
-*Screen: `r1-signin.png`*
+> Briefly, what happens after you press send, so that the numbers on your screen make sense. Your list arrives and is grouped into runs by pharmacy and by area. Izy Global dispatch puts each run on a driver who is based at your counter. The driver collects against a signed form and photographs it, and photographs it again at the door. Every one of those hand-offs is recorded, and the record cannot be edited or deleted afterwards — not by a driver, not by dispatch, not by us. That is what makes the proof of delivery worth anything.
 
-- Works for both portals, and for the driver app.
-- Nobody needs to ring us to change their own password.
-- "Forgotten your password?" is underneath the sign-in box.
+## Passwords
 
-> Now, resetting a password. This works the same way for a pharmacy account, for a site manager, and for a driver on their phone. Start at the sign-in screen and choose, forgotten your password, underneath the box.
+### Three ways to get back in
 
-### The address, not the username
+- A pharmacy: ask your contract manager. Fastest, and no waiting on email.
+- Anybody with an email address on their account: reset it yourself.
+- Either way: ring the Izy Global office and we will reset it.
+
+> Three ways back in if somebody is locked out. If it is a pharmacy counter, ask your contract manager — they can set it from the screen we just looked at, and that is the fastest route because it waits on nobody. If the account has an email address on it, the person can reset it themselves, which we will go through now. And either way you can ring the Izy Global office and we will reset it.
+
+## Passwords
+
+### Resetting it yourself
 
 *Screen: `r2-forgot.png`*
 
+- Sign-in screen → "Forgotten your password?"
 - Type the email address the office holds for you.
-- For a driver that is usually the same as their username. For a pharmacy it is not.
-- The screen answers the same way whether or not the address is known.
+- Not your username. For a counter those are different things.
 
-> Type the email address the office has for you. For a driver that is usually the same as the username they sign in with. For a pharmacy counter it is not: the username is something like u h dot vida, and the address is a mailbox at the pharmacy. The screen gives the same answer whether or not the address is known to us. That is on purpose, so that nobody can use this page to find out who has an account.
+> On the sign-in screen, choose forgotten your password, and type the email address the office has for you. Not your username. For a pharmacy counter those are different things: the username is something like u h dot vida, and the address is a mailbox at the pharmacy. The screen gives the same answer whether or not it recognises the address, which is deliberate, so nobody can use the page to find out who has an account.
 
-### The code and the new password
+## Passwords
+
+### Six digits, fifteen minutes
 
 *Screen: `r3-code.png`*
 
-- Six digits. Fifteen minutes. Works once.
-- Set the new password on the same screen.
-- Every device is signed out, including a phone PIN.
+- The code works once and expires in fifteen minutes.
+- Choose the new password on the same screen.
+- Every device is signed out, including a driver’s phone PIN.
 
-> A six digit code arrives by email. It lasts fifteen minutes and it works once. Type it in, choose a new password on the same screen, and that is it. Setting a new password signs every device out, including a driver’s phone P I N, so a driver will need to set that up again afterwards. If nothing arrives, check the address you typed, then ring the office, who can reset it for you.
+> A six digit code arrives by email. It works once and it expires in fifteen minutes. Type it in, choose a new password on the same screen, and that is it. Setting a new password signs every device out, so anybody using a phone will sign in again afterwards.
 
-### Before go-live: two things to know
+## Passwords
 
-- An account with no email address on file cannot use this at all.
-- It will still say "a code is on its way". Nothing is sent, and nothing reports it.
-- The nine pharmacy counter logins have no address yet. Ring the office until they do.
-- The office can always reset a password directly.
+### Today, this will not work for a counter
 
-> Two things to know before go-live. The reset finds an account by its email address, so an account with no address on file cannot use it at all. It will still say a code is on its way, because that message is deliberately the same either way, and nothing anywhere reports that nothing was sent. As of today the nine University Health counter logins have no address on them. Until they do, ring the office for a reset. The office can always set a password directly.
+- The reset finds an account by email address.
+- The eight counter logins have no address on them yet.
+- It will still say "a code is on its way". Nothing is sent.
+- Until that is fixed: your contract manager, or ring the office.
+
+> One thing to be straight about. The reset finds an account by its email address, and the eight pharmacy counter logins do not have an address on them yet. If a counter tries this today it will be told a code is on its way, and nothing will be sent, because that message is deliberately the same whether or not the address is known. We are fixing that. Until it is fixed, a counter gets a new password from the contract manager, or by ringing the office. Neither of those waits on email at all.
 
 ### In one line each
 
-- Pharmacy: your counter, your lists, your numbers, your proofs of delivery.
-- Site manager: the whole contract, the board, the roster, the custody record.
-- Password: the address the office holds, a six digit code, fifteen minutes.
-- Anything that looks wrong — ring the office. Nothing here is a one-way door.
+- Pharmacy, daily: send the list, watch "not delivered".
+- Pharmacy, weekly: read the week, pull any proof of delivery you need.
+- Contract manager, daily: "not delivered" across all eight.
+- Contract manager, monthly: reconcile against the invoice. Counter passwords are yours.
 
-> In one line each. A pharmacy sees its own counter, its own lists, its own numbers and its own proofs of delivery. A site manager sees the whole contract: the board, the roster, and the custody record behind every delivery. And a password reset needs the address the office holds for you, a six digit code, and fifteen minutes. If anything looks wrong, ring the office. Nothing in here is a one way door.
+> In one line each. A pharmacy, daily: send the list, then watch the not delivered number. A pharmacy, weekly: read the week and pull any proof of delivery you need. The contract manager, daily: the same not delivered number, across all eight counters. And monthly: reconcile against the invoice. The counter passwords are yours to set whenever you need to. Anything else, ring the Izy Global office.

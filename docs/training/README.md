@@ -41,37 +41,56 @@ them aloud and cut a human track over the same frames.
 
 ---
 
-# Portal training
+# Client portal training
 
-`portal-training.mp4` — 8m 09s, 1920x1080, 7.4 MB. Seventeen slides covering
-the pharmacy portal, the site manager portal and the password reset, with the
-real screens from `portal-screens/` on them.
+`portal-training.mp4` — 7m 55s, 1920x1080, 8.8 MB. Sixteen slides for
+UNIVERSITY HEALTH: what their contract manager sees, what a pharmacy counter
+sees, what each does daily, weekly and monthly, and how to get back in when
+somebody is locked out.
 
-Built the same way as the driver video and with the same two traps avoided
-(`-vf fps=15`, and measure-then-scale rather than pinning to 1080). Two more
-were added to the list by this one:
+## Whose portals this is about
+
+The client has two: the contract manager, and the eight counters. **The
+dispatch board, the roster and the drivers record are Izy Global's tools and
+are not in this deck.** The first cut put the board at the centre and it was
+wrong — it taught a client screens they will never open. It now appears once,
+in a slide called "What happens on our side", so that a pharmacy understands
+what becomes of a list after they press send.
+
+## Built the same way as the driver video
+
+Four traps are on the list now, two inherited and two added by this one.
+
+**`-vf fps=15`, never `-r 15`.** The concat demuxer retimes per-image
+durations with `-r` and the picture drifts behind the voice.
+
+**Measure, scale, centre.** Pinning a slide to 1080px clips whatever does not
+fit, silently.
 
 **Narration goes through a UTF-8 file, not through `-Command`.** Embedding the
 words in the PowerShell command line worked until a sentence contained a curly
-apostrophe, which the console encoding turned into a parse error. The slide it
-died on was the one about spreadsheet columns, so the failure read like a deck
-problem rather than an encoding one.
+apostrophe, which the console encoding turned into a parse error — on the
+slide about spreadsheet columns, so it read like a deck problem.
 
-**`python3`, not `python`.** Only one of the two interpreters on this machine
-has `imageio_ffmpeg`, and the one on `python` is not it.
+**Resample the audio to 44100 stereo.** The speech synthesiser produced
+22050 Hz mono this time, which several players decline to play at all. The
+symptom is "the video has no audio", the levels measure fine, and nothing in
+the pipeline looks wrong. The driver video happened to come out at 44100.
+It is forced now rather than inherited from whatever the voice wrote.
 
-## What is in it
+And: **`python3`, not `python`.** Only one of the two interpreters on this
+machine has `imageio_ffmpeg`.
 
-Seventeen slides in three parts: what a pharmacy sees and cannot see, what a
-site manager sees and cannot see, and how anybody resets their own password.
+## What else is here
+
 `portal-voiceover-script.md` is the same words to read aloud if a human track
-is wanted over the same frames; `resetting-your-password.md` is the reset part
-on its own, as a page to hand out.
+is wanted over the same frames. `resetting-your-password.md` is the
+getting-back-in part on its own, as a page to hand to a counter.
 
 ## It says what does not work yet
 
-The reset section ends by saying plainly that an account with no email address
-cannot reset its password, that it will still be told a code is on its way,
-and that the nine University Health counter logins have no address on them
-today. That is in the video because somebody will try it in the first week,
-and the alternative to saying so is nine phone calls.
+The deck says plainly that the eight counter logins have no email address on
+them, that a counter trying the email reset will be told a code is on its way
+and nothing will be sent, and that until that is fixed the contract manager
+sets counter passwords directly — which is faster anyway. Somebody will try it
+in the first week; the alternative to saying so is eight phone calls.
