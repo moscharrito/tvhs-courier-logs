@@ -29,6 +29,7 @@ import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
+import { handleUnder } from '../../lib/people';
 
 const LABEL: Record<string, string> = {
     hipaa_training: 'HIPAA training',
@@ -186,7 +187,9 @@ function Group({ heading, blurb, couriers, empty, tone }: {
                                 <tr key={c.username}>
                                     <td>
                                         <b>{c.name}</b>
-                                        <div className="izy-muted">{c.username}</div>
+                                        {handleUnder(c) !== null && (
+                                            <div className="izy-muted">{handleUnder(c)}</div>
+                                        )}
                                         {/* A check put back to pending after
                                             approval is a different sentence
                                             from an expiry, and 6.2 keeps them
@@ -262,7 +265,10 @@ function NeverOnboarded({ couriers }: { couriers: CourierStanding[] }) {
                 <tbody>
                     {paged.rows.map((c) => (
                         <tr key={c.username}>
-                            <td><b>{c.name}</b><div className="izy-muted">{c.username}</div></td>
+                            <td>
+                                <b>{c.name}</b>
+                                {handleUnder(c) !== null && <div className="izy-muted">{handleUnder(c)}</div>}
+                            </td>
                             <td className="izy-muted">nothing on file</td>
                         </tr>
                     ))}

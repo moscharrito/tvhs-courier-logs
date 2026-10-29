@@ -114,3 +114,36 @@ export const dateFor = (timeZone: string): Formatter =>
 export function todayIn(timeZone: string, at: Date = new Date()): string {
     return at.toLocaleDateString('en-CA', { timeZone: safeZone(timeZone) });
 }
+
+/* ───────────────────────────────────── THE OTHER END OF THAT RANGE.
+ *
+ * The screens that open on "the last thirty days" -- the drivers record,
+ * one driver's own record, the client's performance report -- each had
+ * their own copy of this:
+ *
+ *     const d = new Date();
+ *     d.setDate(d.getDate() - offsetDays);
+ *     return d.toISOString().slice(0, 10);
+ *
+ * which subtracts days in the DEVICE's timezone and then reads the answer
+ * in UTC. Two zones, so the answer moves with the time of day: open the
+ * drivers record at nine in the evening in San Antonio and UTC has already
+ * gone past midnight, so "thirty days back" is a different thirty days
+ * from the one you got that morning. On the screen somebody is paid from,
+ * a window that quietly shifts by a day is a figure that quietly changes.
+ *
+ * Subtracting from an instant is also wrong across a DST boundary, which is
+ * how the same arithmetic lost a day in server/test/uh-client-import on
+ * 29 October 2026: 1 November is twenty-five hours long in America/Chicago,
+ * so thirty times 86,400,000 milliseconds does not land where the calendar
+ * says it should.
+ *
+ * So: resolve today IN THE PROJECT'S ZONE, then step whole days through
+ * Date.UTC, where every day is twenty-four hours and there is no DST to
+ * cross. The result is a calendar date, which is what the server's `from`
+ * and `to` parameters are.
+ */
+export function daysBeforeIn(timeZone: string, days: number, at: Date = new Date()): string {
+    const [y, m, d] = todayIn(timeZone, at).split('-').map(Number);
+    return new Date(Date.UTC(y!, m! - 1, d! - days)).toISOString().slice(0, 10);
+}

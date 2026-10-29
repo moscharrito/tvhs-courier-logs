@@ -982,8 +982,24 @@ export function createOrdersRouter(
             // Ordered by id, not by `at`. `at` is a claim a device made; id is
             // the append order, which is the chain. A backdated event still
             // reads in the sequence it was actually recorded.
-            sql: `SELECT id, package_id, type, at, actor, from_status, to_status, signed_name, signature_key, reason, lat, lng
-                  FROM custody_events WHERE project_id = ? AND order_id = ? ORDER BY id`,
+            /* THE ACTOR'S NAME, NOT ONLY THEIR USERNAME.
+             *
+             * `actor` is a username and stays one: it is the key, it is what
+             * the append-only row stores, and a name that changes later must
+             * not rewrite evidence. But on this contract a username is
+             * usually an email address -- create-drivers.mjs makes them that
+             * way -- so a chain of custody read out for an audit was a
+             * column of personal addresses rather than of people.
+             *
+             * Resolved at read time and LEFT JOINed: an actor whose account
+             * has since been deleted still has their row, with no name, and
+             * the username is what the screen falls back to. The row itself
+             * is untouched either way. */
+            sql: `SELECT e.id, e.package_id, e.type, e.at, e.actor, u.name AS actor_name,
+                         e.from_status, e.to_status, e.signed_name, e.signature_key, e.reason, e.lat, e.lng
+                  FROM custody_events e
+                  LEFT JOIN users u ON u.username = e.actor
+                  WHERE e.project_id = ? AND e.order_id = ? ORDER BY e.id`,
             args: [req.project!.id, Number(order.id)],
         });
 
@@ -1020,6 +1036,9 @@ export function createOrdersRouter(
                 type: String(e['type']),
                 at: String(e['at']),
                 actor: String(e['actor']),
+                /** Their name now, or '' if the account is gone. The row's
+                 *  own `actor` is the evidence; this is for reading it. */
+                actorName: String(e['actor_name'] ?? ''),
                 from: String(e['from_status']),
                 to: String(e['to_status']),
                 signedName: String(e['signed_name']),

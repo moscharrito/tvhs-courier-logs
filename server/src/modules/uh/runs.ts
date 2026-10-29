@@ -33,7 +33,7 @@ import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from 
 import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
-import { proposeRuns, DEFAULT_CLUSTER_SETTINGS, type Clusterable } from './cluster';
+import { proposeRuns, staffProposal, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -771,14 +771,110 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             serviceType: String(r['service_type'] ?? 'scheduled'),
         }));
 
+        /* ──────────────────────────────────── who is actually out there
+         *
+         * THE FLEET SIZE WAS A NUMBER SOMEBODY TYPED, AND THE PLAN WAS
+         * STAFFED BY HAND AFTERWARDS.
+         *
+         * `?drivers=N` proposed N anonymous routes; a dispatcher then chose
+         * a courier for each one from a list of everybody with no run yet,
+         * one at a time, with nothing on the screen saying who was on shift
+         * or which counter they drive from. Three drivers made that
+         * tedious. Twenty-three makes it the slowest part of the morning,
+         * and it is the part happening while deadlines run.
+         *
+         * So the roster is read here and the plan comes back with a name
+         * already on each run. `?drivers=` still overrides the count, for
+         * the "what would ten look like" question a dispatcher asks before
+         * ringing people -- but left alone, the default is the truth rather
+         * than the contract's headcount.
+         *
+         * Open shifts only, and from the shifts table rather than from
+         * recent app activity: a phone in a pocket is not an absence. See
+         * the note in modules/uh/board.ts on why those are different
+         * questions.
+         *
+         * BOTH ROSTERS ARE READ, and the difference between them is the
+         * interesting number. `onShift` is who tapped Go on shift; `all` is
+         * everybody who could be given a run. Planning from the first alone
+         * would be correct and useless at 11:55, when the answer is nobody
+         * and the honest plan is an empty one. So: plan from who is on
+         * shift when anybody is, fall back to the full roster when nobody
+         * is, and SAY WHICH -- a dispatcher reading a plan needs to know
+         * whether it was built from people or from a list. */
+        const rosterRows = await client.execute({
+            sql: `SELECT u.username, u.name,
+                         json_extract(m.settings, '$.homeSiteId') AS home_site_id,
+                         CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END AS on_shift
+                    FROM users u
+                    JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
+                    LEFT JOIN shifts sh ON sh.courier_username = u.username
+                         AND sh.project_id = ? AND sh.ended_at IS NULL
+                   WHERE u.status = 'active' AND m.role IN ('courier', 'lead')
+                   ORDER BY u.name`,
+            args: [req.project!.id, req.project!.id],
+        });
+        const everyone = rosterRows.rows.map((r) => ({
+            username: String(r['username']),
+            name: String(r['name']),
+            homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined
+                ? null : Number(r['home_site_id']),
+            onShift: Number(r['on_shift']) === 1,
+        }));
+        /* Stripped back to what staffProposal takes, so the two cannot drift:
+           it has no business knowing who is on shift, only who it may use. */
+        const strip = (d: typeof everyone[number]): RosterDriver =>
+            ({ username: d.username, name: d.name, homeSiteId: d.homeSiteId });
+        const all: RosterDriver[] = everyone.map(strip);
+        const onShift: RosterDriver[] = everyone.filter((d) => d.onShift).map(strip);
+
+        const planningFrom: 'onShift' | 'roster' = onShift.length > 0 ? 'onShift' : 'roster';
+        const roster = planningFrom === 'onShift' ? onShift : all;
+
         const settings = {
-            drivers: num('drivers', DEFAULT_CLUSTER_SETTINGS.drivers, 200),
+            /* Who is out there, unless the caller said otherwise. Defaulting
+               to the contract's eighteen proposed a wave for a fleet that
+               was not there, every morning, and the dispatcher found out by
+               assigning it. `?drivers=` still overrides, for the "what would
+               ten look like" question asked before ringing people. */
+            drivers: num('drivers', Math.max(1, roster.length), 200),
             maxStopsPerRun: num('maxStopsPerRun', DEFAULT_CLUSTER_SETTINGS.maxStopsPerRun, 200),
             maxSitesPerRun: num('maxSitesPerRun', DEFAULT_CLUSTER_SETTINGS.maxSitesPerRun, 9),
             maxStopsPerStatRun: num('maxStopsPerStatRun', DEFAULT_CLUSTER_SETTINGS.maxStopsPerStatRun, 40),
         };
 
-        res.json({ serviceDate, settings, ...proposeRuns(orders, settings) });
+        const proposal = proposeRuns(orders, settings);
+        const staffing = staffProposal(proposal.runs, roster);
+
+        const notes = [...proposal.notes, ...staffing.notes];
+        if (planningFrom === 'roster' && all.length > 0) {
+            notes.unshift(
+                `Nobody is on shift, so this is planned for all ${all.length} `
+                + `${all.length === 1 ? 'driver' : 'drivers'} on the roster. The names below are who `
+                + 'normally drives each pharmacy, not who has turned up.',
+            );
+        }
+
+        res.json({
+            serviceDate,
+            settings,
+            ...proposal,
+            /** Parallel to `runs`. A suggestion for the screen to preselect,
+             *  never an assignment: nothing is written until the dispatcher
+             *  accepts it through POST /runs. */
+            suggested: staffing.suggested,
+            /** On shift and not needed by this plan. */
+            spare: staffing.spare,
+            /** Everyone the plan was staffed from, so the screen can say so. */
+            roster,
+            /** 'onShift' when it was built from people, 'roster' from a list. */
+            planningFrom,
+            /** The two counts, side by side. Their difference is the thing a
+             *  dispatcher acts on: eighteen on the roster and five on shift
+             *  at 12:05 is thirteen phone calls. */
+            fleet: { onShift: onShift.length, roster: all.length },
+            notes,
+        });
     }));
 
     router.get('/', readers, wrap(async (req, res) => {

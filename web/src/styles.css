@@ -527,3 +527,29 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    wide as "Drivers on shift", and a note on the same line pushed the button
    off the row on a laptop. */
 .izy-field-note { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; }
+
+/* ─────────────────────────────────────────────────── the driver roster
+ *
+ * Which pharmacy each driver works from (pages/uh/Roster.tsx). The same
+ * auto-fill grid as .izy-lanes, because it answers the same shape of
+ * question -- eight or nine short columns read side by side, where the
+ * short one is the thing you are looking for. A single column would mean
+ * holding eight running totals in your head while scrolling.
+ */
+.izy-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+.izy-roster-group { min-width: 0; }
+.izy-roster-group h2 { margin: 0; font-size: 16px; }
+
+/* The name on one line and the pharmacy picker under it, rather than side
+   by side: a driver's name plus an eight-option select does not fit across
+   300px, and a select that truncates its options is one somebody picks the
+   wrong row from. */
+.izy-roster-row { padding: 10px 0; border-top: 1px solid var(--izy-line); min-width: 0; }
+.izy-roster-row:first-of-type { border-top: 0; }
+.izy-roster-row select { width: 100%; margin-top: 6px; }
+.izy-roster-row > div { min-width: 0; overflow-wrap: anywhere; }
+
+/* Narrows the lanes on the board. Sits above a grid that is already
+   several cards wide, so it is capped rather than stretched: a search box
+   the width of the screen reads as a page header, not as a filter. */
+.izy-lane-filter { max-width: 280px; margin-bottom: 12px; }

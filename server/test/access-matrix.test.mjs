@@ -407,6 +407,18 @@ const MATRIX = [
     ['GET', `${UH}/shifts/export.xlsx`, UH_STAFF, 'hours, beside the drivers record'],
     ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
 
+    /* --- the standing roster (28 October 2026). Which pharmacy each driver
+       works from, which is what lets the board staff a proposed wave with
+       names instead of asking for twenty-three decisions at noon.
+
+       DISPATCH, WHICH INCLUDES LEADS. A site manager knows who drives from
+       their own counter, and making them ring an administrator to record it
+       is how the record stops matching the car park. Not couriers: it names
+       every driver on the contract and where each one is based, which is a
+       staff list rather than anybody's own work. */
+    ['GET', `${UH}/roster`, UH_DISPATCH, 'who drives from which pharmacy'],
+    ['PUT', `${UH}/roster/nobody`, UH_DISPATCH, "set a driver's home pharmacy"],
+
     /* --- asking for work (tickets 6.4 and 6.5). A courier browses and asks;
        only dispatch decides, and only dispatch runs the sweep. */
     /* Asking for work went on 16 October 2026: dispatch assigns everything,

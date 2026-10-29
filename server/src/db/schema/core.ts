@@ -616,6 +616,12 @@ export const NOTIFICATION_KINDS = [
      * measures against a run sheet that does not exist. See
      * modules/uh/day-start.ts. */
     'dispatch.notStarted',
+    /* A shift left open overnight by somebody who is still carrying
+     * packages. The sweep closes an empty forgotten shift silently -- that
+     * is housekeeping -- but it will not close one with medication still in
+     * the van, because the open shift is the only thing saying so. See
+     * modules/uh/shift-sweep.ts. */
+    'shift.carryingOvernight',
     /* Email itself has stopped. Written in-app rather than emailed, for the
      * obvious reason. See core/notify/mail-watch.ts: SES refused every send
      * for twenty-five hours once and the only thing that noticed was

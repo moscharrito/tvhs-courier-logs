@@ -73,6 +73,13 @@ export function ProjectHome() {
                     the money stripped out by the server, not hidden by the
                     screen. */}
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/drivers`}>Drivers record</Link>
+                {/* Which pharmacy each driver works from. Read before a wave
+                    rather than during one: it is what lets the board offer
+                    each proposed run to somebody who drives that counter,
+                    instead of asking for twenty-three decisions at noon. */}
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/roster`}>Driver roster</Link>
+                )}
                 {canManage && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/invoices`}>Invoices</Link>
                 )}

@@ -244,6 +244,33 @@ describe('manual STAT and ad hoc orders', () => {
         expect(detail.body.custody[0]).toMatchObject({ type: 'created', to: 'ready', actor: 'admin' });
     });
 
+    it('names the actor as well as recording their username', async () => {
+        /* `actor` is the evidence and stays a username: it is the key, and
+           a name that changes later must not rewrite an append-only row.
+           But a username on this contract is usually an email address, so a
+           chain of custody read out in an audit was a column of personal
+           addresses. The name is resolved at read time beside it. */
+        const body = await makeOrder();
+        const detail = await admin.get(`${BASE}/${body.id}`);
+        expect(detail.body.custody[0]).toMatchObject({ actor: 'admin' });
+        expect(typeof detail.body.custody[0].actorName).toBe('string');
+    });
+
+    it('still reads an event whose actor no longer has an account', async () => {
+        /* The join is LEFT for this. An actor who has left the company must
+           not take their custody rows off the screen with them. */
+        const body = await makeOrder();
+        await sql(
+            "INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status)"
+            + " VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, 'note', ?, 'gone.forever', 'ready', 'ready')",
+            [body.id, new Date().toISOString()],
+        );
+        const detail = await admin.get(`${BASE}/${body.id}`);
+        const orphan = detail.body.custody.find((e) => e.actor === 'gone.forever');
+        expect(orphan).toBeTruthy();
+        expect(orphan.actorName).toBe('');
+    });
+
     it('refuses to create a scheduled order by hand', async () => {
         // Scheduled work comes from a daily list; creating one here would
         // sidestep the import's duplicate detection.

@@ -349,3 +349,148 @@ export function proposeRuns(
 
     return { runs, unplaced, notes, driversNeeded };
 }
+
+/* ═══════════════════════════════════════════════ putting names on the runs
+ *
+ * WHY THIS IS A SECOND PASS AND NOT PART OF proposeRuns.
+ *
+ * proposeRuns answers "what are the runs", which is a question about the
+ * day's orders and nothing else. Who drives them is a question about who
+ * turned up. Keeping them apart means the grouping stays pure and testable
+ * against a fixed list of orders -- a Tuesday is still a test case -- and
+ * that a dispatcher can re-staff a plan without re-grouping it, which is
+ * what happens when somebody rings in sick at 12:30.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE SUGGESTION IS A DEFAULT. IT IS NOT AN ASSIGNMENT.
+ *
+ * Nothing here writes anything. It returns a name per run for the screen to
+ * put in a dropdown, already selected, which the dispatcher changes or
+ * accepts. That distinction is the whole design: twenty-three drivers is
+ * too many to pick by hand every morning and far too few to let a function
+ * dispatch unsupervised.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * HOME FIRST, THEN FLOATERS, THEN COVER -- IN THAT ORDER AND SAID OUT LOUD.
+ *
+ * University Health staffs by location. A driver hired at Southeast drives
+ * from Southeast, and the run they should be offered is the one that
+ * collects there. So:
+ *
+ *   home      their home pharmacy is on the run. The ordinary case.
+ *   floater   no home pharmacy recorded, so they go anywhere.
+ *   cover     somebody else's site, because nobody from that site is left.
+ *
+ * `cover` is deliberately last and deliberately named, because it is the
+ * one a dispatcher should look at: it means a counter is short-handed, and
+ * on a morning where that is news it is worth seeing before the wave goes
+ * out rather than at four o'clock.
+ */
+
+/** One driver available to carry work, as the roster knows them. */
+export interface RosterDriver {
+    username: string;
+    name: string;
+    /** Their standing pharmacy, or null for a floater. */
+    homeSiteId: number | null;
+}
+
+export interface Staffing {
+    /** Parallel to the runs given: the driver for each, or null. */
+    suggested: Array<{ username: string; name: string; why: 'home' | 'floater' | 'cover' } | null>;
+    /** How many runs got nobody. */
+    unstaffed: number;
+    /** Drivers who were on the roster and were not needed. */
+    spare: RosterDriver[];
+    /** Plain sentences for the dispatcher, not codes. */
+    notes: string[];
+}
+
+/**
+ * Offer each proposed run to a driver, preferring their own pharmacy.
+ *
+ * Pure: no database, no network, no clock. One driver takes at most one run
+ * -- a second wave is a second call, with whoever is left.
+ */
+export function staffProposal(runs: ProposedRun[], roster: readonly RosterDriver[]): Staffing {
+    const notes: string[] = [];
+    const suggested: Staffing['suggested'] = runs.map(() => null);
+
+    if (roster.length === 0) {
+        return {
+            suggested,
+            unstaffed: runs.length,
+            spare: [],
+            notes: runs.length === 0 ? [] : ['Nobody is on shift, so no run has a driver yet.'],
+        };
+    }
+
+    const free = new Map(roster.map((d) => [d.username, d]));
+    const take = (d: RosterDriver, why: 'home' | 'floater' | 'cover', at: number) => {
+        free.delete(d.username);
+        suggested[at] = { username: d.username, name: d.name, why };
+    };
+
+    /* STAT first, then soonest deadline. The order matters because the
+       roster runs out: whatever is left unstaffed should be the slackest
+       work on the board, never the hour-from-pickup run. Indices are
+       carried along so `suggested` stays parallel to the caller's array. */
+    const order = runs
+        .map((run, index) => ({ run, index }))
+        .sort((a, b) => {
+            if (a.run.kind !== b.run.kind) return a.run.kind === 'stat' ? -1 : 1;
+            const x = a.run.earliestDueAt;
+            const y = b.run.earliestDueAt;
+            if (x === null && y === null) return a.index - b.index;
+            if (x === null) return 1;
+            if (y === null) return -1;
+            return x === y ? a.index - b.index : (x < y ? -1 : 1);
+        });
+
+    let cover = 0;
+    for (const { run, index } of order) {
+        const sites = new Set(run.siteIds);
+
+        /* A driver whose own pharmacy is on this run. Among several, the
+           one whose site is the run's ONLY site goes first: a run that
+           collects at two counters is somebody's home either way, and
+           giving it to the driver with no better option wastes the match. */
+        const home = [...free.values()]
+            .filter((d) => d.homeSiteId !== null && sites.has(d.homeSiteId))
+            .sort((a, b) => a.username.localeCompare(b.username));
+        if (home.length > 0) { take(home[0]!, 'home', index); continue; }
+
+        const floater = [...free.values()]
+            .filter((d) => d.homeSiteId === null)
+            .sort((a, b) => a.username.localeCompare(b.username))[0];
+        if (floater) { take(floater, 'floater', index); continue; }
+
+        const anybody = [...free.values()].sort((a, b) => a.username.localeCompare(b.username))[0];
+        if (anybody) { take(anybody, 'cover', index); cover += 1; continue; }
+
+        /* Nobody left. Left null, counted below, never silently dropped. */
+    }
+
+    const unstaffed = suggested.filter((s) => s === null).length;
+    if (unstaffed > 0) {
+        notes.push(
+            `${unstaffed} ${unstaffed === 1 ? 'run has' : 'runs have'} no driver: `
+            + `${runs.length} ${runs.length === 1 ? 'run' : 'runs'} and ${roster.length} `
+            + `${roster.length === 1 ? 'driver' : 'drivers'} on shift. Nothing is assigned until you accept this.`,
+        );
+    }
+    if (cover > 0) {
+        notes.push(
+            `${cover} ${cover === 1 ? 'run is' : 'runs are'} offered to a driver from another pharmacy, `
+            + 'because nobody from that counter was left. Check the home pharmacy on those before you send them.',
+        );
+    }
+    const spare = [...free.values()];
+    if (spare.length > 0 && unstaffed === 0) {
+        notes.push(
+            `${spare.length} ${spare.length === 1 ? 'driver is' : 'drivers are'} on shift with no run in this plan.`,
+        );
+    }
+
+    return { suggested, unstaffed, spare, notes };
+}

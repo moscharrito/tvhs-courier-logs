@@ -64,7 +64,41 @@ describe('the proposal', () => {
         const mine = new Set(made.map((o) => o.id));
         const onRuns = res.body.runs.flatMap((r) => r.orderIds).filter((id) => mine.has(id));
         expect(onRuns.length).toBe(made.length);
-        expect(res.body.settings.drivers).toBe(18);
+    });
+
+    it('plans for the people on the roster, not for a number in the contract', async () => {
+        /* It used to default to eighteen -- the fleet in the contract rather
+           than the one standing in a car park -- so a morning with five
+           drivers produced a plan that could not be driven and the
+           dispatcher found out by assigning it. */
+        const res = await propose();
+        expect(res.body.settings.drivers).toBe(res.body.fleet.roster);
+        expect(res.body.fleet.roster).toBeGreaterThan(0);
+    });
+
+    it('says whether the plan was built from people or from a list', async () => {
+        /* Nobody has tapped Go on shift in this file, so it falls back to
+           the roster -- and has to say so. A plan built from a list of who
+           normally drives is a different thing from one built from who
+           turned up, and a dispatcher acting on it needs to know which. */
+        const res = await propose();
+        expect(res.body.planningFrom).toBe('roster');
+        expect(res.body.fleet.onShift).toBe(0);
+        expect(res.body.notes.join(' ')).toMatch(/nobody is on shift/i);
+    });
+
+    it('puts a name on each proposed run', async () => {
+        /* The point of the exercise. A dispatcher picking twenty-three
+           couriers out of a dropdown one at a time is the slowest part of
+           the morning, and it happens while deadlines run. */
+        const res = await propose();
+        expect(res.body.suggested).toHaveLength(res.body.runs.length);
+        const named = res.body.suggested.filter(Boolean);
+        expect(named.length).toBeGreaterThan(0);
+        for (const s of named) {
+            expect(typeof s.username).toBe('string');
+            expect(['home', 'floater', 'cover']).toContain(s.why);
+        }
     });
 
     it('writes nothing, so reading it twice is the same as reading it once', async () => {
@@ -109,9 +143,12 @@ describe('the proposal', () => {
     });
 
     it('ignores a nonsense capacity rather than stranding the day on it', async () => {
-        /* A typo must not become a fleet of zero. */
+        /* A typo must not become a fleet of zero. It falls back to the
+           roster, which is now the default, rather than to the contract's
+           eighteen. */
+        const expected = (await propose()).body.fleet.roster;
         for (const q of ['?drivers=0', '?drivers=-4', '?drivers=abc', '?drivers=']) {
-            expect((await propose(q)).body.settings.drivers, q).toBe(18);
+            expect((await propose(q)).body.settings.drivers, q).toBe(expected);
         }
     });
 
@@ -136,7 +173,12 @@ describe('turning a proposal into runs', () => {
            noon it was meant to save. This is the join between the two. */
         for (let i = 0; i < 4; i += 1) await makeOrder({ siteId: greenId, zip: '78207' });
 
-        const proposal = (await propose()).body;
+        /* An explicit fleet, because this is testing the join between
+           propose and create rather than the fleet logic. Left to default,
+           the roster in this file is one courier and the STAT from an
+           earlier case takes the only seat, so there is no standard run to
+           create and the test would fail for an unrelated reason. */
+        const proposal = (await propose('?drivers=18')).body;
         const run = proposal.runs.find((r) => r.kind === 'standard' && r.orderIds.length > 0);
         expect(run).toBeTruthy();
 
@@ -152,7 +194,7 @@ describe('turning a proposal into runs', () => {
 
         /* And they are gone from the next proposal, because they are now
            somebody's work. */
-        const after = (await propose()).body;
+        const after = (await propose('?drivers=18')).body;
         for (const id of run.orderIds) {
             expect(after.runs.flatMap((r) => r.orderIds)).not.toContain(id);
         }

@@ -53,6 +53,8 @@ import { api } from '../../lib/api';
 import {
     clampToWindow, drillQuery, rangeOfBucket, siteIdOfSliceKey, type Grouping,
 } from '../../lib/drilldown';
+import { useProjectTimezone } from '../../app/auth';
+import { daysBeforeIn, todayIn } from '../../lib/when';
 
 interface Slice {
     key: string;
@@ -103,17 +105,13 @@ const GROUPINGS = [
     { value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' },
 ];
 
-/** Thirty days back, as a sensible opening window. */
-const isoDay = (offsetDays = 0) => {
-    const d = new Date();
-    d.setDate(d.getDate() - offsetDays);
-    return d.toISOString().slice(0, 10);
-};
-
 export function ClientReports() {
     const { code = 'uh' } = useParams();
-    const [from, setFrom] = useState(isoDay(29));
-    const [to, setTo] = useState(isoDay(0));
+    /* The client's own performance numbers, so the window has to be the
+       contract's days rather than the reader's. See lib/when.ts. */
+    const timezone = useProjectTimezone(code);
+    const [from, setFrom] = useState(() => daysBeforeIn(timezone, 29));
+    const [to, setTo] = useState(() => todayIn(timezone));
     const [groupBy, setGroupBy] = useState('day');
     const [report, setReport] = useState<Report | null>(null);
     /* The glossary too, which 5.15 left whole as "a reference rather than a

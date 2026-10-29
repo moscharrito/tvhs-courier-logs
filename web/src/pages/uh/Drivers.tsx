@@ -27,7 +27,9 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
-import { useAuth } from '../../app/auth';
+import { handleUnder } from '../../lib/people';
+import { useAuth, useProjectTimezone } from '../../app/auth';
+import { daysBeforeIn, todayIn } from '../../lib/when';
 
 interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
@@ -73,22 +75,19 @@ export function money(cents: number | null, currency: string): string {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
 }
 
-/** Thirty days back, which is the window somebody checking a payment run is
- *  usually looking at. */
-const isoDay = (offsetDays = 0) => {
-    const d = new Date();
-    d.setDate(d.getDate() - offsetDays);
-    return d.toISOString().slice(0, 10);
-};
-
 export function Drivers() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
     const [params, setParams] = useSearchParams();
 
-    const from = params.get('from') ?? isoDay(30);
-    const to = params.get('to') ?? isoDay(0);
+    /* Both ends resolved in the PROJECT's zone, not the device's and not
+       UTC. The pay figures below are read from this window, and a window
+       that moves with the time of day is a figure that moves with it.
+       See lib/when.ts. */
+    const timezone = useProjectTimezone(code);
+    const from = params.get('from') ?? daysBeforeIn(timezone, 30);
+    const to = params.get('to') ?? todayIn(timezone);
 
     const [data, setData] = useState<Everyone | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
@@ -208,7 +207,14 @@ export function Drivers() {
                                             <Link to={`/projects/${code}/drivers/${d.username}?from=${from}&to=${to}`}>
                                                 {d.name}
                                             </Link>
-                                            <div className="izy-muted">{d.username}</div>
+                                            {/* Only when it says something the name does
+                                                not. A driver's username is their email
+                                                address, and printing it here put a personal
+                                                address under every row of a screen a room
+                                                can see. See lib/people.ts. */}
+                                            {handleUnder(d) !== null && (
+                                                <div className="izy-muted">{handleUnder(d)}</div>
+                                            )}
                                         </td>
                                         <td className="izy-num">{d.daysWorked}</td>
                                         <td className="izy-num">{d.delivered}</td>

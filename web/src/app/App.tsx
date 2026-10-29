@@ -22,6 +22,7 @@ import { ClientReports } from '../pages/uh/ClientReports';
 import { ClientListUpload } from '../pages/uh/ClientListUpload';
 import { PortalLogins } from '../pages/uh/PortalLogins';
 import { Drivers } from '../pages/uh/Drivers';
+import { Roster } from '../pages/uh/Roster';
 import { DriverRecord } from '../pages/uh/DriverRecord';
 import { Discrepancies } from '../pages/uh/Discrepancies';
 import { Reports } from '../pages/uh/Reports';
@@ -66,6 +67,11 @@ export function App() {
                     /drivers/me, which takes the username off the session. */}
                 <Route path="/projects/:code/my-deliveries" element={<DriverRecord mine />} />
                 <Route path="/projects/:code/drivers" element={<Drivers />} />
+                {/* Standing driver-to-pharmacy assignments. No route guard:
+                    the server refuses anybody who is not dispatch, and the
+                    page says so rather than redirecting somewhere nobody
+                    asked for. Same pattern as pharmacy-logins above. */}
+                <Route path="/projects/:code/roster" element={<Roster />} />
                 <Route path="/projects/:code/drivers/:username" element={<DriverRecord />} />
                 <Route path="/projects/:code/reports" element={<Reports />} />
                 <Route path="/projects/:code/discrepancies" element={<Discrepancies />} />

@@ -125,10 +125,19 @@ describe('the other queries a wave leans on', () => {
      *
      * The real shape has two candidate indexes, and which one it picks
      * depends on statistics, so that dependency is what is asserted. */
-    const CUSTODY_READ = `SELECT id, package_id, type, at, actor, from_status, to_status,
-                                 signed_name, signature_key, reason, lat, lng
-                            FROM custody_events
-                           WHERE project_id = ? AND order_id = ? ORDER BY id`;
+    /* Kept in step with modules/uh/orders.ts by hand, which is the same
+       hazard the note above describes. The LEFT JOIN on users arrived on
+       28 October, to put the actor's NAME beside their username: a username
+       on this contract is usually an email address, so a chain of custody
+       read out for an audit was a column of personal addresses. The join is
+       the reason this test is worth re-running: an evidence table read on
+       every order page must not start scanning because of it. */
+    const CUSTODY_READ = `SELECT e.id, e.package_id, e.type, e.at, e.actor, u.name AS actor_name,
+                                 e.from_status, e.to_status, e.signed_name, e.signature_key,
+                                 e.reason, e.lat, e.lng
+                            FROM custody_events e
+                            LEFT JOIN users u ON u.username = e.actor
+                           WHERE e.project_id = ? AND e.order_id = ? ORDER BY e.id`;
 
     it('reads one order\'s custody events through the order index, once analysed', async () => {
         /* ANALYZE outright rather than through optimize(), which declines to
