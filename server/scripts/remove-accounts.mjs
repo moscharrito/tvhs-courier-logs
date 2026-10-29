@@ -148,6 +148,36 @@ for (const username of usernames) {
         devices: await count('SELECT COUNT(*) n FROM devices WHERE user_id = ?', [id]),
         memberships: await count('SELECT COUNT(*) n FROM memberships WHERE user_id = ?', [id]),
         audit: await count('SELECT COUNT(*) n FROM audit_events WHERE username = ?', [username]),
+        /* ── THE THREE THINGS THAT USED TO MAKE THIS CRASH HALFWAY ──────
+         *
+         * `orders` is not a leaf. Seven tables carry a foreign key into it
+         * and --with-work only ever cleared four of them, so the first
+         * courier whose deliveries had a message thread or a reattempt
+         * failed on SQLITE_CONSTRAINT_FOREIGNKEY -- after earlier accounts
+         * in the same run were already gone and with the custody trigger
+         * dropped. The trigger came back (that is what the finally is for)
+         * but the run was left half done, which is the worst state for a
+         * command somebody reaches for to tidy up.
+         *
+         * Found on 29 October: a demo courier with 38 orders carrying 4
+         * threads and 17 reattempts pointing back at them.
+         *
+         * Counted here so the DRY RUN says so before anybody applies. */
+        messages: await count(
+            'SELECT COUNT(*) n FROM order_messages WHERE order_id IN (SELECT id FROM orders WHERE assigned_to_username = ?)',
+            [username]),
+        /* Another order naming one of these as the delivery it re-attempts.
+           It may belong to a different courier, so it is NOT deleted: the
+           pointer is cleared and that order stays. */
+        reattempts: await count(
+            'SELECT COUNT(*) n FROM orders WHERE reattempt_of_order_id IN (SELECT id FROM orders WHERE assigned_to_username = ?)',
+            [username]),
+        /* MONEY. An invoice line is a billed delivery, and deleting one
+           silently changes what a client was charged. This refuses rather
+           than cascades -- see the check below. */
+        invoiced: await count(
+            'SELECT COUNT(*) n FROM invoice_lines WHERE order_id IN (SELECT id FROM orders WHERE assigned_to_username = ?)',
+            [username]),
     };
 
     const work = held.runs + held.orders + held.custody + held.logs + held.checkins;
@@ -158,6 +188,13 @@ for (const username of usernames) {
     console.log(`      memberships ${held.memberships}   devices ${held.devices}   sessions ${held.sessions}   applications ${held.applications}`);
     console.log(`      audit events ${held.audit}: KEPT. audit_events has no foreign key to users, deliberately,`);
     console.log('                       so the record of what somebody did outlives their account.');
+    if (held.messages > 0 || held.reattempts > 0) {
+        console.log(`      message threads ${held.messages}   re-attempts pointing here ${held.reattempts}`);
+    }
+    if (held.invoiced > 0) {
+        console.log(`      -> REFUSED: ${held.invoiced} invoice line${held.invoiced === 1 ? '' : 's'} bill these deliveries.`);
+        console.log('                  Deleting them would change what the client was charged.');
+    }
     if (disable) {
         const target = restore ? 'active' : 'disabled';
         console.log(u.status === target
@@ -201,20 +238,57 @@ if (disable) {
 }
 
 let deleted = 0;
+let refused = 0;
 for (const p of plan) {
     if (p.work > 0 && !withWork) continue;
+
+    /* MONEY IS NOT WORK TO BE SWEPT UP. An invoice line is a delivery that
+       has been billed, so deleting the order behind it changes what a
+       client was charged and leaves the invoice pointing at nothing.
+       --with-work does not cover this and no flag here does: take the
+       account off the roster with --disable instead, which keeps every row
+       and is reversible. */
+    if (p.held.invoiced > 0) {
+        console.log(`  ${p.username}: REFUSED, ${p.held.invoiced} billed deliver${p.held.invoiced === 1 ? 'y' : 'ies'}. Use --disable.`);
+        refused += 1;
+        continue;
+    }
 
     if (p.work > 0) {
         /* custody_events refuses deletes by trigger. Drop it, delete, put it
            back in a finally, then prove it is back. */
+        /* TWO append-only tables, not one. order_messages carries the same
+           pair of triggers as custody_events -- a thread on a delivery is
+           evidence of what was said about it -- and --with-work hit that
+           wall the moment custody stopped being the only guard. Both come
+           off together and both go back in the finally, because leaving
+           either one dropped is the serious outcome here. */
         await run('DROP TRIGGER IF EXISTS custody_events_no_delete');
+        await run('DROP TRIGGER IF EXISTS order_messages_no_delete');
         try {
             const orders = (await run('SELECT id FROM orders WHERE assigned_to_username = ?', [p.username])).rows.map((r) => Number(r.id));
             if (orders.length > 0) {
                 const list = orders.map(() => '?').join(',');
+                /* EVERY foreign key into orders, in dependency order. The
+                   four that were here cleared custody, stops and packages;
+                   order_messages and the reattempt self-reference were not,
+                   and either one aborted the whole run on the first courier
+                   that had one. PRAGMA foreign_key_list(orders) is the list
+                   to check against if a table is added later. */
                 await run(`DELETE FROM custody_events WHERE order_id IN (${list})`, orders);
                 await run(`DELETE FROM run_stops WHERE order_id IN (${list})`, orders);
                 await run(`DELETE FROM packages WHERE order_id IN (${list})`, orders);
+                /* The thread on the delivery. It belongs to the delivery and
+                   goes with it; patient_messages likewise. */
+                await run(`DELETE FROM order_messages WHERE order_id IN (${list})`, orders);
+                await run(`DELETE FROM patient_messages WHERE order_id IN (${list})`, orders);
+                /* NOT a delete. Another order -- possibly another courier's
+                   -- names one of these as the delivery it re-attempts.
+                   Removing that order would take somebody else's work with
+                   it, so the pointer is cleared and the order stays. What is
+                   lost is the link, which is the honest cost of deleting the
+                   original. */
+                await run(`UPDATE orders SET reattempt_of_order_id = NULL WHERE reattempt_of_order_id IN (${list})`, orders);
                 await run(`DELETE FROM orders WHERE id IN (${list})`, orders);
             }
             await run('DELETE FROM custody_events WHERE actor = ?', [p.username]);
@@ -226,10 +300,20 @@ for (const p of plan) {
             await run(`CREATE TRIGGER IF NOT EXISTS custody_events_no_delete
                 BEFORE DELETE ON custody_events
                 BEGIN SELECT RAISE(ABORT, 'custody_events is append-only'); END`);
+            await run(`CREATE TRIGGER IF NOT EXISTS order_messages_no_delete
+                BEFORE DELETE ON order_messages
+                BEGIN SELECT RAISE(ABORT, 'order_messages is append-only'); END`);
         }
-        const trigger = await run("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'custody_events_no_delete'");
-        if (trigger.rows.length === 0) {
-            throw new Error('custody_events is no longer append-only: the delete trigger was not restored');
+        /* Checked, not assumed. The finally above runs on the way out of a
+           failure too, and the one thing this command must never leave
+           behind is a database that quietly accepts deletes. */
+        const back = await run(`SELECT name FROM sqlite_master WHERE type = 'trigger'
+                                 AND name IN ('custody_events_no_delete', 'order_messages_no_delete')`);
+        if (back.rows.length !== 2) {
+            const have = back.rows.map((r) => String(r.name));
+            throw new Error(
+                'append-only triggers were not restored: missing '
+                + ['custody_events_no_delete', 'order_messages_no_delete'].filter((n) => !have.includes(n)).join(', '));
         }
     }
 
@@ -246,9 +330,13 @@ for (const p of plan) {
     console.log(`  deleted ${p.username}`);
 }
 
-const trigger = await run("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'custody_events_no_delete'");
+const trigger = await run(`SELECT name FROM sqlite_master WHERE type = 'trigger'
+                           AND name IN ('custody_events_no_delete', 'order_messages_no_delete')`);
 console.log(`\nDeleted ${deleted} account${deleted === 1 ? '' : 's'}.`);
-console.log(`custody_events append-only trigger present: ${trigger.rows.length === 1}`);
+if (refused > 0) {
+    console.log(`Refused ${refused} with billed deliveries. They are untouched; --disable takes them off the roster.`);
+}
+console.log(`append-only triggers present: ${trigger.rows.length}/2 (custody_events, order_messages)`);
 const roster = await count(
     `SELECT COUNT(*) n FROM users u JOIN memberships m ON m.user_id = u.id JOIN projects p ON p.id = m.project_id
       WHERE p.code = 'uh' AND m.role = 'courier' AND u.status = 'active'`, []);
