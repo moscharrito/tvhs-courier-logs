@@ -755,8 +755,14 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         }
 
         const rs = await client.execute({
-            sql: `SELECT l.*, s.code AS site_code, s.name AS site_name
+            /* The uploader's name beside their username, for the same
+               reason as the custody table in modules/uh/orders.ts: a
+               pharmacy counter's username is an address, and "BY" was a
+               column of them. LEFT JOIN, so a list uploaded by an account
+               that has since gone still lists. */
+            sql: `SELECT l.*, s.code AS site_code, s.name AS site_name, u.name AS imported_by_name
                   FROM daily_lists l JOIN sites s ON s.id = l.site_id
+                  LEFT JOIN users u ON u.username = l.imported_by
                   WHERE ${where.join(' AND ')}
                   ORDER BY l.service_date DESC, l.id DESC LIMIT 100`,
             args,
@@ -772,6 +778,8 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             orderCount: Number(r['order_count']),
             skippedCount: Number(r['skipped_count']),
             importedBy: String(r['imported_by']),
+            /** Their name now, or '' when the account is gone. */
+            importedByName: String(r['imported_by_name'] ?? ''),
             createdAt: r['created_at'],
         })));
     }));

@@ -18,11 +18,12 @@ import { Pager, usePaged } from '../../app/Pager';
 import { Thread } from '../../app/Thread';
 import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
+import { displayName, handleUnder } from '../../lib/people';
 
 interface Package { id: number; description: string; quantity: number; signatureRequired: boolean; outcome: string }
 
 interface CustodyEvent {
-    id: number; packageId: number | null; type: string; at: string; actor: string;
+    id: number; packageId: number | null; type: string; at: string; actor: string; actorName: string;
     from: string; to: string; signedName: string; signatureKey: string;
     reason: string; lat: number | null; lng: number | null; describes: string;
 }
@@ -266,7 +267,19 @@ export function OrderDetail() {
                                     {EVENT_LABEL[e.type] ?? e.type}
                                     {e.from !== e.to && e.to && <><br /><span className="izy-muted">{e.from || 'new'} to {e.to}</span></>}
                                 </td>
-                                <td>{e.actor}</td>
+                                {/* The person, then their username only when
+                                    it says something their name does not. The
+                                    username here is usually an email address,
+                                    and a chain of custody read out in an audit
+                                    was a column of personal addresses. The row
+                                    itself still stores the username: see the
+                                    note on the query in modules/uh/orders.ts. */}
+                                <td>
+                                    {displayName({ name: e.actorName, username: e.actor })}
+                                    {handleUnder({ name: e.actorName, username: e.actor }) !== null && (
+                                        <div className="izy-muted">{handleUnder({ name: e.actorName, username: e.actor })}</div>
+                                    )}
+                                </td>
                                 <td>{e.signedName || <span className="izy-muted">-</span>}</td>
                                 <td>
                                     {e.reason && <div>{e.reason}</div>}

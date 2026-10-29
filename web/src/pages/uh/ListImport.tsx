@@ -38,6 +38,7 @@ import { clockFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
+import { displayName } from '../../lib/people';
 import type { Site } from './Sites';
 
 interface Issue { row: number; field: string; code: string; severity: 'error' | 'warning'; message: string }
@@ -90,6 +91,8 @@ interface ImportSummary {
     sourceFilename: string;
     rowCount: number; orderCount: number; skippedCount: number;
     importedBy: string;
+    /** Optional: a server older than this build does not send it. */
+    importedByName?: string;
 }
 
 /* Every column the importer understands, in the pharmacy's own words.
@@ -119,6 +122,15 @@ const REQUIRED = ['recipientName', 'addressLine', 'zip'];
 
 /** What this screen needs to know about a pharmacy, and no more. */
 export interface ImportSite { id: number; code: string; name: string; status?: string }
+
+/** A mapping's identity, independent of the order keys were set in.
+ *
+ *  JSON.stringify follows insertion order, so unmapping a column and then
+ *  choosing the same one again would produce a different string for an
+ *  identical mapping -- and the screen would insist on a re-read that would
+ *  change nothing. Sorted, the fingerprint is about content only. */
+const mappingKey = (m: Record<string, string>): string =>
+    JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]]));
 
 export function ListImport({ projectCode, timezone, canImport, sites: given, title, intro, refusal }: {
     projectCode: string; timezone: string; canImport: boolean;
@@ -150,6 +162,26 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
     const [mapping, setMapping] = useState<Record<string, string>>({});
     const [skipRows, setSkipRows] = useState<number[]>([]);
     const [acceptDup, setAcceptDup] = useState<number[]>([]);
+    /* ───────────────────────────── THE PREVIEW AND THE IMPORT CAN DISAGREE.
+     *
+     * Changing a column in the mapping updates `mapping`, which is what the
+     * commit sends -- but it does NOT re-run the preview, so the table and
+     * the warning counts on screen still describe the mapping the server
+     * last parsed with. Importing from there confirms one thing and creates
+     * another.
+     *
+     * Found on 28 October by click-through: mapping the pharmacy's "Notes"
+     * column to Description left the screen reading "8 with warnings — no
+     * package description" while the import would have produced eight orders
+     * that each had one. Harmless that way round; the same gap with ZIP or
+     * Recipient name pointed at the wrong column is a list of deliveries to
+     * the wrong addresses, confirmed against a preview of the right ones.
+     *
+     * So the mapping the preview was built from is remembered, and Import is
+     * refused while the two differ. "Re-read with these columns" was always
+     * there and is now the only way forward, rather than the diligent path.
+     */
+    const [previewedWith, setPreviewedWith] = useState<string>('');
     const [busy, setBusy] = useState<'preview' | 'commit' | null>(null);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
 
@@ -198,6 +230,9 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                 const p = json as Preview;
                 setPreview(p);
                 setMapping(p.mapping);
+                /* The mapping this preview was actually built from. See the
+                   note on `mappingMoved` below. */
+                setPreviewedWith(mappingKey(p.mapping));
             } else {
                 const done = json as { id: number; summary: Summary & { imported: number } };
                 setMsg({ kind: 'ok', text: `Imported ${done.summary.imported} orders as list ${done.id}.` });
@@ -226,6 +261,8 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
        rest on the owner's instruction, and the count above the table still
        says how many of how many will be imported. */
     const pagedPreview = usePaged(preview?.rows ?? []);
+    /* True once somebody has moved a column since the preview was parsed. */
+    const mappingMoved = preview !== null && mappingKey(mapping) !== previewedWith;
 
     if (sites === null) return <div className="izy-card"><Loading label="Loading sites" /></div>;
 
@@ -307,6 +344,17 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                     Re-read with these columns
                                 </button>
                             </div>
+
+                            {mappingMoved && (
+                                /* Not "are you sure": the preview below is
+                                   simply not about these columns any more,
+                                   and no amount of care reading it would
+                                   tell you what the import will do. */
+                                <div className="izy-alert warn" role="status">
+                                    The columns have changed since this preview was read.
+                                    Choose <b>Re-read with these columns</b> to see what will actually be imported.
+                                </div>
+                            )}
 
                             {preview.missingRequired.length > 0 && (
                                 <div className="izy-alert error" role="alert">
@@ -412,7 +460,7 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                 <button
                                     className="izy-btn"
                                     type="button"
-                                    disabled={busy !== null || preview.summary.willImport === 0 || preview.missingRequired.length > 0}
+                                    disabled={busy !== null || preview.summary.willImport === 0 || preview.missingRequired.length > 0 || mappingMoved}
                                     onClick={() => { void send(false); }}
                                 >
                                     {busy === 'commit' ? 'Importing' : `Import ${preview.rows.filter((r) => r.willImport && !skipRows.includes(r.row)).length} orders`}
@@ -439,7 +487,12 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                 <td>{l.orderCount}</td>
                                 <td>{l.skippedCount}</td>
                                 <td className="izy-muted">{l.sourceFilename || 'unnamed'}</td>
-                                <td className="izy-muted">{l.importedBy}</td>
+                                {/* The person, not their username, which for a
+                                    pharmacy counter is an address. See
+                                    lib/people.ts. */}
+                                <td className="izy-muted">
+                                    {displayName({ name: l.importedByName ?? '', username: l.importedBy })}
+                                </td>
                             </tr>
                         ))}
                     </tbody>

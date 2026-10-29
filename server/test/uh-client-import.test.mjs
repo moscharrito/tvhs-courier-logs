@@ -54,12 +54,32 @@ let tomorrow;
 let dayCursor = 2;
 const ownDay = () => { dayCursor += 1; return dayIn(dayCursor); };
 
+/* ──────────────────────────── ADD DAYS TO A DATE, NOT TO AN INSTANT.
+ *
+ * This used to take `new Date()`, call setDate(getDate() + offset), and
+ * format the result in America/Chicago. That adds days in the RUNNING
+ * PROCESS's timezone and then reads the answer in somebody else's, and the
+ * two disagree whenever a DST boundary falls between them.
+ *
+ * It bit on 29 October 2026, with vitest.config.mjs setting TZ=UTC:
+ *
+ *     +3 -> 2026-11-01
+ *     +4 -> 2026-11-01      <-- the same day
+ *
+ * US DST ends at 02:00 on 1 November 2026. Chicago is UTC-5 before it and
+ * UTC-6 after, so two instants 24 hours apart landed on one Chicago date,
+ * two tests committed the same fixture for the same site and day, and the
+ * second was correctly refused: "No rows would be imported." A real
+ * refusal, reached by a test bug, in the week of go-live.
+ *
+ * Done properly: take today's calendar date IN THE PROJECT'S TIMEZONE, then
+ * add whole days through Date.UTC, where every day is twenty-four hours and
+ * there is no DST to cross. */
 const dayIn = (offset) => {
-    const d = new Date();
-    d.setDate(d.getDate() + offset);
-    return new Intl.DateTimeFormat('en-CA', {
+    const [y, m, d] = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(d);
+    }).format(new Date()).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + offset)).toISOString().slice(0, 10);
 };
 
 beforeAll(async () => {

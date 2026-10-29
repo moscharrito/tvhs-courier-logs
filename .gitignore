@@ -61,3 +61,7 @@ emails.csv
 # One-off credential tooling and its output. Public repository.
 reset-uh-portals.py
 *.docx
+
+# One-off production tooling.
+purge-drivers.ps1
+list-drivers.mjs

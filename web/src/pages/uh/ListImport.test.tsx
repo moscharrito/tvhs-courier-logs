@@ -204,4 +204,100 @@ describe('ListImport', () => {
         expect(within(row3).getByText('2026-09-14')).toBeInTheDocument();
         expect(within(row3).getByText('5')).toBeInTheDocument();
     });
+    /* ───────── the preview and the import disagreeing (28 October 2026) */
+
+    const previewed = async () => {
+        const r = stub(baseRoutes);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+        await screen.findByText('1 of 3 rows will be imported');
+        return r;
+    };
+
+    it('REFUSES TO IMPORT once a column has moved under the preview', async () => {
+        /* Changing a column updates what the commit sends but does not
+           re-run the preview, so the table on screen stops describing what
+           would be created. Confirming one thing and importing another is
+           the whole failure: with ZIP or Recipient name pointed at the
+           wrong column it is a list of deliveries to the wrong addresses,
+           approved against a preview of the right ones. */
+        await previewed();
+        expect(screen.getByRole('button', { name: /^Import \d+ orders$/ })).toBeEnabled();
+
+        fireEvent.change(screen.getByLabelText(/^ZIP/), { target: { value: 'Address 1' } });
+
+        expect(screen.getByRole('button', { name: /^Import \d+ orders$/ })).toBeDisabled();
+        expect(screen.getByText(/columns have changed since this preview was read/i)).toBeInTheDocument();
+    });
+
+    it('points at the control that fixes it rather than just refusing', async () => {
+        await previewed();
+        fireEvent.change(screen.getByLabelText(/^ZIP/), { target: { value: 'Address 1' } });
+        /* The warning names the control, and the control is right there.
+           Both, because a refusal with no way forward is worse than the
+           bug it prevents. */
+        expect(screen.getByRole('status')).toHaveTextContent('Re-read with these columns');
+        expect(screen.getByRole('button', { name: 'Re-read with these columns' })).toBeEnabled();
+    });
+
+    it('lets the import through again once the preview is re-read', async () => {
+        await previewed();
+        fireEvent.change(screen.getByLabelText(/^ZIP/), { target: { value: 'Address 1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Re-read with these columns' }));
+
+        /* The stub answers with the same preview, whose mapping becomes the
+           new baseline -- which is exactly what the server does. */
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: /^Import \d+ orders$/ })).toBeEnabled();
+        });
+        expect(screen.queryByText(/columns have changed/i)).not.toBeInTheDocument();
+    });
+
+    it('does not cry change when a column is put back the way it was', async () => {
+        /* The fingerprint is sorted for this: JSON.stringify follows
+           insertion order, so unmapping and remapping the same column read
+           as a change and demanded a re-read that would do nothing. */
+        await previewed();
+        const zip = screen.getByLabelText(/^ZIP/);
+        fireEvent.change(zip, { target: { value: '' } });
+        expect(screen.getByRole('button', { name: /^Import \d+ orders$/ })).toBeDisabled();
+
+        fireEvent.change(zip, { target: { value: 'Zip Code' } });
+        expect(screen.getByRole('button', { name: /^Import \d+ orders$/ })).toBeEnabled();
+    });
+
+    it('names the person who uploaded a list, not their username', async () => {
+        /* A pharmacy counter's username is an address. */
+        stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [{
+                id: 4, site: { id: 9, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
+                serviceDate: '2026-10-28', status: 'released', receivedAt: '2026-10-28T17:00:00.000Z',
+                sourceFilename: 'green.csv', rowCount: 8, orderCount: 8, skippedCount: 0,
+                importedBy: 'bereketgeremu@gmail.com', importedByName: 'Bereket Nigusse',
+            }],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        const row4 = (await screen.findByText('green.csv')).closest('tr')!;
+        expect(within(row4).getByText('Bereket Nigusse')).toBeInTheDocument();
+        expect(within(row4).queryByText('bereketgeremu@gmail.com')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the username when a server sends no name', async () => {
+        /* A deployed bundle can be newer than the server for a minute. */
+        stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [{
+                id: 5, site: { id: 9, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
+                serviceDate: '2026-10-28', status: 'released', receivedAt: '2026-10-28T17:00:00.000Z',
+                sourceFilename: 'older.csv', rowCount: 1, orderCount: 1, skippedCount: 0, importedBy: 'uh.green',
+            }],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        const row5 = (await screen.findByText('older.csv')).closest('tr')!;
+        expect(within(row5).getByText('uh.green')).toBeInTheDocument();
+    });
 });

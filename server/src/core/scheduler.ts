@@ -28,6 +28,7 @@ import type { Logger } from './http/logger';
 import { sweepUnclaimed } from '../modules/uh/escalation';
 import { sweepCheckIn } from '../modules/uh/check-in';
 import { sweepDayStart } from '../modules/uh/day-start';
+import { sweepStaleShifts } from '../modules/uh/shift-sweep';
 import { sweepMailWatch } from './notify/mail-watch';
 import { dispatchPending } from './notify/dispatch';
 import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
@@ -105,6 +106,24 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                listRelease.latest rather than the check-in time, because the
                lists are not late at ten. See modules/uh/day-start.ts. */
             await sweepDayStart({ client, projectId, timezone, now: new Date() });
+
+            /* And shifts nobody closed. Nothing but a button has ever
+               written shifts.ended_at, so a courier who shuts the app
+               without tapping Go off shift stays on shift indefinitely --
+               the board counted one at 145 hours on 28 October, and the
+               planner read it as a driver who was available. Closes the
+               empty ones and reports, rather than closes, any still
+               carrying packages. See modules/uh/shift-sweep.ts. */
+            const shifts = await sweepStaleShifts({ client, projectId, now: new Date() });
+            if (shifts.closed > 0 || shifts.carrying.length > 0) {
+                logger.info('shifts.swept', {
+                    project: String(p['code']),
+                    closed: shifts.closed,
+                    /* Logged separately from `closed` because it is the
+                       opposite outcome: a shift deliberately left open. */
+                    stillCarrying: shifts.carrying.length,
+                });
+            }
 
             /* And whether the thing that tells people has itself stopped.
                In the per-project loop because the notification needs

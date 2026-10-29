@@ -23,7 +23,7 @@ import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
-import { Pager, usePaged } from '../../app/Pager';
+import { Pager, usePaged, PAGE_SIZE } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
@@ -57,6 +57,12 @@ interface Courier {
        recent activity, which is what `present` means. See the note on
        courierNote(): the board used to print one as the other. */
     onShift: boolean; shiftStartedAt: string | null;
+    /** Their standing pharmacy, or null for a floater. */
+    homeSiteId: number | null;
+    /** On shift under a membership that is not courier or lead. */
+    offRoster: boolean;
+    /** Disabled mid-shift. They may still be carrying. */
+    inactive: boolean;
     /** Where they were when they last sent an event. Null if never. */
     position: Position | null;
 }
@@ -69,6 +75,13 @@ interface ProposedRun {
     earliestDueAt: string | null;
 }
 
+/** Who the server suggests for a run, and on what grounds. */
+interface Suggested {
+    username: string;
+    name: string;
+    why: 'home' | 'floater' | 'cover';
+}
+
 interface Proposal {
     serviceDate: string;
     settings: { drivers: number; maxStopsPerRun: number; maxSitesPerRun: number; maxStopsPerStatRun: number };
@@ -76,6 +89,18 @@ interface Proposal {
     unplaced: Array<{ orderId: number; why: string }>;
     notes: string[];
     driversNeeded: number;
+    /* OPTIONAL, ALL FOUR, and not because the server might omit them: it
+       always sends them. A deployed bundle can be talking to the previous
+       server for the minute or two a deploy takes, and the board is the one
+       screen where a missing field must degrade to a missing sentence
+       rather than to a white page. */
+    /** Parallel to `runs`. Null where nobody was left. */
+    suggested?: Array<Suggested | null>;
+    /** On shift and not needed by this plan. */
+    spare?: Array<{ username: string; name: string; homeSiteId: number | null }>;
+    /** Whether it was built from people on shift or from the roster list. */
+    planningFrom?: 'onShift' | 'roster';
+    fleet?: { onShift: number; roster: number };
 }
 
 interface Activity {
@@ -149,9 +174,16 @@ function positionLabel(p: Position): string {
  *                         while. Assignable, but ring rather than assume.
  *   on shift, seen        working and in touch. Nothing to say.
  */
-function courierNote(c: Courier): string {
+/* Takes a partial courier, because the proposal's picker offers names the
+   board may not be holding a full record for -- somebody the server staffed
+   from the shift roster who has since picked up a run. An absent `onShift`
+   is unknown, not false: "(not on shift)" beside a driver the server just
+   planned around would be the misleading label this function exists to
+   avoid. See the note on the presence query in modules/uh/board.ts. */
+function courierNote(c: Partial<Courier>): string {
+    if (c.onShift === undefined) return '';
     if (!c.onShift) return ' (not on shift)';
-    if (!c.present) return ` (on shift, last seen ${seenLabel(c)})`;
+    if (!c.present) return ` (on shift, last seen ${seenLabel(c as Courier)})`;
     return '';
 }
 
@@ -187,6 +219,9 @@ export function Board() {
        wave for eighteen drivers when five are on shift produces a plan that
        cannot be driven, and the dispatcher finds out by assigning it. */
     const [fleet, setFleet] = useState('');
+    /* Narrows the lanes below. Not in the URL: it is a glance at one
+       driver during a wave, not a view somebody links to. */
+    const [laneFilter, setLaneFilter] = useState('');
     const [fleetTouched, setFleetTouched] = useState(false);
     const [takeWith, setTakeWith] = useState<Record<number, string>>({});
     const pollRef = useRef<number | null>(null);
@@ -274,6 +309,23 @@ export function Board() {
        on a Tuesday, each with a courier picker beside it, which was a long
        scroll in a panel that is meant to be read quickly at noon. */
     const pagedProposal = usePaged(proposal?.runs ?? []);
+    /* The driver lanes. Three fitted on a screen and twenty-three do not:
+       each lane is a card carrying every stop on the run, so the contract's
+       full fleet is several thousand pixels of scroll with the lane you
+       want as likely to be at the bottom as the top.
+
+       Filtered before paged, so the count under the pager is the count of
+       what matches rather than of the whole board. Matching on the driver's
+       name and on the run's label, which is where "Wave 3" and "STAT" live
+       -- the two things a dispatcher says out loud when looking for one. */
+    const laneMatches = (data?.lanes ?? []).filter((l) => {
+        const q = laneFilter.trim().toLowerCase();
+        if (q === '') return true;
+        return l.courier.name.toLowerCase().includes(q)
+            || l.courier.username.toLowerCase().includes(q)
+            || l.run.label.toLowerCase().includes(q);
+    });
+    const pagedLanes = usePaged(laneMatches);
 
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
@@ -327,11 +379,41 @@ export function Board() {
        and having it change underneath them on the fifteen-second poll is
        the one thing it must not do. It is cleared when one is taken, so
        what is on screen is never a plan that has already half happened. */
+    /* THE FLEET SIZE IS THE SERVER'S ANSWER UNLESS SOMEBODY OVERRODE IT.
+       It used to be this box, always, pre-filled by counting onShift on the
+       client. The server now reads the shifts table itself and staffs the
+       plan from it, so sending a number we counted here would override the
+       better answer with a worse one. `?drivers=` is kept for the "what
+       would ten look like" question, which is what the box is now for. */
     const proposeRoutes = () => act(
-        () => api<Proposal>(`${base}/runs/propose?drivers=${fleetTouched ? fleet : (data?.couriers ?? []).filter((c) => c.onShift).length}${data?.serviceDate ? `&serviceDate=${data.serviceDate}` : ''}`)
-            .then(setProposal),
+        () => api<Proposal>(`${base}/runs/propose?${new URLSearchParams({
+            ...(fleetTouched && fleet !== '' ? { drivers: fleet } : {}),
+            ...(data?.serviceDate ? { serviceDate: data.serviceDate } : {}),
+        }).toString()}`).then((p) => {
+            setProposal(p);
+            /* Preselect the server's suggestion so the ordinary case is one
+               click. A dispatcher who disagrees changes the dropdown; the
+               suggestion is a default and never an assignment. */
+            setTakeWith(Object.fromEntries(
+                (p.suggested ?? []).map((s, i) => [i, s?.username ?? '']).filter(([, u]) => u !== ''),
+            ));
+        }),
         'Routes proposed. Nothing is assigned yet.',
     );
+
+    /* `suggested` is parallel to `runs` and `takeWith` is keyed by position,
+       so removing a run has to move all three or the names slide onto the
+       wrong routes -- and each one still looks individually plausible,
+       which is the kind of mistake nobody catches by reading the screen. */
+    const dropProposed = (taken: ProposedRun[]) => {
+        const gone = new Set(taken);
+        setProposal((p) => {
+            if (p === null) return null;
+            const keep = p.runs.map((r, i) => ({ r, s: (p.suggested ?? [])[i] ?? null })).filter(({ r }) => !gone.has(r));
+            setTakeWith(Object.fromEntries(keep.map(({ s }, i) => [i, s?.username ?? ''])));
+            return { ...p, runs: keep.map(({ r }) => r), suggested: keep.map(({ s }) => s) };
+        });
+    };
 
     /* One proposed run becomes a real one through POST /runs with its
        orderIds -- the path the board already uses, with the lifecycle
@@ -347,9 +429,60 @@ export function Board() {
             },
         }),
         `Run created for ${courier} with ${run.orderIds.length} ${run.orderIds.length === 1 ? 'stop' : 'stops'}.`,
-    ).then(() => setProposal((p) => (p === null ? null : {
-        ...p, runs: p.runs.filter((r) => r !== run),
-    })));
+    ).then(() => dropProposed([run]));
+
+    /* ─────────────────────────────────────────── the whole wave at once
+     *
+     * Twenty-three runs created one dropdown at a time is the slowest part
+     * of the morning, and it is the part happening while deadlines run.
+     *
+     * SEQUENTIAL, NOT Promise.all. Each POST /runs takes custody of its
+     * orders and the lifecycle checks behind it are not written to run
+     * against themselves twenty-three times over. It also means a failure
+     * halfway leaves the runs before it created and the rest still on the
+     * proposal, which is a state a dispatcher can read and finish by hand.
+     *
+     * Only runs with a driver. A run whose dropdown is empty stays on the
+     * proposal rather than being quietly skipped and forgotten. */
+    const createAllRuns = () => {
+        const pending = (proposal?.runs ?? [])
+            .map((run, index) => ({ run, index, courier: takeWith[index] ?? '' }))
+            .filter((x) => x.courier !== '');
+        if (pending.length === 0) return;
+
+        setBusy(true);
+        void (async () => {
+            const made: ProposedRun[] = [];
+            try {
+                for (const { run, index, courier } of pending) {
+                    await api(`${base}/runs`, {
+                        method: 'POST',
+                        json: {
+                            courierUsername: courier,
+                            label: run.kind === 'stat' ? 'STAT' : `Wave ${index + 1}`,
+                            serviceDate: data?.serviceDate,
+                            orderIds: run.orderIds,
+                        },
+                    });
+                    made.push(run);
+                }
+                setMsg({ kind: 'ok', text: `${made.length} ${made.length === 1 ? 'run' : 'runs'} created.` });
+            } catch (err) {
+                /* Names how far it got. "Could not create the runs" after
+                   nine of them were created is worse than no message. */
+                setMsg({
+                    kind: 'error',
+                    text: `${made.length} of ${pending.length} runs created, then: `
+                        + (err instanceof ApiError ? err.message : 'the request failed'),
+                    details: err instanceof ApiError ? err.details : [],
+                });
+            } finally {
+                dropProposed(made);
+                setBusy(false);
+                void load(true);
+            }
+        })();
+    };
 
     const startRun = () => act(
         () => api(`${base}/runs`, { method: 'POST', json: { courierUsername: newRunCourier, label: 'Wave', serviceDate: data?.serviceDate } }),
@@ -384,6 +517,42 @@ export function Board() {
        nobody chose is how a proposal gets built for a fleet that is not
        there. */
     const fleetValue = fleetTouched ? fleet : String(onShiftCount);
+
+    /* The pharmacy a run collects from, by name. `bySite` is every counter
+       with work today, which is every counter a proposed run can name. */
+    const siteNames = new Map(data.bySite.map((b) => [b.site.id, b.site.name]));
+    const siteName = (id: number) => siteNames.get(id) ?? sites.find((x) => x.id === id)?.name ?? `site ${id}`;
+
+    /* WHO MAY BE PICKED FOR A PROPOSED ROUTE.
+       `idleCouriers` is everyone without a run, which is the right default
+       and is not quite enough: the server staffs from the on-shift roster,
+       and somebody it suggested may have picked up a run since the proposal
+       was fetched. Dropping them from the list would blank a dropdown that
+       already had the right answer in it. So: idle, plus anybody suggested,
+       in roster order. */
+    const suggestedNames = new Map(
+        (proposal?.suggested ?? []).filter((x): x is Suggested => x !== null)
+            .map((x) => [x.username, x.name]),
+    );
+    /* How many of the proposed runs have a driver chosen. The Create-all
+       button names it rather than saying "Create all" over a plan where
+       three routes have nobody. */
+    const readyToCreate = (proposal?.runs ?? []).filter((_, i) => (takeWith[i] ?? '') !== '').length;
+
+    const courierChoices: Array<{ username: string; name: string } & Partial<Courier>> = [
+        ...data.idleCouriers,
+        ...[...suggestedNames]
+            .filter(([u]) => !data.idleCouriers.some((c) => c.username === u))
+            .map(([username, name]) => ({ username, name })),
+    ].sort((a, b) => a.name.localeCompare(b.name));
+
+    /* Split for the picker. Somebody the server suggested but whom the board
+       holds no record for counts as working: it staffed the plan from the
+       shift table, so it knows something this list does not. */
+    const chooseFrom = {
+        working: courierChoices.filter((c) => c.onShift !== false),
+        away: courierChoices.filter((c) => c.onShift === false),
+    };
 
     return (
         <>
@@ -607,7 +776,12 @@ export function Board() {
                                     {fleetTouched && fleetValue !== String(onShiftCount) ? ' — overridden' : ''}
                                 </span>
                             </label>
-                            <button className="izy-btn" type="button" disabled={busy || fleetValue === '' || fleetValue === '0'}
+                            {/* Enabled with the box empty. It used to be
+                                disabled, which made the typed number
+                                mandatory; the server reads the shift table
+                                itself now and an empty box means "use who
+                                is actually out there". */}
+                            <button className="izy-btn" type="button" disabled={busy || fleetValue === '0'}
                                 onClick={() => { void proposeRoutes(); }}>
                                 {proposal === null ? 'Propose routes' : 'Propose again'}
                             </button>
@@ -633,6 +807,44 @@ export function Board() {
                                 {proposal.runs.length === 0 ? (
                                     <p className="izy-muted">Nothing left to group.</p>
                                 ) : (
+                                    <>
+                                    {/* ─────────── ACCEPT THE PLAN IN ONE GO.
+                                        Twenty-three dropdowns one at a time is
+                                        the slowest part of the morning. Every
+                                        run still has its own Create button, for
+                                        the dispatcher who wants to send four
+                                        and think about the rest. */}
+                                    <div className="izy-row-between">
+                                        <button
+                                            className="izy-btn"
+                                            type="button"
+                                            disabled={busy || readyToCreate === 0}
+                                            onClick={createAllRuns}
+                                        >
+                                            {readyToCreate === proposal.runs.length
+                                                ? `Create all ${readyToCreate} runs`
+                                                : `Create ${readyToCreate} of ${proposal.runs.length} runs`}
+                                        </button>
+                                        {/* Said plainly, because it is the
+                                            difference between a plan built from
+                                            people and one built from a list of
+                                            who normally drives.
+
+                                            Rendered only when the server sent
+                                            it. A bundle can be newer than the
+                                            server it is talking to for the few
+                                            minutes a deploy takes, and reading
+                                            through an absent `fleet` would turn
+                                            that into a blank board rather than
+                                            a missing sentence. */}
+                                        {proposal.fleet !== undefined && (
+                                            <span className="izy-muted">
+                                                {proposal.planningFrom === 'onShift'
+                                                    ? `staffed from ${proposal.fleet.onShift} on shift of ${proposal.fleet.roster} on the roster`
+                                                    : `nobody on shift — staffed from the ${proposal.fleet.roster}-driver roster`}
+                                            </span>
+                                        )}
+                                    </div>
                                     <table className="izy-table">
                                         <thead>
                                             <tr>
@@ -644,7 +856,21 @@ export function Board() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {pagedProposal.rows.map((run, i) => (
+                                            {pagedProposal.rows.map((run, onPage) => {
+                                                /* THE INDEX HAS TO BE THE ONE IN
+                                                   proposal.runs, NOT THE ONE ON
+                                                   THIS PAGE. takeWith is keyed by
+                                                   position and `suggested` is
+                                                   parallel to the full array, so
+                                                   page two starting again at nought
+                                                   collides with page one -- every
+                                                   row still looking perfectly
+                                                   plausible while the names sit on
+                                                   the wrong routes. */
+                                                const i = pagedProposal.from - 1 + onPage;
+                                                const picked = takeWith[i] ?? '';
+                                                const hint = (proposal.suggested ?? [])[i] ?? null;
+                                                return (
                                                 <tr key={run.orderIds.join(',')}>
                                                     <td>
                                                         {run.kind === 'stat'
@@ -653,11 +879,13 @@ export function Board() {
                                                     </td>
                                                     <td>{run.orderIds.length}</td>
                                                     <td>
-                                                        {run.zips.join(', ')}
+                                                        {/* The pharmacy by name, because that is
+                                                            what a driver is assigned to and what
+                                                            the suggestion below is reasoning
+                                                            about. The ZIPs are the detail. */}
+                                                        {run.siteIds.map((id) => siteName(id)).join(' + ')}
                                                         <br />
-                                                        <span className="izy-muted">
-                                                            {run.siteIds.length === 1 ? 'one pickup' : `${run.siteIds.length} pickups`}
-                                                        </span>
+                                                        <span className="izy-muted">{run.zips.join(', ')}</span>
                                                     </td>
                                                     <td>{run.earliestDueAt === null
                                                         ? <span className="izy-muted">not set</span>
@@ -666,38 +894,110 @@ export function Board() {
                                                         <div className="izy-row">
                                                             <select
                                                                 aria-label={`Courier for proposed route ${i + 1}`}
-                                                                value={takeWith[i] ?? ''}
+                                                                value={picked}
                                                                 onChange={(e) => setTakeWith({ ...takeWith, [i]: e.target.value })}
                                                             >
                                                                 <option value="">Choose a courier</option>
-                                                                {data.idleCouriers.map((c) => (
-                                                                    <option key={c.username} value={c.username}>
-                                                                        {c.name}{courierNote(c)}
-                                                                    </option>
-                                                                ))}
+                                                                {/* ON SHIFT FIRST, IN THEIR OWN GROUP.
+                                                                    Flat, this was thirty-two names in
+                                                                    alphabetical order with the six people
+                                                                    actually working scattered through
+                                                                    them -- so changing a suggestion meant
+                                                                    scrolling past twenty-five drivers who
+                                                                    are at home. The group label does the
+                                                                    work "(not on shift)" was doing one
+                                                                    row at a time. */}
+                                                                {chooseFrom.working.length > 0 && (
+                                                                    <optgroup label="On shift">
+                                                                        {chooseFrom.working.map((c) => (
+                                                                            <option key={c.username} value={c.username}>
+                                                                                {c.name}{courierNote(c)}
+                                                                            </option>
+                                                                        ))}
+                                                                    </optgroup>
+                                                                )}
+                                                                {chooseFrom.away.length > 0 && (
+                                                                    /* Still offered. A dispatcher ringing
+                                                                       somebody to come in needs to put the
+                                                                       run on them before they arrive. */
+                                                                    <optgroup label="Not on shift">
+                                                                        {chooseFrom.away.map((c) => (
+                                                                            <option key={c.username} value={c.username}>
+                                                                                {c.name}
+                                                                            </option>
+                                                                        ))}
+                                                                    </optgroup>
+                                                                )}
                                                             </select>
                                                             <button
                                                                 className="izy-btn secondary small"
                                                                 type="button"
-                                                                disabled={busy || !(takeWith[i] ?? '')}
-                                                                onClick={() => { void takeProposed(run, i, takeWith[i] ?? ''); }}
+                                                                disabled={busy || picked === ''}
+                                                                onClick={() => { void takeProposed(run, i, picked); }}
                                                             >
                                                                 Create run
                                                             </button>
                                                         </div>
+                                                        {/* WHY THIS NAME, in one word. `cover`
+                                                            is the one that matters: it means
+                                                            nobody from that counter was left,
+                                                            which is a thing to notice before
+                                                            the wave goes out. */}
+                                                        {hint !== null && picked === hint.username && (
+                                                            <span className={`izy-muted izy-field-note${hint.why === 'cover' ? ' izy-stat-warn' : ''}`}>
+                                                                {hint.why === 'home' ? 'drives this pharmacy'
+                                                                    : hint.why === 'floater' ? 'no home pharmacy set'
+                                                                        : 'covering another pharmacy'}
+                                                            </span>
+                                                        )}
+                                                        {hint !== null && picked !== '' && picked !== hint.username && (
+                                                            <span className="izy-muted izy-field-note">
+                                                                changed from {hint.name}
+                                                            </span>
+                                                        )}
                                                     </td>
                                                 </tr>
-                                            ))}
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
+                                    </>
                                 )}
                                 <Pager of={pagedProposal} noun="routes" />
                             </>
                         )}
                     </Section>
 
+                    {/* ───────────────────────────────── THE LANES, IN PAGES.
+
+                        Every lane is a card with every stop on it. Three
+                        drivers is a screen; twenty-three is about four
+                        thousand pixels of scroll, and the one a dispatcher
+                        wants is as likely to be at the bottom as the top.
+                        So: eight at a time, the same page size as every
+                        other list, with a filter above for the case where
+                        you know whose lane you want.
+
+                        The pager says the total, which is the part that
+                        matters: a page of eight lanes is otherwise
+                        indistinguishable from a day with eight drivers. */}
+                    {data.lanes.length > PAGE_SIZE && (
+                        <label className="izy-field izy-lane-filter">Find a driver
+                            <input
+                                value={laneFilter}
+                                onChange={(e) => { setLaneFilter(e.target.value); pagedLanes.setPage(0); }}
+                                placeholder="name or pharmacy"
+                                aria-label="Filter lanes by driver"
+                            />
+                        </label>
+                    )}
+                    {pagedLanes.total === 0 && laneFilter !== '' && (
+                        <p className="izy-muted">
+                            No driver on the board matches “{laneFilter}”. {data.lanes.length} {data.lanes.length === 1 ? 'lane' : 'lanes'} in all.
+                        </p>
+                    )}
                     <div className="izy-lanes">
-                    {data.lanes.map((lane) => (
+                    {pagedLanes.rows.map((lane) => (
                         <section
                             key={lane.run.id}
                             className="izy-card izy-lane"
@@ -777,6 +1077,11 @@ export function Board() {
 
 
                     </div>
+                    <Pager
+                        of={pagedLanes}
+                        noun="drivers"
+                        note={laneFilter === '' ? undefined : `filtered from ${data.lanes.length}`}
+                    />
 
                     <Section
                         id="board-activity"

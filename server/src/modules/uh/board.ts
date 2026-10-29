@@ -382,31 +382,65 @@ export function createBoardRouter({ client }: { client: Client }): Router {
          * not seen for an hour is "working, but their phone has not spoken to
          * us, so ring them". Collapsing those two into one word is what
          * produced the misleading label in the first place. */
+        /* ─────────────────────────────────────────────── who gets listed
+         *
+         * TWO ROSTERS THAT DISAGREED, AND THE BOARD SHOWED THE SMALLER ONE.
+         *
+         * modules/uh/shifts.ts lets `admin`, `lead` and `courier` open a
+         * shift. This asked for `courier` and `lead`, inner-joined, and
+         * added `u.status = 'active'`. So a driver could tap Go on shift,
+         * get a 201 and a phone that said they were working, and never
+         * appear here -- not in the lanes, not in the on-shift count the
+         * planner reads, not in the courier picker. Dispatch had no way to
+         * see them and no way to give them work. Found on 28 October with a
+         * driver standing in a car park.
+         *
+         * The rule now: you are listed if you could be given work (courier
+         * or lead), OR IF YOU ARE ON SHIFT, whatever your role and whatever
+         * your status. The second half is the one that matters. Somebody on
+         * an open shift may be holding packages, and a board that hides
+         * them hides the packages too.
+         *
+         * `project_role` comes back so the screen can say when those two
+         * reasons disagree: an admin on shift is a real person driving, and
+         * also a sign that somebody's membership is wrong.
+         *
+         * The membership join stays inner, which is safe: requireProjectRole
+         * means a shift cannot be opened without one. */
         const presence = await client.execute({
-            sql: `SELECT u.username, u.name, MAX(s.last_seen_at) AS last_seen,
+            sql: `SELECT u.username, u.name, m.role AS project_role, u.status AS user_status,
+                         json_extract(m.settings, '$.homeSiteId') AS home_site_id,
+                         MAX(s.last_seen_at) AS last_seen,
                          MAX(CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END) AS on_shift,
                          MIN(sh.started_at) AS shift_started
                   FROM users u
-                  /* A lead appears here because a site manager covers a
-                     route when a driver does not turn up, and a dispatcher
-                     cannot drop a run on somebody the board will not show.
-                     Assignment itself never needed this -- courierIsMember
-                     in runs.ts checks membership and not role -- so the
-                     only thing missing was the name on the screen. See the
-                     note on operate in stop.ts. */
-                  JOIN memberships m ON m.user_id = u.id AND m.project_id = ? AND m.role IN ('courier', 'lead')
+                  JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
                   LEFT JOIN sessions s ON s.user_id = u.id
                   LEFT JOIN shifts sh ON sh.courier_username = u.username
                        AND sh.project_id = ? AND sh.ended_at IS NULL
                   WHERE u.status = 'active'
-                  GROUP BY u.username, u.name
+                     OR EXISTS (SELECT 1 FROM shifts x
+                                 WHERE x.courier_username = u.username
+                                   AND x.project_id = ? AND x.ended_at IS NULL)
+                  GROUP BY u.username, u.name, m.role, u.status
+                  /* A lead appears because a site manager covers a route
+                     when a driver does not turn up, and a dispatcher cannot
+                     drop a run on somebody the board will not show.
+                     Assignment itself never needed this -- courierIsMember
+                     in runs.ts checks membership and not role -- so the
+                     only thing missing was the name on the screen. See the
+                     note on operate in stop.ts. */
+                  HAVING m.role IN ('courier', 'lead')
+                      OR MAX(CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END) = 1
                   ORDER BY u.name`,
-            args: [project.id, project.id],
+            args: [project.id, project.id, project.id],
         });
         const now = Date.now();
         const couriers = presence.rows.map((r) => {
             const lastSeenAt = r['last_seen'] === null ? null : String(r['last_seen']);
             const minutesAgo = lastSeenAt === null ? null : Math.round((now - Date.parse(lastSeenAt)) / 60000);
+            const role = String(r['project_role']);
+            const onShift = Number(r['on_shift']) === 1;
             return {
                 username: String(r['username']),
                 name: String(r['name']),
@@ -414,8 +448,18 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                 minutesSinceSeen: minutesAgo,
                 present: minutesAgo !== null && minutesAgo <= PRESENT_WITHIN_MINUTES,
                 /* The shifts table, not an inference from activity. */
-                onShift: Number(r['on_shift']) === 1,
+                onShift,
                 shiftStartedAt: r['shift_started'] === null ? null : String(r['shift_started']),
+                /** Their standing pharmacy, or null for a floater. */
+                homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined
+                    ? null : Number(r['home_site_id']),
+                projectRole: role,
+                /** On shift for a reason the roster does not otherwise allow.
+                 *  Shown, because the person is real; flagged, because the
+                 *  membership behind it probably wants fixing. */
+                offRoster: onShift && role !== 'courier' && role !== 'lead',
+                /** Disabled mid-shift. They may still be carrying packages. */
+                inactive: String(r['user_status']) !== 'active',
             };
         });
         const courierByUsername = new Map(couriers.map((c) => [c.username, c]));
@@ -535,6 +579,7 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                     ...(courierByUsername.get(username) ?? {
                         username, name: username, lastSeenAt: null, minutesSinceSeen: null,
                         present: false, onShift: false, shiftStartedAt: null,
+                        homeSiteId: null, projectRole: '', offRoster: false, inactive: true,
                     }),
                     position: positionByUsername.get(username) ?? null,
                 },

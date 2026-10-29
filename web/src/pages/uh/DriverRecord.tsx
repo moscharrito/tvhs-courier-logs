@@ -26,8 +26,10 @@ import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
-import { useAuth } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
+import { daysBeforeIn, todayIn } from '../../lib/when';
 import { money } from './Drivers';
+import { handleUnder } from '../../lib/people';
 
 interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
@@ -60,12 +62,6 @@ const GROUPINGS = [
     { value: 'year', label: 'Year' },
 ];
 
-const isoDay = (offsetDays = 0) => {
-    const d = new Date();
-    d.setDate(d.getDate() - offsetDays);
-    return d.toISOString().slice(0, 10);
-};
-
 /** `mine` is set by the route, not by a prop a caller could get wrong. */
 export function DriverRecord({ mine = false }: { mine?: boolean }) {
     const { code = '', username = '' } = useParams();
@@ -73,8 +69,11 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
     const project = projects.find((p) => p.code === code);
     const [params, setParams] = useSearchParams();
 
-    const from = params.get('from') ?? isoDay(30);
-    const to = params.get('to') ?? isoDay(0);
+    /* In the project's zone at both ends: this is the window a driver
+       checks their own pay against. See lib/when.ts. */
+    const timezone = useProjectTimezone(code);
+    const from = params.get('from') ?? daysBeforeIn(timezone, 30);
+    const to = params.get('to') ?? todayIn(timezone);
     const groupBy = params.get('groupBy') ?? 'day';
 
     const [data, setData] = useState<Record_ | null>(null);
@@ -121,7 +120,15 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
         <>
             <h1>{title}</h1>
             <p className="izy-sub">
-                {mine ? user?.username : data.username} · times in {data.timezone}
+                {/* The heading above is already the person's name. This line
+                    repeated their username, which on this contract is their
+                    email address -- a personal address in the subtitle of a
+                    page a site manager reads with somebody looking over their
+                    shoulder. Shown only when it is a handle rather than an
+                    address, and never for your own record, where it told you
+                    who you are. See lib/people.ts. */}
+                {!mine && handleUnder(data) !== null && <>{handleUnder(data)} · </>}
+                times in {data.timezone}
             </p>
 
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}

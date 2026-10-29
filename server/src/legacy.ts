@@ -65,6 +65,7 @@ import { createApplicationsRouter, createPublicApplicationsRouter } from './core
 import { createPasswordResetRouter } from './core/auth/password-reset';
 import { createHttpMailer } from './core/notify/http-mail';
 import { createShiftsRouter } from './modules/uh/shifts';
+import { createRosterRouter } from './modules/uh/roster';
 import { createEscalationRouter } from './modules/uh/escalation';
 import { createTrackingRouter } from './modules/uh/tracking';
 import { createNotificationsRouter, createPushDevicesRouter } from './core/notify/routes';
@@ -434,6 +435,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use('/api/projects/:pid/uh/invoices', requireProject, createInvoicesRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/files', requireProject, idempotent, createFilesRouter({ client: database.client, storage: fileStorage }));
     legacy.app.use('/api/projects/:pid/uh/shifts', requireProject, createShiftsRouter({ client: database.client }));
+    /* Standing driver-to-pharmacy assignments. Mounted beside shifts
+       because the planner reads both together: who is on shift, and where
+       they normally drive from. See modules/uh/roster.ts. */
+    legacy.app.use('/api/projects/:pid/uh/roster', requireProject, createRosterRouter({ client: database.client }));
     /* Asking for work is gone (16 October 2026): dispatch assigns everything.
        What is left is the sweep that refuses to let a delivery sit unassigned
        while its deadline runs out. See modules/uh/escalation.ts. */

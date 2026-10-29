@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { clockFor, stampFor, momentFor, dateFor, safeZone, todayIn, deviceZone } from './when';
+import { clockFor, stampFor, momentFor, dateFor, safeZone, todayIn, deviceZone, daysBeforeIn } from './when';
 
 /* 2026-09-14T18:08:54Z. In Chicago (CDT, UTC-5) that is 1:08 PM. In New York
    it is 2:08 PM, in Phoenix 11:08 AM, in London 7:08 PM. One instant, four
@@ -95,5 +95,58 @@ describe('today, for a service date', () => {
            today and the whole list landed against the wrong service date. */
         expect(todayIn('America/Chicago')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         expect(todayIn('Pacific/Kiritimati') >= todayIn('Pacific/Niue')).toBe(true);
+    });
+});
+
+describe('daysBeforeIn', () => {
+    /* The screens that open on "the last thirty days" each had their own
+       copy of `new Date()`, setDate(-n), toISOString() -- subtracting in the
+       device's zone and reading the answer in UTC. */
+
+    it('steps whole calendar days, not 24-hour blocks', () => {
+        /* 1 November 2026 is twenty-five hours long in America/Chicago:
+           DST ends at 02:00. Subtracting n * 86,400,000 ms from an instant
+           lands on the wrong calendar day across it, which is how the same
+           arithmetic lost a day in server/test/uh-client-import. */
+        const at = new Date('2026-11-03T12:00:00.000Z');
+        expect(daysBeforeIn('America/Chicago', 1, at)).toBe('2026-11-02');
+        expect(daysBeforeIn('America/Chicago', 2, at)).toBe('2026-11-01');
+        expect(daysBeforeIn('America/Chicago', 3, at)).toBe('2026-10-31');
+    });
+
+    it('never gives the same day twice across that boundary', () => {
+        /* The failure mode in one assertion: two offsets collapsing onto one
+           date is what made a second import read as a duplicate. */
+        const at = new Date('2026-11-03T12:00:00.000Z');
+        const days = [0, 1, 2, 3, 4, 5, 6].map((n) => daysBeforeIn('America/Chicago', n, at));
+        expect(new Set(days).size).toBe(days.length);
+    });
+
+    it('answers in the PROJECT zone, not the device zone or UTC', () => {
+        /* 06:30 UTC on the 2nd is still the evening of the 1st in Chicago.
+           This is the "open the drivers record at nine at night and get a
+           different thirty days" case, on the screen somebody is paid from. */
+        const evening = new Date('2026-11-02T03:30:00.000Z');
+        expect(todayIn('America/Chicago', evening)).toBe('2026-11-01');
+        expect(daysBeforeIn('America/Chicago', 30, evening)).toBe('2026-10-02');
+        /* Read in UTC the same instant is already the 2nd, and the window
+           would start a day later. */
+        expect(daysBeforeIn('UTC', 30, evening)).toBe('2026-10-03');
+    });
+
+    it('agrees with todayIn at zero', () => {
+        const at = new Date('2026-11-02T03:30:00.000Z');
+        expect(daysBeforeIn('America/Chicago', 0, at)).toBe(todayIn('America/Chicago', at));
+    });
+
+    it('crosses a month and a year end', () => {
+        expect(daysBeforeIn('America/Chicago', 1, new Date('2027-01-01T18:00:00.000Z'))).toBe('2026-12-31');
+        expect(daysBeforeIn('America/Chicago', 31, new Date('2026-12-01T18:00:00.000Z'))).toBe('2026-10-31');
+    });
+
+    it('falls back to a usable zone rather than throwing on a bad one', () => {
+        /* safeZone's job, inherited through todayIn. A report screen must
+           not go blank because a project carries a typo'd timezone. */
+        expect(() => daysBeforeIn('Not/AZone', 30, new Date('2026-11-02T18:00:00.000Z'))).not.toThrow();
     });
 });
