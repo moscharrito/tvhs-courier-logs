@@ -776,12 +776,17 @@ export function Board() {
                                     {fleetTouched && fleetValue !== String(onShiftCount) ? ' — overridden' : ''}
                                 </span>
                             </label>
-                            {/* Enabled with the box empty. It used to be
-                                disabled, which made the typed number
-                                mandatory; the server reads the shift table
-                                itself now and an empty box means "use who
-                                is actually out there". */}
-                            <button className="izy-btn" type="button" disabled={busy || fleetValue === '0'}
+                            {/* ZERO ON SHIFT IS NOT A REASON TO REFUSE.
+                                This was disabled whenever the box read '0',
+                                which at 11:55 -- before anybody has tapped
+                                Go on shift -- is every morning. The server
+                                plans from the roster in that case and says
+                                it did; disabling the button put that behind
+                                a door the dispatcher could not open.
+
+                                Refused only when somebody TYPED a zero,
+                                which is a request for a plan for nobody. */}
+                            <button className="izy-btn" type="button" disabled={busy || (fleetTouched && fleet === '0')}
                                 onClick={() => { void proposeRoutes(); }}>
                                 {proposal === null ? 'Propose routes' : 'Propose again'}
                             </button>
@@ -821,9 +826,13 @@ export function Board() {
                                             disabled={busy || readyToCreate === 0}
                                             onClick={createAllRuns}
                                         >
+                                            {/* "Create all 1 runs" was on screen for a
+                                                single-route wave, which is most of a
+                                                quiet morning. One route is not a set to
+                                                say "all" about. */}
                                             {readyToCreate === proposal.runs.length
-                                                ? `Create all ${readyToCreate} runs`
-                                                : `Create ${readyToCreate} of ${proposal.runs.length} runs`}
+                                                ? (readyToCreate === 1 ? 'Create the run' : `Create all ${readyToCreate} runs`)
+                                                : `Create ${readyToCreate} of ${proposal.runs.length} ${proposal.runs.length === 1 ? 'run' : 'runs'}`}
                                         </button>
                                         {/* Said plainly, because it is the
                                             difference between a plan built from

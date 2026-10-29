@@ -669,6 +669,16 @@ describe('Board', () => {
         expect(await screen.findByRole('status')).toHaveTextContent('2 runs created.');
     });
 
+    it('does not say "all 1 runs" for a single route', async () => {
+        /* Most of a quiet morning is one route, and "Create all 1 runs" was
+           what the button said on it. */
+        await openProposal(staffed({
+            runs: [{ kind: 'standard', orderIds: [1], zips: ['78224'], siteIds: [7], earliestDueAt: null }],
+            suggested: [{ username: 'ada.courier', name: 'Ada Courier', why: 'home' }],
+        }));
+        expect(await screen.findByRole('button', { name: 'Create the run' })).toBeEnabled();
+    });
+
     it('will not claim to create a run that has nobody against it', async () => {
         /* A route the server could not staff stays on the proposal rather
            than being quietly skipped and forgotten. */

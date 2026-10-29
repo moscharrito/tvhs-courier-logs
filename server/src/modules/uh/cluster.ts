@@ -488,7 +488,13 @@ export function staffProposal(runs: ProposedRun[], roster: readonly RosterDriver
     const spare = [...free.values()];
     if (spare.length > 0 && unstaffed === 0) {
         notes.push(
-            `${spare.length} ${spare.length === 1 ? 'driver is' : 'drivers are'} on shift with no run in this plan.`,
+            /* NOT "on shift". This function is given a roster and does not
+               know what kind it is: when nobody has tapped Go on shift the
+               caller plans from the full driver list instead, and saying
+               "31 drivers are on shift" directly under "Nobody is on shift"
+               is a contradiction a dispatcher has to reason past. Found on
+               29 October by reading the screen it produced. */
+            `${spare.length} ${spare.length === 1 ? 'driver was' : 'drivers were'} not needed by this plan.`,
         );
     }
 

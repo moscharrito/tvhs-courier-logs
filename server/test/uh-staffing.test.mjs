@@ -146,10 +146,20 @@ describe('staffProposal', () => {
         expect(s.unstaffed).toBe(0);
     });
 
+    it('does not claim the spare drivers are on shift', () => {
+        /* staffProposal is given a roster and does not know what kind it
+           is. When nobody has tapped Go on shift the caller plans from the
+           full driver list, and "31 drivers are on shift with no run"
+           printed directly under "Nobody is on shift" is a contradiction
+           the dispatcher has to reason past. Seen on screen, 29 October. */
+        const s = staffProposal([run()], [driver('zoe', GREEN), driver('grant', SOUTHEAST)]);
+        expect(s.notes.join(' ')).not.toMatch(/on shift/i);
+    });
+
     it('names the drivers left over, so a dispatcher can see slack', () => {
         const s = staffProposal([run()], [driver('zoe', GREEN), driver('grant', SOUTHEAST)]);
         expect(s.spare.map((d) => d.username)).toEqual(['grant']);
-        expect(s.notes.join(' ')).toMatch(/no run in this plan/i);
+        expect(s.notes.join(' ')).toMatch(/not needed by this plan/i);
     });
 
     it('does not claim slack on a day that did not fit', () => {
@@ -159,7 +169,7 @@ describe('staffProposal', () => {
            note is suppressed rather than relying on that. */
         const s = staffProposal([run(), run()], [driver('zoe', GREEN)]);
         expect(s.notes.join(' ')).toMatch(/no driver/i);
-        expect(s.notes.join(' ')).not.toMatch(/no run in this plan/i);
+        expect(s.notes.join(' ')).not.toMatch(/not needed by this plan/i);
     });
 
     it('handles the contract roster without leaving a counter short', () => {
