@@ -65,3 +65,12 @@ reset-uh-portals.py
 # One-off production tooling.
 purge-drivers.ps1
 list-drivers.mjs
+
+# The driver roster for create-drivers.mjs and load-roster.mjs. SAME REASON
+# AS emails.csv ABOVE, and this one is worse: `username,name,email,site` is
+# twenty-three real people, their mailboxes, and which University Health
+# counter each of them drives from every weekday. That is a staff directory
+# and a rota in one file. It stays on the machine that runs the script.
+drivers.csv
+*.drivers.csv
+roster.csv
