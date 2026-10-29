@@ -110,7 +110,20 @@ export function Drivers() {
 
     const paged = usePaged(data?.drivers ?? []);
 
-    if (!project || project.role !== 'admin') {
+    /* ADMIN AND LEAD, which is what the server allows.
+     *
+     * This read `role !== 'admin'`, so a site manager following the Drivers
+     * record link from their own project page landed on "Not available".
+     * The link was offered to them and went nowhere.
+     *
+     * modules/uh/driver-records.ts admits both and strips the money on the
+     * way out for anybody who may not see it -- deliberately, from ticket
+     * 7.20: a site manager liaises with drivers daily and needs to know who
+     * is carrying what, while what each driver is paid is commercial and is
+     * not theirs. The screen asks the DATA whether there is money in it
+     * (see hasMoney above) rather than re-deciding the rule, so opening
+     * this to leads shows them exactly what the server sent and no more. */
+    if (!project || (project.role !== 'admin' && project.role !== 'lead')) {
         return (<><h1>Not available</h1><Link className="izy-btn secondary" to="/">Back</Link></>);
     }
     if (data === null) {

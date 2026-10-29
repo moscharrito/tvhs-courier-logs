@@ -38,3 +38,40 @@ reproducible, it costs nothing, and it can be regenerated the moment a step
 in the app changes, which is the failure this whole thing exists to prevent.
 `driver-voiceover-script.md` is the same words if anybody would rather read
 them aloud and cut a human track over the same frames.
+
+---
+
+# Portal training
+
+`portal-training.mp4` — 8m 09s, 1920x1080, 7.4 MB. Seventeen slides covering
+the pharmacy portal, the site manager portal and the password reset, with the
+real screens from `portal-screens/` on them.
+
+Built the same way as the driver video and with the same two traps avoided
+(`-vf fps=15`, and measure-then-scale rather than pinning to 1080). Two more
+were added to the list by this one:
+
+**Narration goes through a UTF-8 file, not through `-Command`.** Embedding the
+words in the PowerShell command line worked until a sentence contained a curly
+apostrophe, which the console encoding turned into a parse error. The slide it
+died on was the one about spreadsheet columns, so the failure read like a deck
+problem rather than an encoding one.
+
+**`python3`, not `python`.** Only one of the two interpreters on this machine
+has `imageio_ffmpeg`, and the one on `python` is not it.
+
+## What is in it
+
+Seventeen slides in three parts: what a pharmacy sees and cannot see, what a
+site manager sees and cannot see, and how anybody resets their own password.
+`portal-voiceover-script.md` is the same words to read aloud if a human track
+is wanted over the same frames; `resetting-your-password.md` is the reset part
+on its own, as a page to hand out.
+
+## It says what does not work yet
+
+The reset section ends by saying plainly that an account with no email address
+cannot reset its password, that it will still be told a code is on its way,
+and that the nine University Health counter logins have no address on them
+today. That is in the video because somebody will try it in the first week,
+and the alternative to saying so is nine phone calls.

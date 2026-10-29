@@ -94,7 +94,21 @@ export interface ProjectMembership {
     code: string;
     name: string;
     timezone: string;
-    role: 'admin' | 'courier' | 'pharmacy';
+    /* FOUR ROLES, NOT THREE. `lead` -- the University Health site manager --
+     * was missing here while the server has had it in PROJECT_ROLES all
+     * along, and a type that cannot express a role the server sends does
+     * not merely fail to describe it: it stops anybody writing code for it.
+     *
+     * pages/uh/Drivers.tsx is what that cost. Its guard reads
+     * `role !== 'admin'` because `role === 'lead'` was a type error, so a
+     * site manager following the Drivers record link from their own project
+     * page landed on "Not available" -- a link offered to them that went
+     * nowhere -- while modules/uh/driver-records.ts had been admitting
+     * leads, with the money stripped, since ticket 7.20.
+     *
+     * Found on 29 October by signing in as the site manager and clicking
+     * every link on the page. */
+    role: 'admin' | 'lead' | 'courier' | 'pharmacy';
 }
 
 export interface DriverPick {

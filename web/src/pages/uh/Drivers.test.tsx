@@ -19,6 +19,7 @@ const admin = { id: 1, username: 'dee.dispatch', name: 'Dee Dispatch', role: 'st
 const courier = { id: 5, username: 'pay.ada', name: 'Ada Pay', role: 'driver', route: null };
 const asAdmin = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
 const asCourier = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
+const asLead = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'lead' }];
 
 const totals = (over = {}) => ({
     delivered: 3, failed: 1, payCents: 1850, rateSet: true,
@@ -190,6 +191,52 @@ describe('the drivers record without the money', () => {
         expect(screen.queryByText('to disburse')).not.toBeInTheDocument();
         /* And nothing that looks like money got rendered anyway. */
         expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
+    });
+});
+
+describe('who may open it at all', () => {
+    /* The project page offers a site manager the Drivers record link. This
+       guard read `role !== 'admin'`, so following that link landed them on
+       "Not available" -- and it read that way because
+       ProjectMembership['role'] did not contain 'lead', so `=== 'lead'`
+       would not compile. The server has admitted leads since ticket 7.20,
+       with the money stripped on the way out. Found by signing in as the
+       site manager and clicking every link on the page. */
+    it('lets a site manager in, because the server does', async () => {
+        renderDrivers({
+            'GET /api/me/projects': asLead,
+            'GET /api/projects/uh/uh/drivers*': {
+                from: '2026-11-02', to: '2026-11-02', timezone: 'America/Chicago',
+                drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 1, delivered: 3, failed: 0, rateSet: true, basis: 'serviceType', lines: {} }],
+                totals: { delivered: 3, failed: 0, rateSet: true, basis: 'serviceType', lines: {} },
+            },
+        });
+        expect(await screen.findByText('Ada Pay')).toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Not available' })).not.toBeInTheDocument();
+    });
+
+    it('still shows a site manager no money', async () => {
+        /* Opening the door must not open the till. The server decides by
+           omitting the fields; this asserts the screen renders what it was
+           sent and invents nothing. */
+        renderDrivers({
+            'GET /api/me/projects': asLead,
+            'GET /api/projects/uh/uh/drivers*': {
+                from: '2026-11-02', to: '2026-11-02', timezone: 'America/Chicago',
+                drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 1, delivered: 3, failed: 0, rateSet: true, basis: 'serviceType', lines: {} }],
+                totals: { delivered: 3, failed: 0, rateSet: true, basis: 'serviceType', lines: {} },
+            },
+        });
+        await screen.findByText('Ada Pay');
+        expect(screen.queryByRole('columnheader', { name: 'Pay' })).not.toBeInTheDocument();
+        expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
+    });
+
+    it('keeps a pharmacy account out', async () => {
+        renderDrivers({
+            'GET /api/me/projects': [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'pharmacy' }],
+        });
+        expect(await screen.findByRole('heading', { name: 'Not available' })).toBeInTheDocument();
     });
 });
 

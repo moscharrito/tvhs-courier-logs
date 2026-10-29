@@ -78,3 +78,19 @@ roster.csv
 # The never-delete list for courier-inventory.mjs. Same reason as the files
 # above: a driver's username is their personal email address.
 protected.txt
+
+# Training captures and the video built from them. THIS REPOSITORY IS PUBLIC.
+#
+# portal-screens/m3-roster.png is the driver roster screen, which is
+# twenty-three real people, their usernames and which University Health
+# counter each one drives from -- the same staff directory the roster.csv
+# rule above exists for, in an image rather than a CSV. m6-drivers.png and
+# m2-board.png carry names too, and portal-training.mp4 has all of them on
+# slides. The gitignore above protects the files; it cannot protect a
+# screenshot of what those files produced.
+#
+# The video and the screens are deliverables for University Health staff and
+# are handed over directly. The written material beside them -- the script,
+# the reset instructions, the READMEs -- carries no names and is committed.
+docs/training/portal-screens/*.png
+docs/training/portal-training.mp4

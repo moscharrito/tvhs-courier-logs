@@ -6,12 +6,26 @@ import { SecretInput } from '../app/SecretInput';
 import { Pager, usePaged } from '../app/Pager';
 
 type Msg = { kind: 'ok' | 'error'; text: string; details?: string[] } | null;
-const PROJECT_ROLES: ProjectMembership['role'][] = ['admin', 'courier', 'pharmacy'];
+/* FOUR, and `lead` was not among them.
+ *
+ * This list is what the role dropdown on a membership offers, so while it
+ * held three an administrator could not make somebody a site manager at
+ * all -- the only way to create one was a script writing the membership
+ * directly, which is how the University Health site manager came to exist.
+ * The server has had four roles in PROJECT_ROLES throughout.
+ *
+ * Found on 29 October, downstream of ProjectMembership['role'] itself
+ * being short of `lead`: a type that cannot say a word stops every screen
+ * from saying it too. */
+const PROJECT_ROLES: ProjectMembership['role'][] = ['admin', 'lead', 'courier', 'pharmacy'];
 
-/* The words people use, not the stored values. Three roles since ticket 5.12:
-   whoever runs the operation, whoever drives, whoever the pharmacy sends. */
+/* The words people use, not the stored values. */
 const ROLE_LABEL: Record<ProjectMembership['role'], string> = {
-    admin: 'Admin and dispatch', courier: 'Driver', pharmacy: 'Pharmacy staff',
+    admin: 'Admin and dispatch',
+    /* University Health's own term for the person who runs a counter. */
+    lead: 'Site manager',
+    courier: 'Driver',
+    pharmacy: 'Pharmacy staff',
 };
 const TVHS_ROUTES = ['northbound', 'southbound'];
 
