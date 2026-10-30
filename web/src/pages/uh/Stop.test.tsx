@@ -207,6 +207,32 @@ describe('Stop', () => {
         expect(screen.queryByLabelText(/Photo of the identification/)).not.toBeInTheDocument();
     });
 
+    it('lets a courier choose a photo as well as take one', async () => {
+        /* It used to carry capture="environment", which opens the rear
+           camera AND removes the choice: no library, no file, one tap and no
+           way round it.
+
+           Reported from a real handset on 30 October: the in-page camera
+           opened to a black frame and would not show or take anything. That
+           sheet belongs to the browser, not to us, and when it misbehaves a
+           courier at a door has no second option and the delivery cannot be
+           recorded at all.
+
+           Without the attribute the phone offers its own chooser -- Take
+           Photo, Photo Library, Browse -- so the camera is still one tap
+           away and it is the phone's own camera app rather than an embedded
+           sheet. Asserted because the attribute is one word and would come
+           back without anybody noticing. */
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+
+        const form = screen.getByLabelText(/Photo of the signed form/);
+        expect(form).not.toHaveAttribute('capture');
+        /* Still a photo field: the accept list is what keeps a PDF out. */
+        expect(form).toHaveAttribute('accept', expect.stringContaining('image/'));
+    });
+
     it('always offers the signed form, because the signature moved onto paper', async () => {
         renderStop();
         await screen.findByRole('heading', { name: 'Stop' });

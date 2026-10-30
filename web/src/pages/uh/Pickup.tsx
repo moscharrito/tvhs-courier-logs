@@ -306,13 +306,12 @@ export function Pickup() {
                                     <input
                                         type="file"
                                         accept="image/jpeg,image/png,image/webp"
-                                        capture="environment"
                                         disabled={busy}
                                         onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
                                     />
                                     <span className="izy-muted izy-field-note">
                                         {formPhoto === null
-                                            ? 'The pharmacy form for this collection.'
+                                            ? 'The pharmacy form for this collection. Take one now, or choose one you already have.'
                                             : `Ready to send: ${formPhoto.name}`}
                                     </span>
                                 </label>

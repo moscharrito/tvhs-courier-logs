@@ -307,13 +307,12 @@ export function Returns() {
                                     <input
                                         type="file"
                                         accept="image/jpeg,image/png,image/webp"
-                                        capture="environment"
                                         disabled={busy}
                                         onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
                                     />
                                     <span className="izy-muted izy-field-note">
                                         {formPhoto === null
-                                            ? 'Part 3, signed by the pharmacy.'
+                                            ? 'Part 3, signed by the pharmacy. Take one now, or choose one you already have.'
                                             : `Ready to send: ${formPhoto.name}`}
                                     </span>
                                 </label>

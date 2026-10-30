@@ -387,13 +387,12 @@ export function Stop() {
                                 <input
                                     type="file"
                                     accept={PHOTO_TYPES.join(',')}
-                                    capture="environment"
                                     disabled={busy}
                                     onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
                                 />
                                 <span className="izy-muted izy-field-note">
                                     {formPhoto === null
-                                        ? 'The pharmacy form the recipient signed.'
+                                        ? 'The pharmacy form the recipient signed. Take one now, or choose one you already have.'
                                         : `Ready to send: ${formPhoto.name}`}
                                 </span>
                             </label>
@@ -409,12 +408,13 @@ export function Stop() {
                                         <input
                                             type="file"
                                             accept={PHOTO_TYPES.join(',')}
-                                            capture="environment"
                                             disabled={busy}
                                             onChange={(e) => setIdPhoto(e.target.files?.[0] ?? null)}
                                         />
                                         <span className="izy-muted izy-field-note">
-                                            {idPhoto === null ? 'Required for this delivery.' : `Ready to send: ${idPhoto.name}`}
+                                            {idPhoto === null
+                                                ? 'Required for this delivery. Take one now, or choose one you already have.'
+                                                : `Ready to send: ${idPhoto.name}`}
                                         </span>
                                     </label>
                                 </div>
@@ -500,13 +500,48 @@ export function Stop() {
                                     ref={photoInput}
                                     type="file"
                                     accept={PHOTO_TYPES.join(',')}
-                                    /* Opens the camera on a phone rather than the photo library. */
-                                    capture="environment"
+                                    /* NO `capture` ATTRIBUTE, DELIBERATELY.
+                                     *
+                                     * It used to read capture="environment",
+                                     * which does two things: it opens the
+                                     * rear camera straight away, and it
+                                     * REMOVES the choice -- no photo library,
+                                     * no file. One tap, no way round it.
+                                     *
+                                     * Reported from a real handset on 30
+                                     * October: the in-page camera opened to a
+                                     * black frame and would not show or take
+                                     * anything. That sheet is the browser's,
+                                     * not ours, and when it misbehaves -- the
+                                     * camera held by another app, a
+                                     * permission that needs re-granting, iOS
+                                     * being iOS -- a courier at a door has no
+                                     * second option and the delivery cannot
+                                     * be recorded at all.
+                                     *
+                                     * Without the attribute the phone offers
+                                     * its own chooser: Take Photo, Photo
+                                     * Library, Browse. The camera is still
+                                     * one tap away and it is now the phone's
+                                     * own camera app rather than an embedded
+                                     * sheet, which is the more reliable path.
+                                     *
+                                     * WHAT IT COSTS, SAID PLAINLY: a
+                                     * photograph chosen from the library is
+                                     * not necessarily of this doorstep today.
+                                     * `capture` was never proof of that
+                                     * either -- it is a hint a determined
+                                     * person can sidestep -- but it did make
+                                     * the lazy path the honest one. What
+                                     * stands behind the photograph now is the
+                                     * custody record: who recorded it, when,
+                                     * and where, written at the moment of the
+                                     * handover and append-only afterwards. */
                                     disabled={busy || filesAvailable === false}
                                     onChange={(e) => {
                                         const picked = e.target.files?.[0] ?? null;
                                         if (picked && !PHOTO_TYPES.includes(picked.type)) {
-                                            setMsg({ kind: 'error', text: 'That is not a photo this app can store. Use the camera.' });
+                                            setMsg({ kind: 'error', text: 'That is not a photo this app can store. Take one with the camera, or pick a JPEG or PNG.' });
                                             setPhoto(null);
                                             return;
                                         }
