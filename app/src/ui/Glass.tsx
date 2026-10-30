@@ -153,7 +153,10 @@ const styles = StyleSheet.create({
     panel: {
         borderRadius: RADIUS.card,
         borderWidth: 1,
-        borderColor: GLASS.border,
+        /* Bright on top, hairline everywhere else. See GLASS.borderEdge:
+           a white ring on all four sides is a sticker, not a pane. */
+        borderColor: GLASS.borderEdge,
+        borderTopColor: GLASS.border,
         padding: SPACE.lg,
         ...GLASS.shadow,
     },

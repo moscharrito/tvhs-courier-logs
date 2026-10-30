@@ -42,10 +42,16 @@ export const theme = {
 export const GROUND = {
     /* More separation between the bands, so there is something for the glass
        to be translucent against. Three near-identical greys gave the panes
-       nothing to catch. */
-    top: '#e3ede7',
+       nothing to catch.
+    
+       WIDENED AGAIN. A pane is only as glassy as the thing behind it varies:
+       with the bands this close, the top and bottom of a tall panel caught
+       almost the same colour and it read as a flat fill. The spread is still
+       small enough that the ground is a background rather than a pattern --
+       a courier should notice the panes, not the wallpaper. */
+    top: '#dCe9e0',
     middle: '#f2f6f3',
-    bottom: '#d8e6dd',
+    bottom: '#cfe0d6',
 } as const;
 
 export const GLASS = {
@@ -62,12 +68,24 @@ export const GLASS = {
        white edge against a denser fill is what gives it thickness. */
     border: 'rgba(255,255,255,0.95)',
     borderSubtle: 'rgba(17,24,39,0.06)',
+    /* THE OTHER THREE EDGES ARE NOT THE TOP ONE.
+    
+       A full white border on all four sides is a sticker: real glass catches
+       light on the edge facing it and goes darker where it meets what is
+       under it. Ringing the panel in white flattened exactly the thickness
+       the bright top edge was there to create. So the top keeps `border`
+       and the sides and bottom take this, which is a hairline of the ink
+       colour rather than an absence of one. */
+    borderEdge: 'rgba(17,24,39,0.10)',
     /* Wide and soft, so the panel floats rather than being outlined. */
     shadow: {
         shadowColor: '#0b2318',
-        shadowOpacity: 0.16,
-        shadowRadius: 30,
-        shadowOffset: { width: 0, height: 12 },
+        /* Deeper and dropped a little further: the panel reads as floating
+           above the ground rather than resting on it, which is the other
+           half of what the bright top edge is doing. */
+        shadowOpacity: 0.2,
+        shadowRadius: 34,
+        shadowOffset: { width: 0, height: 14 },
         /* Android has no shadow radius control, so elevation approximates. */
         elevation: 6,
     },

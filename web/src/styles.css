@@ -553,3 +553,183 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    several cards wide, so it is capped rather than stretched: a search box
    the width of the screen reads as a page header, not as a filter. */
 .izy-lane-filter { max-width: 280px; margin-bottom: 12px; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * GLASS, ON THE WEB.
+ *
+ * The phone app has had this since ticket 7.1 and the web did not, so one
+ * product looked like two: a courier moved from a frosted app to flat white
+ * cards on flat grey and noticed. These rules bring the browser to the same
+ * surface language, using the same greens, so the only difference between
+ * the two is the device in somebody's hand.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHERE THE BLUR IS, AND WHY IT IS NOT EVERYWHERE.
+ *
+ * `backdrop-filter` is the real thing and the browser has it, which the app
+ * does not -- app/src/theme.ts explains why it fakes frosting with layered
+ * fills instead. But a blur is a per-element compositing pass, and the
+ * screens that matter here are long: a board with nine lanes, an orders
+ * table of two hundred rows, a roster of nine counters. Blurring every card
+ * on those is how a three-year-old laptop at a pharmacy counter starts
+ * dropping frames while somebody scrolls.
+ *
+ * So the blur goes on a BOUNDED number of large surfaces -- the shell, the
+ * sign-in card, a sticky table head, a folded section's hover -- and
+ * everything that repeats per row gets a translucent fill and a hairline
+ * instead. Same look, one or two compositing layers per screen rather than
+ * two hundred.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * READABILITY IS NOT NEGOTIABLE HERE.
+ *
+ * This is read by a driver standing in Texas sun and by a pharmacist across
+ * a counter. Glass costs contrast, so every fill behind body text is at
+ * least 0.72 opaque and the ink stays the same near-black it always was.
+ * Nothing load-bearing is carried by translucency alone.
+ *
+ * Two escape hatches, both of which produce a plainer but correct screen:
+ * `prefers-reduced-transparency` for somebody who has asked their system for
+ * less of this, and an @supports fallback for a browser without
+ * backdrop-filter, which gets heavier fills so a pane still reads as a pane
+ * rather than as a washed-out rectangle.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+    /* The ground the glass sits on. Mirrors GROUND in app/src/theme.ts:
+       flat colour gives translucency nothing to catch, and three bands of
+       near-identical grey gave the panes nothing either. */
+    --izy-ground-top: #e3ede7;
+    --izy-ground-mid: #f2f6f3;
+    --izy-ground-bot: #d8e6dd;
+
+    /* Mirrors GLASS in app/src/theme.ts. `fill` is for panes over the
+       ground; `fill-strong` for anything that has to stay readable while
+       content scrolls underneath it. */
+    --izy-glass: rgba(255, 255, 255, 0.72);
+    --izy-glass-strong: rgba(255, 255, 255, 0.88);
+    --izy-glass-quiet: rgba(255, 255, 255, 0.45);
+    --izy-glass-line: rgba(255, 255, 255, 0.65);
+    --izy-glass-edge: rgba(16, 24, 40, 0.07);
+    --izy-glass-shadow: 0 10px 30px rgba(16, 24, 40, 0.07), 0 2px 6px rgba(16, 24, 40, 0.05);
+    --izy-blur: saturate(140%) blur(14px);
+}
+
+/* THE GROUND. Fixed, so panes keep catching the same gradient as the page
+   scrolls rather than sliding over a moving backdrop. */
+body {
+    background:
+        radial-gradient(1200px 600px at 12% -5%, var(--izy-ground-top), transparent 60%),
+        radial-gradient(900px 500px at 95% 105%, var(--izy-ground-bot), transparent 55%),
+        var(--izy-ground-mid);
+    background-attachment: fixed;
+}
+
+/* A PANE, NOT A RECTANGLE. The light top border is what sells it: a pane
+   catches light on its upper edge, and without that this is just a pale box
+   with a shadow. */
+.izy-card,
+.izy-login-card {
+    background: var(--izy-glass);
+    border-color: var(--izy-glass-edge);
+    border-top-color: var(--izy-glass-line);
+    box-shadow: var(--izy-glass-shadow);
+}
+
+/* The sign-in card is one element on an otherwise empty page, so it can
+   afford the real blur -- and it is the first thing anybody sees. */
+.izy-login-card {
+    background: var(--izy-glass-strong);
+    backdrop-filter: var(--izy-blur);
+    -webkit-backdrop-filter: var(--izy-blur);
+}
+
+/* The shell. One surface, always on screen, so one compositing layer that
+   never changes: the cheapest possible place to spend a blur. */
+.izy-side {
+    background: linear-gradient(180deg, rgba(20, 83, 45, 0.94), rgba(14, 62, 33, 0.97));
+    backdrop-filter: var(--izy-blur);
+    -webkit-backdrop-filter: var(--izy-blur);
+    border-right: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+/* A folded section is a header on the ground. It should look like a pane
+   only when it is about to be opened, which is also the only moment the
+   blur is on screen. */
+.izy-section.is-folded { background: transparent; box-shadow: none; }
+.izy-section.is-folded:hover {
+    background: var(--izy-glass-quiet);
+    border-color: var(--izy-glass-edge);
+    backdrop-filter: var(--izy-blur);
+    -webkit-backdrop-filter: var(--izy-blur);
+}
+
+/* A sticky head has rows passing UNDER it, so this one earns its blur:
+   without it the text of row forty shows through the column names. */
+.izy-table th {
+    background: var(--izy-glass-strong);
+    backdrop-filter: var(--izy-blur);
+    -webkit-backdrop-filter: var(--izy-blur);
+}
+
+/* Per-row, so fills only. Zebra striping over glass has to be a tint rather
+   than the old flat #fafbfa, which painted an opaque band across the pane. */
+.izy-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.38); }
+.izy-table tbody tr:hover { background: rgba(22, 163, 74, 0.10); }
+
+/* Inputs sit ON the glass, so they need to read as inset rather than as
+   another pane floating at the same height. */
+.izy-field input,
+.izy-field select,
+.izy-field textarea {
+    background: rgba(255, 255, 255, 0.78);
+    border-color: var(--izy-glass-edge);
+}
+.izy-field input:focus,
+.izy-field select:focus,
+.izy-field textarea:focus {
+    background: #fff;
+    outline: 2px solid var(--izy-green-2);
+    outline-offset: -1px;
+}
+
+/* The secondary button was flat white on flat white and disappeared against
+   a card. On glass it can be the glass. */
+.izy-btn.secondary { background: var(--izy-glass-strong); border-color: var(--izy-glass-edge); }
+.izy-btn.secondary:hover { background: #fff; }
+
+/* Alerts keep their colour and gain the same edge, so they read as panes
+   tinted by their meaning rather than as flat blocks of colour. */
+.izy-alert { border: 1px solid var(--izy-glass-edge); border-top-color: var(--izy-glass-line); }
+
+/* ── Escape hatch 1: somebody has asked their system for less of this ──── */
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --izy-glass: #ffffff;
+        --izy-glass-strong: #ffffff;
+        --izy-glass-quiet: #ffffff;
+        --izy-blur: none;
+    }
+    body { background: var(--izy-bg); }
+    .izy-side { background: var(--izy-green); }
+    .izy-table tbody tr:nth-child(even) { background: #fafbfa; }
+    .izy-field input, .izy-field select, .izy-field textarea { background: #fff; }
+}
+
+/* ── Escape hatch 2: a browser with no backdrop-filter ─────────────────── */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    :root {
+        --izy-glass: rgba(255, 255, 255, 0.92);
+        --izy-glass-strong: #ffffff;
+    }
+    .izy-side { background: var(--izy-green); }
+    .izy-table th { background: #fff; }
+}
+
+/* ── And paper is not glass ────────────────────────────────────────────── */
+@media print {
+    body { background: #fff; }
+    .izy-card, .izy-login-card, .izy-table th {
+        background: #fff; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+    }
+}
