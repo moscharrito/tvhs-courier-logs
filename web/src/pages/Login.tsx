@@ -24,9 +24,33 @@
  * since 5.4), the first thing shown is a PIN and the courier's own name. That
  * is the point of the whole enrolment mechanism, and until 5.4 there was no
  * screen that used it, so couriers typed a username and password at a
- * pharmacy counter instead. */
+ * pharmacy counter instead.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ONE URL PER CONTRACT: /uh AND /tvhs SKIP STEP 1.
+ *
+ * A University Health pharmacist opening the root is asked to choose between
+ * their contract and somebody else's, named. It is a question they cannot
+ * get wrong and should never have been asked, and it discloses that the
+ * other contract exists. /uh and /tvhs answer it for them.
+ *
+ * THIS IS NOT A BOUNDARY, and must not be described as one. Anybody may type
+ * either path; what changes is what each audience is SHOWN by default. The
+ * separation that matters is done by the server, which authenticates and
+ * then scopes every answer to the caller's memberships.
+ *
+ * The segment is matched against the project list the server already sends,
+ * never against a list written here. A code this application does not have
+ * -- a typo, an old bookmark, a third contract added later -- therefore
+ * falls through to the picker, which is a working page rather than a dead
+ * end. Nothing has to be edited here when a contract is added.
+ *
+ * The phone's own lock screen still wins. A courier who has enrolled this
+ * handset gets their PIN whatever the URL says, because that screen is about
+ * who is holding the phone and not about which contract they drive for. */
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { SecretInput } from '../app/SecretInput';
@@ -35,6 +59,10 @@ import { Loading } from '../app/Loading';
 
 type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'device' | 'reset';
 interface LoginProject { code: string; name: string }
+
+/** The first path segment, lowercased. Null at the root. */
+const firstSegment = (pathname: string): string | null =>
+    pathname.split('/').filter(Boolean)[0]?.toLowerCase() ?? null;
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 const routeLabel = (r: string | null) => (r === 'northbound' ? 'NorthBound' : r === 'southbound' ? 'SouthBound' : r ?? '');
@@ -46,6 +74,7 @@ const pickHint = (d: DriverPick) => (d.route === null
 
 export function Login() {
     const { refresh } = useAuth();
+    const { pathname } = useLocation();
     const [projects, setProjects] = useState<LoginProject[] | null>(null);
     /** Who this phone belongs to, when it has been set up. */
     const [phone, setPhone] = useState<DeviceIdentity | null>(null);
@@ -58,6 +87,12 @@ export function Login() {
     const [username, setUsername] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+
+    /* Null until the list arrives, and null for ever on a path that names no
+       project. Derived rather than held: there is one source of truth for
+       "which project", and it is the one the server sent. */
+    const urlCode = firstSegment(pathname);
+    const pinned = projects?.find((p) => p.code.toLowerCase() === urlCode) ?? null;
 
     useEffect(() => {
         api<LoginProject[]>('/api/login/projects').then(setProjects).catch(() => setProjects([]));
@@ -92,6 +127,23 @@ export function Login() {
             })
             .catch(() => { setDrivers([]); setMode('staff'); });
     };
+
+    /* Answer step 1 from the URL, once both questions this page asks on load
+       have come back.
+     
+       Waiting for `phone` is what keeps the enrolled handset's lock screen:
+       acting on `projects` alone would race the device probe and the winner
+       would depend on which request finished first. `mode` is in the
+       dependencies so this cannot drag somebody back who has since moved on
+       -- including out of a password reset, which returns to step 1 and from
+       here lands back on their own contract rather than on the picker. */
+    useEffect(() => {
+        if (!pinned || phone === null) return;
+        if (phone.enrolled && phone.hasPin) return;
+        if (mode !== 'project') return;
+        chooseProject(pinned);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pinned, phone, mode]);
 
     const pick = (d: DriverPick) => {
         setDriver(d);
@@ -172,7 +224,13 @@ export function Login() {
                         <button
                             className="izy-link"
                             type="button"
-                            onClick={() => { setMode('project'); setPin(''); setError(null); }}
+                            onClick={() => {
+                                setPin('');
+                                setError(null);
+                                /* Back to this contract's sign-in, not to a
+                                   choice they were deliberately not asked. */
+                                if (pinned) chooseProject(pinned); else setMode('project');
+                            }}
                         >
                             Not {phone.name}? Sign in another way
                         </button>
@@ -195,7 +253,9 @@ export function Login() {
 
                 {mode === 'pick' && project && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        <button className="izy-link" type="button" onClick={backToProjects} style={{ alignSelf: 'flex-start' }}>Back</button>
+                        {/* Only when the picker is where Back goes. On /tvhs
+                            it would offer a step this URL exists to skip. */}
+                        {!pinned && <button className="izy-link" type="button" onClick={backToProjects} style={{ alignSelf: 'flex-start' }}>Back</button>}
                         <div className="izy-muted">{project.name} · who is driving?</div>
                         {drivers === null ? <Loading label="Loading drivers" /> : drivers.map((d) => (
                             <button key={d.username} className="izy-driver" onClick={() => pick(d)} type="button">
@@ -245,7 +305,12 @@ export function Login() {
 
                 {mode === 'staff' && (
                     <form onSubmit={(e) => { void submit(e); }}>
-                        <button className="izy-link" type="button" onClick={backToProjects} style={{ alignSelf: 'flex-start' }}>Back</button>
+                        {!pinned && <button className="izy-link" type="button" onClick={backToProjects} style={{ alignSelf: 'flex-start' }}>Back</button>}
+                        {/* Which contract this is. On /uh it is the only thing
+                            on the screen that says so, and a pharmacist who
+                            has followed a link needs to see they are in the
+                            right place before they type a password. */}
+                        {project && <div className="izy-muted">{project.name}</div>}
                         <label className="izy-field">Username
                             <input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
                         </label>

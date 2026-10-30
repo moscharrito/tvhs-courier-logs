@@ -360,6 +360,83 @@ describe('Login', () => {
         expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
     });
 
+    /* ── One URL per contract ──────────────────────────────────────────── */
+
+    it('skips the project question on /uh and opens the sign-in for that contract', async () => {
+        const { calls } = mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: false },
+            'GET /api/drivers/list?project=uh': [],
+        });
+        renderApp('/uh');
+
+        expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+        expect(screen.queryByText('Which project are you signing in to?')).not.toBeInTheDocument();
+        /* The point of the whole change: the other contract is not named on
+           a University Health pharmacist's screen. */
+        expect(screen.queryByText('TVHS RMD Courier')).not.toBeInTheDocument();
+        /* But they can still see which one they are in. */
+        expect(screen.getByText('UH Pharmacy Courier')).toBeInTheDocument();
+        expect(calls).toContain('GET /api/drivers/list?project=uh');
+    });
+
+    it('skips it on /tvhs and goes straight to the drivers for that project', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: false },
+            'GET /api/drivers/list?project=tvhs': drivers,
+        });
+        renderApp('/tvhs');
+
+        expect(await screen.findByText(/who is driving\?/)).toBeInTheDocument();
+        expect(screen.queryByText('Which project are you signing in to?')).not.toBeInTheDocument();
+        expect(screen.queryByText('UH Pharmacy Courier')).not.toBeInTheDocument();
+    });
+
+    it('offers no Back to a question it never asked', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: false },
+            'GET /api/drivers/list?project=tvhs': drivers,
+        });
+        renderApp('/tvhs');
+
+        await screen.findByText(/who is driving\?/);
+        expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
+    });
+
+    /* A typo, an old bookmark, or a contract that does not exist. The picker
+       is a working page; a dead end is not. */
+    it('falls back to the picker on a path that names no project', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: false },
+        });
+        renderApp('/uhh');
+
+        expect(await screen.findByText('Which project are you signing in to?')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /UH Pharmacy Courier/ })).toBeInTheDocument();
+    });
+
+    /* The lock screen is about who is holding the phone, which no URL knows. */
+    it('still opens an enrolled phone on its PIN, whatever the path says', async () => {
+        mockFetch({
+            'GET /api/session': { status: 401, body: { error: 'No session' } },
+            'GET /api/login/projects': loginProjects,
+            'GET /api/login/device': { enrolled: true, name: 'Mohammed', username: 'mohammed', hasPin: true, label: "Mohammed's phone" },
+            'GET /api/drivers/list?project=tvhs': drivers,
+        });
+        renderApp('/tvhs');
+
+        expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
+        expect(screen.getByText('Mohammed')).toBeInTheDocument();
+        expect(screen.queryByText(/who is driving\?/)).not.toBeInTheDocument();
+    });
+
     it('shows the TAG brand and the dotted loader while the session is resolving', async () => {
         let release = () => {};
         const gate = new Promise<void>((r) => { release = r; });
