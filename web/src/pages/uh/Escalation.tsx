@@ -32,6 +32,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { displayName } from '../../lib/people';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
@@ -43,9 +44,9 @@ export interface SweepState {
 
 export interface SweepOutcome {
     serviceDate: string;
-    assigned: Array<{ orderId: number; courierUsername: string; serviceType: string; minutesToDue: number; runId: number | null }>;
+    assigned: Array<{ orderId: number; courierUsername: string; courierName?: string; serviceType: string; minutesToDue: number; runId: number | null }>;
     unassignable: Array<{ orderId: number; serviceType: string; minutesToDue: number; reason: string }>;
-    couriers: Array<{ courierUsername: string; open: number }>;
+    couriers: Array<{ courierUsername: string; courierName?: string; open: number }>;
 }
 
 export function Escalation({ projectCode }: { projectCode: string }) {
@@ -191,7 +192,8 @@ function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
                                     {pagedSweep.rows.map((a) => (
                                         <tr key={a.orderId}>
                                             <td>#{a.orderId} <span className="izy-muted">{a.serviceType.toUpperCase()}</span></td>
-                                            <td><b>{a.courierUsername}</b></td>
+                                            {/* The driver, by name. This printed their email address. */}
+                                            <td><b>{displayName({ name: a.courierName ?? '', username: a.courierUsername })}</b></td>
                                             <td className={a.minutesToDue < 0 ? 'izy-stat-bad' : 'izy-stat-warn'}>
                                                 {a.minutesToDue < 0 ? `${-a.minutesToDue} min overdue` : `in ${a.minutesToDue} min`}
                                             </td>
@@ -202,7 +204,7 @@ function Sweep({ state, preview, busy, onPreview, onRun, onCancel }: {
                             <Pager of={pagedSweep} noun="deliveries" />
                             {preview.couriers.length > 0 && (
                                 <p className="izy-muted">
-                                    On shift: {preview.couriers.map((c) => `${c.courierUsername} (${c.open} open)`).join(', ')}
+                                    On shift: {preview.couriers.map((c) => `${displayName({ name: c.courierName ?? '', username: c.courierUsername })} (${c.open} open)`).join(', ')}
                                 </p>
                             )}
                         </>

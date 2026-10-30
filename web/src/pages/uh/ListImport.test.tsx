@@ -277,13 +277,13 @@ describe('ListImport', () => {
                 id: 4, site: { id: 9, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
                 serviceDate: '2026-10-28', status: 'released', receivedAt: '2026-10-28T17:00:00.000Z',
                 sourceFilename: 'green.csv', rowCount: 8, orderCount: 8, skippedCount: 0,
-                importedBy: 'bereketgeremu@gmail.com', importedByName: 'Bereket Nigusse',
+                importedBy: 'dana.whitfield@example.com', importedByName: 'Dana Whitfield',
             }],
         });
         render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
         const row4 = (await screen.findByText('green.csv')).closest('tr')!;
-        expect(within(row4).getByText('Bereket Nigusse')).toBeInTheDocument();
-        expect(within(row4).queryByText('bereketgeremu@gmail.com')).not.toBeInTheDocument();
+        expect(within(row4).getByText('Dana Whitfield')).toBeInTheDocument();
+        expect(within(row4).queryByText('dana.whitfield@example.com')).not.toBeInTheDocument();
     });
 
     it('falls back to the username when a server sends no name', async () => {

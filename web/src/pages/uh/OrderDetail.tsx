@@ -172,7 +172,19 @@ export function OrderDetail() {
                             <td>{order.zone === null ? <span className="izy-pill warn">out of area, needs a distance</span> : `Zone ${order.zone}`}</td>
                         </tr>
                         <tr><th>Status</th><td>{order.status}{order.failureReason && <> · {order.failureReason}</>}</td></tr>
-                        <tr><th>Courier</th><td>{order.assignedTo ?? <span className="izy-muted">unassigned</span>}</td></tr>
+                        {/* The person, not the key. `assignedTo` is a username, which on this
+                            contract is the driver's email address; the server now sends
+                            the name beside it. See lib/people.ts. */}
+                        <tr><th>Courier</th><td>
+                            {order.assignedTo === null || order.assignedTo === undefined
+                                ? <span className="izy-muted">unassigned</span>
+                                : <>
+                                    {displayName({ name: order.assignedToName ?? '', username: order.assignedTo })}
+                                    {handleUnder({ name: order.assignedToName ?? '', username: order.assignedTo }) !== null && (
+                                        <div className="izy-muted">{handleUnder({ name: order.assignedToName ?? '', username: order.assignedTo })}</div>
+                                    )}
+                                </>}
+                        </td></tr>
                         <tr><th>Requested</th><td>{stamp(order.receivedAt)}</td></tr>
                         <tr>
                             <th>Due</th>

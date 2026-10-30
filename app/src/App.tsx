@@ -84,6 +84,10 @@ export function App() {
     /* Shown on the profile screen. Empty until the session call lands, which
        is fine: that screen is several taps away from a cold start. */
     const [who, setWho] = useState('');
+    /* Their NAME, beside the username. The session has carried it all
+       along; only the TVHS branch was using it, so a UH driver's own
+       profile showed them their email address. See lib/people.ts. */
+    const [whoName, setWhoName] = useState('');
     /* Which van the PIN signed in to. TVHS only: a route is what picks the
        legs, and the UH side has none. */
     const [tvhs, setTvhs] = useState<{ route: string; name: string } | null>(null);
@@ -93,10 +97,11 @@ export function App() {
     useEffect(() => {
         if (token === null || token === undefined || chosen === null) return;
         let live = true;
-        void get<{ username: string }>('/api/session', token)
+        void get<{ username: string; name?: string }>('/api/session', token)
             .then((me) => {
                 if (!live) return;
                 setWho(me.username);
+                setWhoName(me.name ?? '');
             })
             .catch(() => undefined);
         void get<Array<{ code: string; name: string }>>('/api/me/projects', token)
@@ -144,6 +149,7 @@ export function App() {
         setApplying(false);
         setMismatch(null);
         setWho('');
+        setWhoName('');
         setTvhs(null);
         /* The contract choice goes too. The next person to hold this phone
            might drive the other one, and a remembered choice would send them
@@ -260,6 +266,7 @@ export function App() {
                     token={token}
                     project={project}
                     username={who}
+                    name={whoName}
                     onSignedOut={onSignedOut}
                     /* Clears the CONTRACT, not just the project, and that is
                        the fix for a button that did nothing. It used to call

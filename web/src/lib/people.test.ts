@@ -11,7 +11,7 @@ import { handleUnder, displayName, looksLikeEmail } from './people';
 
 describe('handleUnder', () => {
     it('says nothing when the username is only the name again, as an address', () => {
-        expect(handleUnder({ name: 'Bereket Nigusse', username: 'bereketgeremu@gmail.com' })).toBeNull();
+        expect(handleUnder({ name: 'Dana Whitfield', username: 'dana.whitfield@example.com' })).toBeNull();
     });
 
     it('keeps a handle, which is not a name and cannot be guessed from one', () => {
@@ -23,7 +23,7 @@ describe('handleUnder', () => {
     it('falls back to the username when there is no name at all', () => {
         /* A row with no label is a row nobody can act on, and an address is
            better than that. */
-        expect(handleUnder({ name: '', username: 'moha0716@gmail.com' })).toBe('moha0716@gmail.com');
+        expect(handleUnder({ name: '', username: 'owen.castellanos@example.com' })).toBe('owen.castellanos@example.com');
         expect(handleUnder({ name: undefined, username: 'test.courier' })).toBe('test.courier');
     });
 
@@ -34,7 +34,7 @@ describe('handleUnder', () => {
 
 describe('displayName', () => {
     it('prefers the name', () => {
-        expect(displayName({ name: 'Mohamed Djemai', username: 'moha0716@gmail.com' })).toBe('Mohamed Djemai');
+        expect(displayName({ name: 'Owen Castellanos', username: 'owen.castellanos@example.com' })).toBe('Owen Castellanos');
     });
 
     it('does not render an empty heading', () => {

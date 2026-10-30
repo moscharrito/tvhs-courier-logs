@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
+import { namesFor, displayName } from './people';
 import { hasProofPhoto, attachPhotos } from './pod-photos';
 import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
@@ -769,6 +770,15 @@ export function createOrdersRouter(
         const slice = hasMore ? found.slice(0, limit) : found;
         const last = slice[slice.length - 1];
         const rows = slice.map(present);
+        /* The courier's NAME beside the username the row stores.
+           One query for the page, not one per row: two hundred orders carry
+           at most a couple of dozen distinct couriers, and this endpoint is
+           polled. See modules/uh/people.ts for why the server has to do
+           this at all. */
+        const listNames = await namesFor(client, rows.map((r) => r.assignedTo ?? ''));
+        for (const r of rows) {
+            (r as Record<string, unknown>)['assignedToName'] = displayName(r.assignedTo ?? null, listNames);
+        }
 
         await req.audit('order.list', 'order', null, {
             returned: rows.length, total, filters: applied, paged: after !== null,
@@ -1021,8 +1031,12 @@ export function createOrdersRouter(
         // Reading one order means reading patient data; record that it happened.
         await req.audit('order.read', 'order', String(order.id), { events: events.rows.length });
 
+        const courierNames = await namesFor(client, [String(order.assigned_to_username ?? '')]);
         res.json({
             ...present(order),
+            /** The courier's name, for the screen. `assignedTo` beside it is
+             *  still the username, which is the key everything joins on. */
+            assignedToName: displayName(order.assigned_to_username ?? null, courierNames),
             packages: pkgs.rows.map((p) => ({
                 id: Number(p['id']),
                 description: String(p['description']),

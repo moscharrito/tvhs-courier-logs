@@ -37,6 +37,7 @@ import { todayIn } from '../../core/dates';
 import { assignToCourier } from './assign';
 import { resolveSettings } from '../../core/projects/settings';
 import { notify, notifyAll, dispatchersOf } from '../../core/notify/outbox';
+import { namesFor } from './people';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -113,11 +114,14 @@ export interface SweepInput {
 export interface SweepOutcome {
     serviceDate: string;
     /** Handed out, with who got it and why it could not wait. */
-    assigned: Array<{ orderId: number; courierUsername: string; serviceType: string; minutesToDue: number; runId: number | null }>;
+    assigned: Array<{ orderId: number; courierUsername: string; courierName: string; serviceType: string; minutesToDue: number; runId: number | null }>;
     /** Past the threshold and nobody to give it to. The loud case. */
     unassignable: Array<{ orderId: number; serviceType: string; minutesToDue: number; reason: string }>;
     /** On shift and how much each is already carrying, for the record. */
-    couriers: Array<{ courierUsername: string; open: number }>;
+    /* `courierName` beside the username on both of these: the username on
+       this contract is a personal email address, and the escalation table
+       printed it as the label. See modules/uh/people.ts. */
+    couriers: Array<{ courierUsername: string; courierName: string; open: number }>;
 }
 
 /**
@@ -163,7 +167,10 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
         open: Number(r['open_stops'] ?? 0),
     }));
 
-    const assigned: SweepOutcome['assigned'] = [];
+    /* Built without the name, which is attached once at the end from a
+       single lookup. Naming each one as it is pushed would be a query per
+       order inside the loop that hands work out. */
+    const assigned: Array<Omit<SweepOutcome['assigned'][number], 'courierName'>> = [];
     const unassignable: SweepOutcome['unassignable'] = [];
 
     for (const row of pending.rows) {
@@ -250,6 +257,19 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
         });
     }
 
-    return { serviceDate, assigned, unassignable, couriers };
+    /* Names resolved once for everybody who appears, then attached. The
+       username stays on the row: it is the key the rest of the system
+       joins on and a rename must not rewrite it. */
+    const names = await namesFor(client, [
+        ...assigned.map((a) => a.courierUsername),
+        ...couriers.map((c) => c.courierUsername),
+    ]);
+    const named = (u: string) => names.get(u) ?? u;
+    return {
+        serviceDate,
+        assigned: assigned.map((a) => ({ ...a, courierName: named(a.courierUsername) })),
+        unassignable,
+        couriers: couriers.map((c) => ({ ...c, courierName: named(c.courierUsername) })),
+    };
 }
 

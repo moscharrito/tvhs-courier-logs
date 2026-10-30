@@ -11,8 +11,8 @@
  * Several screens showed `name` and then the username in grey beneath it,
  * which on this contract reads as:
  *
- *     Bereket Nigusse
- *     bereketgeremu@gmail.com
+ *     Dana Whitfield
+ *     dana.whitfield@example.com
  *
  * Nobody dispatching needs that. It is a personal address on a screen a
  * room can see, it is the longest thing in the column so it sets the

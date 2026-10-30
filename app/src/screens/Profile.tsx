@@ -26,10 +26,13 @@ import { SPACE, TYPE, theme } from '../theme';
 import type { Project } from '../lib/api';
 import { signOutQuestion, type SignOutQuestion } from '../lib/outbox';
 import { ChangePassword } from './ChangePassword';
+import { displayName, handleUnder } from '../lib/people';
 
-export function Profile({ token, username, project, queued, onBack, onSwitchContract, onSignOut }: {
+export function Profile({ token, username, name, project, queued, onBack, onSwitchContract, onSignOut }: {
     token: string;
     username: string;
+    /** Their name. Empty when the session did not carry one. */
+    name?: string;
     project: Project;
     /** How many writes are still waiting to send. */
     queued: number;
@@ -74,8 +77,18 @@ export function Profile({ token, username, project, queued, onBack, onSwitchCont
                 )}
 
                 <Panel style={styles.panel}>
+                    {/* THE PERSON, NOT THE KEY.
+                        This printed the username, which on this contract is
+                        the driver's own email address — shown back to them on
+                        a screen they hold up at a pharmacy counter. The
+                        username stays underneath only when it says something
+                        the name does not, which an address never does. See
+                        lib/people.ts. */}
                     <Text style={styles.label}>Signed in as</Text>
-                    <Text style={styles.value}>{username}</Text>
+                    <Text style={styles.value}>{displayName({ name, username })}</Text>
+                    {handleUnder({ name, username }) !== null && (
+                        <Text style={styles.label}>{handleUnder({ name, username })}</Text>
+                    )}
 
                     <Text style={styles.label}>Driving for</Text>
                     <Text style={styles.value}>{project.name}</Text>

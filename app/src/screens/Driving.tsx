@@ -45,6 +45,8 @@ interface Props {
     token: string;
     project: Project;
     username: string;
+    /** Their name. Empty when the session did not carry one. */
+    name: string;
     onSignedOut: () => void;
     onBack: () => void;
 }
@@ -58,7 +60,7 @@ const TABS: ReadonlyArray<TabDef<Tab>> = [
     { key: 'you', label: 'You', Icon: ProfileIcon, hint: 'Your account, switching contract, and signing out' },
 ];
 
-export function Driving({ token, project, username, onSignedOut, onBack }: Props) {
+export function Driving({ token, project, username, name, onSignedOut, onBack }: Props) {
     const [tab, setTab] = useState<Tab>('run');
     /* Only so the profile screen can warn before signing out discards them. */
     const [queued, setQueued] = useState(0);
@@ -88,6 +90,7 @@ export function Driving({ token, project, username, onSignedOut, onBack }: Props
                     <Profile
                         token={token}
                         username={username}
+                        name={name}
                         project={project}
                         queued={queued}
                         onBack={() => setTab('run')}

@@ -17,6 +17,7 @@ import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import type { Site } from './Sites';
+import { displayName } from '../../lib/people';
 
 export interface Sla {
     state: 'open' | 'due_soon' | 'overdue' | 'met' | 'missed' | 'not_applicable';
@@ -40,6 +41,9 @@ export interface OrderRow {
     status: string;
     dueAt: string | null;
     assignedTo: string | null;
+    /** The courier's name. Optional: a server older than this build does
+     *  not send it, and the row falls back to the username. */
+    assignedToName?: string | null;
     sla: Sla;
 }
 
@@ -295,7 +299,10 @@ export function Orders() {
                                         <td>{o.zone === null ? <span className="izy-pill warn">out of area</span> : o.zone}</td>
                                         <td>{o.serviceType}</td>
                                         <td>{STATUS_LABEL[o.status] ?? o.status}</td>
-                                        <td>{o.assignedTo ?? <span className="izy-muted">unassigned</span>}</td>
+                                        {/* By name. The username behind it is an email address. */}
+                                        <td>{o.assignedTo
+                                            ? displayName({ name: o.assignedToName ?? '', username: o.assignedTo })
+                                            : <span className="izy-muted">unassigned</span>}</td>
                                     </tr>
                                 );
                             })}
