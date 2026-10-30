@@ -169,6 +169,30 @@ describe('the driver roster', () => {
         expect(await screen.findByText(/Nobody on this project is a driver yet/)).toBeInTheDocument();
     });
 
+    it('pages a pharmacy with more drivers than fit, and folds each counter', async () => {
+        /* Robert B. Green has eight today and the contract grows. Each
+           counter gets its OWN page state -- turning to page two at one
+           pharmacy must not move another -- which is why the group is its
+           own component rather than a hook inside the map. */
+        const many = Array.from({ length: 11 }, (_, i) => driver({
+            username: `d${i}`, name: `Driver Number ${i}`, homeSiteId: 1,
+            homeSiteCode: 'green', homeSiteName: 'Robert B. Green',
+        }));
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: many }) }));
+        await screen.findByRole('heading', { name: 'Driver roster' });
+
+        /* Eight of eleven, and the pager says so. */
+        expect(screen.getByText('Driver Number 0')).toBeInTheDocument();
+        expect(screen.queryByText('Driver Number 10')).not.toBeInTheDocument();
+
+        /* And the group folds, which is what makes nine counters readable
+           on a phone. */
+        const toggle = screen.getByRole('button', { name: /Robert B. Green/ });
+        expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        fireEvent.click(toggle);
+        expect(screen.queryByText('Driver Number 0')).not.toBeInTheDocument();
+    });
+
     it('says a home pharmacy is a default and not a restriction', async () => {
         /* Cover is the normal case on a contract where somebody rings in
            sick, and a screen that read as a lock would stop a dispatcher

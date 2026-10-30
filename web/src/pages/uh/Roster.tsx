@@ -41,6 +41,8 @@ import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { useAuth } from '../../app/auth';
 import { handleUnder } from '../../lib/people';
+import { Pager, usePaged } from '../../app/Pager';
+import { Section } from '../../app/Section';
 
 interface RosterDriver {
     username: string;
@@ -167,60 +169,98 @@ export function Roster() {
 
             <div className="izy-roster">
                 {groups.map((g) => (
-                    <section className="izy-card izy-roster-group" key={g.key} aria-label={g.title}>
-                        <div className="izy-row-between">
-                            <h2>{g.title}</h2>
-                            <span className={`izy-pill ${g.drivers.length === 0 ? 'muted' : ''}`}>
-                                {g.drivers.length}
-                            </span>
-                        </div>
-                        {g.site !== null && g.drivers.length === 0 && (
-                            /* An empty counter is the thing this page is read
-                               to find. Said in words, not left as a zero. */
-                            <p className="izy-muted izy-stat-warn">Nobody drives from here.</p>
-                        )}
-                        {g.drivers.map((d) => (
-                            <div className="izy-roster-row" key={d.username}>
-                                <div>
-                                    <Link to={`/projects/${code}/drivers/${encodeURIComponent(d.username)}`}>{d.name}</Link>
-                                    {/* The space belongs OUTSIDE the pill. Inside, the
-                                        browser collapses it against the pill's own
-                                        padding and the name runs into the badge:
-                                        "Rosalind Achebeon shift". */}
-                                    {d.onShift && <> <span className="izy-pill">on shift</span></>}
-                                    <br />
-                                    <span className="izy-muted">
-                                        {/* WHETHER there is an address, not what
-                                            it is. A driver with none cannot reset
-                                            their own password and this is a list
-                                            of drivers in front of the person who
-                                            can fix that -- but printing the
-                                            address itself put a personal address
-                                            under every row. See lib/people.ts. */}
-                                        {d.email === ''
-                                            ? <span className="izy-stat-warn">no email address</span>
-                                            : 'can reset their password'}
-                                        {handleUnder(d) !== null && ` · ${handleUnder(d)}`}
-                                        {d.role === 'lead' && ' · site manager'}
-                                        {d.status !== 'active' && ' · disabled'}
-                                    </span>
-                                </div>
-                                <select
-                                    aria-label={`Home pharmacy for ${d.name}`}
-                                    value={d.homeSiteId === null ? UNASSIGNED : String(d.homeSiteId)}
-                                    disabled={saving === d.username}
-                                    onChange={(e) => { void setHome(d, e.target.value); }}
-                                >
-                                    <option value={UNASSIGNED}>No home pharmacy</option>
-                                    {data.sites.map((s) => (
-                                        <option key={s.id} value={s.id}>{s.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        ))}
-                    </section>
+                    <Group
+                        key={g.key}
+                        id={`uh.roster.${g.key}`}
+                        group={g}
+                        code={code}
+                        sites={data.sites}
+                        saving={saving}
+                        onSet={(d, v) => { void setHome(d, v); }}
+                    />
                 ))}
             </div>
         </>
+    );
+}
+
+
+/* ONE PHARMACY'S DRIVERS.
+ *
+ * Its own component for a dull and binding reason: the list is paged, paging
+ * is a hook, and a hook cannot be called inside the `groups.map` that renders
+ * nine of these. Lifting it here gives each group its own page state, which
+ * is what you want anyway -- turning to page two at Robert B. Green should
+ * not move Southeast.
+ *
+ * FOLDABLE, AND OPEN BY DEFAULT. Nine counters down a phone screen is a long
+ * scroll, and the person reading this usually came for one of them. Section
+ * remembers the choice per group, so a dispatcher who only ever looks at
+ * their own three can fold the rest once and have it stay that way. Open by
+ * default because the thing this page is read to find -- a counter with
+ * nobody on it -- has to be visible without opening anything.
+ */
+function Group({ id, group, code, sites, saving, onSet }: {
+    id: string;
+    group: { key: string; title: string; drivers: RosterDriver[]; site: RosterSite | null };
+    code: string;
+    sites: RosterSite[];
+    saving: string | null;
+    onSet: (d: RosterDriver, value: string) => void;
+}) {
+    const paged = usePaged(group.drivers, 8);
+
+    return (
+        <Section
+            id={id}
+            className="izy-roster-group"
+            title={group.title}
+            summary={`${group.drivers.length} ${group.drivers.length === 1 ? 'driver' : 'drivers'}`}
+        >
+            {group.site !== null && group.drivers.length === 0 && (
+                /* An empty counter is the thing this page is read to find.
+                   Said in words, not left as a zero. */
+                <p className="izy-muted izy-stat-warn">Nobody drives from here.</p>
+            )}
+            {paged.rows.map((d) => (
+                <div className="izy-roster-row" key={d.username}>
+                    <div>
+                        <Link to={`/projects/${code}/drivers/${encodeURIComponent(d.username)}`}>{d.name}</Link>
+                        {/* The space belongs OUTSIDE the pill. Inside, the
+                            browser collapses it against the pill's own
+                            padding and the name runs into the badge:
+                            "Rosalind Achebeon shift". */}
+                        {d.onShift && <> <span className="izy-pill">on shift</span></>}
+                        <br />
+                        <span className="izy-muted">
+                            {/* WHETHER there is an address, not what it is. A
+                                driver with none cannot reset their own
+                                password and this is a list of drivers in
+                                front of the person who can fix that -- but
+                                printing the address itself put a personal
+                                address under every row. See lib/people.ts. */}
+                            {d.email === ''
+                                ? <span className="izy-stat-warn">no email address</span>
+                                : 'can reset their password'}
+                            {handleUnder(d) !== null && ` · ${handleUnder(d)}`}
+                            {d.role === 'lead' && ' · site manager'}
+                            {d.status !== 'active' && ' · disabled'}
+                        </span>
+                    </div>
+                    <select
+                        aria-label={`Home pharmacy for ${d.name}`}
+                        value={d.homeSiteId === null ? UNASSIGNED : String(d.homeSiteId)}
+                        disabled={saving === d.username}
+                        onChange={(e) => onSet(d, e.target.value)}
+                    >
+                        <option value={UNASSIGNED}>No home pharmacy</option>
+                        {sites.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                    </select>
+                </div>
+            ))}
+            <Pager of={paged} noun="drivers" />
+        </Section>
     );
 }

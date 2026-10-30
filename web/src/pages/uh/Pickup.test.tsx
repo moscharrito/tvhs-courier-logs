@@ -258,11 +258,25 @@ describe('Pickup', () => {
         expect(screen.queryByLabelText('Packages counted')).not.toBeInTheDocument();
     });
 
-    it('lists the batch so a courier can check it against the counter', async () => {
+    it('keeps the batch folded, and lists it when the courier asks', async () => {
+        /* FOLDED, because of what the courier is doing at that moment: they
+           are counting boxes handed over a counter, not reading names. A
+           forty-order wave rendered whole pushes the count box and Continue
+           off a phone screen. The list settles an argument about one
+           package, which is a thing you look up.
+
+           Section remembers the choice, so a courier who wants it open gets
+           it open from the second collection onwards. */
         renderPickup();
         await screen.findByRole('heading', { name: 'Pick up' });
-        const details = screen.getByText('What is in this batch').closest('details')!;
-        expect(within(details).getByText(/Ines Vargas/)).toBeInTheDocument();
-        expect(within(details).getByText(/Marcus Ibarra/)).toBeInTheDocument();
+
+        const toggle = screen.getByRole('button', { name: /What is in this batch/ });
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.queryByText(/Ines Vargas/)).not.toBeInTheDocument();
+
+        fireEvent.click(toggle);
+
+        expect(await screen.findByText(/Ines Vargas/)).toBeInTheDocument();
+        expect(screen.getByText(/Marcus Ibarra/)).toBeInTheDocument();
     });
 });

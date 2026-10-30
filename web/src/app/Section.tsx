@@ -45,6 +45,12 @@ interface Props {
     summary?: ReactNode;
     /** Sentence under the title, shown only when open. */
     intro?: ReactNode;
+    /** Extra classes on the <section>, for a parent that styles its children.
+     *
+     *  The roster lays its groups out in a grid and needs `min-width: 0` on
+     *  each one, which a grid item without it loses: the longest driver name
+     *  then sets the column width and the row overflows. */
+    className?: string;
     /** Controls on the header, such as Edit. Clicks do not fold the panel.
      *
      *  Given `expand` because a header button almost always reveals something
@@ -57,7 +63,7 @@ interface Props {
     children: ReactNode;
 }
 
-export function Section({ id, title, summary, intro, actions, defaultOpen = true, children }: Props) {
+export function Section({ id, title, summary, intro, actions, defaultOpen = true, className, children }: Props) {
     const [open, setOpen] = useState(() => remembered(id, defaultOpen));
 
     const toggle = useCallback(() => {
@@ -81,7 +87,7 @@ export function Section({ id, title, summary, intro, actions, defaultOpen = true
            these was eight unlabelled boxes. Pointed at the heading rather than
            duplicating the title into an aria-label, so the two cannot drift. */
         <section
-            className={`izy-card izy-section${open ? '' : ' is-folded'}`}
+            className={`izy-card izy-section${open ? '' : ' is-folded'}${className === undefined ? '' : ` ${className}`}`}
             aria-labelledby={`${id}-heading`}
         >
             <div className="izy-section-head">

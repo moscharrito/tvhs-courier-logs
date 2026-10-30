@@ -16,6 +16,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
+import { Section } from '../../app/Section';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
 interface CarriedOrder {
@@ -81,6 +83,12 @@ export function Returns() {
         }
     }, [base]);
     useEffect(() => { void refresh(); }, [refresh]);
+
+    /* ABOVE THE EARLY RETURN. The first render has no `load` and takes the
+       spinner branch; a hook called only on the second is one React did not
+       see on the first, and that is a white screen rather than a bad list.
+       Same note as Pickup.tsx and app/src/screens/Run.tsx. */
+    const handingBack = usePaged(load?.destinations.find((d) => d.site.id === siteId)?.orders ?? []);
 
     if (load === null) return <div className="izy-card"><Loading label="Loading what you are carrying" /></div>;
 
@@ -253,10 +261,19 @@ export function Returns() {
                                         </label>
                                     </div>
                                 )}
-                                <details>
-                                    <summary>What you are handing back</summary>
+                                {/* Folded and paged, as on the pickup
+                                    screen and for the same reason: at the
+                                    counter the courier is counting boxes,
+                                    and the names are what settles an
+                                    argument about one of them. */}
+                                <Section
+                                    id="uh.returns.batch"
+                                    title="What you are handing back"
+                                    defaultOpen={false}
+                                    summary={`${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
+                                >
                                     <ul className="izy-plain-list">
-                                        {group.orders.map((o) => (
+                                        {handingBack.rows.map((o) => (
                                             <li key={o.orderId}>
                                                 {o.recipientName} · {o.packages} {o.packages === 1 ? 'package' : 'packages'}
                                                 {o.externalRef && <> · {o.externalRef}</>}
@@ -265,7 +282,8 @@ export function Returns() {
                                             </li>
                                         ))}
                                     </ul>
-                                </details>
+                                    <Pager of={handingBack} noun="orders" />
+                                </Section>
                             </div>
 
                             <div className="izy-card">

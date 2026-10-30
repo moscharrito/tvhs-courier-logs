@@ -15,6 +15,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { Pager, usePaged } from '../../app/Pager';
+import { Section } from '../../app/Section';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
 interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled?: boolean }
@@ -83,6 +85,16 @@ export function Pickup() {
         }
     }, [base, runId]);
     useEffect(() => { void load(); }, [load]);
+
+    /* ABOVE THE EARLY RETURN, and it has to stay there.
+     *
+     * The first render has no `waiting` and takes the spinner branch; the
+     * second has it and renders the form. A hook called only on the second
+     * is a hook React did not see on the first, which is "rendered more
+     * hooks than during the previous render" and a white screen for the
+     * courier. The app's Run.tsx carries the same note for the same reason,
+     * and that one was found by a driver rather than by a test. */
+    const batch = usePaged(waiting?.sites.find((s) => s.site.id === siteId)?.orders ?? []);
 
     if (waiting === null) return <div className="izy-card"><Loading label="Loading the pickup" /></div>;
 
@@ -243,17 +255,35 @@ export function Pickup() {
                                         </label>
                                     </div>
                                 )}
-                                <details>
-                                    <summary>What is in this batch</summary>
+                                {/* PAGED, AND FOLDED BY DEFAULT.
+                                    A Robert B. Green wave is forty orders.
+                                    Rendered whole, the count box and the
+                                    Continue button were pushed off a phone
+                                    screen by a list the courier is not
+                                    reading yet -- they are counting boxes,
+                                    not names. It is here to settle an
+                                    argument about one package, which is a
+                                    thing you look up rather than scroll
+                                    past. Section rather than <details>, so
+                                    it folds like every other panel in the
+                                    application and remembers whether this
+                                    courier likes it open. */}
+                                <Section
+                                    id="uh.pickup.batch"
+                                    title="What is in this batch"
+                                    defaultOpen={false}
+                                    summary={`${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
+                                >
                                     <ul className="izy-plain-list">
-                                        {group.orders.map((o) => (
+                                        {batch.rows.map((o) => (
                                             <li key={o.orderId}>
                                                 {o.recipientName} · {o.packages} {o.packages === 1 ? 'package' : 'packages'}
                                                 {o.externalRef && <> · {o.externalRef}</>}
                                             </li>
                                         ))}
                                     </ul>
-                                </details>
+                                    <Pager of={batch} noun="orders" />
+                                </Section>
                             </div>
 
                             <div className="izy-card">
