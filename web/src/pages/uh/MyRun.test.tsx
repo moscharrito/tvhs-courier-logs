@@ -171,13 +171,17 @@ describe('MyRun', () => {
         expect(call).toHaveAttribute('href', 'tel:2105550100');
     });
 
-    it('hides the call button rather than offering a number nobody set', async () => {
+    it('hides the call button rather than offering a number nobody set, and says nothing about it', async () => {
+        /* It used to explain the absence: "an administrator adds one in the
+           project's operating settings". That is an instruction for somebody
+           who is not holding this phone, printed on the screen a driver
+           works from, and the driver reading it is the one person who cannot
+           act on it. */
         renderRun(base({ 'GET /api/projects/uh/uh/runs/mine': mine({ dispatch: { phone: '', name: 'Dispatch' } }) }));
         await screen.findByRole('heading', { name: 'Today' });
         expect(screen.queryByRole('link', { name: /^Call/ })).not.toBeInTheDocument();
-        expect(screen.getByText(/No dispatch number is set/)).toBeInTheDocument();
-        // And says who can fix it, since the courier reading it cannot.
-        expect(screen.getByText(/An administrator adds one/)).toBeInTheDocument();
+        expect(screen.queryByText(/dispatch number/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/operating settings/i)).not.toBeInTheDocument();
     });
 
     it('counts progress and moves the next stop along', async () => {
@@ -221,18 +225,17 @@ describe('MyRun', () => {
         expect(within(list).getByText('Ines Vargas')).toBeInTheDocument();
     });
 
-    it('offers PIN setup once, and stops offering once the phone is set up', async () => {
-        /* Ticket 5.4. Without a prompt nobody discovers the PIN exists, which
-           is exactly what happened between tickets 2.3 and 5.4: a complete,
-           tested enrolment API that no screen ever mentioned. */
+    it('says nothing about PINs, on a set-up phone or an unenrolled one', async () => {
+        /* The offer lived here from ticket 5.4 until it came out again: a
+           setup task on a working screen, shown to a courier mid-round and
+           repeated every day until acted on. Enrolment is still reachable
+           from Your account, which is where a setting belongs.
+         
+           Both device answers, because the prompt was keyed on one of them
+           and a regression would only show on that branch. */
         renderRun(base({ 'GET /api/login/device': { enrolled: false } }));
-        expect(await screen.findByText(/a PIN signs you in instead of your password/i)).toBeInTheDocument();
-        expect(screen.getByRole('link', { name: 'Set up this phone' })).toBeInTheDocument();
-    });
-
-    it('says nothing about PINs on a phone that is already set up', async () => {
-        renderRun(base({ 'GET /api/login/device': { enrolled: true, name: 'Mohammed', username: 'mohammed', hasPin: true, label: 'phone' } }));
         await screen.findByRole('heading', { name: 'Today' });
-        expect(screen.queryByText(/a PIN signs you in instead/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/PIN/i)).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Set up this phone' })).not.toBeInTheDocument();
     });
 });

@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, type DeviceIdentity } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { useAuth, useProjectTimezone } from '../../app/auth';
@@ -81,8 +81,6 @@ export function MyRun() {
     const clock = clockFor(useProjectTimezone(code));
     const [data, setData] = useState<MineResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
-    /** Whether this phone is set up for PIN sign-in (ticket 5.4). */
-    const [phone, setPhone] = useState<DeviceIdentity | null>(null);
 
     /* Declared before the early returns below, which is why it takes the
        stops off `data` defensively rather than off the list computed further
@@ -100,12 +98,6 @@ export function MyRun() {
         }
     }, [code]);
     useEffect(() => { void load(); }, [load]);
-
-    /* Asked once. A failure here is not worth showing anybody: the prompt is
-       an offer, and a courier who cannot reach dispatch has a bigger problem. */
-    useEffect(() => {
-        api<DeviceIdentity>('/api/login/device').then(setPhone).catch(() => setPhone(null));
-    }, []);
 
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
@@ -149,29 +141,24 @@ export function MyRun() {
 
             {error !== null && <div className="izy-alert warn" role="status">{error}</div>}
 
-            {/* Offered, never enforced: a courier at a pharmacy counter must
-                not be held up by a setup screen. Without a prompt nobody
-                discovers the PIN exists at all, which is exactly what happened
-                between tickets 2.3 and 5.4. */}
-            {phone?.enrolled === false && (
-                <div className="izy-alert muted" role="status">
-                    Set this phone up once and a PIN signs you in instead of your password.{' '}
-                    <Link to="/devices">Set up this phone</Link>
-                </div>
-            )}
+            {/* NO PIN PROMPT HERE. It lived above the run between tickets
+                5.4 and this one, offering enrolment to anybody whose phone
+                was not set up. It is a setup task on a working screen: the
+                courier reading it is mid-round, it reappeared every day
+                until acted on, and the PIN is still discoverable from Your
+                account, which is where a setting belongs. */}
 
-            {data.dispatch.phone ? (
+            {/* The button, or nothing at all. The missing branch used to
+                explain the absence -- "an administrator adds one in the
+                project's operating settings" -- which is an instruction
+                addressed to somebody who is not holding this phone, on the
+                screen a driver works from. The absence is now silent here
+                and loud where it can be acted on: set-dispatch.mjs prints
+                it, and the operating settings screen says it. */}
+            {data.dispatch.phone !== '' && (
                 <a className="izy-btn izy-call" href={`tel:${data.dispatch.phone.replace(/[^0-9+]/g, '')}`}>
                     Call {data.dispatch.name}
                 </a>
-            ) : (
-                /* Says who fixes it. A courier reading this is the one person
-                   who cannot, and until the settings screen carried the field
-                   nobody could. */
-                <p className="izy-muted">
-                    No dispatch number is set yet, so there is no call button. An administrator adds one in the
-                    project&rsquo;s operating settings.
-                </p>
             )}
 
             {/* The shadow week only works if the people at the door can file
