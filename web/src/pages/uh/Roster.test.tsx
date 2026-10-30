@@ -29,7 +29,7 @@ const sites = [
 ];
 
 const driver = (over = {}) => ({
-    username: 'zoe.perrill', name: 'Zoe Perrill', email: 'zoe@example.com',
+    username: 'dana.whitfield', name: 'Dana Whitfield', email: 'dana.whitfield@example.com',
     status: 'active', role: 'courier', homeSiteId: 1,
     homeSiteCode: 'green', homeSiteName: 'Robert B. Green', onShift: false, ...over,
 });
@@ -72,7 +72,7 @@ describe('the driver roster', () => {
     it('groups drivers under the pharmacy they work from', async () => {
         renderRoster();
         const group = await screen.findByRole('region', { name: 'Robert B. Green' });
-        expect(within(group).getByText('Zoe Perrill')).toBeInTheDocument();
+        expect(within(group).getByText('Dana Whitfield')).toBeInTheDocument();
     });
 
     it('SAYS WHEN A PHARMACY HAS NOBODY, which is what the page is read for', async () => {
@@ -90,14 +90,14 @@ describe('the driver roster', () => {
             'GET /api/projects/uh/uh/roster': rosterData({
                 drivers: [
                     driver(),
-                    driver({ username: 'donnie.c', name: 'Donnie Clendennen', homeSiteId: null, homeSiteCode: null, homeSiteName: null }),
+                    driver({ username: 'owen.c', name: 'Owen Castellanos', homeSiteId: null, homeSiteCode: null, homeSiteName: null }),
                 ],
             }),
         }));
         const groups = await screen.findAllByRole('region');
         const first = groups[0]!;
         expect(first).toHaveAccessibleName('No home pharmacy yet');
-        expect(within(first).getByText('Donnie Clendennen')).toBeInTheDocument();
+        expect(within(first).getByText('Owen Castellanos')).toBeInTheDocument();
     });
 
     it('does not show an unassigned group when there is nobody in it', async () => {
@@ -134,19 +134,19 @@ describe('the driver roster', () => {
         /* Twenty-three dropdowns behind one Save is a form somebody
            half-fills and gets called away from. */
         const { calls } = renderRoster(routes({
-            'PUT /api/projects/uh/uh/roster/zoe.perrill': { ok: true, username: 'zoe.perrill', homeSiteId: 2 },
+            'PUT /api/projects/uh/uh/roster/dana.whitfield': { ok: true, username: 'dana.whitfield', homeSiteId: 2 },
         }));
-        fireEvent.change(await screen.findByLabelText('Home pharmacy for Zoe Perrill'), { target: { value: '2' } });
+        fireEvent.change(await screen.findByLabelText('Home pharmacy for Dana Whitfield'), { target: { value: '2' } });
 
-        await waitFor(() => expect(calls).toContain('PUT /api/projects/uh/uh/roster/zoe.perrill'));
-        expect(await screen.findByRole('status')).toHaveTextContent('Zoe Perrill → Southeast');
+        await waitFor(() => expect(calls).toContain('PUT /api/projects/uh/uh/roster/dana.whitfield'));
+        expect(await screen.findByRole('status')).toHaveTextContent('Dana Whitfield → Southeast');
     });
 
     it('says what went wrong rather than leaving a value the server refused', async () => {
         const { calls } = renderRoster(routes({
-            'PUT /api/projects/uh/uh/roster/zoe.perrill': { status: 409, body: { error: 'zoe.perrill is on this project as pharmacy, not as a driver.' } },
+            'PUT /api/projects/uh/uh/roster/dana.whitfield': { status: 409, body: { error: 'dana.whitfield is on this project as pharmacy, not as a driver.' } },
         }));
-        fireEvent.change(await screen.findByLabelText('Home pharmacy for Zoe Perrill'), { target: { value: '2' } });
+        fireEvent.change(await screen.findByLabelText('Home pharmacy for Dana Whitfield'), { target: { value: '2' } });
 
         expect(await screen.findByRole('status')).toHaveTextContent(/not as a driver/);
         /* And it reloads, so the select shows what is really stored rather
@@ -158,7 +158,7 @@ describe('the driver roster', () => {
         /* Clearing an assignment is a thing somebody means to do, and a
            blank first option reads as "not filled in yet". */
         renderRoster();
-        const select = await screen.findByLabelText('Home pharmacy for Zoe Perrill');
+        const select = await screen.findByLabelText('Home pharmacy for Dana Whitfield');
         expect(within(select).getByRole('option', { name: 'No home pharmacy' })).toBeInTheDocument();
     });
 

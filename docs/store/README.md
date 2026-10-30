@@ -92,15 +92,16 @@ in the repository.
 Testing -> Internal testing -> Testers -> Create email list. Named
 `Izy drivers — internal`.
 
-    smallgajiadams@gmail.com
-    moscharito@gmail.com
-    contracts@izymovers.com
+THE ADDRESSES ARE NOT WRITTEN DOWN HERE. Two of the three are personal
+mailboxes and this repository is public. The list in Play is the record;
+read it off the Testers tab.
 
 **EVERY ADDRESS HAS TO BE A GOOGLE ACCOUNT.** A Gmail address always is. One
 on our own domain is only a Google account if it is a Workspace mailbox or
 somebody registered it as one. Play takes a non-Google address into the list
 without complaining and that person then never gets access: no error, no
-bounce, nothing to diagnose. `contracts@izymovers.com` is the one to check.
+bounce, nothing to diagnose. The address on our own domain is the one to
+check -- it is the only one in the list that is not a Gmail account.
 
 **THE OPT-IN LINK IS NOT OPTIONAL.** Copy it from the Testers tab and send it
 to all three. Each person opens it and taps "Become a tester" before Play

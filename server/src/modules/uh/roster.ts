@@ -6,17 +6,21 @@
  * ─────────────────────────────────────────────────────────────────────────
  * WHY A STANDING ASSIGNMENT EXISTS AT ALL.
  *
- * University Health staffs by location, not by day: twenty-three drivers
- * are hired against a home pharmacy and drive from it every weekday. Robert
- * B. Green has five, Southeast four, Discharge four and so on down to Rene
- * Garza, who covers Vida and Wheatley together because between them they
- * are eighteen deliveries.
+ * University Health staffs by location, not by day: drivers are hired
+ * against a home pharmacy and drive from it every weekday. In the client's
+ * first draft Robert B. Green had five, Southeast four, Discharge four, and
+ * so on down to one driver covering Vida and Wheatley together, because
+ * between them they are eighteen deliveries.
+ *
+ * NO DRIVER IS NAMED IN THIS FILE, and none should be. That draft is a
+ * planning document about real employees; this repository is public. The
+ * assignments live in the database, where they belong.
  *
  * Without that written down, every morning starts from nothing. The planner
  * groups the day's orders into runs and a dispatcher then picks a name for
  * each one out of a list of everybody, with no indication of who drives
  * from where. That is workable for three drivers and it is not workable for
- * twenty-three: the thing a dispatcher knows and the screen does not is
+ * thirty-five: the thing a dispatcher knows and the screen does not is
  * exactly the thing that makes the morning slow.
  *
  * ─────────────────────────────────────────────────────────────────────────
