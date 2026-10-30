@@ -156,9 +156,22 @@ export function MyRun() {
                 and loud where it can be acted on: set-dispatch.mjs prints
                 it, and the operating settings screen says it. */}
             {data.dispatch.phone !== '' && (
-                <a className="izy-btn izy-call" href={`tel:${data.dispatch.phone.replace(/[^0-9+]/g, '')}`}>
-                    Call {data.dispatch.name}
-                </a>
+                /* THE NUMBER IS WRITTEN OUT, NOT ONLY LINKED.
+                 *
+                 * `tel:` is a tap on a phone and nothing at all in a desktop
+                 * browser: the button is there, you click it, and the page
+                 * sits where it was. Drivers work in the browser for the
+                 * first month and some of them will be at a laptop, so the
+                 * one piece of information on this control -- the number --
+                 * has to be readable rather than only dialable. It is also
+                 * the number somebody writes on their hand before the phone
+                 * dies. */
+                <p className="izy-dispatch">
+                    <a className="izy-btn izy-call" href={`tel:${data.dispatch.phone.replace(/[^0-9+]/g, '')}`}>
+                        Call {data.dispatch.name}
+                    </a>
+                    <span className="izy-muted">{data.dispatch.phone}</span>
+                </p>
             )}
 
             {/* The shadow week only works if the people at the door can file

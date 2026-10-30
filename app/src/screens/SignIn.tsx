@@ -24,14 +24,13 @@ interface Props {
     onSignedIn: (token: string) => void;
     /** Ticket 7.2: signing up is a first-class thing to do from this screen,
      *  not a link somebody has to be sent. */
-    onApply: () => void;
     /** And so is forgetting a password, for the same reason: the phone is
      *  what a courier has in their hand when the one they were read out
      *  does not work. */
     onForgot: () => void;
 }
 
-export function SignIn({ contractName, onBack, onSignedIn, onApply, onForgot }: Props) {
+export function SignIn({ contractName, onBack, onSignedIn, onForgot }: Props) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [busy, setBusy] = useState(false);
@@ -121,12 +120,6 @@ export function SignIn({ contractName, onBack, onSignedIn, onApply, onForgot }: 
                     title="Forgotten your password?"
                     detail="We can email you a code to set a new one."
                     onPress={onForgot}
-                    tone="secondary"
-                />
-                <CardButton
-                    title="Apply to drive for Izy"
-                    detail="New driver? Start here. It takes a couple of minutes."
-                    onPress={onApply}
                     tone="secondary"
                 />
             </View>

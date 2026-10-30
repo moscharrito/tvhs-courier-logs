@@ -733,3 +733,8 @@ body {
         background: #fff; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
     }
 }
+
+/* The call control and the number beside it. On a desktop browser `tel:`
+   does nothing, so the number is the part that has to be readable. */
+.izy-dispatch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
+.izy-dispatch .izy-muted { font-variant-numeric: tabular-nums; }

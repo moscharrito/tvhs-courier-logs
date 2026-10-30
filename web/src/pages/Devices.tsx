@@ -52,11 +52,27 @@ import { SecretInput } from '../app/SecretInput';
 import { confirmSignOut } from '../lib/outbox';
 
 export function Devices() {
-    const { user, signOut } = useAuth();
-    /* Platform role, the same rule the server enforces in
-       MAY_USE_DEVICE_PIN. A site lead is a driver here and works from a phone
-       at a counter exactly as a courier does. */
-    const mayUsePin = user?.role === 'driver';
+    const { user, projects, signOut } = useAuth();
+    /* THE PIN IS A TVHS THING, AND ONLY A TVHS THING.
+     *
+     * It was gated on the platform role alone -- the same rule the server
+     * enforces in MAY_USE_DEVICE_PIN -- which is every driver on every
+     * contract, so all thirty-five University Health drivers were being
+     * offered a four-digit sign-in nobody intends them to use.
+     *
+     * TVHS is where it earns its place: two vans, one driver each, a shared
+     * phone living in the cab, and a PIN instead of typing a password at a
+     * counter. University Health drivers each have their own account and
+     * their own handset, and the right answer there is the password they
+     * already have.
+     *
+     * So: a driver, AND on the contract the mechanism exists for. Somebody
+     * on both keeps it, which is correct -- it is the same phone.
+     *
+     * This closes the offer, not the mechanism. The server still honours a
+     * PIN already enrolled, so a phone set up before today keeps working
+     * until it is signed out; what stops is any new UH enrolment. */
+    const mayUsePin = user?.role === 'driver' && projects.some((p) => p.code === 'tvhs');
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
     const [identity, setIdentity] = useState<DeviceIdentity | null>(null);

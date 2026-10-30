@@ -241,22 +241,6 @@ export const signOut = (token: string | null): Promise<unknown> => post('/api/lo
 
 /* ------------------------------------------------- applying to drive (7.2) */
 
-export interface ApplyInput {
-    projectCode: string;
-    name: string;
-    email: string;
-    phone: string;
-    password: string;
-}
-
-/** Public. Creates an account that can sign in and see nothing but its own
- *  application, plus the application itself. See server ticket 6.1. */
-export async function applyToDrive(input: ApplyInput): Promise<{ ok: boolean; message: string }> {
-    return request<{ ok: boolean; message: string }>(fetch, baseUrl(), '/api/driver-applications', {
-        method: 'POST',
-        json: input,
-    });
-}
 
 export type CheckKind =
     | 'hipaa_training'

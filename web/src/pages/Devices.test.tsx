@@ -19,7 +19,11 @@ import { mockFetch } from '../test/setup';
 const courier = {
     id: 7, username: 'mohammed', name: 'Mohammed', role: 'driver', route: null,
 };
-const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
+/* ON TVHS, because that is the only contract the device PIN belongs to.
+   A shared phone in a van is what the four digits are for; a University
+   Health driver has their own handset and their own password. The UH-only
+   case has its own test at the bottom of this file. */
+const projects = [{ id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'courier' }];
 
 const session = {
     id: 'sess-1', device: 'Chrome on Android', ip: '10.0.0.1',
@@ -290,4 +294,27 @@ describe('a courier on the same page', () => {
         expect(screen.getByRole('heading', { name: 'This phone' })).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Your phones' })).toBeInTheDocument();
     });
+
+    it('offers a University Health driver no PIN at all', async () => {
+        /* Thirty-five drivers were being offered a four-digit sign-in nobody
+           intends them to use. The PIN is for the TVHS van phone: shared
+           handset, one driver per van, a password typed at a counter is the
+           thing it replaces. A UH driver has their own handset and their own
+           password, so the whole section goes -- not disabled, not explained,
+           absent. */
+        renderDevices({
+            'GET /api/me/projects': [
+                { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' },
+            ],
+        });
+
+        /* The page still does what it is for. */
+        expect(await screen.findByRole('heading', { name: 'Your account' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Current password')).toBeInTheDocument();
+
+        expect(screen.queryByRole('heading', { name: 'This phone' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Your phones' })).not.toBeInTheDocument();
+        expect(screen.queryByText(/PIN/)).not.toBeInTheDocument();
+    });
+
 });

@@ -1,17 +1,20 @@
 /* The shell (ticket 7.1).
  *
- * Signed out, applying, waiting to be approved, picking a contract, driving.
+ * Signed out, picking a contract, driving.
  * Plain state rather than a navigation library, on purpose: one linear path
  * does not need a router, and expo-router arrives in 7.3 when the board, a
  * stop and the request queue give it something to route. A dependency added
  * before it earns its place is a dependency nobody can later argue with.
  *
- * AN APPLICANT WITH NO MEMBERSHIP LANDS ON THEIR APPLICATION, not on an
- * empty list of contracts (ticket 7.2). Since the DoorDash change in 6.1 an
- * account exists from the moment somebody applies and belongs to no project
- * until they are approved, so "no projects" is the ordinary state of a real
- * person waiting on us, not an error. Showing them a blank screen would be
- * the app's way of saying nothing is happening.
+ * THERE IS NO APPLICATION PATH ANY MORE. Apply and Onboarding -- a driver
+ * applying from the app and then watching their own background check tick
+ * over -- came out on 30 October. Drivers are onboarded by us and created
+ * with their counter already assigned, so a form that creates an account
+ * and waits for approval describes a process this contract does not use.
+ *
+ * What remains of that state is somebody signed in whom nobody has put on a
+ * contract. That is our mistake rather than theirs, so the screen names the
+ * office to ring instead of offering a form that would do nothing.
  *
  * THE CONTRACT IS CHOSEN BEFORE THE PASSWORD. Izy runs two, a driver knows
  * which one they drive before they know their password, and the app used to
@@ -35,9 +38,8 @@ import { clearToken, loadBase, loadToken, saveToken } from './lib/session';
 import { clearQueue } from './lib/queue';
 import { baseUrl, forgetServer, get, signOut, useContractServer, useServer, type Project } from './lib/api';
 import { SignIn } from './screens/SignIn';
-import { Apply } from './screens/Apply';
 import { ForgotPassword } from './screens/ForgotPassword';
-import { Onboarding } from './screens/Onboarding';
+import { NoContract } from './screens/NoContract';
 import { Projects } from './screens/Projects';
 import { Driving } from './screens/Driving';
 import { ChooseContract } from './screens/ChooseContract';
@@ -62,10 +64,10 @@ export function App() {
     const [intro, setIntro] = useState(true);
     const [token, setToken] = useState<string | null | undefined>(undefined);
     const [project, setProject] = useState<Project | null>(null);
-    const [applying, setApplying] = useState(false);
     const [forgot, setForgot] = useState(false);
-    /* Undefined until the project list comes back. Null once it has and there
-       is nothing on it, which is what sends somebody to their application. */
+    /* Undefined until the project list comes back. False once it has and
+       there is nothing on it, which on this contract means somebody has an
+       account and nobody has put them on a contract yet. */
     const [hasProjects, setHasProjects] = useState<boolean | undefined>(undefined);
     /* Which contract they said they drive for, before signing in. A hint. */
     const [chosen, setChosen] = useState<Contract | null>(null);
@@ -109,9 +111,8 @@ export function App() {
                 if (!live) return;
                 const outcome = outcomeFor(chosen.code, mine);
                 setMismatch(outcome.kind === 'ok' ? null : outcome);
-                /* Feeds the existing applicant path: no memberships at all
-                   still means "waiting on us", which Onboarding already says
-                   far better than a mismatch screen would. */
+                /* No memberships at all is its own screen, and a clearer
+                   answer than a mismatch screen would give. */
                 setHasProjects(mine.length > 0);
             })
             /* A failure here is not the place to sign anybody out: the
@@ -146,7 +147,6 @@ export function App() {
         setToken(null);
         setProject(null);
         setHasProjects(undefined);
-        setApplying(false);
         setMismatch(null);
         setWho('');
         setWhoName('');
@@ -206,21 +206,14 @@ export function App() {
                     onBack={() => chooseContract(null)}
                 />
             ) : token === null ? (
-                applying
-                    ? <Apply
-                        projectCode={chosen.code}
-                        onDone={() => setApplying(false)}
-                        onCancel={() => setApplying(false)}
+                forgot
+                    ? <ForgotPassword onBack={() => setForgot(false)} />
+                    : <SignIn
+                        contractName={chosen.name}
+                        onBack={() => chooseContract(null)}
+                        onSignedIn={onSignedIn}
+                        onForgot={() => setForgot(true)}
                       />
-                    : forgot
-                        ? <ForgotPassword onBack={() => setForgot(false)} />
-                        : <SignIn
-                            contractName={chosen.name}
-                            onBack={() => chooseContract(null)}
-                            onSignedIn={onSignedIn}
-                            onApply={() => setApplying(true)}
-                            onForgot={() => setForgot(true)}
-                          />
             /* THERE WAS A GATE HERE, and it is worth knowing what it was.
                An account whose password an administrator had chosen was
                refused everything by the server until it was replaced, so the
@@ -251,9 +244,17 @@ export function App() {
                     onBack={() => { chooseContract(null); setTvhs(null); }}
                 />
             ) : hasProjects === false ? (
-                /* Signed in, on no contract. Not an error: it is what every
-                   applicant looks like until somebody approves them. */
-                <Onboarding token={token} onSignedOut={onSignedOut} />
+                /* Signed in, on no contract.
+                
+                   This used to be the applicant's own screen: apply in the
+                   app, then watch the background check and the licence tick
+                   over. That whole path is gone -- drivers are onboarded by
+                   us and created with their counter already assigned -- so
+                   the state that remains is somebody whose account exists
+                   and whom nobody has put on a contract. That is our mistake
+                   to fix, not theirs, and the screen says who to ring rather
+                   than offering a form that would do nothing. */
+                <NoContract onSignedOut={onSignedOut} />
             ) : project === null ? (
                 <Projects
                     token={token}
