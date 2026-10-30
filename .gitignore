@@ -95,3 +95,6 @@ protected.txt
 docs/training/portal-screens/*.png
 docs/training/portal-training.mp4
 retire.txt
+
+# Python bytecode from server/scripts.
+__pycache__/
