@@ -101,6 +101,12 @@ interface Proposal {
     /** Whether it was built from people on shift or from the roster list. */
     planningFrom?: 'onShift' | 'roster';
     fleet?: { onShift: number; roster: number };
+    /** The pharmacy this plan is for, or null for the whole day. */
+    site?: { id: number; code: string; name: string } | null;
+    /** 'site' is that counter's own drivers, 'anyDriver' the widened list. */
+    scope?: 'all' | 'site' | 'anyDriver';
+    /** Why the list is short. Counts, so the screen can say it in words. */
+    excluded?: { held: number; otherSite: number; offShift: number };
 }
 
 interface Activity {
@@ -223,6 +229,18 @@ export function Board() {
        driver during a wave, not a view somebody links to. */
     const [laneFilter, setLaneFilter] = useState('');
     const [fleetTouched, setFleetTouched] = useState(false);
+    /* WHICH COUNTER THIS WAVE IS FOR. Empty is the whole day, which is what
+       it did before and still the right answer for a quiet afternoon.
+       University Health drops a list per pharmacy, so the ordinary morning
+       is one of these at a time, staffed by the people hired to drive from
+       there. */
+    const [planSite, setPlanSite] = useState('');
+    /* The way past that counter's own roster, for the morning when its
+       drivers are all off and the work still has to move. Deliberately not
+       a fallback: widening is an act the dispatcher takes and can see they
+       took. Reset whenever the counter changes, so it cannot be left on
+       from a previous pharmacy. */
+    const [anyDriver, setAnyDriver] = useState(false);
     const [takeWith, setTakeWith] = useState<Record<number, string>>({});
     const pollRef = useRef<number | null>(null);
     /* The cards we already hold, and the cursor that says what we have seen.
@@ -385,10 +403,16 @@ export function Board() {
        plan from it, so sending a number we counted here would override the
        better answer with a worse one. `?drivers=` is kept for the "what
        would ten look like" question, which is what the box is now for. */
-    const proposeRoutes = () => act(
+    /* `widen` is an ARGUMENT and not read from state, because the button
+       that widens also sets it, and a setState has not landed by the time
+       the handler runs. Reading the state here would send the OLD value and
+       the dispatcher would have to press it twice. */
+    const proposeRoutes = (widen = anyDriver) => act(
         () => api<Proposal>(`${base}/runs/propose?${new URLSearchParams({
             ...(fleetTouched && fleet !== '' ? { drivers: fleet } : {}),
             ...(data?.serviceDate ? { serviceDate: data.serviceDate } : {}),
+            ...(planSite !== '' ? { site: planSite } : {}),
+            ...(planSite !== '' && widen ? { anyDriver: '1' } : {}),
         }).toString()}`).then((p) => {
             setProposal(p);
             /* Preselect the server's suggestion so the ordinary case is one
@@ -759,6 +783,24 @@ export function Board() {
                             : `${proposal.runs.length} proposed, ${proposal.unplaced.length} with no driver`}
                     >
                         <div className="izy-row">
+                            {/* THE PHARMACY THIS WAVE IS FOR, first in the
+                                row because it changes what every other
+                                control means. Picking one plans that
+                                counter's list with that counter's drivers;
+                                leaving it on the whole day is what this
+                                panel did before. */}
+                            <label className="izy-field" style={{ maxWidth: 260 }}>Pharmacy
+                                <select
+                                    value={planSite}
+                                    aria-label="Pharmacy to plan for"
+                                    onChange={(e) => { setPlanSite(e.target.value); setAnyDriver(false); }}
+                                >
+                                    <option value="">The whole day, every pharmacy</option>
+                                    {sites.map((st) => (
+                                        <option key={st.code} value={st.code}>{st.name}</option>
+                                    ))}
+                                </select>
+                            </label>
                             <label className="izy-field" style={{ maxWidth: 170 }}>Drivers on shift
                                 <input
                                     value={fleetValue}
@@ -848,9 +890,47 @@ export function Board() {
                                             a missing sentence. */}
                                         {proposal.fleet !== undefined && (
                                             <span className="izy-muted">
+                                                {proposal.site ? `${proposal.site.name}: ` : ''}
                                                 {proposal.planningFrom === 'onShift'
                                                     ? `staffed from ${proposal.fleet.onShift} on shift of ${proposal.fleet.roster} on the roster`
                                                     : `nobody on shift — staffed from the ${proposal.fleet.roster}-driver roster`}
+                                            </span>
+                                        )}
+                                        {/* THE WIDENING, OFFERED WHERE IT IS
+                                            NEEDED AND NOWHERE ELSE.
+
+                                            A counter whose drivers are all
+                                            off cannot be planned, and the
+                                            dispatcher's next question is
+                                            always "then who can take it".
+                                            Answering it costs one click
+                                            here; the alternative is leaving
+                                            them to work out that the
+                                            pharmacy dropdown is the thing
+                                            standing in their way.
+
+                                            It is a button and not a
+                                            fallback: anybody it brings in
+                                            is driving from somebody else's
+                                            counter, which the plan marks
+                                            cover, and that is worth a
+                                            deliberate act. */}
+                                        {proposal.scope === 'site' && proposal.fleet?.onShift === 0 && (
+                                            <button
+                                                className="izy-btn secondary"
+                                                type="button"
+                                                disabled={busy}
+                                                onClick={() => { setAnyDriver(true); void proposeRoutes(true); }}
+                                            >
+                                                Widen to everyone on shift
+                                            </button>
+                                        )}
+                                        {proposal.excluded !== undefined && proposal.excluded.held > 0 && (
+                                            <span className="izy-muted">
+                                                {proposal.excluded.held}{' '}
+                                                {proposal.excluded.held === 1 ? 'driver has' : 'drivers have'} no
+                                                pharmacy yet and {proposal.excluded.held === 1 ? 'is' : 'are'} not
+                                                offered here. <Link to={`/projects/${code}/roster`}>Assign them</Link>
                                             </span>
                                         )}
                                     </div>

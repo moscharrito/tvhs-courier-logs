@@ -746,6 +746,39 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             return Number.isInteger(n) && n >= 1 && n <= max ? n : fallback;
         };
 
+        /* ──────────────────────────────── planning for ONE pharmacy
+         *
+         * `?site=green` plans that counter's list with that counter's
+         * drivers, which is how University Health actually works: a list
+         * drops per pharmacy and the wave that answers it is staffed from
+         * the people hired to drive from there. Without it the morning is
+         * one plan over nine counters and a dispatcher picking names out
+         * of everybody.
+         *
+         * By CODE, not by id. A code is in the URL a dispatcher can read
+         * and does not change when a row is reinserted. Unknown codes are
+         * refused rather than silently ignored, because a typo that plans
+         * the whole day looks exactly like a plan that worked. */
+        let site: { id: number; code: string; name: string } | null = null;
+        if (q['site'] !== undefined && q['site'] !== '') {
+            const found = await client.execute({
+                sql: 'SELECT id, code, name FROM sites WHERE project_id = ? AND code = ?',
+                args: [req.project!.id, q['site']],
+            });
+            if (found.rows.length === 0) {
+                res.status(400).json({ error: `No pharmacy with the code ${q['site']} on this contract.` });
+                return;
+            }
+            const r0 = found.rows[0]!;
+            site = { id: Number(r0['id']), code: String(r0['code']), name: String(r0['name']) };
+        }
+
+        /* The dispatcher's way past the site's own roster, for the morning
+           when the counter's drivers are all off and the work still has to
+           move. Deliberately a request rather than a fallback: widening is
+           an act somebody takes and can see they took. */
+        const anyDriver = q['anyDriver'] === '1' || q['anyDriver'] === 'true';
+
         /* Unassigned only. An order already on a run belongs to a courier
            who may have collected it, and proposing it to somebody else is
            how a package ends up in two places. */
@@ -754,12 +787,15 @@ export function createRunsRouter({ client }: { client: Client }): Router {
                     FROM orders o
                    WHERE o.project_id = ? AND o.service_date = ?
                      AND o.status IN ('ready', 'pending')
+                     ${site === null ? '' : 'AND o.site_id = ?'}
                      AND NOT EXISTS (
                            SELECT 1 FROM run_stops rs
                             JOIN runs r ON r.id = rs.run_id
                             WHERE rs.order_id = o.id AND r.status != 'cancelled')
                    ORDER BY o.id`,
-            args: [req.project!.id, serviceDate],
+            args: site === null
+                ? [req.project!.id, serviceDate]
+                : [req.project!.id, serviceDate, site.id],
         });
 
         const orders: Clusterable[] = rs.rows.map((r) => ({
@@ -825,10 +861,46 @@ export function createRunsRouter({ client }: { client: Client }): Router {
            it has no business knowing who is on shift, only who it may use. */
         const strip = (d: typeof everyone[number]): RosterDriver =>
             ({ username: d.username, name: d.name, homeSiteId: d.homeSiteId });
-        const all: RosterDriver[] = everyone.map(strip);
-        const onShift: RosterDriver[] = everyone.filter((d) => d.onShift).map(strip);
 
-        const planningFrom: 'onShift' | 'roster' = onShift.length > 0 ? 'onShift' : 'roster';
+        /* ──────────────────────────── who this plan may be staffed from
+         *
+         * A DRIVER WITH NO HOME PHARMACY IS NOT OFFERED ANYWHERE.
+         *
+         * Seven of the thirty-five have accounts and no counter yet, and
+         * the decision of 30 October is to HOLD them: active, able to sign
+         * in, and not proposed by the planner until somebody gives them a
+         * pharmacy. Offering them everywhere would have been the other
+         * reading, and it hides the thing that needs doing -- an
+         * unassigned driver should show up as a gap in the roster screen,
+         * not as a name quietly filling someone else's run.
+         *
+         * They are counted, not silently dropped: `excluded.held` is what
+         * the screen says out loud. */
+        const held = everyone.filter((d) => d.homeSiteId === null);
+        const assignable = everyone.filter((d) => d.homeSiteId !== null);
+
+        /* Planning one counter: its own drivers, unless the dispatcher
+           asked to widen. Planning the whole day: everybody assignable. */
+        const scoped = site !== null && !anyDriver
+            ? assignable.filter((d) => d.homeSiteId === site.id)
+            : assignable;
+
+        const all: RosterDriver[] = scoped.map(strip);
+        const onShift: RosterDriver[] = scoped.filter((d) => d.onShift).map(strip);
+
+        /* THE FALLBACK IS FOR THE WHOLE-DAY PLAN ONLY.
+         *
+         * Unscoped, a plan built from the full roster when nobody is on
+         * shift is the honest answer to "what does today look like" at
+         * 11:55, and it says so. Scoped to a counter it would be the wrong
+         * answer to a different question: a dispatcher planning Southeast
+         * at one o'clock is asking who can take this work NOW, and a list
+         * of people who are not on shift reads as an answer to that. So a
+         * site plan with nobody on shift comes back empty, and the screen
+         * offers the widening rather than performing it. */
+        const planningFrom: 'onShift' | 'roster' = onShift.length > 0
+            ? 'onShift'
+            : (site === null ? 'roster' : 'onShift');
         const roster = planningFrom === 'onShift' ? onShift : all;
 
         const settings = {
@@ -855,6 +927,35 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             );
         }
 
+        /* Said in the order a dispatcher needs them: what this plan is,
+           then why the list is short, then what they can do about it. */
+        if (site !== null) {
+            if (anyDriver) {
+                notes.unshift(
+                    `${site.name}: staffed from everyone on shift, not only this pharmacy's drivers. `
+                    + 'Anybody from another counter is marked cover.',
+                );
+            } else if (onShift.length === 0) {
+                notes.unshift(
+                    `Nobody from ${site.name} is on shift, so no run has a driver. `
+                    + `${all.length} ${all.length === 1 ? 'driver drives' : 'drivers drive'} from here. `
+                    + 'Widen to everyone on shift if the work cannot wait.',
+                );
+            } else {
+                notes.unshift(
+                    `${site.name}: ${onShift.length} of ${all.length} `
+                    + `${all.length === 1 ? 'driver' : 'drivers'} on shift.`,
+                );
+            }
+        }
+        if (held.length > 0) {
+            notes.push(
+                `${held.length} ${held.length === 1 ? 'driver has' : 'drivers have'} no pharmacy assigned `
+                + `and ${held.length === 1 ? 'is' : 'are'} not offered by the planner. `
+                + 'Give them a counter on the roster screen.',
+            );
+        }
+
         res.json({
             serviceDate,
             settings,
@@ -873,6 +974,22 @@ export function createRunsRouter({ client }: { client: Client }): Router {
              *  dispatcher acts on: eighteen on the roster and five on shift
              *  at 12:05 is thirteen phone calls. */
             fleet: { onShift: onShift.length, roster: all.length },
+            /** The pharmacy this plan is for, or null for the whole day. */
+            site,
+            /** 'site' is that counter's own drivers; 'anyDriver' is the
+             *  widened list the dispatcher asked for; 'all' is the
+             *  unscoped whole-day plan. */
+            scope: site === null ? 'all' : (anyDriver ? 'anyDriver' : 'site'),
+            /** Who was left out, so the screen can say why rather than
+             *  present a short list as if it were the whole roster. */
+            excluded: {
+                /** Active, on this contract, and no pharmacy assigned. */
+                held: held.length,
+                /** Assigned somewhere else. Zero unless scoped to a site. */
+                otherSite: assignable.length - scoped.length,
+                /** In scope and not on shift. */
+                offShift: scoped.length - scoped.filter((d) => d.onShift).length,
+            },
             notes,
         });
     }));

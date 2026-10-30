@@ -709,6 +709,79 @@ describe('Board', () => {
         expect(screen.getByRole('heading', { name: 'Dispatch board' })).toBeInTheDocument();
     });
 
+    /* ── Planning one pharmacy ─────────────────────────────────────────── */
+
+    it('plans one pharmacy when one is chosen, and the whole day otherwise', async () => {
+        /* University Health drops a list per counter, and the wave that
+           answers it is driven by the people hired to drive from there. */
+        const { calls } = renderBoard(routes({
+            'GET /api/projects/uh/uh/runs/propose*': staffed(),
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+
+        /* The default is what this panel did before: everything. */
+        const pick = await screen.findByLabelText('Pharmacy to plan for');
+        expect(pick).toHaveValue('');
+
+        fireEvent.change(pick, { target: { value: 'discharge' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Propose routes' }));
+
+        await waitFor(() => expect(calls.some((c) => c.includes('site=discharge'))).toBe(true));
+    });
+
+    it('offers to widen when the pharmacy has nobody on shift, and widens on one click', async () => {
+        /* Strict by default: a dispatcher planning Southeast at one o'clock
+           is asking who can take this NOW, and a list of people who are not
+           on shift reads as an answer to that. The widening is a button
+           rather than a fallback, because anybody it brings in is driving
+           from somebody else's counter. */
+        const { calls } = renderBoard(routes({
+            'GET /api/projects/uh/uh/runs/propose*': staffed({
+                site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' },
+                scope: 'site',
+                suggested: [null, null],
+                planningFrom: 'onShift',
+                fleet: { onShift: 0, roster: 4 },
+                excluded: { held: 0, otherSite: 19, offShift: 4 },
+            }),
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.change(await screen.findByLabelText('Pharmacy to plan for'), { target: { value: 'discharge' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Propose routes' }));
+
+        const widen = await screen.findByRole('button', { name: 'Widen to everyone on shift' });
+        fireEvent.click(widen);
+
+        /* The widening has to be on the FIRST click. It is passed as an
+           argument rather than read back out of state, which would send
+           the old value and make the dispatcher press it twice. */
+        await waitFor(() => expect(calls.some((c) => c.includes('anyDriver=1'))).toBe(true));
+    });
+
+    it('does not offer to widen a plan that has drivers', async () => {
+        await openProposal(staffed({
+            site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' },
+            scope: 'site',
+            fleet: { onShift: 2, roster: 4 },
+        }));
+        await screen.findByLabelText('Courier for proposed route 1');
+        expect(screen.queryByRole('button', { name: 'Widen to everyone on shift' })).not.toBeInTheDocument();
+        expect(screen.getByText(/Discharge Pharmacy: staffed from 2 on shift of 4/)).toBeInTheDocument();
+    });
+
+    it('says how many drivers have no pharmacy, and links to where that is fixed', async () => {
+        /* A driver with no counter is not offered anywhere, which is the
+           right default and a silent one. The count is what makes it a gap
+           somebody closes rather than a name that quietly never appears. */
+        await openProposal(staffed({ excluded: { held: 7, otherSite: 0, offShift: 3 } }));
+        expect(await screen.findByText(/7 drivers have no/)).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Assign them' })).toHaveAttribute('href', '/projects/uh/roster');
+    });
+
     it('keeps the dropdown keyed to the route, not to the row on the page', async () => {
         /* Page two starting again at nought collided with page one: the
            names sat on the wrong routes and every row still looked

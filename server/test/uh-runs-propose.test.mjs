@@ -30,7 +30,13 @@ beforeAll(async () => {
     await admin.post('/api/users').send({
         username: 'ada.courier', name: 'Ada Courier', password: 'courier-pass-1', role: 'driver',
     });
-    await admin.put('/api/users/ada.courier/memberships/uh').send({ role: 'courier', settings: {} });
+    /* WITH A HOME PHARMACY, because the planner no longer offers a driver
+       who has none. That is the 30 October decision: a driver with no
+       counter is held, not floated, so an empty `settings` here would make
+       every proposal in this file unstaffed. See the roster scoping in
+       modules/uh/runs.ts. */
+    await admin.put('/api/users/ada.courier/memberships/uh')
+        .send({ role: 'courier', settings: { homeSiteId: dischargeId } });
 });
 afterAll(async () => { await srv.stop(); });
 
