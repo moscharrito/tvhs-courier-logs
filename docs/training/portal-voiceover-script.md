@@ -153,17 +153,6 @@ Generated from the deck. The words beside each picture are the words spoken over
 
 > A six digit code arrives by email. It works once and it expires in fifteen minutes. Type it in, choose a new password on the same screen, and that is it. Setting a new password signs every device out, so anybody using a phone will sign in again afterwards.
 
-## Passwords
-
-### Today, this will not work for a counter
-
-- The reset finds an account by email address.
-- The eight counter logins have no address on them yet.
-- It will still say "a code is on its way". Nothing is sent.
-- Until that is fixed: your contract manager, or ring the office.
-
-> One thing to be straight about. The reset finds an account by its email address, and the eight pharmacy counter logins do not have an address on them yet. If a counter tries this today it will be told a code is on its way, and nothing will be sent, because that message is deliberately the same whether or not the address is known. We are fixing that. Until it is fixed, a counter gets a new password from the contract manager, or by ringing the office. Neither of those waits on email at all.
-
 ### In one line each
 
 - Pharmacy, daily: send the list, watch "not delivered".

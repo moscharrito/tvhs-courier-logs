@@ -75,20 +75,6 @@ is signed out.
 
 ---
 
-## Today, this will not work for a counter
-
-> **The eight counter logins have no email address on them yet.**
-
-The reset finds an account by its address. With none on file there is nothing
-to match, and because the message above is deliberately identical either way,
-a counter that tries it **will be told a code is on its way and nothing will
-be sent**. Nothing anywhere reports that.
-
-Until it is fixed, a counter gets a new password from the **contract
-manager** — which is faster anyway — or by ringing the office.
-
----
-
 ## For the Izy Global office
 
 - `server/scripts/set-emails.mjs` puts addresses on accounts that lack them.

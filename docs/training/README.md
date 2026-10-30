@@ -43,7 +43,7 @@ them aloud and cut a human track over the same frames.
 
 # Client portal training
 
-`portal-training.mp4` — 7m 55s, 1920x1080, 8.8 MB. Sixteen slides for
+`portal-training.mp4` — 7m 21s, 1920x1080, 8.3 MB. Fifteen slides for
 UNIVERSITY HEALTH: what their contract manager sees, what a pharmacy counter
 sees, what each does daily, weekly and monthly, and how to get back in when
 somebody is locked out.
