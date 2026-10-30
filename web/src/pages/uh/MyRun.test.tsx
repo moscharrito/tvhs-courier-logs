@@ -19,7 +19,11 @@ const sla = (over = {}) => ({ state: 'open', minutesToDue: 45, onTime: null, mea
 const stop = (over = {}) => ({
     sequence: 1, orderId: 21, externalRef: 'RX-1', serviceType: 'stat',
     recipientName: 'Ines Vargas', address: '1100 Broadway St, Apt 4B',
-    city: 'San Antonio', zip: '78215', zone: 1, status: 'assigned',
+    /* COLLECTED, because that is when a courier reads their round. An
+       uncollected stop now hides the whole list -- see the note in
+       MyRun.tsx -- so the tests that are about the list say so, and the
+       ones about the pickup gate ask for 'assigned' explicitly. */
+    city: 'San Antonio', zip: '78215', zone: 1, status: 'picked_up',
     dueAt: '2026-09-14T19:00:00.000Z', sla: sla(), ...over,
 });
 
@@ -223,6 +227,55 @@ describe('MyRun', () => {
         const list = screen.getByRole('list');
         expect(within(list).getByText('delivered')).toBeInTheDocument();
         expect(within(list).getByText('Ines Vargas')).toBeInTheDocument();
+    });
+
+    /* ── Nothing until it is collected ─────────────────────────────────── */
+
+    it('hides the whole round until the pickup is recorded', async () => {
+        /* The names and addresses of people expecting medication, for a
+           round the courier has not taken custody of yet, on a phone open
+           at a pharmacy counter. Custody is the line. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' })] }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+
+        expect(screen.getByRole('heading', { name: 'Collect first' })).toBeInTheDocument();
+        expect(screen.getByText(/Your stops appear once you have recorded the pickup/)).toBeInTheDocument();
+
+        /* Not the name, not the address, not the deadline, and no way in. */
+        expect(screen.queryByText('Ines Vargas')).not.toBeInTheDocument();
+        expect(screen.queryByText(/1100 Broadway St/)).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Next stop')).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Open the stop' })).not.toBeInTheDocument();
+    });
+
+    it('hides all of it, not merely the uncollected ones', async () => {
+        /* A partial list is the same disclosure made quieter, and a courier
+           part-way through a pickup should be finishing it. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{ ...mine().runs[0], stops: [
+                    stop({ status: 'assigned' }),
+                    stop({ sequence: 2, orderId: 22, recipientName: 'Marcus Ibarra', status: 'picked_up' }),
+                ] }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.queryByText('Marcus Ibarra')).not.toBeInTheDocument();
+        expect(screen.queryByText('Ines Vargas')).not.toBeInTheDocument();
+    });
+
+    it('shows the round the moment everything is collected', async () => {
+        renderRun(base());
+        /* Twice over: the Next card and the full list. getAllBy, because
+           one of those appearing without the other would be the bug. */
+        await screen.findByLabelText('Next stop');
+        expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(1);
+        expect(screen.getAllByRole('link', { name: 'Open the stop' }).length).toBeGreaterThan(0);
+        expect(screen.queryByRole('heading', { name: 'Collect first' })).not.toBeInTheDocument();
     });
 
     it('says nothing about PINs, on a set-up phone or an unenrolled one', async () => {

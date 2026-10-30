@@ -61,7 +61,10 @@ function stop(sequence: number, over: Partial<Stop> = {}): Stop {
         zip: '78207',
         recipientPhone: '210-555-0100',
         idRequired: false,
-        status: 'assigned',
+        /* COLLECTED. An uncollected stop now hides the whole round -- the
+           same rule as the web's MyRun -- so a test about the list says so,
+           and the one about the gate asks for 'assigned'. */
+        status: 'picked_up',
         ...over,
     } as unknown as Stop;
 }
@@ -159,5 +162,26 @@ describe('the run screen survives its own data arriving', () => {
         /* Paged, not all thirty at once: the last stop of a thirty-stop run
            cannot be on the first page. */
         expect(text).not.toContain('Test Patient 30');
+    });
+
+    it('shows no part of the round until the pickup is recorded', async () => {
+        /* The same rule as the web's MyRun, and it has to stay the same:
+           every driver works in the browser for the first month and then
+           moves to this. Two screens that disagree about what a courier may
+           see is the kind of difference that gets noticed at a counter. */
+        get.mockResolvedValue(runWith([
+            stop(1, { status: 'assigned' } as Partial<Stop>),
+            stop(2, { status: 'picked_up' } as Partial<Stop>),
+        ]));
+        const tree = await mount();
+        const text = textOf(tree.toJSON());
+
+        expect(text).toContain('Collect first');
+        expect(text).toContain('Your stops appear once you have recorded the pickup');
+        /* All of it, not merely the uncollected one. */
+        expect(text).not.toContain('Test Patient 1');
+        expect(text).not.toContain('Test Patient 2');
+        expect(text).not.toContain('Rehearsal Way');
+        expect(text).not.toContain('Open the stop');
     });
 });

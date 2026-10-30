@@ -174,6 +174,12 @@ export function MyRun() {
                         {toCollect.length} {toCollect.length === 1 ? 'stop is' : 'stops are'} still at the pharmacy.
                         You cannot deliver what you have not taken custody of.
                     </p>
+                    {/* WHERE THEY ARE GOING IS NOT SHOWN UNTIL THEY HAVE THE
+                        PACKAGES. The addresses, the names and the deadlines
+                        all appear once the pickup is recorded. */}
+                    <p className="izy-muted">
+                        Your stops appear once you have recorded the pickup.
+                    </p>
                     {data.runs.filter((r) => r.stops.some((s) => s.status === 'assigned')).map((r) => (
                         <Link key={r.id} className="izy-btn" to={`/projects/${code}/runs/${r.id}/pickup`}>
                             Pick up for run {r.id}
@@ -182,7 +188,30 @@ export function MyRun() {
                 </div>
             )}
 
-            {stops.length === 0 ? (
+            {/* ─────────────────────────── NOTHING BELOW UNTIL IT IS COLLECTED
+             *
+             * The round used to be on screen from the moment dispatch
+             * assigned it: every name, every address, every deadline, while
+             * the medication was still behind the counter. Two reasons that
+             * is wrong, and the second is the one that matters.
+             *
+             * It invites the round to start in the wrong order. A courier
+             * reading "next: 4 Hickory, due 13:15" before they have been to
+             * the pharmacy is being shown a destination they cannot serve.
+             *
+             * And it is a patient list on a screen, for work that has not
+             * begun. A phone open at a counter, a browser on a shared
+             * machine -- the names and addresses of people expecting
+             * medication, belonging to a round the courier is not yet
+             * carrying. Custody is the line: once they have signed for the
+             * packages the round is theirs and they need every detail of
+             * it. Before that they need one instruction, which is to go and
+             * collect.
+             *
+             * Deliberately ALL or nothing, not "hide the uncollected ones".
+             * A partial list is the same disclosure made quieter, and a
+             * courier part-way through a pickup should be finishing it. */}
+            {toCollect.length > 0 ? null : stops.length === 0 ? (
                 <div className="izy-card"><p>No stops assigned to you today.</p></div>
             ) : (
                 <>

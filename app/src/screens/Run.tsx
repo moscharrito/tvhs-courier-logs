@@ -176,6 +176,21 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     /* One problem rather than six identical alerts on a phone screen. */
     const refused = summarise(outbox?.rejected ?? []);
 
+    /* ───────────────────── NOTHING OF THE ROUND UNTIL IT IS COLLECTED
+     *
+     * The same rule as the web's MyRun, and it has to BE the same: every
+     * driver works in the browser for the first month and then moves to
+     * this, and two screens that disagree about what a courier may see is
+     * the kind of difference that gets noticed at a counter.
+     *
+     * While anything is still behind the counter, the round is one
+     * instruction -- go and collect. The names, the addresses and the
+     * deadlines arrive with custody.
+     *
+     * All or nothing, not "hide the uncollected ones": a partial list is
+     * the same disclosure made quieter. */
+    const collectFirst = toCollect > 0;
+
     return (
         <Ground>
         {/* ─────────────────────────────────────────────────────────────
@@ -197,7 +212,20 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 subtitle={data === null ? undefined : `${data.serviceDate} · ${done} of ${stops.length} done`}
             />
 
-            {next !== null && (
+            {collectFirst && (
+                <Panel style={styles.nextPanel}>
+                    <Text style={styles.nextLabel}>Collect first</Text>
+                    <Text style={styles.nextName}>
+                        {toCollect} {toCollect === 1 ? 'order is' : 'orders are'} still at the pharmacy
+                    </Text>
+                    <Text style={styles.nextAddress}>
+                        You cannot deliver what you have not taken custody of. Your stops appear
+                        once you have recorded the pickup.
+                    </Text>
+                </Panel>
+            )}
+
+            {!collectFirst && next !== null && (
                 <Panel style={styles.nextPanel}>
                     <Text style={styles.nextLabel}>Next: stop {next.sequence}</Text>
                     <Text style={styles.nextName}>{next.recipientName}</Text>
@@ -273,7 +301,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                     />
                 )}
 
-                {next !== null && (
+                {!collectFirst && next !== null && (
                     <>
                         <CardButton
                             title="Open the stop"
@@ -292,7 +320,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                     </>
                 )}
 
-                {stops.length > 0 && (
+                {!collectFirst && stops.length > 0 && (
                     <View style={styles.allStops}>
                         <Text style={styles.cardTitle}>All stops</Text>
                         {paged.rows.map((s) => (

@@ -5,6 +5,7 @@ import { SyncStatus } from './SyncStatus';
 import { initials } from '../lib/initials';
 import { confirmSignOut } from '../lib/outbox';
 import { counterName, isPharmacyOnly, projectHref } from '../lib/pharmacy';
+import { displayName, handleUnder } from '../lib/people';
 import { rememberedFlag, rememberFlag } from '../lib/remember';
 
 /* ROLE_LABEL used to sit here, declared and never read. It was left behind
@@ -161,8 +162,15 @@ export function Layout() {
                     )}
                 </nav>
                 <div className="izy-me">
-                    <b>{user.name}</b>
-                    <span>{user.username}</span>
+                    <b>{displayName(user)}</b>
+                    {/* The handle only when it says something the name does
+                        not. On this contract a driver's username IS their
+                        email address, and this rail is on every screen they
+                        open -- including one held up at a pharmacy counter.
+                        `uh.sitemanager` still shows, because that is not a
+                        name and somebody needs to know which account they
+                        are in. See lib/people.ts. */}
+                    {handleUnder(user) !== null && <span>{handleUnder(user)}</span>}
                     <div style={{ marginTop: 8 }}>
                         <button className="izy-btn secondary small" onClick={() => { void onSignOut(); }}>
                             {/* Collapsed, the word will not fit and the door

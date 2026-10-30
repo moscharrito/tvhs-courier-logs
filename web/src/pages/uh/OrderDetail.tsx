@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { stampFor } from '../../lib/when';
-import { useProjectTimezone } from '../../app/auth';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Thread } from '../../app/Thread';
@@ -84,6 +84,21 @@ export function OrderDetail() {
     /* This page is the one somebody opens to answer "was it on time", so its
        times have to be the ones the deadline was set in. */
     const stamp = stampFor(useProjectTimezone(code));
+
+    /* WHERE BACK GOES DEPENDS ON WHO IS READING.
+     *
+     * This always pointed at the orders console, which is a dispatch screen:
+     * a filter naming every counter on the contract, a box for looking up
+     * another courier, and Export to Excel. A driver reaches this page from
+     * the Details link on their own stop, so Back was handing them the one
+     * screen they had no business on -- and on the web, where every driver
+     * works for the first month, that was the way in.
+     *
+     * Their run is where they came from and where they want to be. */
+    const { projects } = useAuth();
+    const isCourier = projects.find((p) => p.code === code)?.role === 'courier';
+    const backTo = isCourier ? `/projects/${code}/my-run` : `/projects/${code}/orders`;
+    const backLabel = isCourier ? 'Back to today' : 'Orders';
     const [order, setOrder] = useState<Detail | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +122,7 @@ export function OrderDetail() {
             <>
                 <h1>Order not available</h1>
                 <p className="izy-sub">{error}</p>
-                <Link className="izy-btn secondary" to={`/projects/${code}/orders`}>Back to orders</Link>
+                <Link className="izy-btn secondary" to={backTo}>{backLabel}</Link>
             </>
         );
     }
@@ -120,7 +135,7 @@ export function OrderDetail() {
         <>
             <h1>Order #{order.id}</h1>
             <p className="izy-sub">
-                <Link to={`/projects/${code}/orders`}>Orders</Link> · {order.serviceType} · {order.serviceDate}
+                <Link to={backTo}>{backLabel}</Link> · {order.serviceType} · {order.serviceDate}
                 {order.externalRef && <> · <code>{order.externalRef}</code></>}
                 {order.dailyListId !== null && <> · from list {order.dailyListId}</>}
             </p>
