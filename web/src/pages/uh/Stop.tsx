@@ -19,6 +19,7 @@ import { clockFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
+import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
 import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { NavigateIcon, PhoneIcon, PinIcon, RouteIcon } from '../../app/Icons';
 
@@ -72,8 +73,8 @@ async function currentPosition(): Promise<{ lat: number; lng: number } | null> {
 
 /** What the file service accepts. A phone that offers anything else is
  *  told so before the courier waits on an upload that cannot succeed. */
-const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
-const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
+/* PHOTO_TYPES and MAX_PHOTO_BYTES moved to lib/photos.ts, along with the
+   rule that decides a camera's content type rather than trusting it. */
 
 /** What a queued entry is called when the courier reads the list back. */
 const LABELS: Record<string, string> = {
@@ -194,7 +195,7 @@ export function Stop() {
                 body: { ...body, ...(position ?? {}) },
                 label: `${LABELS[path] ?? path} for ${order!.recipientName}`,
                 orderId: order!.id,
-                ...(photo ? { photo: { blob: photo, contentType: photo.type, kind: 'doorstep', bodyKey: 'fileId' } } : {}),
+                ...(photo ? { photo: { blob: photo, contentType: photoType(photo) ?? "image/jpeg", kind: 'doorstep', bodyKey: 'fileId' } } : {}),
                 ...(photos?.length ? { photos } : {}),
             });
             if (result.sent) {
@@ -250,10 +251,10 @@ export function Stop() {
          * together and go up in order when the signal returns. ────────── */
         const photos: QueuedPhoto[] = [];
         if (formPhoto !== null) {
-            photos.push({ blob: formPhoto, contentType: formPhoto.type, kind: 'courier_form', bodyKey: 'courierFormFileId' });
+            photos.push({ blob: formPhoto, contentType: photoType(formPhoto) ?? "image/jpeg", kind: 'courier_form', bodyKey: 'courierFormFileId' });
         }
         if (idPhoto !== null) {
-            photos.push({ blob: idPhoto, contentType: idPhoto.type, kind: 'patient_id', bodyKey: 'patientIdFileId' });
+            photos.push({ blob: idPhoto, contentType: photoType(idPhoto) ?? "image/jpeg", kind: 'patient_id', bodyKey: 'patientIdFileId' });
         }
         void post('deliver', { signedName: signedName.trim() }, 'Delivered and recorded.', undefined, photos);
     };
@@ -443,7 +444,7 @@ export function Stop() {
                             <label className="izy-field">Photo of the signed form
                                 <input
                                     type="file"
-                                    accept={PHOTO_TYPES.join(',')}
+                                    accept={PHOTO_ACCEPT}
                                     disabled={busy}
                                     onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
                                 />
@@ -464,7 +465,7 @@ export function Stop() {
                                     <label className="izy-field">Photo of the identification
                                         <input
                                             type="file"
-                                            accept={PHOTO_TYPES.join(',')}
+                                            accept={PHOTO_ACCEPT}
                                             disabled={busy}
                                             onChange={(e) => setIdPhoto(e.target.files?.[0] ?? null)}
                                         />
@@ -560,7 +561,7 @@ export function Stop() {
                                 <input
                                     ref={photoInput}
                                     type="file"
-                                    accept={PHOTO_TYPES.join(',')}
+                                    accept={PHOTO_ACCEPT}
                                     /* NO `capture` ATTRIBUTE, DELIBERATELY.
                                      *
                                      * It used to read capture="environment",
@@ -600,14 +601,21 @@ export function Stop() {
                                      * handover and append-only afterwards. */
                                     disabled={busy || filesAvailable === false}
                                     onChange={(e) => {
+                                        /* THE CHECK THAT REFUSED THE CAMERA.
+                                         *
+                                         * This read `PHOTO_TYPES.includes(picked.type)`, and
+                                         * `picked.type` is the browser's guess. A file from the
+                                         * photo library carries a good one; a file from a camera
+                                         * often carries `image/jpg`, which is not a registered
+                                         * type, or nothing at all. So the courier took a
+                                         * photograph and was told it was not a photo.
+                                         *
+                                         * lib/photos.ts decides the type instead of trusting it,
+                                         * and answers null only when nothing can. */
                                         const picked = e.target.files?.[0] ?? null;
-                                        if (picked && !PHOTO_TYPES.includes(picked.type)) {
-                                            setMsg({ kind: 'error', text: 'That is not a photo this app can store. Take one with the camera, or pick a JPEG or PNG.' });
-                                            setPhoto(null);
-                                            return;
-                                        }
-                                        if (picked && picked.size > MAX_PHOTO_BYTES) {
-                                            setMsg({ kind: 'error', text: 'That photo is too large to send. Take another.' });
+                                        const problem = picked === null ? null : photoProblem(picked);
+                                        if (problem !== null) {
+                                            setMsg({ kind: 'error', text: problem });
                                             setPhoto(null);
                                             return;
                                         }

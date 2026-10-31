@@ -20,6 +20,7 @@ import { Section } from '../../app/Section';
 import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { BoxIcon, RouteIcon } from '../../app/Icons';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
+import { PHOTO_ACCEPT, photoType, photoProblem } from '../../lib/photos';
 
 interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled?: boolean }
 /* `controlled` is true when ANY order in the group is, which is what decides
@@ -130,7 +131,7 @@ export function Pickup() {
                     module: `/api/projects/${code}/uh`,
                     orderId: null,
                     blob: formPhoto,
-                    contentType: formPhoto.type,
+                    contentType: photoType(formPhoto) ?? "image/jpeg",
                     kind: 'courier_form',
                     idemKey: `pickup-${group.site.id}-${formPhoto.size}-${formPhoto.lastModified}`,
                 });
@@ -355,9 +356,24 @@ export function Pickup() {
                                     <label className="izy-field">Photo of the signed form
                                         <input
                                             type="file"
-                                            accept="image/jpeg,image/png,image/webp"
+                                            accept={PHOTO_ACCEPT}
                                             disabled={busy}
-                                            onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
+                                            onChange={(e) => {
+                                                /* Caught here rather than by the
+                                                   server after the upload: a
+                                                   refusal at a counter should
+                                                   name the file, not arrive as
+                                                   a four-hundred. */
+                                                const picked = e.target.files?.[0] ?? null;
+                                                const problem = picked === null ? null : photoProblem(picked);
+                                                if (problem !== null) {
+                                                    setMsg({ kind: 'error', text: problem });
+                                                    setFormPhoto(null);
+                                                    return;
+                                                }
+                                                setMsg(null);
+                                                setFormPhoto(picked);
+                                            }}
                                         />
                                         <span className="izy-muted izy-field-note">
                                             {formPhoto === null
