@@ -96,6 +96,68 @@ describe('a retry carrying the id the phone chose', () => {
         expect(retry.body).toMatchObject({ code: first.body.code, replayed: true });
     });
 
+    it('does NOT replay a 400, because a malformed request describes nothing', async () => {
+        /* ───────────────────────────────────────────────────────────────
+         * Reported from a real handset on 31 October, AFTER the defect it
+         * was about had been fixed and deployed.
+         *
+         * A driver photographing a collection form was refused with
+         * "Invalid request". The cause was fixed server-side, the deploy
+         * went out, the driver retried the same photograph -- and got the
+         * identical refusal, because the key an upload builds is
+         * deterministic (counter, file size, file timestamp) and the 400
+         * recorded BEFORE the fix was being replayed from the cache. The
+         * handler never ran. From the outside it looked exactly like a fix
+         * that had not worked.
+         *
+         * So a 400 releases its id. It is a statement about the REQUEST,
+         * not about the work, and the only way the same bytes become
+         * acceptable is if a defect was fixed -- which is the case worth
+         * recovering from. A 409 is the opposite and still replays: the
+         * test above says why.
+         * ─────────────────────────────────────────────────────────────── */
+        const ada = await courierAgent();
+        const k = key();
+
+        // Malformed on purpose: countedPackages is required and absent.
+        const bad = await ada.post(`${RUNS}/1/pickup`).send({ clientEventId: k, siteId: dischargeId });
+        expect(bad.status).toBe(400);
+
+        /* Nothing is left holding the id. */
+        const rows = (await sql('SELECT state FROM client_events WHERE client_event_id = ?', [k])).rows;
+        expect(rows).toHaveLength(0);
+
+        /* And it can be used again for a real event, which is the point:
+           the driver who hit this had to be able to retry. */
+        const order = await pickedUpOrder();
+        const retry = await ada.post(`${ORDERS}/${order.id}/arrive`).send({ clientEventId: k });
+        expect(retry.status).toBe(201);
+        expect(retry.body.replayed).toBeUndefined();
+    });
+
+    it('heals an id already poisoned by a stored 400', async () => {
+        /* The half that matters for the driver who is stuck RIGHT NOW. The
+           fix above stops new 400s being stored; this makes the ones
+           already in the table stop being served, without a purge. */
+        const ada = await courierAgent();
+        const k = key();
+        const order = await pickedUpOrder();
+
+        /* Put the scar there by hand: a row exactly as the old code left
+           it. Reaching into the table is the only way to produce a state
+           that this version can no longer create. */
+        await sql(
+            `INSERT INTO client_events (project_id, client_event_id, username, state, status, response, created_at, completed_at)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, ?, 'done', 400, ?, ?, ?)`,
+            [k, 'ada.courier', JSON.stringify({ error: 'Invalid request', details: ['orderId: Expected number, received null'] }),
+                new Date().toISOString(), new Date().toISOString()],
+        );
+
+        const retry = await ada.post(`${ORDERS}/${order.id}/arrive`).send({ clientEventId: k });
+        expect(retry.status, JSON.stringify(retry.body)).toBe(201);
+        expect(retry.body.replayed).toBeUndefined();
+    });
+
     it("does not answer one courier with another courier's reply", async () => {
         const mine = await pickedUpOrder('ada.courier');
         const ada = await courierAgent('ada.courier');

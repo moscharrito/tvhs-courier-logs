@@ -149,17 +149,69 @@ export function createIdempotency({ client, now = () => new Date() }: Idempotenc
                     });
                     return;
                 }
-                let body: unknown = null;
-                try { body = JSON.parse(String(row['response'] || 'null')); } catch { body = null; }
-                const status = Number(row['status'] ?? 200);
-                res.status(status).json(
-                    body && typeof body === 'object' && !Array.isArray(body)
-                        // Said plainly so the app can tell "recorded now" from
-                        // "recorded earlier" without guessing.
-                        ? { ...(body as Record<string, unknown>), replayed: true }
-                        : body,
-                );
-                return;
+                const storedStatus = Number(row['status'] ?? 200);
+
+                /* A STORED 400 IS NOT AN ANSWER, IT IS A SCAR.
+                 *
+                 * The key a phone sends is deterministic -- for an upload it
+                 * is built from the counter and the photograph's own size and
+                 * timestamp -- so a courier retrying the SAME form at the
+                 * SAME counter sends the same id. If a 400 was stored, they
+                 * are handed it again from the cache, for the full retention
+                 * week, without the handler ever running.
+                 *
+                 * That is how the file-upload defect of 31 October looked
+                 * fixed in the code, deployed, and still broken on the phone:
+                 * the driver was being served a refusal recorded before the
+                 * fix existed. Re-running is also what makes a key already
+                 * poisoned that way heal itself on the next attempt, with
+                 * nothing to purge by hand.
+                 *
+                 * ONLY A 400, AND THE LINE IS NOT ARBITRARY. A 400 says the
+                 * REQUEST was malformed; it says nothing about the state of
+                 * the work, and the only way the same bytes become acceptable
+                 * is if the client or the server was wrong and has been
+                 * fixed -- exactly the case worth recovering from.
+                 *
+                 * A 409 is the opposite: a refusal ABOUT the work's state,
+                 * which does change. The test beside this one spells out the
+                 * cost of re-running those -- a phone retrying a rejected
+                 * return would eventually meet an order in a state where the
+                 * same event IS legal, and record something the courier never
+                 * did. Those stay stored.
+                 *
+                 * The claim is taken again below, so two phones racing on a
+                 * previously-malformed id still get one answer and one
+                 * "still being recorded". */
+                if (storedStatus !== 400) {
+                    let body: unknown = null;
+                    try { body = JSON.parse(String(row['response'] || 'null')); } catch { body = null; }
+                    res.status(storedStatus).json(
+                        body && typeof body === 'object' && !Array.isArray(body)
+                            // Said plainly so the app can tell "recorded now"
+                            // from "recorded earlier" without guessing.
+                            ? { ...(body as Record<string, unknown>), replayed: true }
+                            : body,
+                    );
+                    return;
+                }
+
+                /* Take the claim back and let the handler answer for itself.
+                 *
+                 * Reset to what a fresh INSERT above writes rather than to
+                 * nulls: `response` is NOT NULL DEFAULT '' and nulling it
+                 * fails the constraint, which turned this recovery into a
+                 * 500 the first time it ran. `created_at` moves too, so the
+                 * retention sweep measures this attempt rather than the one
+                 * that failed a week ago and deletes the claim mid-flight. */
+                await client.execute({
+                    sql: `UPDATE client_events
+                             SET state = 'in_progress', status = NULL, response = '',
+                                 completed_at = NULL, method = ?, path = ?, created_at = ?
+                           WHERE project_id = ? AND client_event_id = ?`,
+                    args: [req.method, req.originalUrl.split('?')[0] ?? '', at, projectId, key],
+                });
+                claimed = true;
             }
 
             const release = async () => {
@@ -186,7 +238,14 @@ export function createIdempotency({ client, now = () => new Date() }: Idempotenc
                 if (settled) return originalJson(body);
                 settled = true;
                 const status = res.statusCode;
-                const finish = status >= 500 ? release() : store(status, body);
+                /* The note at the top of this file says a failed request does
+                   not burn its key, and that only ever held for a 500. A 400
+                   burned it for the full retention week -- see the long note
+                   in the replay branch above for what that cost. A malformed
+                   request wrote nothing and describes no state, so there is
+                   nothing to replay and the id stays usable. */
+                const burnsTheKey = status < 500 && status !== 400;
+                const finish = burnsTheKey ? store(status, body) : release();
                 finish.then(() => originalJson(body)).catch(() => originalJson(body));
                 return res;
             };
