@@ -64,6 +64,7 @@ reset-uh-portals.py
 
 # One-off production tooling.
 purge-drivers.ps1
+stage-wheatley.ps1
 list-drivers.mjs
 
 # The driver roster for create-drivers.mjs and load-roster.mjs. SAME REASON
