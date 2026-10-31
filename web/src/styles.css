@@ -1151,9 +1151,20 @@ body {
         display: block; flex: 0 0 auto;
         padding: var(--izy-s-sm) var(--izy-s-md) max(var(--izy-s-md), env(safe-area-inset-bottom));
     }
-    /* A driver screen is one column. The desktop rule scrolls a wide table
-       inside its card, which here would hide half of a stop. */
-    .izy-courier .izy-card { overflow-x: visible; }
+    /* ── THE SHEET NEVER MOVES SIDEWAYS ───────────────────────────────────
+     *
+     * The order record is two tables with a 560px floor on them, inside a
+     * 331px sheet. With nothing stopping it the SHEET scrolled: a courier
+     * nudging the chain of custody sideways took the proof-of-delivery card
+     * and every heading off the screen with it, and there is no edge to tell
+     * them that is what happened.
+     *
+     * The table scrolls in its own card instead, which is what the rule
+     * further up this file already does on a phone — it had been undone here
+     * by an `overflow-x: visible` added to stop a card clipping a stop row.
+     * It was clipping nothing; the stop rows are narrower than the sheet. */
+    .izy-courier .izy-sheet { overflow-x: hidden; }
+    .izy-courier .izy-sheet .izy-card { overflow-x: auto; }
 
     /* The shift bar, as the app draws it: a slim full-bleed strip across the
        top of the screen rather than a pane floating in the context region.

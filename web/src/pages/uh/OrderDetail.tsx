@@ -18,6 +18,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { Thread } from '../../app/Thread';
 import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
+import { CardAnchor, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { displayName, handleUnder } from '../../lib/people';
 
 interface Package { id: number; description: string; quantity: number; signatureRequired: boolean; outcome: string }
@@ -131,14 +132,15 @@ export function OrderDetail() {
     const sla = slaLabel(order.sla);
     const p = order.pricing;
 
-    return (
+    /* ONE SCREEN, TWO SHAPES, and this one is the lookup rather than the
+       work. A courier opens it from Details on their own stop to settle a
+       question -- was it on time, what did the pharmacy say, who signed --
+       so it gets the app's frame with the answer to "which delivery is
+       this" pinned above the record. Dispatch opens it to read the whole
+       record at a desk and keeps the console. Same body, same tables, same
+       `isCourier` that already decides where Back goes. */
+    const page = (
         <>
-            <h1>Order #{order.id}</h1>
-            <p className="izy-sub">
-                <Link to={backTo}>{backLabel}</Link> · {order.serviceType} · {order.serviceDate}
-                {order.externalRef && <> · <code>{order.externalRef}</code></>}
-                {order.dailyListId !== null && <> · from list {order.dailyListId}</>}
-            </p>
 
             {/* HOW THE PHARMACY SENT IT, before the proof-of-delivery link.
             
@@ -167,11 +169,18 @@ export function OrderDetail() {
             {/* Our copy of the proof of delivery: the same document the client
                 gets, with our couriers named in full. A plain link, because the
                 browser already knows how to open a PDF. */}
-            <p>
-                <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/${order.id}/pod.pdf`} target="_blank" rel="noreferrer">
-                    Proof of delivery (PDF)
-                </a>
-            </p>
+            {/* Our copy of the proof of delivery: the same document the
+                client gets, with our couriers named in full. A card rather
+                than a grey pill, because on a phone it is the one thing on
+                this screen somebody is usually here to open. */}
+            <CardAnchor
+                href={`/api/projects/${code}/uh/orders/${order.id}/pod.pdf`}
+                external
+                title="Proof of delivery (PDF)"
+                tone="quiet"
+                compact
+                detail="The signed record for this delivery"
+            />
 
             <div className="izy-card">
                 <div className="izy-row-between">
@@ -180,8 +189,16 @@ export function OrderDetail() {
                 </div>
                 <table className="izy-table">
                     <tbody>
-                        <tr><th>Recipient</th><td>{order.recipientName}{order.recipientPhone && <> · {order.recipientPhone}</>}</td></tr>
-                        <tr><th>Address</th><td>{order.address}<br />{order.city} {order.state} {order.zip}</td></tr>
+                        {/* A courier reads these off the panel above, which
+                            does not scroll away. Printing them again four
+                            rows later is the duplication the panel exists to
+                            remove; a dispatcher has no panel, so they stay. */}
+                        {isCourier
+                            ? (order.recipientPhone ? <tr><th>Phone</th><td>{order.recipientPhone}</td></tr> : null)
+                            : <>
+                                <tr><th>Recipient</th><td>{order.recipientName}{order.recipientPhone && <> · {order.recipientPhone}</>}</td></tr>
+                                <tr><th>Address</th><td>{order.address}<br />{order.city} {order.state} {order.zip}</td></tr>
+                            </>}
                         <tr>
                             <th>Zone</th>
                             <td>{order.zone === null ? <span className="izy-pill warn">out of area, needs a distance</span> : `Zone ${order.zone}`}</td>
@@ -332,6 +349,53 @@ export function OrderDetail() {
             >
                 <Thread base={`/api/projects/${code}/uh`} orderId={order.id} label="" />
             </Section>
+        </>
+    );
+
+    if (isCourier) {
+        return (
+            <Screen>
+                <Context>
+                    <ScreenHeader
+                        title={`Order #${order.id}`}
+                        subtitle={<><Link to={backTo}>{backLabel}</Link> · {order.serviceType} · {order.serviceDate}</>}
+                    />
+                    {/* WHICH DELIVERY THIS IS, and nothing a courier has to
+                        scroll for. The handling flags are deliberately NOT
+                        here: they have their own panel at the top of the
+                        sheet, in the server's own phrasing, and saying them
+                        twice in two different shapes is how two codebases
+                        end up describing one rule differently. */}
+                    <Panel role="group" aria-label="This delivery">
+                        <p className="izy-lede">{order.recipientName}</p>
+                        <p className="izy-lede-note">{order.address}<br />{order.city} {order.state} {order.zip}</p>
+                        <div className="izy-chips">
+                            <Chip label={order.status} tone={order.status === 'delivered' ? 'good' : order.status === 'failed' ? 'bad' : 'neutral'} />
+                            {sla.text && (
+                                <Chip
+                                    label={sla.text}
+                                    tone={sla.tone === 'off' ? 'bad' : sla.tone === 'ok' ? 'good' : sla.tone === 'warn' ? 'warn' : 'neutral'}
+                                />
+                            )}
+                            {order.zone === null && <Chip label="out of area" tone="warn" />}
+                            {order.externalRef && <Chip label={order.externalRef} />}
+                        </div>
+                    </Panel>
+                </Context>
+                <Sheet>{page}</Sheet>
+            </Screen>
+        );
+    }
+
+    return (
+        <>
+            <h1>Order #{order.id}</h1>
+            <p className="izy-sub">
+                <Link to={backTo}>{backLabel}</Link> · {order.serviceType} · {order.serviceDate}
+                {order.externalRef && <> · <code>{order.externalRef}</code></>}
+                {order.dailyListId !== null && <> · from list {order.dailyListId}</>}
+            </p>
+            {page}
         </>
     );
 }
