@@ -46,7 +46,24 @@ const RequestUpload = z.object({
     /** What the client is about to send, so an oversized upload is refused
      *  before it burns a courier's data allowance rather than after. */
     bytes: z.number().int().min(1).max(MAX_FILE_BYTES),
-    orderId: z.number().int().positive().optional(),
+    /* NULL IS A REAL ANSWER HERE, AND IT WAS BEING REFUSED.
+     *
+     * A photograph of a collection form belongs to the COLLECTION, not to
+     * any one of the orders in it: a technician handing over forty packages
+     * signs one sheet. The web client has always said so in as many words --
+     * see the comment on `orderId` in web/src/lib/outbox.ts -- and sent
+     * `orderId: null`.
+     *
+     * `.optional()` accepts a missing key, not a null one, so every such
+     * upload was refused with "Invalid request" and the detail
+     * "orderId: Expected number, received null". The driver saw only the
+     * headline, on the screen where they were trying to take custody of a
+     * round. It hit the pickup and the hand-back, never the per-stop photo,
+     * which is why it survived: the test that matters most was passing.
+     *
+     * The handler below already reads `body.orderId ?? null`, so it wanted
+     * this all along. */
+    orderId: z.number().int().positive().nullable().optional(),
 });
 
 const Confirm = z.object({
@@ -113,9 +130,34 @@ export function createFilesRouter({ client, storage }: { client: Client; storage
     }
 
     /** A courier may only touch files on an order that is theirs. */
-    async function courierMayTouch(req: Request, orderId: number | null): Promise<boolean> {
+    /* Kinds that belong to a BATCH rather than to one delivery.
+     *
+     * One: the photograph of the form a pharmacy signs when it hands a
+     * collection over, or takes undelivered packages back. A technician
+     * handing over forty packages signs one sheet, so the photograph has
+     * forty orders behind it and no single order of its own.
+     *
+     * Everything else is per-delivery and stays that way. A patient_id in
+     * particular: a government ID tied by name to somebody receiving a
+     * prescription is the most sensitive object this system stores, and it
+     * has no meaning detached from the delivery it was shown for. */
+    const BATCH_KINDS: readonly string[] = ['courier_form'];
+
+    /* THE SECOND HALF OF THE BUG ABOVE, and the worse half.
+     *
+     * `orderId === null` returned false for a courier, flatly: no order, no
+     * access. So even with the schema accepting null, a driver photographing
+     * a collection form would have been refused at every one of the three
+     * steps an upload takes -- asking, confirming, reading back -- with
+     * "That order is not assigned to you", which is not what happened and
+     * names a thing that does not exist.
+     *
+     * A courier may upload a batch photograph, and only a batch kind. The
+     * file is inert until a pickup or a hand-back references it, and those
+     * handlers check the run and the counter themselves. */
+    async function courierMayTouch(req: Request, orderId: number | null, kind: string): Promise<boolean> {
         if (req.membership?.role !== 'courier') return true;
-        if (orderId === null) return false;
+        if (orderId === null) return BATCH_KINDS.includes(kind);
         const rs = await client.execute({
             sql: 'SELECT 1 FROM orders WHERE project_id = ? AND id = ? AND assigned_to_username = ?',
             args: [req.project!.id, orderId, req.session.user?.username ?? ''],
@@ -144,8 +186,12 @@ export function createFilesRouter({ client, storage }: { client: Client; storage
             // day the photo happened to be taken.
             serviceDate = String(rs.rows[0]['service_date']);
         }
-        if (!(await courierMayTouch(req, orderId))) {
-            res.status(403).json({ error: 'That order is not assigned to you' });
+        if (!(await courierMayTouch(req, orderId, body.kind))) {
+            res.status(403).json({
+                error: orderId === null
+                    ? `A ${body.kind} photograph has to belong to a delivery.`
+                    : 'That order is not assigned to you',
+            });
             return;
         }
 
@@ -188,7 +234,7 @@ export function createFilesRouter({ client, storage }: { client: Client; storage
         if (!file) return;
         const body = parse(Confirm, req.body ?? {}, res);
         if (!body) return;
-        if (!(await courierMayTouch(req, file.order_id))) {
+        if (!(await courierMayTouch(req, file.order_id, file.kind))) {
             res.status(403).json({ error: 'That order is not assigned to you' });
             return;
         }
@@ -208,7 +254,7 @@ export function createFilesRouter({ client, storage }: { client: Client; storage
         if (!storage.available) { unavailable(res); return; }
         const file = await fileOr404(req, res);
         if (!file) return;
-        if (!(await courierMayTouch(req, file.order_id))) {
+        if (!(await courierMayTouch(req, file.order_id, file.kind))) {
             res.status(403).json({ error: 'That order is not assigned to you' });
             return;
         }
@@ -229,7 +275,7 @@ export function createFilesRouter({ client, storage }: { client: Client; storage
 
     router.get('/', operate, wrap(async (req, res) => {
         const orderId = req.query['orderId'] ? Number(req.query['orderId']) : null;
-        if (orderId !== null && !(await courierMayTouch(req, orderId))) {
+        if (orderId !== null && !(await courierMayTouch(req, orderId, ''))) {
             res.status(403).json({ error: 'That order is not assigned to you' });
             return;
         }

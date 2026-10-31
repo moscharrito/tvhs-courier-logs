@@ -394,7 +394,22 @@ async function putPhoto(
     });
     if (created.status >= 500 || created.status === 429 || created.status === 408) throw new RetryLater('file service');
     if (created.status >= 400) {
-        throw Object.assign(new Error(String(created.body?.['error'] ?? 'The photo was refused')), { status: created.status });
+        /* THE DETAIL COMES WITH IT, and that is not a style choice.
+         *
+         * On 31 October a driver at a counter saw "Invalid request" and
+         * nothing else. The server had said exactly what was wrong --
+         * "orderId: Expected number, received null" -- in `details`, and
+         * this line dropped it on the floor. A round trip to a phone, a
+         * pharmacy and back went into finding out what one discarded string
+         * already knew.
+         *
+         * It is developer wording on a driver's screen, which is the cost.
+         * The alternative is a driver who can only report that it said
+         * "Invalid request", which is the thing that happened. */
+        const refusal = String(created.body?.['error'] ?? 'The photo was refused');
+        const details = created.body?.['details'];
+        const why = Array.isArray(details) && details.length > 0 ? ` (${details.join('; ')})` : '';
+        throw Object.assign(new Error(refusal + why), { status: created.status });
     }
     const upload = created.body?.['upload'] as { url: string; method: string; headers: Record<string, string> } | undefined;
     const fileId = Number(created.body?.['id']);

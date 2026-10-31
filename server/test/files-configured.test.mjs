@@ -43,6 +43,99 @@ afterAll(async () => { await srv.stop(); });
 const sql = (q, args = []) => srv.core.client.execute({ sql: q, args });
 
 describe('with a configured bucket', () => {
+    /* ───────────────────────── A COLLECTION FORM BELONGS TO NO ONE ORDER
+     *
+     * Reported from a real handset on 31 October: "Invalid request" when a
+     * driver photographed the form at a pharmacy counter. Two defects in a
+     * row, and the second only became reachable once the first was fixed.
+     *
+     *   The schema took `orderId` as an optional NUMBER, and the client has
+     *   always sent null for a batch photograph -- a technician handing over
+     *   forty packages signs one sheet. `.optional()` accepts a missing key,
+     *   not a null one. 400, with the real reason in `details` that the
+     *   driver never sees.
+     *
+     *   And `courierMayTouch` returned false for a null order, flatly. So
+     *   the fix above would have turned a 400 into a 403 reading "That
+     *   order is not assigned to you" -- about an order that does not
+     *   exist.
+     *
+     * It hit the pickup and the hand-back and never the per-stop photo,
+     * which is exactly why it survived every test here: all of them pass an
+     * orderId, because they were written about deliveries.
+     *
+     * Tested AS A COURIER. An admin returns true on the first line of that
+     * check, so an admin-only test proves nothing about the person who
+     * actually hit this.
+     */
+    describe('a batch photograph, which has no order', () => {
+        let courier;
+
+        beforeAll(async () => {
+            await admin.post('/api/users').send({
+                username: 'batch.courier', name: 'Batch Courier',
+                password: 'batch-courier-pass-1', role: 'driver',
+            });
+            await admin.put('/api/users/batch.courier/memberships/uh').send({ role: 'courier', settings: {} });
+            courier = srv.agent();
+            const li = await courier.post('/api/login').send({ username: 'batch.courier', password: 'batch-courier-pass-1' });
+            expect(li.status, li.text).toBe(200);
+        });
+
+        it('is accepted from a courier with orderId null', async () => {
+            const res = await courier.post(FILES).send({
+                kind: 'courier_form', contentType: 'image/jpeg', bytes: 120_000, orderId: null,
+            });
+            expect(res.status, JSON.stringify(res.body)).toBe(201);
+            expect(res.body.upload.method).toBe('PUT');
+        });
+
+        it('files it under the day rather than under an order', async () => {
+            const res = await courier.post(FILES).send({
+                kind: 'courier_form', contentType: 'image/jpeg', bytes: 1000, orderId: null,
+            });
+            const key = (await sql('SELECT s3_key FROM files WHERE id = ?', [res.body.id])).rows[0].s3_key;
+            /* courier-form, not courier_form: buildKey runs every segment
+               through safe(), which hyphenates. Worth pinning as it is
+               actually written rather than as it is spelled in the code. */
+            expect(key).toContain('/unassigned/courier-form/');
+            expect(key).not.toContain('order-');
+        });
+
+        it('lets the courier confirm it, which is the step after the PUT', async () => {
+            /* The create succeeding and the confirm refusing would leave the
+               file pending forever, and a pending file is one the pickup
+               handler will not accept. */
+            const created = await courier.post(FILES).send({
+                kind: 'courier_form', contentType: 'image/jpeg', bytes: 1000, orderId: null,
+            });
+            const stored = await courier.post(`${FILES}/${created.body.id}/stored`).send({ bytes: 1000 });
+            expect(stored.status, JSON.stringify(stored.body)).toBe(200);
+            expect(stored.body.status).toBe('stored');
+        });
+
+        it('still refuses a kind that has to belong to a delivery', async () => {
+            /* The exception that keeps this narrow. An identity document is
+               the most sensitive thing here and means nothing detached from
+               the delivery it was shown for; a courier must not be able to
+               put one in the bucket with no order on it. */
+            const res = await courier.post(FILES).send({
+                kind: 'patient_id', contentType: 'image/jpeg', bytes: 1000, orderId: null,
+            });
+            expect(res.status).toBe(403);
+            expect(res.body.error).toMatch(/has to belong to a delivery/);
+        });
+
+        it("still refuses somebody else's order", async () => {
+            /* The rule this whole check exists for, unchanged. */
+            const res = await courier.post(FILES).send({
+                kind: 'doorstep', contentType: 'image/jpeg', bytes: 1000, orderId,
+            });
+            expect(res.status).toBe(403);
+            expect(res.body.error).toMatch(/not assigned to you/);
+        });
+    });
+
     it('reports itself available', async () => {
         expect((await admin.get(`${FILES}/status/check`)).body).toEqual({ available: true, reason: null });
     });
