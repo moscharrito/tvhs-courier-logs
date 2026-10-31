@@ -228,3 +228,15 @@ describe('Returns', () => {
         expect(screen.getByText(/still count as attempted/)).toBeInTheDocument();
     });
 });
+
+describe('the camera beside the photo field', () => {
+    it("is there, because the phone's own camera came up black at a counter", async () => {
+        /* 31 October: tapping the field, choosing Take Photo, and getting a
+           black frame. That camera belongs to the operating system and no
+           line of ours is in its path, so there is a second way in that we
+           own -- and that reports what went wrong. See app/Camera.tsx. */
+        renderReturns();
+        await screen.findByLabelText(/Photo of the signed form/);
+        expect(screen.getByRole('button', { name: 'Take a picture' })).toBeInTheDocument();
+    });
+});

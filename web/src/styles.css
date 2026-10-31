@@ -1257,3 +1257,56 @@ body {
     min-height: var(--izy-tap-min);
     align-self: center;
 }
+
+/* ── The in-page camera ─────────────────────────────────────────────────────
+ * Full screen, black, and nothing on it but the frame and the shutter. The
+ * reason it is its own layer rather than a card in the form: a courier
+ * photographing a signed form at a counter is holding the phone in one hand
+ * and the paperwork in the other, and anything that is not the picture or
+ * the button is in the way. See the long note in app/Camera.tsx for why
+ * there is an in-page camera at all. */
+.izy-cam {
+    position: fixed; inset: 0; z-index: 90;
+    display: flex; flex-direction: column;
+    background: #000;
+    /* Clear of the notch and the home bar, both of which land exactly where
+       a shutter wants to be. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.izy-cam-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+/* `contain`, not `cover`: a form photographed at a counter must not have its
+   edges cropped off to fill a portrait screen. Letterboxing against black is
+   the right trade when the subject is a document. */
+.izy-cam-view { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+/* Anything the camera has to say sits over the frame, not under it, because
+   a black frame is exactly when there is nothing to cover up. */
+.izy-cam-say {
+    position: absolute; inset: auto var(--izy-s-md) var(--izy-s-md);
+    padding: var(--izy-s-md);
+    border-radius: var(--izy-r-card);
+    background: rgba(255, 255, 255, 0.94);
+    color: var(--izy-ink);
+    font-size: var(--izy-t-label); line-height: 22px;
+}
+.izy-cam-say p { margin: 0 0 var(--izy-s-sm); }
+.izy-cam-say .izy-card-btn:last-child { margin-bottom: 0; }
+.izy-cam-bar {
+    flex: 0 0 auto;
+    display: flex; flex-direction: column; align-items: center;
+    gap: var(--izy-s-sm);
+    padding: var(--izy-s-md) var(--izy-s-lg) var(--izy-s-lg);
+}
+/* Bigger than the 64px custody minimum, because it is pressed while looking
+   at the subject rather than at the button. */
+.izy-cam-shutter {
+    width: 76px; height: 76px; border-radius: 999px;
+    border: 4px solid rgba(255, 255, 255, 0.9);
+    background: transparent; padding: 5px;
+    cursor: pointer;
+}
+.izy-cam-shutter > span { display: block; width: 100%; height: 100%; border-radius: 999px; background: #fff; }
+.izy-cam-shutter:active:not(:disabled) { transform: scale(0.94); }
+.izy-cam-shutter:disabled { opacity: 0.4; cursor: default; }
+.izy-cam-shutter:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+.izy-cam-bar .izy-card-btn { width: auto; margin: 0; background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.3); }

@@ -20,6 +20,7 @@ import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
+import { CameraButton } from '../../app/Camera';
 import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { NavigateIcon, PhoneIcon, PinIcon, RouteIcon } from '../../app/Icons';
 
@@ -446,7 +447,20 @@ export function Stop() {
                                     type="file"
                                     accept={PHOTO_ACCEPT}
                                     disabled={busy}
-                                    onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
+                                    /* This field took whatever it was handed and
+                                       checked nothing -- the doorstep path below
+                                       validated and this, the path EVERY ordinary
+                                       delivery goes down, did not. A file too
+                                       large or plainly not a photograph became a
+                                       four-hundred after the upload instead of a
+                                       sentence before it. */
+                                    onChange={(e) => {
+                                        const picked = e.target.files?.[0] ?? null;
+                                        const problem = picked === null ? null : photoProblem(picked);
+                                        if (problem !== null) { setMsg({ kind: 'error', text: problem }); setFormPhoto(null); return; }
+                                        setMsg(null);
+                                        setFormPhoto(picked);
+                                    }}
                                 />
                                 <span className="izy-muted izy-field-note">
                                     {formPhoto === null
@@ -454,6 +468,11 @@ export function Stop() {
                                         : `Ready to send: ${formPhoto.name}`}
                                 </span>
                             </label>
+                            {/* The camera, as a path of our own. The phone's own
+                                camera came up black for a courier on 31 October
+                                and nothing in the file input above can reach
+                                that; see app/Camera.tsx. */}
+                            <CameraButton name="courier-form" disabled={busy} onPhoto={(file) => { setMsg(null); setFormPhoto(file); }} />
 
                             {order.idRequired === true && (
                                 <div className="izy-card izy-id-required">
@@ -467,7 +486,13 @@ export function Stop() {
                                             type="file"
                                             accept={PHOTO_ACCEPT}
                                             disabled={busy}
-                                            onChange={(e) => setIdPhoto(e.target.files?.[0] ?? null)}
+                                            onChange={(e) => {
+                                                const picked = e.target.files?.[0] ?? null;
+                                                const problem = picked === null ? null : photoProblem(picked);
+                                                if (problem !== null) { setMsg({ kind: 'error', text: problem }); setIdPhoto(null); return; }
+                                                setMsg(null);
+                                                setIdPhoto(picked);
+                                            }}
                                         />
                                         <span className="izy-muted izy-field-note">
                                             {idPhoto === null
@@ -475,6 +500,7 @@ export function Stop() {
                                                 : `Ready to send: ${idPhoto.name}`}
                                         </span>
                                     </label>
+                                    <CameraButton name="patient-id" disabled={busy} onPhoto={(file) => { setMsg(null); setIdPhoto(file); }} />
                                 </div>
                             )}
 
@@ -624,6 +650,11 @@ export function Stop() {
                                     }}
                                 />
                             </label>
+                            <CameraButton
+                                name="doorstep"
+                                disabled={busy || filesAvailable === false}
+                                onPhoto={(file) => { setMsg(null); setPhoto(file); }}
+                            />
                             {photo && <p className="izy-muted">Photo ready, {Math.round(photo.size / 1024)} KB.</p>}
                             <label className="izy-field">Why nobody signed
                                 <input value={noSignatureReason} onChange={(e) => setNoSignatureReason(e.target.value)}

@@ -233,6 +233,48 @@ describe('Stop', () => {
         expect(form).toHaveAttribute('accept', expect.stringContaining('image/'));
     });
 
+    it('offers a camera of our own beside every photo field', async () => {
+        /* 31 OCTOBER, AND THE THIRD FIX FOR THE SAME REPORT. The file input
+           hands the whole business to the operating system: it opens the
+           phone's camera app, and when THAT comes up black there is no line
+           of ours in the path. So there is a second way in -- getUserMedia,
+           a frame we own, a canvas -- and the point of it is not elegance.
+           It is that when it fails it fails with a name the courier can be
+           told, instead of a black rectangle.
+
+           One per field, because a delivery needs the form AND, when the
+           pharmacy stamped it, the identification. */
+        renderStop(routes({ 'GET /api/projects/uh/uh/orders/21': order({ idRequired: true }) }));
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+
+        expect(screen.getAllByRole('button', { name: 'Take a picture' })).toHaveLength(2);
+    });
+
+    it('names a file the server would refuse, rather than letting it become a four-hundred', async () => {
+        /* This field took whatever it was handed and checked nothing, while
+           the doorstep field below it validated -- and this is the path every
+           ordinary delivery goes down. */
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+
+        /* The name goes in FIRST, deliberately. With it missing the record
+           button is disabled for that reason alone, and an assertion about
+           the refused file would pass whether the file was refused or not. */
+        fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
+
+        const field = screen.getByLabelText(/Photo of the signed form/) as HTMLInputElement;
+        const docket = new File(['%PDF-1.4'], 'docket.pdf', { type: 'application/pdf' });
+        fireEvent.change(field, { target: { files: [docket] } });
+
+        expect(await screen.findByText(/not a photo this app can store/i)).toBeInTheDocument();
+        /* And it is not held on to: the record button stays shut, and says
+           the photograph is what is missing. */
+        expect(screen.getByRole('button', { name: /Record the delivery/ })).toBeDisabled();
+        expect(screen.getByText('Photograph the signed form.')).toBeInTheDocument();
+    });
+
     it('always offers the signed form, because the signature moved onto paper', async () => {
         renderStop();
         await screen.findByRole('heading', { name: 'Stop' });

@@ -20,6 +20,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoType, photoProblem } from '../../lib/photos';
+import { CameraButton } from '../../app/Camera';
 import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { ReturnIcon, RouteIcon } from '../../app/Icons';
 
@@ -353,6 +354,10 @@ export function Returns() {
                                             : `Ready to send: ${formPhoto.name}`}
                                     </span>
                                 </label>
+                                {/* The camera, as a path of our own: the phone's
+                                    came up black at a counter on 31 October.
+                                    See app/Camera.tsx. */}
+                                <CameraButton name="return-form" disabled={busy} onPhoto={(file) => { setMsg(null); setFormPhoto(file); }} />
                             </div>
 
                             <CardButton

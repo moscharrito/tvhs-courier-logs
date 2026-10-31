@@ -21,6 +21,7 @@ import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet
 import { BoxIcon, RouteIcon } from '../../app/Icons';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoType, photoProblem } from '../../lib/photos';
+import { CameraButton } from '../../app/Camera';
 
 interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled?: boolean }
 /* `controlled` is true when ANY order in the group is, which is what decides
@@ -381,6 +382,10 @@ export function Pickup() {
                                                 : `Ready to send: ${formPhoto.name}`}
                                         </span>
                                     </label>
+                                    {/* The camera, as a path of our own: the
+                                        phone's came up black at a counter on 31
+                                        October. See app/Camera.tsx. */}
+                                    <CameraButton name="collection-form" disabled={busy} onPhoto={(file) => { setMsg(null); setFormPhoto(file); }} />
 
                                     {formPhoto === null && (
                                         <label className="izy-field">If there is no signed form, say why
