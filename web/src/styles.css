@@ -1212,3 +1212,48 @@ body {
     .izy-card-btn { transition: none; }
     .izy-card-btn:active:not(:disabled) { transform: none; }
 }
+
+/* ── The way in, in the app's shape ────────────────────────────────────────
+ *
+ * The sign-in screen is the first thing every University Health driver sees
+ * on the web, and it was the last screen still built like a console: a 20px
+ * wordmark inside the pane, 14px fields in 34px boxes, and the three things
+ * somebody actually taps rendered as a small green button and two underlined
+ * links. app/src/screens/SignIn.tsx puts the wordmark on the ground above
+ * the panel and makes every action a card, so this does the same.
+ *
+ * The card keeps the real blur it already had. It is one element on an
+ * otherwise empty page and the first thing anybody sees. */
+.izy-login { align-content: center; gap: var(--izy-s-lg); }
+.izy-login-brand { text-align: center; }
+.izy-login-wordmark {
+    display: block; margin: 0;
+    font-size: var(--izy-t-display); font-weight: 800;
+    color: var(--izy-green); letter-spacing: 0.5px; line-height: 1.1;
+}
+.izy-login-company { display: block; margin-top: 2px; font-size: var(--izy-t-meta); color: var(--izy-muted); }
+
+/* Fields at the size a thumb needs, same floors as the sheets. Somebody
+   typing a generated password at a pharmacy counter is doing it one-handed
+   with a crate in the other. */
+.izy-login-card .izy-field { font-size: var(--izy-t-label); font-weight: 600; }
+.izy-login-card .izy-field input {
+    min-height: var(--izy-tap-standard);
+    font-size: var(--izy-t-body); font-weight: 400;
+    border-radius: var(--izy-r-button);
+    padding: var(--izy-s-sm) var(--izy-s-md);
+    margin-top: var(--izy-s-xs);
+}
+/* The reveal control sits inside the box, so the text has to stop short of
+   it. Spelled out because the shorthand above would otherwise flatten the
+   padding-right that rule depends on. */
+.izy-login-card .izy-secret-row input { padding-right: 44px; }
+.izy-login-card .izy-secret-toggle { width: 42px; }
+.izy-login-card form { gap: var(--izy-s-md); }
+/* A link is still a link, but it is tapped with a thumb like everything
+   else here. */
+.izy-login-card .izy-link {
+    font-size: var(--izy-t-label);
+    min-height: var(--izy-tap-min);
+    align-self: center;
+}

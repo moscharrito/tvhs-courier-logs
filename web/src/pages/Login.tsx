@@ -54,6 +54,7 @@ import { useLocation } from 'react-router-dom';
 import { api, ApiError, type DriverPick, type DeviceIdentity } from '../lib/api';
 import { useAuth } from '../app/auth';
 import { SecretInput } from '../app/SecretInput';
+import { CardButton } from '../app/Glass';
 import { PasswordReset } from './PasswordReset';
 import { Loading } from '../app/Loading';
 
@@ -198,9 +199,19 @@ export function Login() {
 
     return (
         <div className="izy-login">
+            {/* ABOVE THE CARD, ON THE GROUND, which is where the app puts
+                it: the wordmark is the only thing on this screen wide
+                enough to anchor to, and inside the pane it was competing
+                with the thing somebody came here to do. See the same block
+                at the top of app/src/screens/SignIn.tsx. */}
+            <div className="izy-login-brand">
+                {/* Still the page heading. It is the only one this screen
+                    has, and a sign-in page with no h1 is a page a screen
+                    reader cannot summarise. */}
+                <h1 className="izy-login-wordmark">TAG</h1>
+                <span className="izy-login-company">Izy Global Services LLC</span>
+            </div>
             <div className="izy-login-card">
-                <h1>TAG</h1>
-                <p className="izy-sub">Izy Global Services LLC</p>
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
 
                 {mode === 'device' && phone?.enrolled && (
@@ -219,7 +230,7 @@ export function Login() {
                             required
                             autoFocus
                         />
-                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
+                        <CardButton submit title="Sign in" tone="primary" busy={busy} />
                         {/* A shared phone, or somebody else's: always a way out. */}
                         <button
                             className="izy-link"
@@ -240,11 +251,18 @@ export function Login() {
                 {mode === 'project' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <div className="izy-muted">Which project are you signing in to?</div>
-                        {projects === null ? <Loading label="Loading projects" /> : projects.map((p) => (
-                            <button key={p.code} className="izy-driver" onClick={() => chooseProject(p)} type="button">
-                                <span className="izy-avatar">{initials(p.name)}</span>
-                                <span><b>{p.name}</b><span>{p.code}</span></span>
-                            </button>
+                        {/* The app's ChooseContract, which is a panel of
+                            cards rather than a list of 36px avatars. Same
+                            question, asked the same way, so a driver who
+                            installs the app in December recognises it. */}
+                        {projects === null ? <Loading label="Loading projects" /> : projects.map((p, i) => (
+                            <CardButton
+                                key={p.code}
+                                title={p.name}
+                                detail={p.code}
+                                tone={i === 0 ? 'primary' : 'secondary'}
+                                onClick={() => chooseProject(p)}
+                            />
                         ))}
                         {projects?.length === 0 && <div className="izy-muted">No projects configured yet.</div>}
                         {staffLink}
@@ -258,10 +276,13 @@ export function Login() {
                         {!pinned && <button className="izy-link" type="button" onClick={backToProjects} style={{ alignSelf: 'flex-start' }}>Back</button>}
                         <div className="izy-muted">{project.name} · who is driving?</div>
                         {drivers === null ? <Loading label="Loading drivers" /> : drivers.map((d) => (
-                            <button key={d.username} className="izy-driver" onClick={() => pick(d)} type="button">
-                                <span className="izy-avatar">{initials(d.name)}</span>
-                                <span><b>{d.name}</b><span>{pickHint(d)}</span></span>
-                            </button>
+                            <CardButton
+                                key={d.username}
+                                title={d.name}
+                                detail={pickHint(d)}
+                                tone="secondary"
+                                onClick={() => pick(d)}
+                            />
                         ))}
                         {staffLink}
                     </div>
@@ -278,7 +299,7 @@ export function Login() {
                             <SecretInput label="Your password (first time only)" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                         )}
                         <SecretInput label={mode === 'setup' ? 'Create a 4 to 6 digit PIN' : 'PIN'} inputMode="numeric" pattern="\d{4,6}" autoComplete="one-time-code" value={pin} onChange={(e) => setPin(e.target.value)} required autoFocus />
-                        <button className="izy-btn" type="submit" disabled={busy}>{mode === 'setup' ? 'Set PIN and sign in' : 'Sign in'}</button>
+                        <CardButton submit title={mode === 'setup' ? 'Set PIN and sign in' : 'Sign in'} tone="primary" busy={busy} />
                         {mode === 'pin' && (
                             <button className="izy-link" type="button" onClick={() => { setMode('setup'); setPin(''); }}>Forgot PIN? Use password</button>
                         )}
@@ -293,7 +314,7 @@ export function Login() {
                             <span><b>{driver.name}</b><span>{driver.username}</span></span>
                         </div>
                         <SecretInput label="Your password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
-                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
+                        <CardButton submit title="Sign in" tone="primary" busy={busy} />
                         {/* Said here rather than discovered later: this is the
                             once-per-phone step, and the next one is four
                             digits. */}
@@ -315,7 +336,7 @@ export function Login() {
                             <input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
                         </label>
                         <SecretInput label="Password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-                        <button className="izy-btn" type="submit" disabled={busy}>Sign in</button>
+                        <CardButton submit title="Sign in" tone="primary" busy={busy} />
                         <div className="izy-muted" style={{ textAlign: 'center' }}>Your projects appear after you sign in.</div>
                     </form>
                 )}
@@ -332,13 +353,13 @@ export function Login() {
                     one back -- "Sign in another way" is the route out of
                     those, and it leads here. */}
                 {mode !== 'reset' && mode !== 'device' && mode !== 'pin' && (
-                    <button
-                        className="izy-link"
-                        type="button"
+                    <CardButton
+                        title="Forgotten your password?"
+                        detail="We can email you a code to set a new one."
+                        tone="quiet"
+                        compact
                         onClick={() => { setMode('reset'); setError(null); }}
-                    >
-                        Forgotten your password?
-                    </button>
+                    />
                 )}
             </div>
         </div>
