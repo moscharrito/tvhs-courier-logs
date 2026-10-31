@@ -4,9 +4,10 @@ import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
 import { initials } from '../lib/initials';
 import { confirmSignOut } from '../lib/outbox';
-import { counterName, isPharmacyOnly, projectHref } from '../lib/pharmacy';
+import { counterName, isCourierOnly, isPharmacyOnly, projectHref } from '../lib/pharmacy';
 import { displayName, handleUnder } from '../lib/people';
 import { rememberedFlag, rememberFlag } from '../lib/remember';
+import { DriverTabs, DriverTopBar } from './DriverShell';
 
 /* ROLE_LABEL used to sit here, declared and never read. It was left behind
    when the NavLink's title attribute went (see the comment on the project
@@ -43,6 +44,11 @@ export function Layout() {
     /* A pharmacy counter gets its own rail. See lib/pharmacy.ts for why this
        is a shared answer rather than a check made here. */
     const pharmacy = isPharmacyOnly(projects);
+    /* And a courier on a phone gets the app's shell instead of a rail: top
+       bar, screen, three tabs. See DriverShell.tsx, which also explains why
+       both bars are in the document at every width and hidden by CSS. */
+    const courier = isCourierOnly(projects);
+    const contract = projects[0];
 
     const toggleRail = useCallback(() => {
         setCollapsed((was) => {
@@ -82,7 +88,7 @@ export function Layout() {
     );
 
     return (
-        <div className={`izy${collapsed ? ' is-collapsed' : ''}`}>
+        <div className={`izy${collapsed ? ' is-collapsed' : ''}${courier && contract ? ' izy-courier' : ''}`}>
             <aside className="izy-side">
                 <div className="izy-side-top">
                     {/* Whose screen this is. A pharmacist reading
@@ -181,12 +187,23 @@ export function Layout() {
                     </div>
                 </div>
             </aside>
+            {/* Hidden above 900px, where the rail is the navigation and has
+                room to spell itself out. Both of these are the app's shell:
+                see DriverShell.tsx. */}
+            {courier && contract && (
+                <DriverTopBar
+                    code={contract.code}
+                    contract={contract.name}
+                    onSignOut={() => { void onSignOut(); }}
+                />
+            )}
             <main className="izy-main">
                 {/* Above the screen, not tucked into a corner: a courier who
                     cannot tell "sent" from "on this phone" will assume sent. */}
                 <SyncStatus />
                 <Outlet />
             </main>
+            {courier && contract && <DriverTabs code={contract.code} />}
         </div>
     );
 }

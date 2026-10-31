@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { counterName, isPharmacyOnly, projectHref } from './pharmacy';
+import { counterName, isCourierOnly, isPharmacyOnly, projectHref } from './pharmacy';
 
 const member = (code: string, role: string) => ({
     id: 1, code, name: code.toUpperCase(), timezone: 'America/Chicago', role,
@@ -40,6 +40,40 @@ describe('who gets the counter experience', () => {
 
     it('is not a courier', () => {
         expect(isPharmacyOnly([member('uh', 'courier')])).toBe(false);
+    });
+});
+
+describe('who gets the phone app\'s shell', () => {
+    /* What this decides is the SHAPE of the screen: no side rail, a top bar,
+       three tabs along the bottom. Every University Health driver works in
+       the browser for the first month and then installs the app, and two
+       layouts for the same job is two things to learn. */
+
+    it('is a courier with one courier membership', () => {
+        expect(isCourierOnly([member('uh', 'courier')])).toBe(true);
+    });
+
+    it('is not an Izy administrator, who is enrolled everywhere', () => {
+        /* The same reason as above, and the worse failure of the two: an
+           admin reduced to three tabs loses the whole console. */
+        expect(isCourierOnly([member('uh', 'admin'), member('tvhs', 'admin')])).toBe(false);
+    });
+
+    it('is not a driver who also leads a site', () => {
+        /* EVERY, not some. A tab bar with Today, History and You cannot
+           reach the board, the roster or the planner, and a site lead needs
+           all three. */
+        expect(isCourierOnly([member('uh', 'courier'), member('tvhs', 'lead')])).toBe(false);
+    });
+
+    it('is not a pharmacy, and not an account with no memberships', () => {
+        expect(isCourierOnly([member('uh', 'pharmacy')])).toBe(false);
+        expect(isCourierOnly([])).toBe(false);
+    });
+
+    it('is a courier who drives for two contracts', () => {
+        /* Both are rounds, so both want the run screen. */
+        expect(isCourierOnly([member('uh', 'courier'), member('tvhs', 'courier')])).toBe(true);
     });
 });
 

@@ -36,6 +36,30 @@ export function isPharmacyOnly(projects: readonly ProjectMembership[]): boolean 
 }
 
 /**
+ * True when every project this account belongs to is a courier seat.
+ *
+ * The same question as isPharmacyOnly for the other role that gets its own
+ * shell, and here for the same reason: the shell, the rail and the tab bar
+ * have to agree, and three screens each deciding for themselves is how two
+ * of them get it wrong.
+ *
+ * What it decides is the SHAPE of the screen rather than what is on it.
+ * Every University Health driver works in the browser for the first month
+ * and then moves to the phone app, so a courier on a phone gets the app's
+ * layout: no side rail, a top bar, a tab bar along the bottom. Permission is
+ * not this function's business — the server scopes a courier, and
+ * app/App.tsx has the route allow-list.
+ *
+ * EVERY, not some, and for the same two reasons as above. An administrator
+ * is enrolled in every project at boot and must keep the full console. A
+ * driver who also leads a site needs the dispatch screens the rail reaches,
+ * and a tab bar with three tabs cannot offer them.
+ */
+export function isCourierOnly(projects: readonly ProjectMembership[]): boolean {
+    return projects.length > 0 && projects.every((p) => p.role === 'courier');
+}
+
+/**
  * Where a project card should point.
  *
  * `/projects/:code/:code` was the old answer everywhere, and it is right for

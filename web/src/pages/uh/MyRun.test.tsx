@@ -2,7 +2,21 @@
 
    The assertion that matters most is the map link: it carries the address
    and never the patient's name, because that URL leaves the application into
-   a third party's servers and the phone's own history. */
+   a third party's servers and the phone's own history.
+
+   ─────────────────────────────────────────────────────────────────────────
+   WHERE THE DIRECTIONS ASSERTIONS LOOK, AND WHY IT MOVED.
+
+   This screen is now the phone app's layout: information in the upper
+   region, controls in a sheet under the thumb. Directions and "Open the
+   stop" used to sit inside the next-stop card, so these tests scoped to
+   `getByLabelText('Next stop')` to pick the current stop's control out of
+   the one-per-row in the list below.
+
+   They are controls, so they are in the sheet now, grouped and named "This
+   stop". The scoping moved with them and nothing else about these tests
+   changed: `thisStop()` does the job `next` did, which was only ever to
+   avoid matching twenty rows at once. */
 
 import { describe, it, expect } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
@@ -56,6 +70,9 @@ function renderRun(routes: Record<string, unknown>) {
     );
 }
 
+/** The sheet's controls for the stop a courier is driving to right now. */
+const thisStop = () => screen.getByRole('group', { name: 'This stop' });
+
 const base = (over = {}) => ({
     'GET /api/session': session,
     'GET /api/me/projects': projects,
@@ -107,11 +124,10 @@ describe('MyRun', () => {
            a regression dressed as a feature. */
         renderRun(base());
         await screen.findByRole('heading', { name: 'Today' });
-        const next = screen.getByLabelText('Next stop');
-        const link = within(next).getByRole('link', { name: 'Directions' });
+        const link = within(thisStop()).getByRole('link', { name: 'Directions' });
         expect(link).toHaveAttribute('href', expect.stringContaining('google.com/maps/search'));
         expect(link).toHaveAttribute('target', '_blank');
-        expect(within(next).queryByRole('button', { name: 'Directions' })).toBeNull();
+        expect(within(thisStop()).queryByRole('button', { name: 'Directions' })).toBeNull();
         expect(document.querySelectorAll('iframe').length).toBe(0);
     });
 
@@ -129,8 +145,7 @@ describe('MyRun', () => {
             },
         }));
         await screen.findByRole('heading', { name: 'Today' });
-        const next = screen.getByLabelText('Next stop');
-        fireEvent.click(within(next).getByRole('button', { name: 'Directions' }));
+        fireEvent.click(within(thisStop()).getByRole('button', { name: 'Directions' }));
 
         const frame = await screen.findByTitle('Directions to this stop');
         const urls = [
@@ -159,10 +174,9 @@ describe('MyRun', () => {
             },
         }));
         await screen.findByRole('heading', { name: 'Today' });
-        const next = screen.getByLabelText('Next stop');
-        fireEvent.click(within(next).getByRole('button', { name: 'Directions' }));
+        fireEvent.click(within(thisStop()).getByRole('button', { name: 'Directions' }));
 
-        const link = await within(next).findByRole('link', { name: 'Directions' });
+        const link = await within(thisStop()).findByRole('link', { name: 'Directions' });
         expect(link).toHaveAttribute('href', expect.stringContaining('google.com/maps/search'));
         expect(link).toHaveAttribute('target', '_blank');
         expect(document.querySelectorAll('iframe').length).toBe(0);
@@ -276,6 +290,76 @@ describe('MyRun', () => {
         expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(1);
         expect(screen.getAllByRole('link', { name: 'Open the stop' }).length).toBeGreaterThan(0);
         expect(screen.queryByRole('heading', { name: 'Collect first' })).not.toBeInTheDocument();
+    });
+
+    /* ── The app's shape ──────────────────────────────────────────────── */
+
+    it('keeps the upper region information and puts every control in the sheet', async () => {
+        /* The split this screen was rebuilt around, and the one thing about
+           it that is easy to undo by accident: somebody adds a button to the
+           next-stop card because that is where the stop is, and the shape
+           stops being the app's. Information above, actions under the thumb.
+           Asserted as "no interactive element at all" rather than as a list
+           of the ones that moved, so a new one cannot creep back in. */
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        const next = screen.getByLabelText('Next stop');
+        expect(within(next).queryAllByRole('link')).toHaveLength(0);
+        expect(within(next).queryAllByRole('button')).toHaveLength(0);
+
+        /* And the controls for it are together, in the sheet, named. */
+        const sheet = thisStop();
+        expect(within(sheet).getByRole('link', { name: 'Open the stop' })).toBeInTheDocument();
+        expect(within(sheet).getByRole('link', { name: 'Directions' })).toBeInTheDocument();
+    });
+
+    it('names a card after its action, not after the whole card', async () => {
+        /* A card is a glyph, a verb and a sentence under it, and left alone
+           its accessible name is all three: "Open the stop Stop 1 for Ines
+           Vargas". That is a name no two cards can share even when they are
+           the same action, so a voice-control user asking for "Open the
+           stop" matches nothing and a screen reader reads a paragraph.
+
+           The detail is still announced — as a description. Both halves are
+           asserted, because pinning the name by DELETING the explanation
+           would pass the first half and be a worse screen. */
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        /* Scoped, because the list below has one per row and they share this
+           name — which is the point: before this they could not. */
+        const open = within(thisStop()).getByRole('link', { name: 'Open the stop' });
+        expect(open.getAttribute('aria-describedby')).not.toBeNull();
+        expect(document.getElementById(open.getAttribute('aria-describedby')!)?.textContent)
+            .toContain('Stop 1 for Ines Vargas');
+    });
+
+    it('offers to collect from a pharmacy rather than naming a run number', async () => {
+        /* It used to read "Pick up for run 10". A driver has no idea what
+           run 10 is and does not need to: what they need is that there is
+           something at a counter and how much of it. The app's wording. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' }), stop({ sequence: 2, orderId: 22, status: 'assigned' })] }],
+            }),
+        }));
+        const collect = await screen.findByRole('link', { name: 'Collect from a pharmacy' });
+        expect(collect).toHaveAttribute('href', '/projects/uh/runs/10/pickup');
+        expect(screen.queryByText(/run 10/i)).not.toBeInTheDocument();
+        expect(document.getElementById(collect.getAttribute('aria-describedby')!)?.textContent)
+            .toContain('2 orders are waiting');
+    });
+
+    it('offers the way back and the way to complain on every run, finished or not', async () => {
+        /* Both were a grey link in a row at the bottom. A package can sit in
+           a van overnight, and a screen that hides the way to hand it back
+           is how it stays there; the discrepancy form is the only screen the
+           people at the door have for the shadow week. */
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.getByRole('link', { name: 'Take back undelivered' }))
+            .toHaveAttribute('href', '/projects/uh/returns');
+        expect(screen.getByRole('link', { name: 'Something did not match' }))
+            .toHaveAttribute('href', '/projects/uh/discrepancies');
     });
 
     it('says nothing about PINs, on a set-up phone or an unenrolled one', async () => {

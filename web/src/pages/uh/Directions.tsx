@@ -18,8 +18,10 @@
  * so the screen already knows it before anything is drawn.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { CardFace } from '../../app/Glass';
+import type { IconProps } from '../../app/Icons';
 
 export interface DirectionsAnswer {
     available: boolean;
@@ -51,14 +53,49 @@ interface Props {
     /** Google Maps for this stop. The link when there is no embed, and the
      *  way out to turn-by-turn when there is. */
     mapsUrl: string;
+    /* ─────────────────────────────────────────────────────────────────────
+     * WEARING THE CARD SHAPE, on the driver's run screen.
+     *
+     * The run screen is the phone app's layout now — context above, actions
+     * in a sheet under the thumb — and in that sheet Directions sits beside
+     * "Collect from a pharmacy" and "Open the stop" as a card: a glyph, the
+     * action, and a sentence under it.
+     *
+     * It cannot simply BE a CardLink or a CardButton, because which of those
+     * it is depends on the installation: a server with no map key renders a
+     * link that opens on the first tap, and one with a key renders a button
+     * that unfolds a frame and relabels itself "Hide map". So it borrows the
+     * card's FACE and keeps its own element. See app/Glass.tsx.
+     *
+     * Absent, as it is everywhere else, this renders exactly what it always
+     * did: one element with one word in it.
+     * ───────────────────────────────────────────────────────────────────── */
+    /** The sentence under the action. Turns this into a card. */
+    detail?: ReactNode;
+    /** Decorative; the label is the accessible name. */
+    Icon?: ComponentType<IconProps>;
 }
 
-export function Directions({ code, orderId, embed, label = 'Directions', className = 'izy-btn', mapsUrl }: Props) {
+export function Directions({ code, orderId, embed, label = 'Directions', className = 'izy-btn', mapsUrl, detail, Icon }: Props) {
     const [open, setOpen] = useState(false);
     const [answer, setAnswer] = useState<DirectionsAnswer | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const panel = useRef<HTMLDivElement | null>(null);
+    const detailId = useId();
+
+    /* With no `detail` this is exactly what it was: one element, one word
+       inside it, no ARIA. With one, it is a card, and the name is pinned to
+       the action while the sentence becomes a description — see the note
+       above `named` in app/Glass.tsx for why that is the right way round.
+       Both take the CURRENT label, so the name says "Hide map" when the
+       button does. */
+    const cardProps = (name: string) => (detail === undefined
+        ? {}
+        : { 'aria-label': name, 'aria-describedby': detailId });
+    const cardInside = (name: string) => (detail === undefined
+        ? name
+        : <CardFace Icon={Icon} title={name} detail={detail} detailId={detailId} />);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -95,7 +132,11 @@ export function Directions({ code, orderId, embed, label = 'Directions', classNa
        Also the landing place if the per-stop call comes back refusing one,
        which it can when a stop has no address on it. */
     if (!embed || (answer !== null && !answer.available)) {
-        return <a className={className} href={mapsUrl} target="_blank" rel="noreferrer">{label}</a>;
+        return (
+            <a className={className} href={mapsUrl} target="_blank" rel="noreferrer" {...cardProps(label)}>
+                {cardInside(label)}
+            </a>
+        );
     }
 
     return (
@@ -105,8 +146,9 @@ export function Directions({ code, orderId, embed, label = 'Directions', classNa
                 type="button"
                 aria-expanded={open}
                 onClick={() => setOpen((was) => !was)}
+                {...cardProps(open ? 'Hide map' : label)}
             >
-                {open ? 'Hide map' : label}
+                {cardInside(open ? 'Hide map' : label)}
             </button>
 
             {open && (

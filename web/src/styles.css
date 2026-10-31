@@ -738,3 +738,423 @@ body {
    does nothing, so the number is the part that has to be readable. */
 .izy-dispatch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
 .izy-dispatch .izy-muted { font-variant-numeric: tabular-nums; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE DRIVER'S SCREEN, WHICH IS THE PHONE APP'S SCREEN.
+ *
+ * Every University Health driver works in the browser for the first month
+ * and only then moves to the phone app. The two had drifted into different
+ * products: the app's driver side was designed as a rideshare shape — what
+ * is happening above, everything you can DO in a sheet under the thumb — and
+ * the browser was rendering the same screens as the dispatch console, with
+ * our company name in 18px above the next address.
+ *
+ * So the numbers below are app/src/theme.ts, transcribed. TAP, RADIUS,
+ * SPACE, TYPE and GLASS, as custom properties, so the two files can be read
+ * side by side and a change to one is visible as a change to the other.
+ * Where a value differs it is because the medium does, and it says so.
+ *
+ * WHO THIS IS FOR, which is the whole reason for the sizes: somebody
+ * standing beside a van, one-handed, in Texas sun, with a cold pack in the
+ * other hand. 64px on anything that records custody. A 16px floor on
+ * anything they read. Nothing smaller because it looked tidier.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+    /* TAP. Apple asks for 44 and Android for 48 as a MINIMUM, and both
+       minima assume somebody sitting still indoors. These are floors. */
+    --izy-tap-primary: 64px;   /* collect, deliver, arrive, go on shift */
+    --izy-tap-standard: 56px;  /* ordinary navigation */
+    --izy-tap-min: 48px;       /* a dense row in a list */
+
+    --izy-r-card: 22px;
+    --izy-r-button: 18px;
+    --izy-r-sheet: 28px;
+
+    --izy-s-xs: 6px;
+    --izy-s-sm: 10px;
+    --izy-s-md: 16px;
+    --izy-s-lg: 22px;
+    --izy-s-xl: 30px;
+
+    /* A windscreen-glare floor of 16 for anything a courier reads and 17
+       for anything they act on. */
+    --izy-t-display: 32px;
+    --izy-t-heading: 20px;
+    --izy-t-body: 17px;
+    --izy-t-label: 16px;
+    --izy-t-meta: 15px;
+
+    /* GLASS, from the same file. The fills are a little denser than the
+       app's because a browser has a real backdrop-filter behind them and
+       the app is faking depth with layered fills — see the long note at the
+       top of app/src/theme.ts. */
+    --izy-glass-green: rgba(20, 83, 45, 0.92);
+    --izy-glass-edge-ink: rgba(17, 24, 39, 0.10);
+    --izy-glass-top: rgba(255, 255, 255, 0.95);
+    --izy-glass-hair: rgba(17, 24, 39, 0.08);
+    --izy-pane-shadow: 0 14px 34px rgba(11, 35, 24, 0.14), 0 2px 6px rgba(11, 35, 24, 0.06);
+    --izy-sheet-shadow: 0 -8px 34px rgba(11, 35, 24, 0.13);
+}
+
+/* ── A pane, not a rectangle ────────────────────────────────────────────────
+ * The bright top border is most of what sells glass: a pane catches light on
+ * the edge facing it and goes darker where it meets what is under it. A full
+ * white ring on all four sides is a sticker. */
+.izy-pane {
+    background: var(--izy-glass);
+    border: 1px solid var(--izy-glass-edge-ink);
+    border-top-color: var(--izy-glass-top);
+    border-radius: var(--izy-r-card);
+    padding: var(--izy-s-lg);
+    box-shadow: var(--izy-pane-shadow);
+}
+.izy-pane.is-strong { background: var(--izy-glass-strong); }
+
+/* ── The bottom sheet ───────────────────────────────────────────────────────
+ * On a desktop this is just a pane: there is no thumb to reach with, and a
+ * sheet welded to the bottom of a 1400px window is a shape borrowed past the
+ * point where it means anything. The phone rules are in the media query at
+ * the bottom of this block. */
+.izy-sheet {
+    background: var(--izy-glass-strong);
+    border: 1px solid var(--izy-glass-edge-ink);
+    border-top-color: var(--izy-glass-top);
+    border-radius: var(--izy-r-sheet);
+    padding: var(--izy-s-sm) var(--izy-s-lg) var(--izy-s-lg);
+    box-shadow: var(--izy-pane-shadow);
+}
+.izy-grabber {
+    width: 44px; height: 5px; margin: 0 auto var(--izy-s-md);
+    border-radius: 999px;
+    background: rgba(17, 24, 39, 0.18);
+}
+
+/* ── The card button ────────────────────────────────────────────────────────
+ * A button that is a card, because `detail` is what makes the difference
+ * between two actions readable at a glance: a courier choosing between
+ * "Collect from a pharmacy" and "Take undelivered back" is helped more by a
+ * line of explanation than by a tidier row of chips. */
+.izy-card-btn {
+    display: flex; align-items: center; gap: var(--izy-s-md);
+    width: 100%;
+    min-height: var(--izy-tap-primary);
+    margin: 0 0 var(--izy-s-sm);
+    padding: var(--izy-s-md) var(--izy-s-lg);
+    border: 1px solid transparent;
+    border-radius: var(--izy-r-button);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+    /* The press is a lift rather than a colour change, so it reads through
+       sunglasses and in direct sun. */
+    transition: transform 120ms ease, opacity 120ms ease;
+}
+.izy-card-btn.is-compact {
+    min-height: var(--izy-tap-standard);
+    padding: var(--izy-s-sm) var(--izy-s-md);
+}
+.izy-card-btn.is-compact .izy-card-btn-title { font-size: var(--izy-t-label); }
+.izy-card-btn:active:not(:disabled) { transform: scale(0.985); opacity: 0.92; }
+.izy-card-btn:disabled { opacity: 0.45; cursor: default; }
+.izy-card-btn:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 2px; }
+.izy-card-btn-icon { flex: 0 0 28px; display: grid; place-items: center; }
+.izy-card-btn-text { flex: 1; min-width: 0; }
+.izy-card-btn-title { display: block; font-size: var(--izy-t-body); font-weight: 700; }
+.izy-card-btn-detail { display: block; margin-top: 3px; font-size: var(--izy-t-meta); line-height: 20px; font-weight: 400; }
+
+/* The tones, and the icon takes the title's colour so a tone change cannot
+   leave a glyph invisible against its own button. */
+.izy-card-btn.is-primary { background: var(--izy-glass-green); border-color: rgba(255, 255, 255, 0.22); color: #fff; }
+.izy-card-btn.is-primary .izy-card-btn-detail { color: rgba(255, 255, 255, 0.82); }
+.izy-card-btn.is-secondary { background: var(--izy-glass); border-color: var(--izy-glass-edge-ink); border-top-color: var(--izy-glass-top); color: var(--izy-green); }
+.izy-card-btn.is-secondary .izy-card-btn-detail { color: var(--izy-muted); }
+.izy-card-btn.is-quiet { background: rgba(255, 255, 255, 0.45); border-color: var(--izy-glass-hair); color: var(--izy-ink); }
+.izy-card-btn.is-quiet .izy-card-btn-detail { color: var(--izy-muted); }
+/* Saving a timesheet and clearing a day are routine. A solid green slab and
+   a solid red slab shout about them, and a screen where everything shouts
+   says nothing. Red survives on the outline of the destructive one, because
+   the difference still has to be obvious at a glance in a moving van. */
+.izy-card-btn.is-calm { background: rgba(22, 163, 74, 0.14); border-color: rgba(22, 163, 74, 0.35); color: var(--izy-green); }
+.izy-card-btn.is-calm .izy-card-btn-detail { color: var(--izy-muted); }
+.izy-card-btn.is-calmDanger { background: rgba(185, 28, 28, 0.08); border-color: rgba(185, 28, 28, 0.32); color: var(--izy-danger); }
+.izy-card-btn.is-calmDanger .izy-card-btn-detail { color: var(--izy-muted); }
+.izy-card-btn.is-danger { background: rgba(185, 28, 28, 0.92); border-color: rgba(255, 255, 255, 0.2); color: #fff; }
+.izy-card-btn.is-danger .izy-card-btn-detail { color: rgba(255, 255, 255, 0.85); }
+
+/* ── Chips ──────────────────────────────────────────────────────────────────
+ * Distinct from .izy-pill, which is a 12px table badge. A chip is read at
+ * arm's length beside the next address, so it keeps the 15px floor. */
+.izy-chip {
+    display: inline-flex; align-items: center; min-height: 30px;
+    padding: 0 12px; border-radius: 999px; border: 1px solid transparent;
+    font-size: var(--izy-t-meta); font-weight: 600; white-space: nowrap;
+}
+.izy-chip.is-neutral { background: rgba(255, 255, 255, 0.6); border-color: var(--izy-glass-hair); color: var(--izy-muted); }
+.izy-chip.is-good { background: rgba(22, 163, 74, 0.14); border-color: rgba(22, 163, 74, 0.3); color: #166534; }
+.izy-chip.is-warn { background: rgba(217, 119, 6, 0.14); border-color: rgba(217, 119, 6, 0.3); color: #92400e; }
+.izy-chip.is-bad { background: rgba(185, 28, 28, 0.12); border-color: rgba(185, 28, 28, 0.3); color: var(--izy-danger); }
+
+/* ── The screen header ──────────────────────────────────────────────────────
+ * display, not heading: "Today" is the one word on screen somebody reads
+ * from arm's length while holding a crate. Outspecifies `.izy-main h1`
+ * deliberately — that 26px is right for a console page and small here. */
+.izy-screen-head { margin-bottom: var(--izy-s-md); }
+.izy-screen-head-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--izy-s-sm); }
+.izy-main .izy-screen-head h1 { margin: 0; font-size: var(--izy-t-display); font-weight: 800; letter-spacing: -0.01em; }
+.izy-screen-head-right { flex: 0 0 auto; }
+.izy-main .izy-screen-head .izy-screen-sub { margin: var(--izy-s-xs) 0 0; font-size: var(--izy-t-meta); color: var(--izy-muted); }
+
+/* ── The run frame ─────────────────────────────────────────────────────────
+ * Context above, sheet below. The upper region is the rideshare map slot: no
+ * order in this system has coordinates, and getting them means sending a
+ * patient's address to a map provider, which ticket 1.4 refused until a BAA
+ * covers it. What fills it is what a map would have told them anyway — where
+ * they are up to, what is next, how long it has — and it is full size so a
+ * map drops in later rather than forcing a redesign. */
+.izy-run-context > * + * { margin-top: var(--izy-s-md); }
+/* The shift bar and the panes are both .izy-card descendants and both carry
+   their own bottom margin, which doubles the gap the rule above sets. */
+.izy-run-context > * { margin-bottom: 0; }
+/* It is an <h2> so the screen is navigable by heading — "Collect first" is
+   what a driver is looking for — and it is sized as the app's label, which
+   is the small line above the big one. */
+.izy-run-next-label { margin: 0; font-size: var(--izy-t-meta); font-weight: 600; color: var(--izy-muted); letter-spacing: 0.6px; }
+.izy-run-next-name { margin: var(--izy-s-xs) 0 0; font-size: 24px; font-weight: 700; color: var(--izy-ink); }
+.izy-run-next-address { margin: 2px 0 0; font-size: var(--izy-t-body); line-height: 25px; color: var(--izy-ink); }
+.izy-run-chips { display: flex; flex-wrap: wrap; gap: var(--izy-s-sm); margin-top: 12px; }
+
+/* Inside the sheet, a folding section is a titled list rather than a pane.
+   The sheet is already the surface; a card on a card is two borders and a
+   shadow between a driver and their round. */
+.izy-sheet .izy-section {
+    background: transparent; border: 0; box-shadow: none;
+    padding: 0; margin: var(--izy-s-md) 0 var(--izy-s-sm);
+}
+.izy-sheet .izy-section .izy-section-title { font-size: var(--izy-t-heading); font-weight: 700; }
+
+/* The all-stops list inside the sheet. Hairlines rather than cards: twelve
+   panes stacked is a texture, not a list. */
+.izy-run-stops-title { margin: var(--izy-s-lg) 0 var(--izy-s-sm); font-size: var(--izy-t-heading); font-weight: 700; }
+.izy-run-stops { list-style: none; margin: 0; padding: 0; }
+.izy-run-stops > li {
+    border-top: 1px solid var(--izy-glass-hair);
+    padding: 14px 0; min-height: var(--izy-tap-min);
+}
+.izy-run-stops > li.is-done { opacity: 0.45; }
+.izy-run-stop-name { font-size: var(--izy-t-body); font-weight: 600; color: var(--izy-ink); }
+.izy-run-stop-meta { margin-top: 4px; font-size: var(--izy-t-meta); line-height: 21px; color: var(--izy-muted); }
+.izy-run-stop-actions { display: flex; flex-wrap: wrap; gap: var(--izy-s-sm); margin-top: var(--izy-s-sm); }
+/* Inside a row, a card button is one of several and must not take the width. */
+.izy-run-stop-actions .izy-card-btn { width: auto; margin: 0; }
+.izy-run-foot { margin: var(--izy-s-md) 0 0; font-size: var(--izy-t-meta); line-height: 21px; color: var(--izy-muted); }
+
+/* ── The same screen at a desk ──────────────────────────────────────────────
+ * Some drivers will be at a laptop for the first month — it is why the
+ * dispatch number is written out rather than only linked. They get the same
+ * screen in the same order, as one column rather than stretched: a card
+ * button nine hundred pixels wide with a glyph at one end is a banner, not a
+ * button, and the line of detail under the title ends up a finger's width
+ * from the thing it describes. The grabber goes with the sheet's pinning;
+ * there is nothing to drag here. */
+@media (min-width: 901px) {
+    .izy-run { max-width: 720px; }
+    .izy-run .izy-grabber { display: none; }
+    .izy-sheet { padding-top: var(--izy-s-lg); }
+}
+
+/* ── The shell a driver gets: top bar, tab bar ─────────────────────────────
+ * The app's ui/Nav.tsx. Both are hidden at desktop width, where the side
+ * rail is the navigation and has room to spell itself out.
+ *
+ * `izy-courier`, NOT `izy-driver`. That name is taken, by the row on the
+ * sign-in page that lists a driver to pick — `display: flex; align-items:
+ * center` and a white 10px-radius box. Putting it on the shell root silently
+ * centred every child of the page: the tab bar came out 169px wide in the
+ * middle of a 375px screen with "Tod…" in it, which looks like a flex bug
+ * and is a name collision. */
+.izy-courier-top, .izy-tabbar { display: none; }
+
+.izy-courier-back, .izy-courier-out {
+    display: inline-flex; align-items: center; gap: var(--izy-s-xs);
+    min-height: var(--izy-tap-min); border-radius: 999px;
+    border: 1px solid var(--izy-glass-hair);
+    font-size: var(--izy-t-label); font-weight: 700;
+    text-decoration: none; cursor: pointer;
+}
+/* `label` says where it goes, not "Back": a courier three screens deep wants
+   to know what they are returning to. */
+.izy-courier-back { padding: 0 var(--izy-s-md) 0 var(--izy-s-sm); background: rgba(255, 255, 255, 0.6); color: var(--izy-green); }
+/* Small and top-right because it is not the work; labelled all the same,
+   because an unlabelled door glyph on a shared phone is the control nobody
+   presses when they should and somebody presses when they should not. */
+.izy-courier-out { padding: 0 var(--izy-s-md); background: rgba(185, 28, 28, 0.08); border-color: rgba(185, 28, 28, 0.22); color: var(--izy-danger); font-size: var(--izy-t-meta); }
+.izy-courier-back:focus-visible, .izy-courier-out:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 2px; }
+/* The contract's name, where a back pill would point at the screen you are
+   already on. Truncated rather than wrapped: it shares a row with Sign out,
+   and a second line here pushes the run down the screen. */
+.izy-courier-where {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--izy-t-meta); color: var(--izy-muted);
+}
+
+.izy-tabbar-inner {
+    display: flex; gap: 2px; padding: var(--izy-s-xs);
+    background: var(--izy-glass-strong);
+    backdrop-filter: var(--izy-blur);
+    -webkit-backdrop-filter: var(--izy-blur);
+    border: 1px solid var(--izy-glass-top);
+    border-radius: var(--izy-r-sheet);
+    box-shadow: var(--izy-pane-shadow);
+}
+.izy-tabbar a {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    min-height: var(--izy-tap-standard); padding: var(--izy-s-sm) 4px;
+    border-radius: var(--izy-r-button);
+    color: var(--izy-muted); text-decoration: none;
+    /* 14 rather than the 15 floor the rest of this keeps, and the only
+       deliberate exception to it: three labels share a 375px phone and at 15
+       the longest truncates. It sits under a 24px icon and carries 600/800
+       weight, so it is not doing the work alone. */
+    font-size: 14px; font-weight: 600;
+}
+/* The selected tab is a lit panel rather than a coloured word. */
+.izy-tabbar a.active { background: rgba(22, 163, 74, 0.12); color: var(--izy-green); font-weight: 800; }
+.izy-tabbar a:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: -3px; }
+.izy-tabbar a span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* ── On a phone, a driver gets the app's shape ──────────────────────────────
+ *
+ * The rail goes and the tab bar replaces it. Before this, the rail took the
+ * top third of a phone before a single stop appeared, and a driver holding a
+ * package needs the next address rather than our company name.
+ *
+ * Nothing is lost with it: Today, History and You are the three things it
+ * linked to, Sign out moves into the top bar where the app has it, and the
+ * contract name is on the sign-in screen they just came through.
+ *
+ * THE SHEET IS PINNED AND SCROLLS INSIDE ITSELF. That is the whole point of
+ * the shape: twenty stops must not push "what is next" off the top of the
+ * screen. It means a fixed-height frame, which is what the dvh is for —
+ * 100vh on a phone is taller than the visible viewport once the browser's
+ * own chrome is counted, and the last card button would sit under it. */
+@media (max-width: 900px) {
+    .izy-courier { height: 100vh; height: 100dvh; overflow: hidden; }
+    .izy-courier .izy-side { display: none; }
+    .izy-courier .izy-courier-top {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: var(--izy-s-sm);
+        flex: 0 0 auto;
+        padding: max(var(--izy-s-sm), env(safe-area-inset-top)) var(--izy-s-lg) 0;
+    }
+    /* ── WHO OWNS THE SCROLL ───────────────────────────────────────────────
+     *
+     * The run screen owns it: the sheet scrolls inside itself and the frame
+     * does not move, which is the whole point of the shape. Every other
+     * screen a courier can reach is still an ordinary page and has to
+     * scroll as one — the stop, the pickup, returns, their deliveries,
+     * their account.
+     *
+     * So main scrolls by default and stops when it is holding the run.
+     * `:has()` rather than a class from React, because which screen is
+     * mounted is the router's business and the shell should not be asking.
+     * Without `:has()` the run simply scrolls as a long page, which is what
+     * it did before any of this.
+     *
+     * Children do not shrink. They are flex items in a column, so left
+     * alone a page taller than the frame would squeeze every element to fit
+     * and hand each one its own scrollbar instead of scrolling the page.
+     * Returns rendered exactly that way: a fragment of four elements, four
+     * independent scroll boxes, none of them obviously broken until the
+     * content got long. */
+    .izy-courier .izy-main {
+        flex: 1 1 auto; min-height: 0;
+        display: flex; flex-direction: column;
+        padding: var(--izy-s-md) var(--izy-s-lg) var(--izy-s-lg);
+        overflow-y: auto;
+    }
+    .izy-courier .izy-main > * { flex-shrink: 0; }
+    .izy-courier .izy-main:has(.izy-run) { padding: 0; overflow: hidden; }
+    .izy-courier .izy-run { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    /* ITS OWN HEIGHT, CAPPED — not a share of what is left.
+       `flex: 0 1 auto` looks like the cautious choice and is not: flex-basis
+       auto means the sheet below asks for the height of ALL of its content,
+       twenty stops and four cards of it, and the two then shrink in
+       proportion. The context came out 126px tall with a 109px shift bar in
+       it, so "Today" and the next stop were scrolled out of a region whose
+       entire job is to hold them. The sheet takes what is left from zero;
+       this takes what it needs, up to a cap, and scrolls inside the cap on a
+       short screen. */
+    .izy-courier .izy-run-context {
+        flex: 0 0 auto; max-height: 62%; min-height: 0; overflow-y: auto;
+        /* No bottom padding: the sheet below brings its own top padding and
+           a grabber, which is the gap. Sixteen pixels here was sixteen
+           pixels of overflow and a scrollbar on a region that fits. */
+        padding: var(--izy-s-md) var(--izy-s-lg) 0;
+    }
+    .izy-courier .izy-sheet {
+        flex: 1 1 0; min-height: 7rem; overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0; border-bottom: 0; border-left: 0; border-right: 0;
+        border-radius: var(--izy-r-sheet) var(--izy-r-sheet) 0 0;
+        box-shadow: var(--izy-sheet-shadow);
+        backdrop-filter: var(--izy-blur);
+        -webkit-backdrop-filter: var(--izy-blur);
+    }
+    /* Floats clear of the edge so the glass has something to sit over. */
+    .izy-courier .izy-tabbar {
+        display: block; flex: 0 0 auto;
+        padding: var(--izy-s-sm) var(--izy-s-md) max(var(--izy-s-md), env(safe-area-inset-bottom));
+    }
+    /* A driver screen is one column. The desktop rule scrolls a wide table
+       inside its card, which here would hide half of a stop. */
+    .izy-courier .izy-card { overflow-x: visible; }
+
+    /* The shift bar, as the app draws it: a slim full-bleed strip across the
+       top of the screen rather than a pane floating in the context region.
+       It is the one thing on this screen a driver reads once in the morning
+       and then stops noticing, and a pane makes it compete with the stop
+       they are actually working. */
+    .izy-courier .izy-run-context > .izy-shift {
+        margin: calc(var(--izy-s-md) * -1) calc(var(--izy-s-lg) * -1) 0;
+        background: rgba(255, 255, 255, 0.55);
+        border: 0; border-bottom: 1px solid var(--izy-glass-hair);
+        border-radius: 0; box-shadow: none;
+        padding: var(--izy-s-sm) var(--izy-s-lg);
+    }
+    /* A ROW, against the stacking rule 100px further up this file.
+       That rule is right on a console page, where the bar is a card and the
+       sentence has the full width: stacked, "Go off shift" stops wrapping
+       inside a 90px button. Here the bar is full-bleed chrome at the top of
+       the run, and stacking cost 109px of an 812px screen — enough to push
+       the next stop out of the region that exists to hold it. Full bleed
+       buys back the card's padding, so the row fits: the button takes what
+       it needs and the sentence takes the rest. */
+    .izy-courier .izy-run-context > .izy-shift .izy-row-between {
+        flex-direction: row; align-items: center; gap: var(--izy-s-sm);
+    }
+    .izy-courier .izy-run-context > .izy-shift .izy-btn { width: auto; flex: 0 0 auto; }
+    .izy-courier .izy-run-context > .izy-shift .izy-shift-state { font-size: 14px; }
+}
+
+/* A phone in landscape, or a short window: the context region would otherwise
+   take the whole frame and leave the sheet a sliver. */
+@media (max-width: 900px) and (max-height: 520px) {
+    .izy-courier .izy-run-context { max-height: 55%; }
+}
+
+/* ── The escape hatches, which the glass layer above also takes ──────────── */
+@media (prefers-reduced-transparency: reduce) {
+    .izy-pane, .izy-sheet, .izy-tabbar-inner { background: #fff; }
+    .izy-card-btn.is-quiet { background: #fff; }
+    .izy-courier-back { background: #fff; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .izy-sheet, .izy-tabbar-inner { background: #fff; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .izy-card-btn { transition: none; }
+    .izy-card-btn:active:not(:disabled) { transform: none; }
+}
