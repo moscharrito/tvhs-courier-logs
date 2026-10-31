@@ -30,6 +30,7 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { daysBeforeIn, todayIn } from '../../lib/when';
 import { money } from './Drivers';
 import { handleUnder } from '../../lib/people';
+import { Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 
 interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
@@ -116,10 +117,14 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
 
     const title = mine ? 'Your deliveries' : data.name;
 
-    return (
+    /* ONE SCREEN, TWO SHAPES. `mine` is the courier's own record — the
+       History tab of the phone app — and it gets the app's frame. Without
+       it this is a site manager looking somebody up at a desk, which is a
+       console page and should stay one. Same split as Discrepancies, and
+       the same flag that already decides the heading and whether a
+       username is printed under it. */
+    const page = (
         <>
-            <h1>{title}</h1>
-            <p className="izy-sub">
                 {/* The heading above is already the person's name. This line
                     repeated their username, which on this contract is their
                     email address -- a personal address in the subtitle of a
@@ -127,10 +132,6 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                     shoulder. Shown only when it is a handle rather than an
                     address, and never for your own record, where it told you
                     who you are. See lib/people.ts. */}
-                {!mine && handleUnder(data) !== null && <>{handleUnder(data)} · </>}
-                times in {data.timezone}
-            </p>
-
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}
 
             {!mine && (
@@ -166,6 +167,11 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                 </div>
             </div>
 
+            {/* A courier's own record shows these in the panel above, where
+                they stay on screen while the days below scroll. Printing
+                them twice is the clutter the Section summary rule exists to
+                stop. A manager has no panel, so they stay here. */}
+            {!mine && (
             <div className="izy-card">
                 <h2>{from} to {to}</h2>
                 <div className="izy-stats">
@@ -177,6 +183,7 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                     <div><b>{money(data.totals.payCents, data.currency)}</b><span>{mine ? 'earned' : 'to disburse'}</span></div>
                 </div>
             </div>
+            )}
 
             {data.periods.length === 0 ? (
                 <div className="izy-card"><p className="izy-muted">Nothing delivered in this range.</p></div>
@@ -221,6 +228,54 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                 </Section>
             ))}
             <Pager of={periods} noun={groupBy === 'day' ? 'days' : `${groupBy}s`} />
+        </>
+    );
+
+    if (mine) {
+        return (
+            <Screen>
+                <Context>
+                    <ScreenHeader title="Your deliveries" subtitle={`times in ${data.timezone}`} />
+                    {/* The three numbers somebody opens their own record
+                        for, in the region that does not scroll away: how
+                        many, how many went wrong, and what it comes to. The
+                        breakdown by day is the work underneath. */}
+                    <Panel>
+                        <h2 className="izy-lede-kicker">{from} to {to}</h2>
+                        <p className="izy-lede">{money(data.totals.payCents, data.currency)}</p>
+                        {/* The word, on its own line under the number. A
+                            figure with no caption is the one thing on this
+                            screen somebody could read as the wrong total —
+                            and it is deliberately "earned" rather than the
+                            manager's "to disburse", because this is their
+                            own record. */}
+                        <p className="izy-lede-note">earned</p>
+                        <div className="izy-chips">
+                            <Chip label={`${data.totals.delivered} delivered`} tone="good" />
+                            {data.totals.failed > 0 && <Chip label={`${data.totals.failed} not delivered`} tone="bad" />}
+                            <Chip label={`${data.periods.length} ${groupBy === 'day' ? 'days' : `${groupBy}s`}`} />
+                        </div>
+                    </Panel>
+                </Context>
+                <Sheet>{page}</Sheet>
+            </Screen>
+        );
+    }
+
+    return (
+        <>
+            <h1>{title}</h1>
+            <p className="izy-sub">
+                {/* The heading above is already the person's name. This line
+                    repeated their username, which on this contract is their
+                    email address -- a personal address in the subtitle of a
+                    page a site manager reads with somebody looking over their
+                    shoulder. Shown only when it is a handle rather than an
+                    address. See lib/people.ts. */}
+                {handleUnder(data) !== null && <>{handleUnder(data)} · </>}
+                times in {data.timezone}
+            </p>
+            {page}
         </>
     );
 }

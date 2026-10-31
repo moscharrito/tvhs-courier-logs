@@ -62,6 +62,28 @@ export function Panel({ children, strong = false, className, ...rest }: {
 }
 
 /**
+ * A driver's screen: the frame the app gives every one of them.
+ *
+ * Context above — what is happening, which is the region a rideshare app
+ * fills with a map — and a sheet below holding everything you can DO. The
+ * frame is what makes the shape work: on a phone it is exactly the height of
+ * the viewport, so the sheet scrolls inside itself and a long list can never
+ * push "what is next" off the top. The shell finds it with `:has(.izy-screen)`
+ * and hands over the scroll; see styles.css.
+ *
+ * A page without this renders as it always did, as an ordinary scrolling
+ * page inside the shell. That is the fallback and it is a fine one.
+ */
+export function Screen({ children }: { children: ReactNode }) {
+    return <div className="izy-screen">{children}</div>;
+}
+
+/** The upper region. Information only — every control belongs in the Sheet. */
+export function Context({ children }: { children: ReactNode }) {
+    return <div className="izy-screen-context">{children}</div>;
+}
+
+/**
  * The bottom sheet: everything a courier can DO, under the thumb.
  *
  * The shape the app borrowed from rideshare apps and this now borrows back.
@@ -150,18 +172,26 @@ interface FaceProps {
 }
 
 /** A card that does something here. */
-export function CardButton({ title, detail, Icon, tone = 'primary', compact = false, onClick, disabled = false, busy = false }: FaceProps & {
-    onClick: () => void;
+export function CardButton({ title, detail, Icon, tone = 'primary', compact = false, onClick, disabled = false, busy = false, submit = false }: FaceProps & {
+    onClick?: () => void;
     disabled?: boolean;
     busy?: boolean;
+    /** Submits the form it is inside, rather than calling onClick.
+     *
+     *  A driver screen's main action is usually a form: the count and the
+     *  printed name at a pharmacy counter, the signature at a door. Making
+     *  that a type="button" with an onClick would break Enter on a keyboard
+     *  and `required` on every field above it, both of which the form is
+     *  already doing correctly. */
+    submit?: boolean;
 }) {
     const off = disabled || busy;
     const id = useId();
     return (
         <button
-            type="button"
+            type={submit ? 'submit' : 'button'}
             className={[toneClass(tone), compact ? 'is-compact' : ''].filter(Boolean).join(' ')}
-            onClick={onClick}
+            {...(onClick === undefined ? {} : { onClick })}
             disabled={off}
             aria-busy={busy}
             {...named(title, detail, id)}

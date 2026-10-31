@@ -17,6 +17,8 @@ import { api, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
+import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { BoxIcon, RouteIcon } from '../../app/Icons';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
 
 interface WaitingOrder { orderId: number; sequence: number; recipientName: string; externalRef: string; packages: number; controlled?: boolean }
@@ -182,183 +184,241 @@ export function Pickup() {
     };
 
     return (
-        <>
-            <h1>Pick up</h1>
-            <p className="izy-sub">
-                <Link to={`/projects/${code}/my-run`}>Today</Link> · run {runId}
-            </p>
+        <Screen>
+            {/* The upper region: which counter, and how much of it. The app's
+                Collect screen puts exactly these two numbers here, and they
+                are the two a courier checks against the trolley in front of
+                them before they start counting. */}
+            <Context>
+                <ScreenHeader
+                    title="Pick up"
+                    subtitle={<><Link to={`/projects/${code}/my-run`}>Today</Link> · run {runId}</>}
+                />
+                {group !== null ? (
+                    <Panel>
+                        <h2 className="izy-lede-kicker">Collecting from</h2>
+                        <p className="izy-lede">{group.site.name}</p>
+                        <div className="izy-chips">
+                            <Chip label={`${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`} />
+                            <Chip label={`${group.packages} expected`} tone="warn" />
+                            {/* §6 of the offer letter: a documented
+                                two-signature handoff on anything controlled.
+                                Both signatures are on the paper docket, and
+                                the delivery is refused without a photograph
+                                of it — so what this has to do is make sure
+                                nobody drives off not knowing. */}
+                            {group.controlled && <Chip label="CONTROLLED" tone="bad" />}
+                        </div>
+                    </Panel>
+                ) : (
+                    <Panel>
+                        <h2 className="izy-lede-kicker">Collecting from</h2>
+                        <p className="izy-lede">
+                            {waiting.sites.length === 0 ? 'Nothing left to collect' : 'Choose where you are'}
+                        </p>
+                        <p className="izy-lede-note">
+                            {waiting.sites.length === 0
+                                ? 'Nothing left to collect on this run.'
+                                : `${waiting.totals.orders} ${waiting.totals.orders === 1 ? 'order' : 'orders'} `
+                                  + `across ${waiting.sites.length} ${waiting.sites.length === 1 ? 'pharmacy' : 'pharmacies'}.`}
+                        </p>
+                    </Panel>
+                )}
+            </Context>
 
-            {msg && (
-                <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
-                    {msg.text}
-                    {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
-                </div>
-            )}
-
-            {done && (
-                <div className="izy-alert ok" role="status">
-                    Collected {done.collected.length} {done.collected.length === 1 ? 'order' : 'orders'}.
-                    {done.notes.length > 0 && <ul>{done.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
-                </div>
-            )}
-
-            {queued && (
-                <div className="izy-alert warn" role="status">
-                    Saved on this phone. The pickup will be sent as soon as you have signal, and the list
-                    above will catch up then. Load the vehicle and go.
-                </div>
-            )}
-
-            {waiting.sites.length === 0 ? (
-                <div className="izy-card">
-                    <p>Nothing left to collect on this run.</p>
-                    <Link className="izy-btn" to={`/projects/${code}/my-run`}>Back to today</Link>
-                </div>
-            ) : (
-                <form onSubmit={(e) => { void submit(e); }}>
-                    <div className="izy-card">
-                        <h2>Which pharmacy</h2>
-                        <label className="izy-field">Pharmacy
-                            <select value={siteId} onChange={(e) => { setSiteId(e.target.value === '' ? '' : Number(e.target.value)); setCounted(''); }}>
-                                <option value="">Choose where you are</option>
-                                {waiting.sites.map((s) => (
-                                    <option key={s.site.id} value={s.site.id}>
-                                        {s.site.name} ({s.orders.length} {s.orders.length === 1 ? 'order' : 'orders'}, {s.packages} packages)
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
+            <Sheet>
+                {msg && (
+                    <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
+                        {msg.text}
+                        {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
                     </div>
+                )}
 
-                    {group && (
-                        <>
-                            <div className="izy-card">
-                                <h2>Count the packages</h2>
-                                <p className="izy-muted">
-                                    {group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'} for this pharmacy.
-                                    Count what you are actually given and type it in.
-                                </p>
-                                <label className="izy-field" style={{ maxWidth: 180 }}>Packages counted
-                                    <input
-                                        value={counted}
-                                        onChange={(e) => setCounted(e.target.value.replace(/[^0-9]/g, ''))}
-                                        inputMode="numeric"
-                                        placeholder="0"
-                                        required
-                                    />
-                                </label>
-                                {mismatch && (
-                                    <div className="izy-alert warn" role="status">
-                                        The list expects {expected}. Say why the count is different before you continue.
-                                        <label className="izy-field" style={{ marginTop: 8 }}>Reason
-                                            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="One item not ready" />
-                                        </label>
-                                    </div>
-                                )}
-                                {/* PAGED, AND FOLDED BY DEFAULT.
-                                    A Robert B. Green wave is forty orders.
-                                    Rendered whole, the count box and the
-                                    Continue button were pushed off a phone
-                                    screen by a list the courier is not
-                                    reading yet -- they are counting boxes,
-                                    not names. It is here to settle an
-                                    argument about one package, which is a
-                                    thing you look up rather than scroll
-                                    past. Section rather than <details>, so
-                                    it folds like every other panel in the
-                                    application and remembers whether this
-                                    courier likes it open. */}
-                                <Section
-                                    id="uh.pickup.batch"
-                                    title="What is in this batch"
-                                    defaultOpen={false}
-                                    summary={`${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
-                                >
-                                    <ul className="izy-plain-list">
-                                        {batch.rows.map((o) => (
-                                            <li key={o.orderId}>
-                                                {o.recipientName} · {o.packages} {o.packages === 1 ? 'package' : 'packages'}
-                                                {o.externalRef && <> · {o.externalRef}</>}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                    <Pager of={batch} noun="orders" />
-                                </Section>
-                            </div>
+                {done && (
+                    <div className="izy-alert ok" role="status">
+                        Collected {done.collected.length} {done.collected.length === 1 ? 'order' : 'orders'}.
+                        {done.notes.length > 0 && <ul>{done.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+                    </div>
+                )}
 
-                            <div className="izy-card">
-                                <h2>The signed form</h2>
-                                <p className="izy-muted">
-                                    The printed name of the person handing the packages over, and a photograph of
-                                    the form they signed. One photograph covers the whole collection.
-                                </p>
-                                <label className="izy-field">Printed name
-                                    <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required placeholder="Name of the pharmacy staff member" />
-                                </label>
+                {queued && (
+                    <div className="izy-alert warn" role="status">
+                        Saved on this phone. The pickup will be sent as soon as you have signal, and the list
+                        above will catch up then. Load the vehicle and go.
+                    </div>
+                )}
 
-                                {/* THE PHARMACY'S PAD IS GONE. The counter
-                                    signs its own collection document and this
-                                    photographs it, so asking a technician to
-                                    scrawl on a phone as well was asking them
-                                    to sign twice -- and that scrawl was the
-                                    thing couriers reported stopped the round. */}
-                                <label className="izy-field">Photo of the signed form
-                                    <input
-                                        type="file"
-                                        accept="image/jpeg,image/png,image/webp"
-                                        disabled={busy}
-                                        onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
-                                    />
-                                    <span className="izy-muted izy-field-note">
-                                        {formPhoto === null
-                                            ? 'The pharmacy form for this collection. Take one now, or choose one you already have.'
-                                            : `Ready to send: ${formPhoto.name}`}
-                                    </span>
-                                </label>
+                {waiting.sites.length === 0 ? (
+                    <CardLink
+                        to={`/projects/${code}/my-run`}
+                        title="Back to today"
+                        Icon={RouteIcon}
+                        tone="primary"
+                        detail="Your round, and the next stop on it"
+                    />
+                ) : (
+                    <form onSubmit={(e) => { void submit(e); }}>
+                        {/* ONE PHARMACY AND IT IS ALREADY CHOSEN: no question.
+                            A select with a single option is a control that
+                            asks the courier to confirm something the screen
+                            already knows, and the name is in the panel above
+                            either way. */}
+                        {waiting.sites.length > 1 && (
+                            <label className="izy-field">Pharmacy
+                                <select value={siteId} onChange={(e) => { setSiteId(e.target.value === '' ? '' : Number(e.target.value)); setCounted(''); }}>
+                                    <option value="">Choose where you are</option>
+                                    {waiting.sites.map((s) => (
+                                        <option key={s.site.id} value={s.site.id}>
+                                            {s.site.name} ({s.orders.length} {s.orders.length === 1 ? 'order' : 'orders'}, {s.packages} packages)
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
 
-                                {formPhoto === null && (
-                                    <label className="izy-field">If there is no signed form, say why
+                        {group && (
+                            <>
+                                <div className="izy-card">
+                                    <h2>Count the packages</h2>
+                                    <p className="izy-muted">
+                                        {group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'} for this pharmacy.
+                                        Count what you are actually given and type it in.
+                                    </p>
+                                    {/* Deliberately empty, never prefilled with
+                                        the expected number: a box that starts
+                                        correct is a box everybody taps through
+                                        without counting. */}
+                                    <label className="izy-field" style={{ maxWidth: 180 }}>Packages counted
                                         <input
-                                            value={noFormReason}
-                                            onChange={(e) => setNoFormReason(e.target.value)}
-                                            placeholder="e.g. the counter had no form ready"
+                                            value={counted}
+                                            onChange={(e) => setCounted(e.target.value.replace(/[^0-9]/g, ''))}
+                                            inputMode="numeric"
+                                            placeholder="0"
+                                            required
+                                        />
+                                    </label>
+                                    {mismatch && (
+                                        <div className="izy-alert warn" role="status">
+                                            The list expects {expected}. Say why the count is different before you continue.
+                                            <label className="izy-field" style={{ marginTop: 8 }}>Reason
+                                                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="One item not ready" />
+                                            </label>
+                                        </div>
+                                    )}
+                                    {/* PAGED, AND FOLDED BY DEFAULT.
+                                        A Robert B. Green wave is forty orders.
+                                        Rendered whole, the count box and the
+                                        Continue button were pushed off a phone
+                                        screen by a list the courier is not
+                                        reading yet -- they are counting boxes,
+                                        not names. It is here to settle an
+                                        argument about one package, which is a
+                                        thing you look up rather than scroll
+                                        past. Section rather than <details>, so
+                                        it folds like every other panel in the
+                                        application and remembers whether this
+                                        courier likes it open. */}
+                                    <Section
+                                        id="uh.pickup.batch"
+                                        title="What is in this batch"
+                                        defaultOpen={false}
+                                        summary={`${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
+                                    >
+                                        <ul className="izy-plain-list">
+                                            {batch.rows.map((o) => (
+                                                <li key={o.orderId}>
+                                                    {o.recipientName} · {o.packages} {o.packages === 1 ? 'package' : 'packages'}
+                                                    {o.externalRef && <> · {o.externalRef}</>}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                        <Pager of={batch} noun="orders" />
+                                    </Section>
+                                </div>
+
+                                <div className="izy-card">
+                                    <h2>The signed form</h2>
+                                    <p className="izy-muted">
+                                        The printed name of the person handing the packages over, and a photograph of
+                                        the form they signed. One photograph covers the whole collection.
+                                    </p>
+                                    <label className="izy-field">Printed name
+                                        <input value={signedName} onChange={(e) => setSignedName(e.target.value)} required placeholder="Name of the pharmacy staff member" />
+                                    </label>
+
+                                    {/* THE PHARMACY'S PAD IS GONE. The counter
+                                        signs its own collection document and this
+                                        photographs it, so asking a technician to
+                                        scrawl on a phone as well was asking them
+                                        to sign twice -- and that scrawl was the
+                                        thing couriers reported stopped the round. */}
+                                    <label className="izy-field">Photo of the signed form
+                                        <input
+                                            type="file"
+                                            accept="image/jpeg,image/png,image/webp"
                                             disabled={busy}
+                                            onChange={(e) => setFormPhoto(e.target.files?.[0] ?? null)}
                                         />
                                         <span className="izy-muted izy-field-note">
-                                            A collection with no proof and no explanation is a gap in the chain of
-                                            custody that nobody can explain later.
+                                            {formPhoto === null
+                                                ? 'The pharmacy form for this collection. Take one now, or choose one you already have.'
+                                                : `Ready to send: ${formPhoto.name}`}
                                         </span>
                                     </label>
-                                )}
 
-                                {/* THE PAD WENT ON 19 OCTOBER. Both signatures
-                                    are on the physical form, and the driver
-                                    photographs it at the final delivery --
-                                    stop.ts refuses a controlled delivery
-                                    without that photograph. Asking the
-                                    courier to draw a mark here as well was
-                                    asking them to sign twice for one
-                                    handover, in a place the paper had not
-                                    reached yet. */}
-                            </div>
+                                    {formPhoto === null && (
+                                        <label className="izy-field">If there is no signed form, say why
+                                            <input
+                                                value={noFormReason}
+                                                onChange={(e) => setNoFormReason(e.target.value)}
+                                                placeholder="e.g. the counter had no form ready"
+                                                disabled={busy}
+                                            />
+                                            <span className="izy-muted izy-field-note">
+                                                A collection with no proof and no explanation is a gap in the chain of
+                                                custody that nobody can explain later.
+                                            </span>
+                                        </label>
+                                    )}
 
-                            <div className="izy-card">
-                                <button className="izy-btn" type="submit" disabled={!ready || busy}>
-                                    {busy ? 'Recording' : `Take custody of ${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
-                                </button>
-                                {!ready && (
-                                    <p className="izy-muted">
-                                        {signedName.trim() === '' && 'Add the printed name. '}
-                                        {formPhoto === null && noFormReason.trim().length < 3 && 'Photograph the signed form, or say why there is none. '}
-                                        {countedNumber === null && 'Count the packages. '}
-                                        {mismatch && note.trim() === '' && 'Say why the count is different.'}
-                                    </p>
-                                )}
-                            </div>
-                        </>
-                    )}
-                </form>
-            )}
-        </>
+                                    {/* THE PAD WENT ON 19 OCTOBER. Both signatures
+                                        are on the physical form, and the driver
+                                        photographs it at the final delivery --
+                                        stop.ts refuses a controlled delivery
+                                        without that photograph. Asking the
+                                        courier to draw a mark here as well was
+                                        asking them to sign twice for one
+                                        handover, in a place the paper had not
+                                        reached yet. */}
+                                </div>
+
+                                {/* THE ACTION, LAST AND LARGEST. `detail` says
+                                    what is missing while it is disabled, which
+                                    is the sentence that used to sit under the
+                                    button in grey and is the only thing a
+                                    stuck courier needs. */}
+                                <CardButton
+                                    submit
+                                    title={`Take custody of ${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
+                                    Icon={BoxIcon}
+                                    tone="primary"
+                                    disabled={!ready}
+                                    busy={busy}
+                                    detail={ready
+                                        ? `${counted} packages into the van, signed for by ${signedName.trim()}`
+                                        : [
+                                            signedName.trim() === '' ? 'Add the printed name.' : '',
+                                            formPhoto === null && noFormReason.trim().length < 3
+                                                ? 'Photograph the signed form, or say why there is none.' : '',
+                                            countedNumber === null ? 'Count the packages.' : '',
+                                            mismatch && note.trim() === '' ? 'Say why the count is different.' : '',
+                                        ].filter(Boolean).join(' ')}
+                                />
+                            </>
+                        )}
+                    </form>
+                )}
+            </Sheet>
+        </Screen>
     );
 }

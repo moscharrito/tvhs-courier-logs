@@ -19,6 +19,8 @@ import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
+import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { ReturnIcon, RouteIcon } from '../../app/Icons';
 
 interface CarriedOrder {
     orderId: number; recipientName: string; externalRef: string;
@@ -165,12 +167,35 @@ export function Returns() {
     };
 
     return (
-        <>
-            <h1>Take back</h1>
-            <p className="izy-sub">
-                <Link to={`/projects/${code}/my-run`}>Today</Link> · undelivered packages
-            </p>
+        <Screen>
+            <Context>
+                <ScreenHeader
+                    title="Take back"
+                    subtitle={<><Link to={`/projects/${code}/my-run`}>Today</Link> · undelivered packages</>}
+                />
+                <Panel>
+                    <h2 className="izy-lede-kicker">Still with you</h2>
+                    <p className="izy-lede">
+                        {load.totals.orders} {load.totals.orders === 1 ? 'order' : 'orders'}
+                    </p>
+                    <p className="izy-lede-note">
+                        {load.destinations.length === 0
+                            ? 'Nothing undelivered is still with you.'
+                            : 'These still count as attempted. Taking them back does not change that.'}
+                    </p>
+                    {load.destinations.length > 0 && (
+                        <div className="izy-chips">
+                            <Chip label={`${load.totals.packages} ${load.totals.packages === 1 ? 'package' : 'packages'}`} />
+                            <Chip
+                                label={`${load.destinations.length} ${load.destinations.length === 1 ? 'counter' : 'counters'}`}
+                                tone="warn"
+                            />
+                        </div>
+                    )}
+                </Panel>
+            </Context>
 
+            <Sheet>
             {msg && (
                 <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
                     {msg.text}
@@ -193,19 +218,15 @@ export function Returns() {
             )}
 
             {load.destinations.length === 0 ? (
-                <div className="izy-card">
-                    <p>Nothing undelivered is still with you.</p>
-                    <Link className="izy-btn" to={`/projects/${code}/my-run`}>Back to today</Link>
-                </div>
+                <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
             ) : (
                 <form onSubmit={(e) => { void submit(e); }}>
                     <div className="izy-card">
-                        <h2>Still with you</h2>
-                        <p className="izy-muted">
-                            {load.totals.orders} {load.totals.orders === 1 ? 'order' : 'orders'},
-                            {' '}{load.totals.packages} {load.totals.packages === 1 ? 'package' : 'packages'}.
-                            These still count as attempted: taking them back does not change that.
-                        </p>
+                        {/* The count and the sentence moved into the panel
+                            above: they say what this screen is for, and they
+                            have to stay on screen while the form below is
+                            filled in. What is left here is the choice. */}
+                        <h2>Which counter</h2>
                         {load.destinations.map((d) => (
                             <label key={d.site.id} className="izy-choice">
                                 <input
@@ -318,23 +339,27 @@ export function Returns() {
                                 </label>
                             </div>
 
-                            <div className="izy-card">
-                                <button className="izy-btn" type="submit" disabled={!ready || busy}>
-                                    {busy ? 'Recording' : `Hand back ${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
-                                </button>
-                                {!ready && (
-                                    <p className="izy-muted">
-                                        {signedName.trim() === '' && 'Add the printed name. '}
-                                        {formPhoto === null && 'Photograph the signed form. '}
-                                        {countedNumber === null && 'Count the packages. '}
-                                        {mismatch && note.trim() === '' && 'Say why the count is different.'}
-                                    </p>
-                                )}
-                            </div>
+                            <CardButton
+                                submit
+                                title={`Hand back ${group.orders.length} ${group.orders.length === 1 ? 'order' : 'orders'}`}
+                                Icon={ReturnIcon}
+                                tone="primary"
+                                busy={busy}
+                                disabled={!ready}
+                                detail={ready
+                                    ? `${counted} packages over the counter to ${signedName.trim()}`
+                                    : [
+                                        signedName.trim() === '' ? 'Add the printed name.' : '',
+                                        formPhoto === null ? 'Photograph the signed form.' : '',
+                                        countedNumber === null ? 'Count the packages.' : '',
+                                        mismatch && note.trim() === '' ? 'Say why the count is different.' : '',
+                                    ].filter(Boolean).join(' ')}
+                            />
                         </>
                     )}
                 </form>
             )}
-        </>
+            </Sheet>
+        </Screen>
     );
 }

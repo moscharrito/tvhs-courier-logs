@@ -50,6 +50,10 @@ import { useAuth } from '../app/auth';
 import { Pager, usePaged } from '../app/Pager';
 import { SecretInput } from '../app/SecretInput';
 import { confirmSignOut } from '../lib/outbox';
+import { useNavigate } from 'react-router-dom';
+import { CardButton, Context, Panel, Screen, ScreenHeader, Sheet } from '../app/Glass';
+import { isCourierOnly } from '../lib/pharmacy';
+import { displayName, handleUnder } from '../lib/people';
 
 export function Devices() {
     const { user, projects, signOut } = useAuth();
@@ -73,6 +77,11 @@ export function Devices() {
      * PIN already enrolled, so a phone set up before today keeps working
      * until it is signed out; what stops is any new UH enrolment. */
     const mayUsePin = user?.role === 'driver' && projects.some((p) => p.code === 'tvhs');
+    /* The You tab of the phone app, for a courier; an account page for
+       everybody else. Same split as Discrepancies and the driver record,
+       and the same helper the shell uses to decide the rail. */
+    const courier = isCourierOnly(projects);
+    const navigate = useNavigate();
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
     const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
@@ -174,14 +183,8 @@ export function Devices() {
     const pagedDevices = usePaged(devices ?? []);
     const pagedSessions = usePaged(sessions ?? []);
 
-    return (
+    const page = (
         <>
-            <h1>{mayUsePin ? 'Devices and sign-in' : 'Your account'}</h1>
-            <p className="izy-sub">
-                {mayUsePin
-                    ? 'Set up this phone so a PIN signs you in, see which phones are set up, and sign out anywhere you do not recognize.'
-                    : 'Change your password, and sign out anywhere you do not recognize.'}
-            </p>
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
             <ChangePassword />
@@ -340,6 +343,73 @@ export function Devices() {
                     </button>
                 </div>
             </div>
+        </>
+    );
+
+    if (courier) {
+        return (
+            <Screen>
+                <Context>
+                    {/* "Your account", not "You". The tab is called You
+                        because three tabs share a 375px bar; the app's own
+                        Profile screen is headed "Your account" and this is
+                        the same screen, so it says the same thing. A heading
+                        that disagrees with the app is the kind of small
+                        difference that makes two products out of one. */}
+                    <ScreenHeader
+                        title={mayUsePin ? 'Devices and sign-in' : 'Your account'}
+                        subtitle={mayUsePin
+                            ? 'This phone, your password, and anywhere else you are signed in'
+                            : 'Your password, and anywhere else you are signed in'}
+                    />
+                    {/* WHOSE SESSION THIS IS, first and largest.
+                        A phone gets handed between two drivers at a counter,
+                        and "am I signed in as me" is the question this tab
+                        exists to answer before any of the settings under it
+                        matter. The app's Profile screen opens the same way. */}
+                    <Panel>
+                        <h2 className="izy-lede-kicker">Signed in as</h2>
+                        <p className="izy-lede">{user === null ? '' : displayName(user)}</p>
+                        {user !== null && handleUnder(user) !== null && (
+                            <p className="izy-lede-note">{handleUnder(user)}</p>
+                        )}
+                    </Panel>
+                </Context>
+                <Sheet>
+                    {page}
+                    {/* The app's You tab ends with this and so does ours.
+                        The top bar carries one too, but it is a small pill
+                        in a corner and this is where somebody goes looking. */}
+                    <CardButton
+                        title="Sign out"
+                        tone="calmDanger"
+                        compact
+                        detail="Ends this session on this phone"
+                        onClick={() => {
+                            void (async () => {
+                                /* Signing out empties the offline queue, and
+                                   this is the last point at which that can be
+                                   stopped. See lib/outbox.ts. */
+                                if (!(await confirmSignOut())) return;
+                                await signOut();
+                                navigate('/', { replace: true });
+                            })();
+                        }}
+                    />
+                </Sheet>
+            </Screen>
+        );
+    }
+
+    return (
+        <>
+            <h1>{mayUsePin ? 'Devices and sign-in' : 'Your account'}</h1>
+            <p className="izy-sub">
+                {mayUsePin
+                    ? 'Set up this phone so a PIN signs you in, see which phones are set up, and sign out anywhere you do not recognize.'
+                    : 'Change your password, and sign out anywhere you do not recognize.'}
+            </p>
+            {page}
         </>
     );
 }

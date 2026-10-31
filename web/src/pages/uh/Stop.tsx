@@ -19,6 +19,8 @@ import { clockFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
+import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { NavigateIcon, PhoneIcon, PinIcon, RouteIcon } from '../../app/Icons';
 
 interface Package {
     id: number; description: string; quantity: number;
@@ -279,12 +281,42 @@ export function Stop() {
         && order.packages.every((p) => reasons[p.id]?.code !== 'other' || (reasons[p.id]?.note ?? '').trim() !== '');
 
     return (
-        <>
-            <h1>Stop</h1>
-            <p className="izy-sub">
-                <Link to={`/projects/${code}/my-run`}>Today</Link> · order {order.id} · {order.serviceType}
-            </p>
+        <Screen>
+            {/* WHO AND WHERE, AND IT STAYS ON SCREEN.
+                The app puts the name and the address at the top of this
+                screen and the work underneath, and the reason shows up the
+                moment somebody uses it: a courier filling in the printed
+                name is standing at the door reading it off the person in
+                front of them, and the address is what they check they are at
+                the right one. In the sheet shape the region does not scroll
+                away while the form is being filled in, which the old stack
+                of cards did. */}
+            <Context>
+                <ScreenHeader
+                    title="Stop"
+                    subtitle={<><Link to={`/projects/${code}/my-run`}>Today</Link> · order {order.id} · {order.serviceType}</>}
+                />
+                <Panel role="group" aria-label="This delivery">
+                    <p className="izy-lede">{order.recipientName}</p>
+                    <p className="izy-lede-note">{order.address}<br />{order.city} {order.zip}</p>
+                    <div className="izy-chips">
+                        <Chip label={`due ${clock(order.dueAt)}`} />
+                        {order.arrivedAt && <Chip label={`arrived ${clock(order.arrivedAt)}`} tone="good" />}
+                        {/* HOW THE PHARMACY SENT IT, before the knock rather
+                            than beside the signature box. A courier reads
+                            this or they read nothing, and it changes what
+                            they do: whether to go back to the van for the
+                            cooler, and whether the person opening the door
+                            is allowed to take this at all. */}
+                        {needsSignature && <Chip label="signature required" tone="warn" />}
+                        {order.idRequired === true && <Chip label="ID required" tone="warn" />}
+                        {order.controlled === true && <Chip label="controlled" tone="bad" />}
+                    </div>
+                    {order.deliveryNotes && <p className="izy-lede-note">{order.deliveryNotes}</p>}
+                </Panel>
+            </Context>
 
+            <Sheet>
             {msg && (
                 <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
                     {msg.text}
@@ -292,17 +324,16 @@ export function Stop() {
                 </div>
             )}
 
-            <div className="izy-card izy-next">
-                <p className="izy-next-name">{order.recipientName}</p>
-                <p className="izy-next-address">{order.address}<br />{order.city} {order.zip}</p>
-                <p className="izy-muted">
-                    due {clock(order.dueAt)}
-                    {order.arrivedAt && <> · arrived {clock(order.arrivedAt)}</>}
-                    {needsSignature && <> · <b>signature required</b></>}
-                </p>
-                {order.deliveryNotes && <p>{order.deliveryNotes}</p>}
-                {order.recipientPhone && <a className="izy-btn secondary" href={`tel:${order.recipientPhone}`}>Call recipient</a>}
-            </div>
+            {order.recipientPhone && (
+                <CardAnchor
+                    href={`tel:${order.recipientPhone}`}
+                    title="Call recipient"
+                    Icon={PhoneIcon}
+                    tone="quiet"
+                    compact
+                    detail={order.recipientPhone}
+                />
+            )}
 
             {queuedHere && !closed && (
                 <div className="izy-card">
@@ -311,7 +342,7 @@ export function Stop() {
                         What you recorded at this stop is saved on this phone and has not reached dispatch
                         yet. It will go as soon as you have signal. There is nothing else to do here.
                     </p>
-                    <Link className="izy-btn" to={`/projects/${code}/my-run`}>Back to today</Link>
+                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
                 </div>
             )}
 
@@ -319,47 +350,73 @@ export function Stop() {
                 <div className="izy-card">
                     <h2>Finished</h2>
                     <p>This stop is recorded as <b>{order.status}</b>.</p>
-                    <Link className="izy-btn" to={`/projects/${code}/my-run`}>Back to today</Link>
+                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
                 </div>
             ) : (
                 <>
                     {order.arrivedAt === null && !queuedHere && (
-                        <div className="izy-card">
-                            <h2>Arrived?</h2>
-                            <p className="izy-muted">
-                                Tap this when you reach the address. It is the time the delivery is measured
-                                against, so it counts even if nobody answers.
-                            </p>
-                            {/* Says it is working. Fixing a position can take
-                                several seconds on a phone with a poor view of
-                                the sky, and a button that looks inert is a
-                                button a courier taps twice. */}
-                            <button className="izy-btn" type="button" disabled={busy}
-                                onClick={() => { void post('arrive', {}, 'Arrival recorded.'); }}>
-                                {busy ? 'Recording' : 'I have arrived'}
-                            </button>
-                        </div>
+                        /* FIRST, AND ON ITS OWN. The deadline is measured
+                           against this and it counts even when nobody answers
+                           the door, so it is the primary card and nothing
+                           shares the row with it.
+
+                           `busy` is wired through rather than swapping the
+                           label: fixing a position can take several seconds
+                           on a phone with a poor view of the sky, and a
+                           button that looks inert is a button a courier taps
+                           twice. */
+                        <CardButton
+                            title="I have arrived"
+                            Icon={PinIcon}
+                            tone="primary"
+                            busy={busy}
+                            onClick={() => { void post('arrive', {}, 'Arrival recorded.'); }}
+                            detail="The time this delivery is measured against. It counts even if nobody answers."
+                        />
                     )}
 
                     {choice === null && !queuedHere && (
                         <div className="izy-card">
                             <h2>How did it go?</h2>
-                            <div className="izy-row">
-                                <button className="izy-btn" type="button" disabled={busy} onClick={() => setChoice('deliver')}>
-                                    Handed over
-                                </button>
-                                {/* Only when the medication allows it (Scope 1.2.3) AND the
-                                    contract does (Addendum 2 clause 4, which supersedes it
-                                    for University Health). */}
-                                {!needsSignature && handoverOnly === false && (
-                                    <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setChoice('doorstep')}>
-                                        Left at the door
-                                    </button>
-                                )}
-                                <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setChoice('attempt')}>
-                                    Could not deliver
-                                </button>
-                            </div>
+                            {/* Cards rather than a row of three pills. These
+                                are the three endings a delivery can have and
+                                they are not interchangeable: one of them is
+                                leaving medication on a step. A line of
+                                explanation under each is what makes the
+                                difference readable to somebody choosing with
+                                one hand in the rain. */}
+                            {/* SECONDARY, with "I have arrived" above it in
+                                green. Both are on screen at once until the
+                                arrival is recorded, and two primary slabs
+                                competing is a screen that says nothing — the
+                                app makes the same call for the same reason.
+                                Arrival is the one with a deadline attached. */}
+                            <CardButton
+                                title="Handed over"
+                                tone="secondary"
+                                disabled={busy}
+                                onClick={() => setChoice('deliver')}
+                                detail="Somebody took it, and signed the pharmacy's form"
+                            />
+                            {/* Only when the medication allows it (Scope 1.2.3) AND the
+                                contract does (Addendum 2 clause 4, which supersedes it
+                                for University Health). */}
+                            {!needsSignature && handoverOnly === false && (
+                                <CardButton
+                                    title="Left at the door"
+                                    tone="quiet"
+                                    disabled={busy}
+                                    onClick={() => setChoice('doorstep')}
+                                    detail="Needs a photograph of where you left it"
+                                />
+                            )}
+                            <CardButton
+                                title="Could not deliver"
+                                tone="calmDanger"
+                                disabled={busy}
+                                onClick={() => setChoice('attempt')}
+                                detail="Nobody there, refused, no access — a reason per item"
+                            />
                             {needsSignature && (
                                 <p className="izy-muted">
                                     This one needs a signature, so it cannot be left at the door.
@@ -460,24 +517,28 @@ export function Stop() {
                                 </div>
                             )}
 
-                            <div className="izy-row">
-                                <button
-                                    className="izy-btn"
-                                    type="submit"
-                                    /* The same three branches the server
-                                       checks: a photographed form, or a
-                                       reason for not having one. Plus the ID
-                                       where the pharmacy stamped it, and the
-                                       courier's own mark on a controlled
-                                       handover, which has no escape. */
-                                    disabled={busy || signedName.trim() === ''
-                                        || formPhoto === null
-                                        || (order.idRequired === true && idPhoto === null)}
-                                >
-                                    {busy ? 'Saving' : 'Record the delivery'}
-                                </button>
-                                <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setChoice(null)}>Back</button>
-                            </div>
+                            {/* The same three branches the server checks: a
+                                photographed form, or a reason for not having
+                                one. Plus the ID where the pharmacy stamped
+                                it, and the courier's own mark on a controlled
+                                handover, which has no escape. `detail` names
+                                whichever is missing, which the grey sentence
+                                under the old button never did here. */}
+                            <CardButton
+                                submit
+                                title="Record the delivery"
+                                tone="primary"
+                                busy={busy}
+                                disabled={signedName.trim() === ''
+                                    || formPhoto === null
+                                    || (order.idRequired === true && idPhoto === null)}
+                                detail={[
+                                    signedName.trim() === '' ? 'Add the printed name.' : '',
+                                    formPhoto === null ? 'Photograph the signed form.' : '',
+                                    order.idRequired === true && idPhoto === null ? 'Photograph the identification.' : '',
+                                ].filter(Boolean).join(' ') || `Handed to ${signedName.trim()}`}
+                            />
+                            <CardButton title="Back" tone="quiet" compact disabled={busy} onClick={() => setChoice(null)} />
                         </form>
                     )}
 
@@ -560,16 +621,24 @@ export function Stop() {
                                 <input value={noSignatureReason} onChange={(e) => setNoSignatureReason(e.target.value)}
                                     placeholder="Nobody answered, left inside the screen door" required minLength={3} />
                             </label>
-                            <div className="izy-row">
-                                <button className="izy-btn" type="submit"
-                                    disabled={busy || photo === null || noSignatureReason.trim().length < 3 || filesAvailable === false}>
-                                    {busy ? 'Sending the photo' : 'Record the delivery'}
-                                </button>
-                                <button className="izy-btn secondary" type="button" disabled={busy}
-                                    onClick={() => { setChoice(null); setPhoto(null); if (photoInput.current) photoInput.current.value = ''; }}>
-                                    Back
-                                </button>
-                            </div>
+                            <CardButton
+                                submit
+                                title="Record the delivery"
+                                tone="primary"
+                                busy={busy}
+                                disabled={photo === null || noSignatureReason.trim().length < 3 || filesAvailable === false}
+                                detail={[
+                                    photo === null ? 'Photograph where you left it.' : '',
+                                    noSignatureReason.trim().length < 3 ? 'Say why nobody signed.' : '',
+                                ].filter(Boolean).join(' ') || 'Both the photo and the reason are the proof for this stop'}
+                            />
+                            <CardButton
+                                title="Back"
+                                tone="quiet"
+                                compact
+                                disabled={busy}
+                                onClick={() => { setChoice(null); setPhoto(null); if (photoInput.current) photoInput.current.value = ''; }}
+                            />
                         </form>
                     )}
 
@@ -604,16 +673,22 @@ export function Stop() {
                                     )}
                                 </div>
                             ))}
-                            <div className="izy-row">
-                                <button className="izy-btn" type="submit" disabled={busy || !attemptReady}>
-                                    {busy ? 'Saving' : 'Record the attempt'}
-                                </button>
-                                <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setChoice(null)}>Back</button>
-                            </div>
+                            <CardButton
+                                submit
+                                title="Record the attempt"
+                                tone="calmDanger"
+                                busy={busy}
+                                disabled={!attemptReady}
+                                detail={attemptReady
+                                    ? 'The contract charges per item attempted, so the reason is the invoice line'
+                                    : 'Choose a reason for every item first'}
+                            />
+                            <CardButton title="Back" tone="quiet" compact disabled={busy} onClick={() => setChoice(null)} />
                         </form>
                     )}
                 </>
             )}
-        </>
+            </Sheet>
+        </Screen>
     );
 }

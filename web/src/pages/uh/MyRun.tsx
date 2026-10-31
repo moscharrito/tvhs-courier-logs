@@ -58,7 +58,7 @@ import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { ShiftBar } from './ShiftBar';
-import { CardAnchor, CardButton, CardLink, Chip, Panel, ScreenHeader, Sheet } from '../../app/Glass';
+import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { BoxIcon, FlagIcon, HistoryIcon, NavigateIcon, PhoneIcon, PinIcon, ReturnIcon } from '../../app/Icons';
 
 interface Stop {
@@ -173,12 +173,12 @@ export function MyRun() {
         .join(' · ');
 
     return (
-        <div className="izy-run">
+        <Screen>
             {/* ─────────────────────────────────────────────────────────────
                 THE UPPER REGION. See the header: the rideshare map slot,
                 holding status until there is something to draw.
                 ───────────────────────────────────────────────────────────── */}
-            <div className="izy-run-context">
+            <Context>
                 {/* FIRST, ABOVE EVERYTHING, because it gates the day. Dispatch
                     cannot assign to a courier who is not on shift, and the
                     escalation for unclaimed work looks for somebody who is —
@@ -199,23 +199,23 @@ export function MyRun() {
 
                 {collectFirst ? (
                     <Panel>
-                        <h2 className="izy-run-next-label">Collect first</h2>
-                        <p className="izy-run-next-name">
+                        <h2 className="izy-lede-kicker">Collect first</h2>
+                        <p className="izy-lede">
                             {toCollect.length} {toCollect.length === 1 ? 'order is' : 'orders are'} still at the pharmacy
                         </p>
                         {/* WHERE THEY ARE GOING IS NOT SHOWN UNTIL THEY HAVE
                             THE PACKAGES. The addresses, the names and the
                             deadlines all appear once the pickup is recorded. */}
-                        <p className="izy-run-next-address">
+                        <p className="izy-lede-note">
                             You cannot deliver what you have not taken custody of. Your stops appear
                             once you have recorded the pickup.
                         </p>
                     </Panel>
                 ) : current !== null ? (
                     <Panel role="group" aria-label="Next stop">
-                        <h2 className="izy-run-next-label">Next: stop {current.sequence}</h2>
-                        <p className="izy-run-next-name">{current.recipientName}</p>
-                        <p className="izy-run-next-address">{current.address}<br />{current.city} {current.zip}</p>
+                        <h2 className="izy-lede-kicker">Next: stop {current.sequence}</h2>
+                        <p className="izy-lede">{current.recipientName}</p>
+                        <p className="izy-lede-note">{current.address}<br />{current.city} {current.zip}</p>
                         {/* FOUR, and the pharmacy's reference is deliberately
                             not one of them. Every chip costs a line of a
                             region that has to hold the name, the address and
@@ -224,7 +224,7 @@ export function MyRun() {
                             the bottom of the region. The reference is
                             reference: it is on the row in the list below and
                             on the stop itself, and nobody drives to it. */}
-                        <div className="izy-run-chips">
+                        <div className="izy-chips">
                             <Chip label={current.serviceType.toUpperCase()} />
                             <SlaChip sla={current.sla} />
                             {current.dueAt !== null && <Chip label={`due ${clock(current.dueAt)}`} />}
@@ -234,9 +234,9 @@ export function MyRun() {
                         </div>
                     </Panel>
                 ) : stops.length === 0 ? (
-                    <Panel><p className="izy-run-next-address">No stops assigned to you today.</p></Panel>
+                    <Panel><p className="izy-lede-note">No stops assigned to you today.</p></Panel>
                 ) : null}
-            </div>
+            </Context>
 
             {/* ─────────────────────────────────────────────────────────────
                 THE SHEET. Everything a courier can DO, under the thumb, in
@@ -446,7 +446,7 @@ export function MyRun() {
                     detail="Ask dispatch for the latest"
                 />
             </Sheet>
-        </div>
+        </Screen>
     );
 }
 

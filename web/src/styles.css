@@ -913,17 +913,60 @@ body {
  * covers it. What fills it is what a map would have told them anyway — where
  * they are up to, what is next, how long it has — and it is full size so a
  * map drops in later rather than forcing a redesign. */
-.izy-run-context > * + * { margin-top: var(--izy-s-md); }
+.izy-screen-context > * + * { margin-top: var(--izy-s-md); }
 /* The shift bar and the panes are both .izy-card descendants and both carry
    their own bottom margin, which doubles the gap the rule above sets. */
-.izy-run-context > * { margin-bottom: 0; }
+.izy-screen-context > * { margin-bottom: 0; }
 /* It is an <h2> so the screen is navigable by heading — "Collect first" is
    what a driver is looking for — and it is sized as the app's label, which
    is the small line above the big one. */
-.izy-run-next-label { margin: 0; font-size: var(--izy-t-meta); font-weight: 600; color: var(--izy-muted); letter-spacing: 0.6px; }
-.izy-run-next-name { margin: var(--izy-s-xs) 0 0; font-size: 24px; font-weight: 700; color: var(--izy-ink); }
-.izy-run-next-address { margin: 2px 0 0; font-size: var(--izy-t-body); line-height: 25px; color: var(--izy-ink); }
-.izy-run-chips { display: flex; flex-wrap: wrap; gap: var(--izy-s-sm); margin-top: 12px; }
+.izy-lede-kicker { margin: 0; font-size: var(--izy-t-meta); font-weight: 600; color: var(--izy-muted); letter-spacing: 0.6px; }
+.izy-lede { margin: var(--izy-s-xs) 0 0; font-size: 24px; font-weight: 700; color: var(--izy-ink); }
+.izy-lede-note { margin: 2px 0 0; font-size: var(--izy-t-body); line-height: 25px; color: var(--izy-ink); }
+.izy-chips { display: flex; flex-wrap: wrap; gap: var(--izy-s-sm); margin-top: 12px; }
+
+/* ── A SHEET IS THE SURFACE, SO NOTHING INSIDE IT IS A CARD ────────────────
+ *
+ * Every driver screen in this application was built out of .izy-card: a
+ * white box with a border and a heading, stacked four or five deep. That is
+ * right on a console page, where the boxes are what separate one subject
+ * from another on a wide empty screen. Inside a sheet it is a card on a
+ * card — two borders and a shadow between a courier and the thing they are
+ * trying to do, and on a 375px screen it is about sixty pixels of frame per
+ * section that could have been content.
+ *
+ * So a card inside a sheet keeps its heading and loses its box. This is one
+ * rule rather than an edit to six screens, which also means a screen that
+ * has not been converted yet does not look broken when it is dropped in. */
+.izy-sheet .izy-card {
+    background: transparent; border: 0; box-shadow: none;
+    padding: 0; margin: 0 0 var(--izy-s-lg); overflow: visible;
+}
+.izy-sheet .izy-card > h2,
+.izy-sheet > h2 { margin: 0 0 var(--izy-s-sm); font-size: var(--izy-t-heading); font-weight: 700; }
+
+/* ── Fields at the size a thumb needs ──────────────────────────────────────
+ * The console's inputs are 14px in a 34px box, which is fine with a mouse
+ * and a keyboard. The app's are 17px in a 56px one, because the person
+ * filling them in is standing at a counter holding a crate. Same floors as
+ * everything else here: 16 to read, 17 to act on, 56 to hit. */
+.izy-sheet .izy-field { font-size: var(--izy-t-label); font-weight: 600; }
+.izy-sheet .izy-field input,
+.izy-sheet .izy-field select,
+.izy-sheet .izy-field textarea {
+    min-height: var(--izy-tap-standard);
+    font-size: var(--izy-t-body);
+    font-weight: 400;
+    border-radius: var(--izy-r-button);
+    padding: var(--izy-s-sm) var(--izy-s-md);
+    margin-top: var(--izy-s-xs);
+}
+.izy-sheet .izy-field textarea { min-height: 96px; }
+.izy-sheet .izy-field input[type="file"] { padding: var(--izy-s-sm); font-size: var(--izy-t-label); }
+.izy-sheet .izy-field-note { font-weight: 400; font-size: var(--izy-t-meta); line-height: 21px; }
+/* Prose inside a sheet is read at arm's length too. */
+.izy-sheet p { font-size: var(--izy-t-label); line-height: 24px; }
+.izy-sheet .izy-muted { font-size: var(--izy-t-meta); line-height: 22px; }
 
 /* Inside the sheet, a folding section is a titled list rather than a pane.
    The sheet is already the surface; a card on a card is two borders and a
@@ -959,8 +1002,8 @@ body {
  * from the thing it describes. The grabber goes with the sheet's pinning;
  * there is nothing to drag here. */
 @media (min-width: 901px) {
-    .izy-run { max-width: 720px; }
-    .izy-run .izy-grabber { display: none; }
+    .izy-screen { max-width: 720px; }
+    .izy-screen .izy-grabber { display: none; }
     .izy-sheet { padding-top: var(--izy-s-lg); }
 }
 
@@ -1076,8 +1119,8 @@ body {
         overflow-y: auto;
     }
     .izy-courier .izy-main > * { flex-shrink: 0; }
-    .izy-courier .izy-main:has(.izy-run) { padding: 0; overflow: hidden; }
-    .izy-courier .izy-run { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .izy-courier .izy-main:has(.izy-screen) { padding: 0; overflow: hidden; }
+    .izy-courier .izy-screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
     /* ITS OWN HEIGHT, CAPPED — not a share of what is left.
        `flex: 0 1 auto` looks like the cautious choice and is not: flex-basis
        auto means the sheet below asks for the height of ALL of its content,
@@ -1087,7 +1130,7 @@ body {
        entire job is to hold them. The sheet takes what is left from zero;
        this takes what it needs, up to a cap, and scrolls inside the cap on a
        short screen. */
-    .izy-courier .izy-run-context {
+    .izy-courier .izy-screen-context {
         flex: 0 0 auto; max-height: 62%; min-height: 0; overflow-y: auto;
         /* No bottom padding: the sheet below brings its own top padding and
            a grabber, which is the gap. Sixteen pixels here was sixteen
@@ -1117,7 +1160,7 @@ body {
        It is the one thing on this screen a driver reads once in the morning
        and then stops noticing, and a pane makes it compete with the stop
        they are actually working. */
-    .izy-courier .izy-run-context > .izy-shift {
+    .izy-courier .izy-screen-context > .izy-shift {
         margin: calc(var(--izy-s-md) * -1) calc(var(--izy-s-lg) * -1) 0;
         background: rgba(255, 255, 255, 0.55);
         border: 0; border-bottom: 1px solid var(--izy-glass-hair);
@@ -1132,17 +1175,17 @@ body {
        the next stop out of the region that exists to hold it. Full bleed
        buys back the card's padding, so the row fits: the button takes what
        it needs and the sentence takes the rest. */
-    .izy-courier .izy-run-context > .izy-shift .izy-row-between {
+    .izy-courier .izy-screen-context > .izy-shift .izy-row-between {
         flex-direction: row; align-items: center; gap: var(--izy-s-sm);
     }
-    .izy-courier .izy-run-context > .izy-shift .izy-btn { width: auto; flex: 0 0 auto; }
-    .izy-courier .izy-run-context > .izy-shift .izy-shift-state { font-size: 14px; }
+    .izy-courier .izy-screen-context > .izy-shift .izy-btn { width: auto; flex: 0 0 auto; }
+    .izy-courier .izy-screen-context > .izy-shift .izy-shift-state { font-size: 14px; }
 }
 
 /* A phone in landscape, or a short window: the context region would otherwise
    take the whole frame and leave the sheet a sliver. */
 @media (max-width: 900px) and (max-height: 520px) {
-    .izy-courier .izy-run-context { max-height: 55%; }
+    .izy-courier .izy-screen-context { max-height: 55%; }
 }
 
 /* ── The escape hatches, which the glass layer above also takes ──────────── */

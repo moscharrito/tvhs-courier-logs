@@ -23,6 +23,7 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
+import { Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 
 const KINDS: Array<{ value: string; label: string }> = [
     { value: 'delivery', label: 'What was recorded at the door' },
@@ -135,13 +136,20 @@ export function Discrepancies() {
 
     if (!project) return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
 
-    return (
+    /* ONE SCREEN, TWO SHAPES, because it already had two jobs.
+     *
+     * A courier reaches this from "Something did not match" on their run,
+     * on a phone, to file one thing they just saw. Dispatch reaches it at a
+     * desk to read what was filed and decide what it means for go-live.
+     * The form, the wording and the server call are the same for both; the
+     * frame around them is not, and pretending otherwise is how the driver
+     * side ended up looking like a console in the first place.
+     *
+     * So the body is built once and the frame is chosen by the same
+     * `canReview` that already decides the fold and whether the summary is
+     * even requested. */
+    const page = (
         <>
-            <h1>Discrepancies</h1>
-            <p className="izy-sub">
-                Anything where this system and what actually happened disagree. When in doubt, file it:
-                a duplicate costs a minute, a missed one costs the go-live decision.
-            </p>
             {msg && <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
 
             {/* One screen, two jobs. A courier reaches this from "Something
@@ -303,6 +311,36 @@ export function Discrepancies() {
                     </>)}
                 </div>
             )}
+        </>
+    );
+
+    if (!canReview) {
+        return (
+            <Screen>
+                <Context>
+                    <ScreenHeader title="Discrepancies" subtitle="Tell us what you saw" />
+                    <Panel>
+                        <h2 className="izy-lede-kicker">Something did not match</h2>
+                        <p className="izy-lede-note">
+                            Anything where this system and what actually happened disagree. When in
+                            doubt, file it: a duplicate costs a minute, a missed one costs the
+                            go-live decision.
+                        </p>
+                    </Panel>
+                </Context>
+                <Sheet>{page}</Sheet>
+            </Screen>
+        );
+    }
+
+    return (
+        <>
+            <h1>Discrepancies</h1>
+            <p className="izy-sub">
+                Anything where this system and what actually happened disagree. When in doubt, file it:
+                a duplicate costs a minute, a missed one costs the go-live decision.
+            </p>
+            {page}
         </>
     );
 }
