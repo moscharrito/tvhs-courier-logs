@@ -61,13 +61,39 @@
  * GEOID / INTPTLAT / INTPTLONG, so it loads unmodified.
  *
  *   npm run load:zips -w server -- --file zcta.csv
- *       What it would load, and what it refuses. Writes nothing.
+ *       Against the LOCAL database. What it would load, and what it
+ *       refuses. Writes nothing.
  *
  *   ... --apply
  *       Does it.
  *
- *   ... --base https://logs.izyglobalservices.com --i-mean-production --apply
- *       Against the live site.
+ * ─────────────────────────────────────────────────────────────────────────
+ * AGAINST PRODUCTION, WHICH IS NOT A `--base` FLAG.
+ *
+ * This writes to the database directly rather than through the API, so
+ * there is no base URL to point at: it goes wherever the environment's
+ * connection string goes. The first version of this comment advertised a
+ * `--base` that does not exist, which would have sent somebody to load
+ * production and quietly fill their laptop's file database instead.
+ *
+ * The credentials are Render's, not this repository's. Same shape as
+ * clear-test-work.mjs:
+ *
+ *   ALLOW_TURSO_OUTSIDE_PRODUCTION=true
+ *   TURSO_DATABASE_URL=...  TURSO_AUTH_TOKEN=...
+ *   npm run load:zips -w server -- --file zcta.csv --i-mean-production
+ *
+ * then the same line with --apply. In PowerShell the variables are set
+ * with `$env:NAME = '...'` on their own lines first; there is no inline
+ * prefix form.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * AND THE PHARMACIES HAVE TO BE GEOCODED FIRST, because that is what every
+ * point is checked against. That is an authenticated call -- POST
+ * /api/projects/uh/uh/geocode/sites needs an admin or lead session, not a
+ * bare curl, which answers 401. Do it from the dispatch console while
+ * signed in. This script refuses with that instruction rather than loading
+ * coordinates it cannot verify.
  *
  * Only ZIPs that the project already prices are loaded. The file may hold
  * all 33,000 in the country; 72 of them are this contract's.
@@ -192,7 +218,9 @@ const anchors = siteRs.rows.map((r) => ({ code: String(r.code), lat: Number(r.la
 if (anchors.length === 0) {
     console.error(
         'No pharmacy on this project has coordinates, so a loaded point could not be checked against anything.\n'
-        + '  Geocode the sites first (POST /uh/geocode/sites). Refusing to load unverified coordinates.',
+        + '  Geocode them first: POST /api/projects/<project>/uh/geocode/sites, signed in as an admin or a\n'
+        + '  lead. It needs a session, so it is a call from the dispatch console rather than a bare curl.\n'
+        + '  Refusing to load coordinates that nothing could be checked against.',
     );
     process.exit(1);
 }
