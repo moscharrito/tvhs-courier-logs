@@ -28,12 +28,13 @@
  * here and is verified in a browser.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from './auth';
 import { App } from './App';
 import { mockFetch } from '../test/setup';
+import { DriverBrowserNotice } from './DriverShell';
 
 const session = { id: 4, username: 'ada.courier', name: 'Ada Courier', role: 'driver', route: null };
 const admin = { id: 1, username: 'admin', name: 'Izy Admin', role: 'admin', route: null };
@@ -134,5 +135,62 @@ describe('everybody else', () => {
             expect(screen.queryByRole('navigation', { name: 'Your work' })).toBeNull();
         });
         expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+    });
+});
+
+describe('a driver on an iPhone in the wrong browser', () => {
+    /* FOUR DAYS, TWO WRONG DIAGNOSES FROM ME, AND A COURIER WHO HAD
+       CONCLUDED THE APP DID NOT WORK. On an iPhone every browser is WebKit
+       inside another app, and only Safari can reach the camera. Confirmed
+       on the handset on 31 October: same phone, same page, Safari, works.
+
+       Thirty-five drivers start on 1 November on their own phones. The
+       ones who open this in Chrome must be told here, not at a counter
+       with a package in one hand. */
+    const realUa = navigator.userAgent;
+    const as = (userAgent: string, maxTouchPoints = 5) => {
+        Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+        Object.defineProperty(navigator, 'maxTouchPoints', { value: maxTouchPoints, configurable: true });
+    };
+    afterEach(() => {
+        Object.defineProperty(navigator, 'userAgent', { value: realUa, configurable: true });
+        Reflect.deleteProperty(navigator, 'maxTouchPoints');
+    });
+
+    it('is told to open Safari, and told why, before anything else', () => {
+        as('Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/155.0.8059.37 Mobile/15E148 Safari/604.1');
+        render(<MemoryRouter><DriverBrowserNotice /></MemoryRouter>);
+
+        const said = screen.getByRole('alert');
+        expect(said).toHaveTextContent(/open this in safari/i);
+        /* The consequence, not just the instruction. "Use Safari" with no
+           reason is an instruction people skip. */
+        expect(said).toHaveTextContent(/not be able to photograph a form/i);
+        expect(screen.getByRole('link', { name: 'Open in Safari' })).toBeInTheDocument();
+    });
+
+    it('has no way to dismiss it, so it cannot be tapped away before the counter', () => {
+        /* No button and no stored flag: the condition IS the browser, so it
+           clears itself the moment they do what it asks. A dismissal would
+           let somebody clear it at sign-in and meet the black camera an
+           hour later with nothing on screen to explain it. */
+        as('Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/155.0.8059.37 Mobile/15E148 Safari/604.1');
+        render(<MemoryRouter><DriverBrowserNotice /></MemoryRouter>);
+
+        expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    });
+
+    it('says nothing at all in Safari, which is the whole point', () => {
+        as('Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1');
+        render(<MemoryRouter><DriverBrowserNotice /></MemoryRouter>);
+
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('says nothing on Android, where the camera works', () => {
+        as('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36', 5);
+        render(<MemoryRouter><DriverBrowserNotice /></MemoryRouter>);
+
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 });

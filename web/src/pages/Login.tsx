@@ -57,6 +57,7 @@ import { SecretInput } from '../app/SecretInput';
 import { CardButton } from '../app/Glass';
 import { PasswordReset } from './PasswordReset';
 import { Loading } from '../app/Loading';
+import { DriverBrowserNotice } from '../app/DriverShell';
 
 type Mode = 'project' | 'pick' | 'pin' | 'setup' | 'password' | 'staff' | 'device' | 'reset';
 interface LoginProject { code: string; name: string }
@@ -212,6 +213,13 @@ export function Login() {
                 <span className="izy-login-company">Izy Global Services LLC</span>
             </div>
             <div className="izy-login-card">
+                {/* THE EARLIEST POSSIBLE PLACE TO SAY IT, which is the point.
+                    On an iPhone the camera works in Safari and nowhere else
+                    (see lib/browser.ts), and a driver who signs in with the
+                    wrong browser finds that out at a pharmacy counter with a
+                    package in one hand. Said here, before the password, it
+                    costs them one tap instead of a round. */}
+                <DriverBrowserNotice />
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
 
                 {mode === 'device' && phone?.enrolled && (

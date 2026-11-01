@@ -7,7 +7,7 @@ import { confirmSignOut } from '../lib/outbox';
 import { counterName, isCourierOnly, isPharmacyOnly, projectHref } from '../lib/pharmacy';
 import { displayName, handleUnder } from '../lib/people';
 import { rememberedFlag, rememberFlag } from '../lib/remember';
-import { DriverTabs, DriverTopBar } from './DriverShell';
+import { DriverBrowserNotice, DriverTabs, DriverTopBar } from './DriverShell';
 
 /* ROLE_LABEL used to sit here, declared and never read. It was left behind
    when the NavLink's title attribute went (see the comment on the project
@@ -198,6 +198,12 @@ export function Layout() {
                 />
             )}
             <main className="izy-main">
+                {/* Before anything else on the screen, and only for somebody
+                    who drives: on an iPhone the camera works in Safari and
+                    nowhere else, and a courier who finds that out at a
+                    counter has a package in one hand and no way to record
+                    the delivery. See DriverBrowserNotice. */}
+                {courier && <DriverBrowserNotice />}
                 {/* Above the screen, not tucked into a corner: a courier who
                     cannot tell "sent" from "on this phone" will assume sent. */}
                 <SyncStatus />

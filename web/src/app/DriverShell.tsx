@@ -38,6 +38,7 @@
  */
 
 import { NavLink, useLocation, useParams } from 'react-router-dom';
+import { iosWrapper } from '../lib/browser';
 import { HistoryIcon, ProfileIcon, RouteIcon, SignOutIcon } from './Icons';
 
 /* The tab roots. A back control on one of these would point at the screen
@@ -99,6 +100,63 @@ export function DriverTopBar({ code, contract, onSignOut }: {
  * glyph is what makes it findable at a glance, so the icons are decorative
  * and hidden from the accessibility tree.
  */
+/**
+ * Told to an iPhone driver before they are standing at a counter, not after.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT THIS COST BEFORE IT EXISTED.
+ *
+ * Four days of "the camera is black", two wrong diagnoses from me, and a
+ * courier who had concluded the app did not work. The cause, when the
+ * check on the handset finally said it: Chrome on an iPhone.
+ *
+ * Every iOS browser is WebKit inside another app, because Apple requires
+ * it, and that app has to hold the camera permission from iOS before a
+ * page inside it can be offered one. Safari does not have the problem
+ * because the permission is Safari's to begin with. Confirmed on the
+ * handset on 31 October: same phone, same page, Safari, camera works.
+ *
+ * Thirty-five drivers start on 1 November on their own phones. Some of
+ * them will open this in Chrome. Every one of those finds out at a
+ * pharmacy counter, holding a package, with a form that has to be
+ * photographed before the delivery can be recorded — unless they are told
+ * here first.
+ *
+ * NO DISMISS BUTTON, AND NO STORED FLAG. It goes away by itself the moment
+ * they do the thing it asks, because the condition IS the browser. A
+ * dismissal would let somebody tap it away on the sign-in screen and meet
+ * the black camera an hour later with nothing on screen to explain it.
+ *
+ * It is on the shell rather than on the camera, because by the time the
+ * camera has failed the courier is already stuck at the counter. The
+ * camera's own message says the same thing for anyone who gets that far.
+ */
+export function DriverBrowserNotice() {
+    const wrapper = iosWrapper();
+    if (wrapper === null) return null;
+
+    /* iOS honours this scheme from inside another browser and opens the
+       real Safari. If it is ignored the sentence underneath still tells
+       them what to do, which is why the address is written out rather than
+       only linked. */
+    const safari = `x-safari-${window.location.href}`;
+
+    return (
+        <div className="izy-browser-note" role="alert">
+            <p>
+                <b>Open this in Safari.</b> You are using {wrapper} on an iPhone, and the camera cannot work
+                here &mdash; only Safari can reach it. You will not be able to photograph a form.
+            </p>
+            <a className="izy-card-btn is-primary is-compact" href={safari}>
+                <span className="izy-card-btn-title">Open in Safari</span>
+            </a>
+            <p className="izy-browser-note-how">
+                If that does nothing, open Safari yourself and type <b>{window.location.host}</b>.
+            </p>
+        </div>
+    );
+}
+
 export function DriverTabs({ code }: { code: string }) {
     const tab = (to: string, label: string, Icon: typeof RouteIcon, hint: string, end = false) => (
         <NavLink
