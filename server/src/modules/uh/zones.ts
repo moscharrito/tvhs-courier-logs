@@ -8,6 +8,7 @@
 
 import type { Client } from '@libsql/client';
 import type { PriceSchedule, Zone } from './pricing';
+import type { ZipPoint } from './cluster';
 
 /** One row per ZIP: the newest mapping that has taken effect by `on`. */
 export async function zipZoneMap(client: Client, projectId: number, on: string): Promise<Map<string, Zone>> {
@@ -54,4 +55,28 @@ export async function scheduleOn(client: Client, projectId: number, on: string):
         dryRunFee: Number(r['dry_run_fee']),
         outOfAreaPerMile: Number(r['out_of_area_per_mile']),
     };
+}
+
+/**
+ * Where each ZIP is, for the planner.
+ *
+ * Same effective-dated shape as the zone map above and for the same reason:
+ * ZIP boundaries get redrawn, and a round planned last March should still be
+ * explicable with the map that was in force that day.
+ *
+ * AN EMPTY MAP IS A VALID ANSWER and the common one until the points are
+ * loaded. cluster.ts falls back to the zone rule for any ZIP it has no point
+ * for, so nothing here is required for the planner to work -- see the note
+ * on ZipPoint. The table holds the centre of a postal area, which is public
+ * reference data and not a patient address; drizzle/0057 says why at length.
+ */
+export async function zipPointMap(client: Client, projectId: number, on: string): Promise<Map<string, ZipPoint>> {
+    const rs = await client.execute({
+        sql: `SELECT zip, lat, lng FROM zip_points p WHERE project_id = ? AND effective_from <= ?
+                AND effective_from = (
+                  SELECT MAX(effective_from) FROM zip_points p2
+                  WHERE p2.project_id = p.project_id AND p2.zip = p.zip AND p2.effective_from <= ?)`,
+        args: [projectId, on, on],
+    });
+    return new Map(rs.rows.map((r) => [String(r['zip']), { lat: Number(r['lat']), lng: Number(r['lng']) }]));
 }

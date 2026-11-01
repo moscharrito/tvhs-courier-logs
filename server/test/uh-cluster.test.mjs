@@ -280,3 +280,143 @@ describe('it is the same answer twice', () => {
         expect(JSON.stringify(proposeRuns(orders))).toBe(JSON.stringify(proposeRuns(orders)));
     });
 });
+
+describe('keeping a round inside one part of town', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * WHAT WAS WRONG, REPORTED AFTER THE FIRST WEEK.
+     *
+     * Drivers crossing San Antonio between consecutive stops on rounds the
+     * planner thought were tight. The cause is in the old rule: a run could
+     * take any group whose ZONE matched, and a zone is a distance BAND from
+     * the pickup. Two ZIPs in zone 3 are both that far out -- and can be on
+     * opposite sides of the county.
+     *
+     * The real coordinates below are not needed and not used: these are
+     * invented points at known separations, because what is under test is
+     * the packing rule, not anybody's map. The loader is what checks a real
+     * file, against the pharmacies' own coordinates.
+     *
+     * One degree of latitude is about 69 miles, so 0.1 degrees is ~6.9.
+     */
+    const at = (lat, lng) => ({ lat, lng });
+    /* Three ZIPs: two close together, one far away, all in the same zone. */
+    const NEAR_A = '78207';
+    const NEAR_B = '78201';
+    const FAR = '78250';
+    const points = new Map([
+        [NEAR_A, at(29.40, -98.50)],
+        [NEAR_B, at(29.45, -98.50)],   // ~3.5 miles from A
+        [FAR, at(29.80, -98.50)],      // ~28 miles from A
+    ]);
+
+    const settings = { ...DEFAULT_CLUSTER_SETTINGS, drivers: 10, maxStopsPerRun: 40 };
+
+    /** Which run, if any, holds this order id. */
+    const runHolding = (p, id) => p.runs.find((r) => r.orderIds.includes(id));
+
+    it('put a far ZIP on the same run as a near one, before points existed', () => {
+        /* THE BUG, PINNED. Same zone, so the old rule said yes. This is the
+           behaviour that is still correct when no points are supplied, and
+           it is here so the difference the points make is visible rather
+           than asserted. */
+        const orders = [...many(5, { zip: NEAR_A, zone: 3 }, 1), ...many(5, { zip: FAR, zone: 3 }, 100)];
+        const p = proposeRuns(orders, settings);
+
+        expect(runHolding(p, 1)).toBe(runHolding(p, 100));
+    });
+
+    it('keeps them apart once it knows where the ZIPs are', () => {
+        const orders = [...many(5, { zip: NEAR_A, zone: 3 }, 1), ...many(5, { zip: FAR, zone: 3 }, 100)];
+        const p = proposeRuns(orders, settings, points);
+
+        expect(runHolding(p, 1)).not.toBe(runHolding(p, 100));
+        /* And nothing was dropped on the way: two runs, ten stops. */
+        expect(placed(p).sort((a, b) => a - b)).toEqual(orders.map((o) => o.id).sort((a, b) => a - b));
+    });
+
+    it('still combines two ZIPs that really are close', () => {
+        /* The other half. A rule that only ever splits is not clustering,
+           it is one run per ZIP. */
+        const orders = [...many(5, { zip: NEAR_A, zone: 3 }, 1), ...many(5, { zip: NEAR_B, zone: 3 }, 100)];
+        const p = proposeRuns(orders, settings, points);
+
+        expect(runHolding(p, 1)).toBe(runHolding(p, 100));
+    });
+
+    it('combines across different zones when the ZIPs are near each other', () => {
+        /* Zone is a band from the pickup, so two ZIPs three miles apart can
+           sit either side of a band edge. The old rule refused that pair and
+           was wrong to: they are neighbours. Real distance supersedes the
+           proxy, which is the whole point of having it. */
+        const orders = [...many(5, { zip: NEAR_A, zone: 1 }, 1), ...many(5, { zip: NEAR_B, zone: 4 }, 100)];
+        const p = proposeRuns(orders, settings, points);
+
+        expect(runHolding(p, 1)).toBe(runHolding(p, 100));
+    });
+
+    it('measures the whole width of a run, not the distance to its middle', () => {
+        /* A centroid-and-radius test lets a run creep across the city one
+           stop at a time, each addition looking reasonable against a centre
+           that keeps moving. Bounding every PAIR cannot do that.
+           A, B and C are each ~7 miles from the next and A to C is ~14, so
+           with a 10-mile limit A+B is fine, B+C is fine, and A+B+C is not. */
+        const chain = new Map([
+            ['78001', at(29.30, -98.50)],
+            ['78002', at(29.40, -98.50)],
+            ['78003', at(29.50, -98.50)],
+        ]);
+        const orders = [
+            ...many(5, { zip: '78001', zone: 1 }, 1),
+            ...many(5, { zip: '78002', zone: 1 }, 100),
+            ...many(5, { zip: '78003', zone: 1 }, 200),
+        ];
+        const p = proposeRuns(orders, { ...settings, maxSpreadMiles: 10 }, chain);
+
+        const first = runHolding(p, 1);
+        expect(runHolding(p, 200)).not.toBe(first);
+        expect(placed(p)).toHaveLength(15);
+    });
+
+    it('falls back to the zone rule for a ZIP it has no point for', () => {
+        /* Partial data is the normal state: the loader takes what a public
+           file has and leaves the rest. A ZIP with no centre must not be
+           assumed near anything, and must not be dropped either. */
+        const orders = [...many(5, { zip: NEAR_A, zone: 3 }, 1), ...many(5, { zip: '79999', zone: 3 }, 100)];
+        const p = proposeRuns(orders, settings, points);
+
+        /* Same zone, one unknown point: the old rule decides, so together. */
+        expect(runHolding(p, 1)).toBe(runHolding(p, 100));
+        expect(placed(p)).toHaveLength(10);
+    });
+
+    it('changes nothing at all when no points are given', () => {
+        /* The property that made this safe to ship on a go-live morning:
+           an empty table is the behaviour that was already there. Asserted
+           against the same input both ways rather than described. */
+        const orders = [
+            ...many(12, { zip: NEAR_A, zone: 1 }, 1),
+            ...many(9, { zip: NEAR_B, zone: 2 }, 100),
+            ...many(7, { zip: FAR, zone: 1 }, 200),
+        ];
+        const before = proposeRuns(orders, settings);
+        const after = proposeRuns(orders, settings, new Map());
+
+        expect(after.runs).toEqual(before.runs);
+        expect(after.unplaced).toEqual(before.unplaced);
+        expect(after.driversNeeded).toBe(before.driversNeeded);
+    });
+
+    it('says how many drivers the tighter plan needs, rather than hiding the cost', () => {
+        /* Splitting runs geographically makes MORE of them. That is the
+           trade and it has to be visible: a dispatcher who can see at 12:05
+           that tight routing needs two more drivers can do something about
+           it. The module already reports driversNeeded; this holds it to
+           reporting the higher number rather than quietly packing looser. */
+        const orders = [...many(10, { zip: NEAR_A, zone: 3 }, 1), ...many(10, { zip: FAR, zone: 3 }, 100)];
+
+        const loose = proposeRuns(orders, settings);
+        const tight = proposeRuns(orders, settings, points);
+
+        expect(tight.driversNeeded).toBeGreaterThan(loose.driversNeeded);
+    });
+});

@@ -115,6 +115,70 @@ export interface ClusterSettings {
     maxSitesPerRun: number;
     /** Stops on a STAT run. STATs are driven more or less directly. */
     maxStopsPerStatRun: number;
+    /**
+     * How far apart two destination ZIPs on one run may be, in miles,
+     * measured centre to centre.
+     *
+     * A DIAMETER, NOT A RADIUS: every ZIP on a run is within this of every
+     * other one, so the figure is the width of the whole round rather than
+     * a distance from somewhere. That is the number a dispatcher can reason
+     * about without knowing where the centre happened to land.
+     *
+     * Ten miles is a deliberate middle. Tighter runs are nicer to drive and
+     * there are more of them: squeeze this and the day fragments into more
+     * runs than there are drivers, which does not make the deliveries go
+     * away -- it moves them into `unplaced` and asks for staff that do not
+     * exist. Loosen it and a driver crosses the county between stops. Ten
+     * holds a round inside roughly one quadrant of San Antonio, and the
+     * planner reports `driversNeeded` either way, so the cost of a change
+     * here is visible before anybody drives it.
+     *
+     * It does nothing at all until ZIP points are supplied. See below.
+     */
+    maxSpreadMiles: number;
+}
+
+/**
+ * Where a ZIP is, to cluster by.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THIS IS NOT A PATIENT ADDRESS AND IT IS NOT GEOCODING.
+ *
+ * The long note at the top of this file says there are no coordinates and
+ * that guessing which ZIPs touch is worse than not trying. Both still
+ * stand. What has changed is that the question has an answer that was
+ * always allowed: a ZIP's own centre is PUBLIC REFERENCE DATA. It is
+ * identical for every delivery in that ZIP, it describes a postal area and
+ * not a person, it is already the unit Addendum 2 prices by, and the ZIP is
+ * already on the order.
+ *
+ * Nothing is sent anywhere to obtain it. No delivery address is read,
+ * geocoded, or transmitted, and core/geo/provider.ts still refuses to. The
+ * points arrive as a table loaded from a public dataset, and the loader
+ * checks them against the pharmacies' own coordinates before accepting any
+ * of them -- see scripts/load-zip-points.mjs, which exists because a
+ * mistyped centroid is exactly the confidently-wrong answer this module
+ * said it would rather not give.
+ *
+ * WITHOUT POINTS, NOTHING CHANGES. Supply none and every decision below
+ * falls back to the zone rule this module has used since 7.9, which is why
+ * this could be added on a go-live morning: an empty table is the old
+ * behaviour, exactly.
+ */
+export interface ZipPoint {
+    lat: number;
+    lng: number;
+}
+
+/** Miles between two points on the globe. */
+function milesApart(a: ZipPoint, b: ZipPoint): number {
+    const R = 3958.7613;
+    const rad = (d: number) => (d * Math.PI) / 180;
+    const dLat = rad(b.lat - a.lat);
+    const dLng = rad(b.lng - a.lng);
+    const s = Math.sin(dLat / 2) ** 2
+        + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 
 export const DEFAULT_CLUSTER_SETTINGS: ClusterSettings = {
@@ -122,6 +186,7 @@ export const DEFAULT_CLUSTER_SETTINGS: ClusterSettings = {
     maxStopsPerRun: 40,
     maxSitesPerRun: 2,
     maxStopsPerStatRun: 4,
+    maxSpreadMiles: 10,
 };
 
 export interface ProposedRun {
@@ -191,6 +256,8 @@ function runOf(kind: 'stat' | 'standard', orders: Clusterable[]): ProposedRun {
 export function proposeRuns(
     orders: Clusterable[],
     settings: ClusterSettings = DEFAULT_CLUSTER_SETTINGS,
+    /** ZIP to its centre. Omit it and the zone rule decides, as before. */
+    points?: ReadonlyMap<string, ZipPoint>,
 ): Proposal {
     const notes: string[] = [];
     const runs: ProposedRun[] = [];
@@ -258,17 +325,62 @@ export function proposeRuns(
     /* An open run is one still taking stops. A group joins the first open
        run it fits in: capacity, and the pharmacy limit, which is the real
        constraint because every extra site is another escorted badge-in. */
-    interface Open { orders: Clusterable[]; sites: Set<number>; zones: Set<number | null> }
+    interface Open { orders: Clusterable[]; sites: Set<number>; zones: Set<number | null>; zips: Set<string> }
     const open: Open[] = [];
+
+    const pointOf = (zip: string): ZipPoint | undefined => points?.get(zip);
+
+    /** Every ZIP in both the run and the group has a known centre. */
+    const allPlaced = (run: Open, group: Clusterable[]): boolean => {
+        if (points === undefined) return false;
+        for (const zip of run.zips) if (pointOf(zip) === undefined) return false;
+        for (const o of group) if (pointOf(o.zip) === undefined) return false;
+        return true;
+    };
 
     const fits = (run: Open, group: Clusterable[]): boolean => {
         if (run.orders.length + group.length > settings.maxStopsPerRun) return false;
         const sites = new Set(run.sites);
         for (const o of group) sites.add(o.siteId);
         if (sites.size > settings.maxSitesPerRun) return false;
-        /* Same distance band from the pickup, which is the only proximity
-           we can honestly claim. An unmapped ZIP (zone null) combines only
-           with other unmapped ones rather than being assumed near. */
+
+        /* WHERE THE ZIPS ACTUALLY ARE, when we know.
+           The zone rule below is a proxy for this and a poor one: zone is a
+           distance BAND from the pickup, so two ZIPs in zone 3 are both
+           that far out and can be on opposite sides of the county. A run
+           could hold 78207 and 78250 and look correct. Reported after the
+           first week: drivers crossing San Antonio between consecutive
+           stops on a round that the planner thought was tight.
+
+           With centres in hand the test is the real one, and it is a
+           DIAMETER: the new ZIP must be within maxSpreadMiles of every ZIP
+           already on the run, not of some drifting average. A centroid-and-
+           radius test lets a run grow a stop at a time across the city with
+           each addition looking reasonable; bounding every pair cannot. */
+        if (allPlaced(run, group)) {
+            for (const o of group) {
+                const to = pointOf(o.zip)!;
+                for (const zip of run.zips) {
+                    if (zip === o.zip) continue;
+                    if (milesApart(pointOf(zip)!, to) > settings.maxSpreadMiles) return false;
+                }
+                /* And the group's own ZIPs against each other, for the day
+                   a group spans more than one -- it does not today, but the
+                   check costs nothing and the invariant should hold whoever
+                   changes the grouping above. */
+                for (const other of group) {
+                    if (other.zip === o.zip) continue;
+                    if (milesApart(pointOf(other.zip)!, to) > settings.maxSpreadMiles) return false;
+                }
+            }
+            return true;
+        }
+
+        /* No centre for at least one of them, so fall back to the band.
+           An unmapped ZIP (zone null) combines only with other unmapped
+           ones rather than being assumed near. This is what every run used
+           before points existed, and it is still what a run gets when the
+           table has nothing to say about one of its ZIPs. */
         const zones = new Set(run.zones);
         for (const o of group) zones.add(o.zone);
         return zones.size <= 1;
@@ -285,6 +397,7 @@ export function proposeRuns(
                 orders: full,
                 sites: new Set(full.map((o) => o.siteId)),
                 zones: new Set(full.map((o) => o.zone)),
+                zips: new Set(full.map((o) => o.zip)),
             });
             remaining = remaining.slice(settings.maxStopsPerRun);
         }
@@ -292,12 +405,15 @@ export function proposeRuns(
 
         const home = open.find((run) => fits(run, remaining));
         if (home) {
-            for (const o of remaining) { home.orders.push(o); home.sites.add(o.siteId); home.zones.add(o.zone); }
+            for (const o of remaining) {
+                home.orders.push(o); home.sites.add(o.siteId); home.zones.add(o.zone); home.zips.add(o.zip);
+            }
         } else {
             open.push({
                 orders: [...remaining],
                 sites: new Set(remaining.map((o) => o.siteId)),
                 zones: new Set(remaining.map((o) => o.zone)),
+                zips: new Set(remaining.map((o) => o.zip)),
             });
         }
     }

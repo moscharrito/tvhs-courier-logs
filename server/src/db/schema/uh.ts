@@ -77,6 +77,43 @@ export const zoneZips = sqliteTable(
     ],
 );
 
+/* Where each ZIP is, so the planner can keep a round in one part of town.
+ *
+ * NOT A PATIENT ADDRESS AND NOT GEOCODING. One row per ZIP, identical for
+ * every delivery in it: the centre of a postal area, which is public
+ * reference data. No address is read or sent anywhere to produce it, and
+ * core/geo/provider.ts still refuses to. drizzle/0057 argues it at length.
+ *
+ * Empty until scripts/load-zip-points.mjs is run, and modules/uh/cluster.ts
+ * falls back to the zone band for any ZIP with no point -- so an empty table
+ * is the behaviour this planner had before the table existed.
+ *
+ * Effective-dated like zoneZips: ZIP boundaries are redrawn, and a round
+ * planned last March should stay explicable with that March's map. */
+export const zipPoints = sqliteTable(
+    'zip_points',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        zip: text('zip').notNull(),
+        lat: real('lat').notNull(),
+        lng: real('lng').notNull(),
+        /** Which file the figure came from, so a wrong one is traceable. */
+        source: text('source').notNull(),
+        effectiveFrom: text('effective_from').notNull(),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        unique('zip_points_project_zip_from_unique').on(t.projectId, t.zip, t.effectiveFrom),
+        index('zip_points_project_zip_idx').on(t.projectId, t.zip),
+        /* Loose on purpose: not a map, a guard against a transposed pair or
+           a dropped minus sign, either of which lands a ZIP in the ocean and
+           neither of which anything downstream would notice. */
+        check('zip_points_lat_check', sql`${t.lat} BETWEEN 25 AND 37`),
+        check('zip_points_lng_check', sql`${t.lng} BETWEEN -107 AND -93`),
+    ],
+);
+
 /* One complete price list, effective from a date. A contract price schedule
  * changes as a whole, so a row is the whole schedule rather than one rate.
  * Rates are the Izy BAFO figures; they are firm for the base term and the

@@ -34,6 +34,7 @@ import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrateg
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
 import { proposeRuns, staffProposal, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
+import { zipPointMap } from './zones';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -913,9 +914,18 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             maxStopsPerRun: num('maxStopsPerRun', DEFAULT_CLUSTER_SETTINGS.maxStopsPerRun, 200),
             maxSitesPerRun: num('maxSitesPerRun', DEFAULT_CLUSTER_SETTINGS.maxSitesPerRun, 9),
             maxStopsPerStatRun: num('maxStopsPerStatRun', DEFAULT_CLUSTER_SETTINGS.maxStopsPerStatRun, 40),
+            /* The width of a round, in miles. Overridable like the rest so
+               a dispatcher can ask "what would tight look like" before
+               ringing anybody -- the answer comes back as driversNeeded. */
+            maxSpreadMiles: num('maxSpreadMiles', DEFAULT_CLUSTER_SETTINGS.maxSpreadMiles, 200),
         };
 
-        const proposal = proposeRuns(orders, settings);
+        /* Where the ZIPs are, when we know. Empty until the points are
+           loaded, and an empty map is the zone rule this planner used
+           before -- see the note on ZipPoint in cluster.ts. */
+        const points = await zipPointMap(client, req.project!.id, serviceDate);
+
+        const proposal = proposeRuns(orders, settings, points);
         const staffing = staffProposal(proposal.runs, roster);
 
         const notes = [...proposal.notes, ...staffing.notes];

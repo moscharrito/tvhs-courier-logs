@@ -18,6 +18,7 @@
     "rehearse": "tsx scripts/rehearse.mjs",
     "rehearse:two": "tsx scripts/two-drivers.mjs",
     "sim": "tsx scripts/simulate-wave.mjs",
+    "load:zips": "tsx scripts/load-zip-points.mjs",
     "reconcile": "tsx scripts/reconcile.mjs",
     "loadtest": "tsx scripts/load-test.mjs",
     "restore:check": "tsx scripts/restore-check.mjs",
