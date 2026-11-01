@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { api, ApiError, whenSessionEnds } from './api';
+import { api, ApiError, why, whenSessionEnds } from './api';
 
 const answer = (status: number, body: unknown = {}) => vi.fn(async () => ({
     ok: status >= 200 && status < 300,
@@ -114,5 +114,38 @@ describe('every other failure', () => {
         expect(err.message).toBe('Say why first');
         expect(err.code).toBe('deliver.countersignatureRequired');
         expect(err.details).toEqual(['x']);
+    });
+});
+
+describe('what a failed call says on the screen', () => {
+    /* GO-LIVE MORNING, 1 NOVEMBER. A courier pressed File it and got the
+       words "Invalid request" and nothing else. The server had already said
+       which box was wrong -- `details: ["expected: String must contain at
+       least 3 character(s)"]` -- and ApiError had carried it all along.
+       The screen read `err.message` and dropped the rest on the floor.
+
+       Two characters of a field name beat any sentence we could write,
+       because they say WHICH control to go and fix. */
+    it('adds the field the server named', () => {
+        const err = new ApiError(400, 'Invalid request', ['expected: String must contain at least 3 character(s)']);
+        expect(why(err, 'Could not file it')).toBe('Invalid request (expected: String must contain at least 3 character(s))');
+    });
+
+    it('joins several, because a form can be wrong in more than one place', () => {
+        const err = new ApiError(400, 'Invalid request', ['kind: Invalid enum value', 'expected: too short']);
+        expect(why(err, 'nope')).toBe('Invalid request (kind: Invalid enum value; expected: too short)');
+    });
+
+    it('leaves a message with no details alone, rather than printing empty brackets', () => {
+        expect(why(new ApiError(403, 'That order is not assigned to you'), 'nope'))
+            .toBe('That order is not assigned to you');
+    });
+
+    it('falls back for anything that is not an ApiError', () => {
+        /* A network drop throws a TypeError whose message is "Failed to
+           fetch", which tells a courier nothing. The caller's own words are
+           better than the browser's. */
+        expect(why(new TypeError('Failed to fetch'), 'Could not reach dispatch')).toBe('Could not reach dispatch');
+        expect(why(null, 'Could not reach dispatch')).toBe('Could not reach dispatch');
     });
 });

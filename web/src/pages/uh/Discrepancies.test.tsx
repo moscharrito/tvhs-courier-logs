@@ -178,3 +178,61 @@ describe('the go-live panel', () => {
         expect(screen.getByText('Nothing open.')).toBeInTheDocument();
     });
 });
+
+describe('filing one when something is wrong with the form', () => {
+    /* GO-LIVE MORNING, 1 NOVEMBER. A courier filled this in, pressed File
+       it, and got the words "Invalid request" in a red box. Nothing on the
+       screen said which box was wrong and nothing could be done about it. */
+    const fill = async (over: Record<string, string> = {}) => {
+        const mocked = renderAs('courier');
+        await screen.findByRole('heading', { name: 'Discrepancies' });
+        fireEvent.change(screen.getByLabelText(/What the system said/), { target: { value: over.expected ?? 'The upload should have finished.' } });
+        fireEvent.change(screen.getByLabelText(/What actually happened/), { target: { value: over.actual ?? 'App crashed during upload' } });
+        if (over.reference !== undefined) {
+            fireEvent.change(screen.getByLabelText(/Delivery number/), { target: { value: over.reference } });
+        }
+        return mocked;
+    };
+
+    it('refuses a delivery number that is not a number, and says so in words', async () => {
+        /* THE BUG. `Number('Charlie')` is NaN, JSON.stringify writes NaN as
+           null, and the schema answers "orderId: Expected number, received
+           null" -- the same shape as the photo upload on 31 October, and
+           the same unreadable "Invalid request" at the far end of it.
+           Caught here now, and the box is named. */
+        const mocked = await fill({ reference: 'Charlie' });
+        fireEvent.click(screen.getByRole('button', { name: 'File it' }));
+
+        expect(await screen.findByText(/delivery number has to be a number/i)).toBeInTheDocument();
+        /* And nothing was sent: a refusal the server never saw. */
+        expect(mocked.calls.filter((c) => c.startsWith('POST'))).toEqual([]);
+    });
+
+    it('sends nothing for the delivery number when it is left empty', async () => {
+        /* Empty is the normal case -- most reports are not about one
+           delivery -- and it must be ABSENT from the body rather than null,
+           which is what the schema refuses. */
+        const mocked = await fill();
+        fireEvent.click(screen.getByRole('button', { name: 'File it' }));
+
+        await waitFor(() => expect(mocked.calls.some((c) => c.startsWith('POST'))).toBe(true));
+        const sent = mocked.bodies['POST /api/projects/uh/uh/discrepancies'] as Record<string, unknown>;
+        expect('orderId' in sent).toBe(false);
+    });
+
+    it('shows the field the server named, instead of "Invalid request" alone', async () => {
+        const mocked = renderAs('courier', {
+            'POST /api/projects/uh/uh/discrepancies': {
+                status: 400,
+                body: { error: 'Invalid request', details: ['expected: String must contain at least 3 character(s)'] },
+            },
+        });
+        await screen.findByRole('heading', { name: 'Discrepancies' });
+        fireEvent.change(screen.getByLabelText(/What the system said/), { target: { value: 'something' } });
+        fireEvent.change(screen.getByLabelText(/What actually happened/), { target: { value: 'App crashed during upload' } });
+        fireEvent.click(screen.getByRole('button', { name: 'File it' }));
+
+        expect(await screen.findByText(/at least 3 character/i)).toBeInTheDocument();
+        expect(mocked.calls.some((c) => c.startsWith('POST'))).toBe(true);
+    });
+});

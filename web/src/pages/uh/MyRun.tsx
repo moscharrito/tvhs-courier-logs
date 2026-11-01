@@ -124,7 +124,17 @@ export function MyRun() {
        arrived ran one more hook than the render before it. React throws, the
        screen goes white, and it happens to every courier on every shift the
        moment their run loads. */
-    const pagedStops = usePaged(data?.runs.flatMap((r) => r.stops) ?? []);
+    /* FIVE HERE, EIGHT EVERYWHERE ELSE, asked for from a handset on
+       1 November and right for a reason worth writing down.
+       Eight is a page of a dispatcher's TABLE: eight rows of one line each,
+       on a wide screen, read by somebody sitting down. A stop on this screen
+       is a card -- name, address, due time, zone, and three controls -- and
+       eight of them is a long scroll inside a sheet that is already sharing
+       a 375px screen with the context above it. The courier's question is
+       always "what are the next few", never "show me all forty", and the
+       answer to the second one is a scroll they do with their thumb while
+       holding a package. */
+    const pagedStops = usePaged(data?.runs.flatMap((r) => r.stops) ?? [], 5);
 
     const load = useCallback(async () => {
         setError(null);

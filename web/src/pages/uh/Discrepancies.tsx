@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
+import { api, why, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
 import { momentFor, todayIn } from '../../lib/when';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
@@ -86,7 +86,7 @@ export function Discrepancies() {
             setList(l);
             setSummary(s);
         } catch (err) {
-            setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not load the log' });
+            setMsg({ kind: 'error', text: why(err, 'Could not load the log') });
         }
     }, [base, canReview]);
     useEffect(() => { void load(); }, [load]);
@@ -97,18 +97,34 @@ export function Discrepancies() {
         setMsg(null);
         void (async () => {
             try {
+                /* A DELIVERY NUMBER THAT IS NOT A NUMBER USED TO BECOME
+                   `null` ON THE WIRE. `Number('abc')` is NaN, JSON.stringify
+                   writes NaN as null, and the schema answers "orderId:
+                   Expected number, received null" -- the same shape of bug
+                   as the photo upload on 31 October. A reference that is not
+                   a number is now simply not sent, and the courier is told
+                   rather than the server. */
+                const ref = reference.trim();
+                const orderId = ref === '' ? null : Number(ref);
+                if (orderId !== null && !Number.isInteger(orderId)) {
+                    setMsg({ kind: 'error', text: 'The delivery number has to be a number, like 4182. Leave it empty if this is not about one delivery.' });
+                    return;
+                }
+                /* Trimmed here as well as on the server. `required` lets a
+                   box of spaces through and `.trim().min(3)` then refuses
+                   it, which is a refusal nobody can see the cause of. */
                 await api(base, {
                     method: 'POST',
                     json: {
-                        serviceDate, kind, severity, expected, actual,
-                        ...(reference.trim() ? { orderId: Number(reference.trim()) } : {}),
+                        serviceDate, kind, severity, expected: expected.trim(), actual: actual.trim(),
+                        ...(orderId === null ? {} : { orderId }),
                     },
                 });
                 setExpected(''); setActual(''); setReference('');
                 setMsg({ kind: 'ok', text: 'Filed. Thank you: a week with no reports means nobody was looking.' });
                 await load();
             } catch (err) {
-                setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not file it' });
+                setMsg({ kind: 'error', text: why(err, 'Could not file it') });
             } finally {
                 setBusy(false);
             }
@@ -126,7 +142,7 @@ export function Discrepancies() {
                 setResolution('');
                 await load();
             } catch (err) {
-                setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'Could not close it' });
+                setMsg({ kind: 'error', text: why(err, 'Could not close it') });
             }
         })();
     };

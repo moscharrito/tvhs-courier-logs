@@ -1132,10 +1132,21 @@ body {
        short screen. */
     .izy-courier .izy-screen-context {
         flex: 0 0 auto; max-height: 62%; min-height: 0; overflow-y: auto;
-        /* No bottom padding: the sheet below brings its own top padding and
-           a grabber, which is the gap. Sixteen pixels here was sixteen
-           pixels of overflow and a scrollbar on a region that fits. */
-        padding: var(--izy-s-md) var(--izy-s-lg) 0;
+        /* A SMALL BOTTOM GAP AFTER ALL, reported from a handset on
+           1 November as the context "overlapping" the sheet.
+           It does not overlap -- the two are exactly flush, measured at
+           434px on a 812px screen -- and that is the problem. The sheet's
+           own top padding sits INSIDE its glass, above the grabber, so from
+           outside there is no gap at all: the last card's bottom edge runs
+           into the sheet's lip and under its blur, and it reads as a card
+           sliding behind a panel rather than ending.
+           Ten pixels, not the sixteen that overflowed this region before:
+           enough to see the card end, cheap enough not to cost a line of
+           the next address.
+           The sides come in from 22 to 16 in the same change. The cap is a
+           PERCENTAGE, so the narrower the padding the more of the card fits
+           above the fold -- which is the other half of what was reported. */
+        padding: var(--izy-s-sm) var(--izy-s-md) var(--izy-s-sm);
     }
     .izy-courier .izy-sheet {
         flex: 1 1 0; min-height: 7rem; overflow-y: auto;
@@ -1330,3 +1341,41 @@ body {
     overflow-wrap: anywhere;
 }
 .izy-report dd.is-bad { color: var(--izy-danger); font-weight: 700; }
+
+/* ── The wrong-browser notice ───────────────────────────────────────────────
+ * Shown to a driver on an iPhone who is not in Safari, on the sign-in page
+ * and on every screen of the round. It has no dismiss control on purpose:
+ * the condition is the browser, so it goes away by itself the moment they
+ * do what it asks, and nobody can tap it away at sign-in and then meet a
+ * black camera at a counter with nothing on screen to explain it.
+ * See app/DriverShell.tsx for the four days this cost. */
+.izy-browser-note {
+    margin: 0 0 var(--izy-s-md);
+    padding: var(--izy-s-md);
+    border-radius: var(--izy-r-card);
+    border: 1px solid rgba(217, 119, 6, 0.4);
+    background: rgba(217, 119, 6, 0.1);
+    color: var(--izy-ink);
+}
+.izy-browser-note p { margin: 0 0 var(--izy-s-sm); font-size: var(--izy-t-label); line-height: 22px; }
+.izy-browser-note .izy-card-btn { margin-bottom: var(--izy-s-sm); }
+.izy-browser-note .izy-browser-note-how { margin-bottom: 0; font-size: var(--izy-t-meta); color: var(--izy-muted); }
+
+/* ── A form's own submit button, on a courier's screen ──────────────────────
+ * Reported from a handset on 1 November: the File it button on Discrepancies
+ * sitting hard against the box above it. Measured at exactly zero gap, and
+ * 33px tall against the 48px floor this whole layer is built on -- the
+ * driver screens use CardButton, which carries both, and the few plain
+ * forms left over inherit the dispatcher console's 33px chip instead.
+ *
+ * Scoped to .izy-courier so the console keeps its compact buttons: a
+ * dispatcher at a 1400px window with a mouse is not the audience for a
+ * 48px slab, and widening it there would be a change nobody asked for. */
+.izy-courier form > .izy-btn,
+.izy-courier form > .izy-row > .izy-btn {
+    margin-top: var(--izy-s-md);
+    min-height: var(--izy-tap-min);
+    padding-left: var(--izy-s-lg);
+    padding-right: var(--izy-s-lg);
+    font-size: var(--izy-t-label);
+}

@@ -21,6 +21,27 @@ export class ApiError extends Error {
     }
 }
 
+/**
+ * What to put on the screen when a call failed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NOT JUST `err.message`.
+ *
+ * The server answers a failed validation with `{ error: "Invalid request",
+ * details: ["expected: String must contain at least 3 character(s)"] }`.
+ * ApiError has carried `details` all along and most screens showed only the
+ * message, so a courier pressing File it on 1 November -- go-live morning --
+ * got the words "Invalid request" and nothing else. The server had already
+ * said exactly which box was wrong; the screen dropped it on the floor.
+ *
+ * Two characters of a field name are worth more than any sentence we could
+ * write here, because they say WHICH control to go and fix.
+ */
+export function why(err: unknown, fallback: string): string {
+    if (!(err instanceof ApiError)) return fallback;
+    return err.details.length > 0 ? `${err.message} (${err.details.join('; ')})` : err.message;
+}
+
 /* ───────────────────────────── a session that ended is not an error ──────
  *
  * A pharmacist left the portal open over lunch. The session idled out after
