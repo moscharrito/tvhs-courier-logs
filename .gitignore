@@ -65,6 +65,7 @@ reset-uh-portals.py
 # One-off production tooling.
 purge-drivers.ps1
 stage-wheatley.ps1
+check-pod.ps1
 list-drivers.mjs
 
 # The driver roster for create-drivers.mjs and load-roster.mjs. SAME REASON
@@ -99,3 +100,8 @@ retire.txt
 
 # Python bytecode from server/scripts.
 __pycache__/
+
+# A proof of delivery names a patient, their address and who signed for
+# their prescription. scripts/check-pod.mjs writes one here so it can be
+# opened and looked at, and this repository is PUBLIC. Never committed.
+pod-*.pdf
