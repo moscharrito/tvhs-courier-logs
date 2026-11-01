@@ -66,6 +66,63 @@ export async function storedPhoto(
 }
 
 /**
+ * The collection form: the paper the PHARMACY signed when it handed the
+ * packages over, photographed at the counter.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY IT NEEDS ITS OWN QUERY INSTEAD OF JUST ANOTHER `kind`.
+ *
+ * One form covers the whole trolley. A courier collecting eleven orders
+ * photographs one sheet, so the `files` row is written with order_id NULL
+ * -- deliberately, because it does not belong to any single delivery -- and
+ * modules/uh/pickup.ts puts its id on EVERY order's `picked_up` custody
+ * event instead. That is the correct shape for the fact being recorded.
+ *
+ * `storedPhoto` above looks photographs up with `WHERE order_id = ?`. So
+ * the collection form was referenced by the chain of custody and could not
+ * be found by the document that prints the chain of custody. Nothing threw
+ * and nothing was lost; the picture simply was not there, and because a
+ * form photographed AT THE DOOR does carry an order id and did appear, the
+ * common case looked right and this went unnoticed until somebody
+ * collected at a counter and went looking for the picture afterwards.
+ *
+ * So this walks the other way round: from the order's custody events to
+ * the file they name. It is the only path that reaches a batch document.
+ *
+ * NEWEST EVENT WINS, and ordered by id rather than by `at`: `at` is a claim
+ * a phone made and id is the append order, which is the chain. A courier
+ * who collected, was turned back, and collected again has two pickups, and
+ * the second one's form is the one that describes the packages in the van.
+ */
+export async function collectionPhoto(
+    client: Client, projectId: number, orderId: number,
+): Promise<StoredPhoto | null> {
+    const rs = await client.execute({
+        /* Joined to `files` so a dangling id -- a row removed by retention,
+           an upload that never completed -- comes back as no photograph
+           rather than as a key that fetches nothing. */
+        sql: `SELECT f.id, f.s3_key, f.content_type
+                FROM custody_events e
+                JOIN files f ON f.id = e.file_id
+               WHERE e.project_id = ? AND e.order_id = ?
+                 AND e.file_id IS NOT NULL
+                 AND f.status = 'stored'
+                 AND f.order_id IS NULL
+               ORDER BY e.id DESC LIMIT 1`,
+        /* `f.order_id IS NULL` is the half that keeps this from printing the
+           same picture twice: a form photographed at the door is bound to
+           the order, is already found by storedPhoto, and is a different
+           page of this document. Only the unbound batch ones come through
+           here. */
+        args: [projectId, orderId],
+    });
+    const row = rs.rows[0];
+    return row
+        ? { id: Number(row['id']), key: String(row['s3_key']), contentType: String(row['content_type']) }
+        : null;
+}
+
+/**
  * The JPEG behind a stored key, or undefined.
  *
  * Through the same presigned GET a browser would use, rather than a second
@@ -110,6 +167,13 @@ export async function attachPhotos(
 
         const ident = await storedPhoto(client, projectId, orderId, ID_KIND);
         if (ident) data.idPhoto = { bytes: await fetchPhoto(storage, ident.key) };
+
+        /* The pharmacy's end of the chain. Not gated on data.photo.available
+           -- that flag is about whether a DELIVERY photograph exists and is
+           printable, and a collection form is a different fact: it can be
+           the only picture on a delivery that was handed over on paper. */
+        const collected = await collectionPhoto(client, projectId, orderId);
+        if (collected) data.collectionPhoto = { bytes: await fetchPhoto(storage, collected.key) };
     } catch {
         /* See the header. The record is worth more than the pictures. */
     }

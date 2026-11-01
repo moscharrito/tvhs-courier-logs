@@ -111,6 +111,11 @@ export interface PodData {
     photo: { available: boolean; note: string; bytes?: Buffer | undefined };
     /** Identification, where the pharmacy stamped the form ID Required. */
     idPhoto?: { bytes?: Buffer | undefined } | undefined;
+    /** The form the PHARMACY signed, photographed at the counter. It covers
+     *  a whole collection rather than this one delivery, which is why it is
+     *  found through the custody chain instead of by order id -- see
+     *  collectionPhoto in pod-photos.ts. */
+    collectionPhoto?: { bytes?: Buffer | undefined } | undefined;
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -467,6 +472,28 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         photoPage(
             data.idPhoto.bytes, 'Ph1', 'Identification',
             'This delivery was marked ID Required by the pharmacy. The recipient presented identification, photographed at the door.',
+        );
+    }
+    /* LAST, BECAUSE IT IS THE EARLIEST THING THAT HAPPENED, and the two
+       facts are different ones. The pages above are the handover to the
+       patient; this is the handover FROM the pharmacy, which is where the
+       chain of custody starts. A reader looking for "did the right person
+       receive it" should not meet a picture of a counter first.
+       It says plainly that the form covers a collection rather than this
+       delivery alone, because a reader who assumes otherwise is reading it
+       as evidence about this patient and it is not. */
+    if (data.collectionPhoto?.bytes) {
+        photoPage(
+            /* NOT "Collected from the pharmacy": that exact phrase is
+               already the timeline's label for the picked_up event, two
+               pages earlier. Two identical headings meaning different
+               things -- one an event, one a photograph -- is a document
+               that makes a reader work out which is which. It also made a
+               test pass against the wrong text, which is how it was
+               found. */
+            data.collectionPhoto.bytes, 'Ph2', 'The pharmacy’s collection form',
+            'The form the pharmacy signed when it handed the packages over, photographed by the courier at the '
+            + 'counter. One form covers the whole collection, so it may list other deliveries made on the same run.',
         );
     }
 

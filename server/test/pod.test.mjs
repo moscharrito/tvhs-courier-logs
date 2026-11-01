@@ -15,6 +15,7 @@ import path from 'node:path';
 import { startServer, tempDb, removeDir, storedForm } from './helpers/server.mjs';
 import { buildPdf, Page, PAGE, toLatin, wrap, textWidth } from '../src/core/pdf/writer.ts';
 import { renderPod, fitStrokes, stamp, podFilename } from '../src/modules/uh/pod.ts';
+import { collectionPhoto } from '../src/modules/uh/pod-photos.ts';
 
 const ORDERS = '/api/projects/uh/uh/orders';
 const RUNS = '/api/projects/uh/uh/runs';
@@ -440,6 +441,31 @@ describe('our copy and the client copy', () => {
         });
     }
 
+    /** A stored photograph belonging to no order: a collection form. */
+    async function batchFile(kind) {
+        const at = new Date().toISOString();
+        const rs = await client.execute({
+            sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+                  VALUES (?, NULL, ?, ?, 'image/jpeg', 1024, 'stored', 'ada.courier', ?, ?) RETURNING id`,
+            args: [projectId, kind, `uh/test/${kind}/${Math.random()}.jpg`, at, at],
+        });
+        return Number(rs.rows[0].id);
+    }
+
+    /* INSERTED, NOT UPDATED. custody_events is append-only by database
+       trigger -- the first version of these tests tried to UPDATE the
+       existing pickup row and the trigger refused it, which is the trigger
+       doing exactly its job. A courier who collected, was turned back and
+       collected again leaves two pickups anyway, so appending one is the
+       shape the real system produces. */
+    async function pickupEventNaming(orderId, fileId) {
+        await client.execute({
+            sql: `INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status, file_id)
+                  VALUES (?, ?, 'picked_up', ?, 'ada.courier', 'assigned', 'picked_up', ?)`,
+            args: [projectId, orderId, new Date().toISOString(), fileId],
+        });
+    }
+
     const asUh = async () => {
         const uh = srv.agent();
         await uh.post('/api/login').send({ username: 'uh.pharmacist', password: 'client-pass-1' });
@@ -460,6 +486,73 @@ describe('our copy and the client copy', () => {
         for (const text of [ours, theirs]) expect(text).toMatch(/photograph/i);
         /* Neither may claim there was none. */
         for (const text of [ours, theirs]) expect(text).not.toMatch(/No photograph was taken/i);
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE COLLECTION FORM, TESTED AT THE LOOKUP RATHER THAN THE PAGE.
+     *
+     * A photograph page only renders when real bytes come back from the
+     * bucket, and these tests run without one -- every other photo test
+     * here asserts the NOTE on the summary page for the same reason. So
+     * the thing worth pinning is the query, which is the part that was
+     * wrong, and it is pinned directly.
+     *
+     * The first version asserted on the rendered text instead and passed
+     * against the timeline's own "Collected from the pharmacy" label two
+     * pages earlier. It proved nothing and looked green.
+     */
+    it('finds a collection form that belongs to no single delivery', async () => {
+        /* THE GAP THIS CLOSES, found on 1 November by looking for a picture
+           that had definitely been taken.
+
+           A courier collecting eleven orders photographs ONE pharmacy form.
+           The files row is written with order_id NULL -- correctly, it is
+           not about any one delivery -- and pickup.ts puts its id on every
+           order's picked_up custody event instead. pod-photos.ts looked
+           photographs up with WHERE order_id = ?, so the form was
+           referenced by the chain of custody and unreachable by the
+           document that prints the chain of custody. */
+        const order = await deliveredOrder();
+        const fileId = await batchFile('courier_form');
+
+        expect(await collectionPhoto(client, projectId, order.id)).toBeNull();
+
+        await pickupEventNaming(order.id, fileId);
+
+        const found = await collectionPhoto(client, projectId, order.id);
+        expect(found?.id).toBe(fileId);
+    });
+
+    it('does not offer a form that is already bound to the order', async () => {
+        /* The guard on the new query. A form photographed at the door has
+           an order id, is already found the ordinary way, and is a separate
+           page of this document. Reaching it again through the custody
+           chain would print one picture under two headings, and the second
+           heading would be a lie about where it was taken. */
+        const order = await deliveredOrder();
+        await storedFile('courier_form', order.id);
+        const bound = Number((await client.execute({
+            sql: 'SELECT id FROM files WHERE project_id = ? AND order_id = ? ORDER BY id DESC LIMIT 1',
+            args: [projectId, order.id],
+        })).rows[0].id);
+        await pickupEventNaming(order.id, bound);
+
+        expect(await collectionPhoto(client, projectId, order.id)).toBeNull();
+    });
+
+    it('ignores a form whose upload never finished', async () => {
+        /* A `pending` row is an upload that started and stopped. Putting
+           one in a document produces a page that will not render. */
+        const order = await deliveredOrder();
+        const at = new Date().toISOString();
+        const rs = await client.execute({
+            sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at)
+                  VALUES (?, NULL, 'courier_form', ?, 'image/jpeg', 1024, 'pending', 'ada.courier', ?) RETURNING id`,
+            args: [projectId, `uh/test/pending/${Math.random()}.jpg`, at],
+        });
+        await pickupEventNaming(order.id, Number(rs.rows[0].id));
+
+        expect(await collectionPhoto(client, projectId, order.id)).toBeNull();
     });
 
     it('both say there is none when the photograph is gone', async () => {
