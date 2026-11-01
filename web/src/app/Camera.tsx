@@ -38,6 +38,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { cameraAdvice } from '../lib/browser';
 
 /** A courier's photo is proof, not a portrait. 1600px on the long edge
  *  reads a signature and a door number perfectly and weighs a few hundred
@@ -68,10 +69,12 @@ function why(e: unknown): Trouble {
         case 'NotAllowedError':
         case 'PermissionDeniedError':
         case 'SecurityError':
-            return {
-                text: 'This browser is not letting the page use the camera. Tap the padlock beside the address, allow Camera, then try again.',
-                again: true,
-            };
+            /* THE ADVICE HAS TO MATCH THE DEVICE IN THEIR HAND.
+               This said "tap the padlock beside the address" to everybody,
+               which is Chrome-on-a-desktop language. A courier on an iPhone
+               went looking for a padlock, found nothing, and concluded the
+               app was broken -- see the report quoted in lib/browser.ts. */
+            return { text: cameraAdvice() ?? 'This browser is not letting the page use the camera. Tap the padlock beside the address, allow Camera, then try again.', again: true };
         case 'NotReadableError':
         case 'TrackStartError':
         case 'AbortError':

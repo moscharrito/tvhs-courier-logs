@@ -50,6 +50,7 @@
  */
 
 import { useCallback, useRef, useState } from 'react';
+import { cameraAdvice, iosWrapper, isIos } from '../lib/browser';
 
 type Line = { label: string; value: string; bad?: boolean };
 
@@ -83,10 +84,60 @@ function frameBrightness(video: HTMLVideoElement): number | null {
     }
 }
 
+/**
+ * What the readings mean, in one paragraph, for somebody standing at a
+ * counter. The order matters: each branch is only reached once the ones
+ * above it have been ruled out.
+ */
+function read(
+    seen: { api: boolean; permission: string; refused: string; muted: boolean; frames: boolean; peak: number },
+    violations: string[],
+): string {
+    if (!seen.api) {
+        return 'This browser will not give a web page a camera at all. Use Choose photo on the delivery screen, '
+            + 'and take the picture with the phone\'s own camera app first.';
+    }
+    if (violations.length > 0) {
+        return 'The page\'s own security policy blocked something it needed. That is ours to fix, not yours. '
+            + 'Send this report on and use Choose photo meanwhile.';
+    }
+    if (seen.refused !== '' || (!seen.frames && !seen.muted && seen.permission === 'denied')) {
+        /* THE CASE THE 31 OCTOBER REPORT TURNED OUT TO BE.
+           Permission `prompt` means the SITE has not been refused, and no
+           prompt appeared -- so the refusal came from above the page. On
+           iOS that is the app around WebKit, or iOS itself. */
+        const above = seen.permission === 'prompt' || seen.permission === '';
+        const advice = cameraAdvice();
+        if (advice !== null) {
+            return `${above ? 'The camera was refused without this page ever being allowed to ask you, so the refusal is not coming from the website. ' : ''}${advice}`;
+        }
+        return above
+            ? 'The camera was refused without you being asked, so the refusal is coming from the browser or the '
+              + 'phone rather than from this website. Check the camera permission in the browser settings and in '
+              + 'the phone settings.'
+            : 'The camera permission has been refused for this site. Allow it in the browser settings and try again.';
+    }
+    if (seen.muted) {
+        return 'The camera opened but the phone is sending no picture through it. Something else has the camera: '
+            + 'close any app that uses it -- the camera app, a video call, a scanner -- and run this again.';
+    }
+    if (!seen.frames) {
+        return 'The camera opened and reported no picture size at all, which usually means the camera is being '
+            + 'held by something else. Close any app that uses the camera and run this again.';
+    }
+    if (seen.peak >= 0 && seen.peak <= 8) {
+        return 'The camera is working and sending a completely black picture. Check nothing is covering the lens, '
+            + 'and that you are not in the dark.';
+    }
+    return 'The camera is working on this phone. Take the picture from the delivery screen as normal, and if it '
+        + 'still fails there, send this report on.';
+}
+
 export function CameraCheck() {
     const video = useRef<HTMLVideoElement | null>(null);
     const stream = useRef<MediaStream | null>(null);
     const [lines, setLines] = useState<Line[] | null>(null);
+    const [verdict, setVerdict] = useState<string | null>(null);
     const [running, setRunning] = useState(false);
     const [copied, setCopied] = useState(false);
 
@@ -98,8 +149,14 @@ export function CameraCheck() {
     const check = useCallback(async () => {
         setRunning(true);
         setCopied(false);
+        setVerdict(null);
         stop();
         const out: Line[] = [];
+        /* Gathered as the check runs, so the page can say what it MEANS
+           rather than handing somebody eleven facts and a shrug. A courier
+           in a car park does not want a reading, they want to know whether
+           to keep tapping or open Safari. */
+        const seen = { api: false, permission: '', refused: '', muted: false, frames: false, peak: -1 };
         const add = (label: string, value: string, bad = false) => out.push({ label, value, ...(bad ? { bad } : {}) });
 
         /* A CSP that forbids what the page plays would black the picture out
@@ -118,9 +175,15 @@ export function CameraCheck() {
             add('Installed to home screen', yes(standalone));
             add('Browser', navigator.userAgent);
 
+            /* Named, not just a user agent string: "Chrome on an iPhone"
+               is the single most useful line in the report, because on iOS
+               that means WebKit borrowed by another app. */
+            const wrapper = iosWrapper();
+            if (isIos()) add('Browser on iPhone', wrapper === null ? 'Safari' : `${wrapper} (not Safari)`, wrapper !== null);
+
             const media = navigator.mediaDevices;
-            add('Camera API present', yes(media !== undefined && typeof media.getUserMedia === 'function'),
-                media === undefined || typeof media.getUserMedia !== 'function');
+            seen.api = media !== undefined && typeof media.getUserMedia === 'function';
+            add('Camera API present', yes(seen.api), !seen.api);
 
             /* Asked before the prompt, because the answer is the difference
                between "never asked" and "asked and refused". */
@@ -128,6 +191,7 @@ export function CameraCheck() {
                 const perms = (navigator as Navigator & { permissions?: Permissions }).permissions;
                 if (perms?.query !== undefined) {
                     const status = await perms.query({ name: 'camera' as PermissionName });
+                    seen.permission = status.state;
                     add('Camera permission', status.state, status.state === 'denied');
                 } else {
                     add('Camera permission', 'this browser will not say');
@@ -162,6 +226,8 @@ export function CameraCheck() {
                     got = await media.getUserMedia({ video: true, audio: false });
                     add('Camera opened', 'yes, but only without asking for the rear one');
                 } catch (second) {
+                    seen.refused = second !== null && typeof second === 'object' && 'name' in second
+                        ? String((second as { name: unknown }).name) : 'Error';
                     add('Camera opened', errorLine(second), true);
                 }
             }
@@ -175,6 +241,7 @@ export function CameraCheck() {
                     add('Camera in use', track.label === '' ? '(no name given)' : track.label);
                     add('Track state', track.readyState, track.readyState !== 'live');
                     /* THE ONE. See the header. */
+                    seen.muted = track.muted;
                     add('Sending frames', track.muted ? 'NO - the system is holding the camera back' : 'yes', track.muted);
                     const s = track.getSettings();
                     add('Requested size', `${s.width ?? '?'} x ${s.height ?? '?'}`);
@@ -198,6 +265,8 @@ export function CameraCheck() {
                         const b = frameBrightness(element);
                         if (b !== null) peak = Math.max(peak ?? 0, b);
                     }
+                    seen.frames = element.videoWidth > 0;
+                    seen.peak = peak ?? -1;
                     add('Picture size, every half second', sizes.join(', '), element.videoWidth === 0);
                     add('Brightest pixel seen', peak === null ? 'could not read the frame' : `${peak} of 255`,
                         peak !== null && peak <= 8);
@@ -212,6 +281,7 @@ export function CameraCheck() {
 
             add('Blocked by the page policy', violations.length === 0 ? 'nothing' : violations.join(' | '), violations.length > 0);
             setLines(out);
+            setVerdict(read(seen, violations));
         } finally {
             document.removeEventListener('securitypolicyviolation', onViolation);
             setRunning(false);
@@ -242,6 +312,13 @@ export function CameraCheck() {
                 autoPlay
                 style={{ width: '100%', maxHeight: 240, background: '#000', borderRadius: 12, display: 'block', marginBottom: 16 }}
             />
+
+            {/* THE ANSWER FIRST, above the readings that produced it.
+                Eleven facts and no conclusion is what a courier was already
+                getting from a black rectangle. */}
+            {verdict !== null && (
+                <div className="izy-alert warn" role="status"><b>What to do:</b> {verdict}</div>
+            )}
 
             {lines !== null && (
                 <>
