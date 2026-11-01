@@ -29,6 +29,7 @@ import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
 import { OrderDetail } from '../pages/uh/OrderDetail';
 import { Applications } from '../pages/uh/Applications';
+import { CameraCheck } from '../pages/CameraCheck';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
     const { user } = useAuth();
@@ -78,7 +79,21 @@ export function App() {
     const { loading, user } = useAuth();
 
     if (loading) return <Loading full />;
-    if (!user) return <Login />;
+    /* THE ONE PAGE THAT IS REACHABLE WITHOUT SIGNING IN.
+     *
+     * A courier whose camera will not work is often about to give up on the
+     * app, and making them authenticate before they can find out why is a
+     * way of not finding out. It reads the device and shows what it read;
+     * it sends nothing, stores nothing and asks the server nothing, so
+     * there is nothing behind it to protect. */
+    if (!user) {
+        return (
+            <Routes>
+                <Route path="/camera-check" element={<CameraCheck />} />
+                <Route path="*" element={<Login />} />
+            </Routes>
+        );
+    }
 
     // Everyone lands on the project picker after sign-in and chooses where to go.
     return (
@@ -132,6 +147,7 @@ export function App() {
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />
                 <Route path="/projects/:code/*" element={<DriverRoutesOnly><ProjectHome /></DriverRoutesOnly>} />
                 <Route path="/devices" element={<Devices />} />
+                <Route path="/camera-check" element={<CameraCheck />} />
                 <Route path="/users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="/users/:username" element={<AdminOnly><UserDetail /></AdminOnly>} />
                 <Route path="/audit" element={<AdminOnly><Audit /></AdminOnly>} />

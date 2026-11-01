@@ -77,6 +77,24 @@ export function buildCsp(options: SecurityOptions): string {
         ['worker-src', ["'self'"]],
         // The service worker's scope, which must stay ours.
         ['manifest-src', ["'self'"]],
+        /* THE COURIER'S CAMERA PLAYS INTO A <video>, AND THIS WAS MISSING.
+         *
+         * With no media-src the directive falls back to default-src 'self',
+         * which permits a same-origin URL and nothing else. A live camera is
+         * neither: it reaches the element as a MediaStream on `srcObject`,
+         * and a still frame is read back through a blob.
+         *
+         * The specification says `srcObject` is not a fetch and so is not
+         * governed by this directive at all, and on a current browser that
+         * is true. It has not always been true, this is a fleet of personal
+         * Android handsets of unknown vintage, and the failure it produces
+         * is a black rectangle with no error -- which is exactly the report
+         * that has been open since 30 October. Declaring what the page
+         * actually plays costs nothing and removes the question.
+         *
+         * It is NOT a licence to load media from anywhere: both values are
+         * local to this document. */
+        ['media-src', ["'self'", 'blob:', 'mediastream:']],
     ];
 
     /* Only in production: the development server is plain HTTP on localhost,

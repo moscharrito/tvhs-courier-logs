@@ -129,6 +129,8 @@ function CameraSheet({ name, onPhoto, onClose }: {
     const stream = useRef<MediaStream | null>(null);
     const [trouble, setTrouble] = useState<Trouble | null>(null);
     const [dim, setDim] = useState(false);
+    /** The track is live but the system is withholding frames. See below. */
+    const [held, setHeld] = useState(false);
     const [dark, setDark] = useState<File | null>(null);
     const [attempt, setAttempt] = useState(0);
 
@@ -144,6 +146,7 @@ function CameraSheet({ name, onPhoto, onClose }: {
         let cancelled = false;
         setTrouble(null);
         setDim(false);
+        setHeld(false);
 
         const start = async () => {
             const media = navigator.mediaDevices;
@@ -177,6 +180,45 @@ function CameraSheet({ name, onPhoto, onClose }: {
             }
 
             stream.current = got;
+
+            /* THE STATE THAT LOOKS EXACTLY LIKE SUCCESS AND IS NOT.
+             *
+             * A track can be `live` and `muted` at the same time, and the
+             * two words do not mean what they look like. `muted` here is
+             * not a user setting and has no control anywhere in the browser:
+             * it means THE SOURCE IS NOT PRODUCING FRAMES. The operating
+             * system has the camera and is not handing it over -- another
+             * app holds it, a privacy switch is off, a work profile forbids
+             * it, or the hardware did not come up.
+             *
+             * getUserMedia RESOLVES. There is no exception, no error name,
+             * nothing in the console. The video element sits at its black
+             * background with videoWidth 0 for as long as anyone cares to
+             * look at it. This is the black screen, and nothing in the three
+             * fixes before this one could have seen it, because by every
+             * check they made the camera was working.
+             *
+             * So: watch the flag, and watch it change. A courier who closes
+             * the app that was holding the camera gets `unmute` and the
+             * picture appears; saying so is the difference between a fault
+             * they can clear and a phone they think is broken. */
+            const track = got.getVideoTracks()[0];
+            if (track !== undefined) {
+                const look = () => {
+                    if (cancelled) return;
+                    setHeld(track.muted);
+                    if (!track.muted) setDim(false);
+                };
+                track.addEventListener('mute', look);
+                track.addEventListener('unmute', look);
+                /* Ended without us stopping it: the camera was taken away
+                   mid-session, which a phone does when another app asks. */
+                track.addEventListener('ended', () => {
+                    if (!cancelled) setTrouble({ text: 'The camera was taken away while it was open. Something else on the phone asked for it.', again: true });
+                });
+                look();
+            }
+
             const element = video.current;
             if (element !== null) {
                 element.srcObject = got;
@@ -259,12 +301,32 @@ function CameraSheet({ name, onPhoto, onClose }: {
                         )}
                     </div>
                 )}
-                {trouble === null && dim && dark === null && (
+                {trouble === null && (held || dim) && dark === null && (
                     <div className="izy-cam-say" role="status">
-                        <p>
-                            The camera is open but no picture is coming through. Another app may be holding it.
-                            Take the shot anyway if you can see something, or close this and choose a photo instead.
-                        </p>
+                        {held ? (
+                            <>
+                                {/* Said as a fact, not a guess: the track
+                                    itself reports that the system is holding
+                                    the frames back. */}
+                                <p>
+                                    The phone is not letting the camera send any picture. That is the system doing
+                                    it, not this app &mdash; something else has the camera, or camera access is
+                                    switched off for this browser.
+                                </p>
+                                <p>
+                                    Close any app that uses the camera, then tap below. If it stays black, check the
+                                    phone&rsquo;s settings for camera access, and use Choose photo meanwhile.
+                                </p>
+                                <button type="button" className="izy-card-btn is-secondary is-compact" onClick={() => setAttempt((n) => n + 1)}>
+                                    <span className="izy-card-btn-title">Try the camera again</span>
+                                </button>
+                            </>
+                        ) : (
+                            <p>
+                                The camera is open but no picture is coming through. Another app may be holding it.
+                                Take the shot anyway if you can see something, or close this and choose a photo instead.
+                            </p>
+                        )}
                     </div>
                 )}
                 {dark !== null && (

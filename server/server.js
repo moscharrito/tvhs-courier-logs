@@ -201,15 +201,43 @@ async function requireProject(req, res, next) {
 // Projects the caller belongs to, with their role in each. Drives the
 // project switcher in the frontend shell.
 app.get('/api/me/projects', requireAuth, async (req, res) => {
+    /* THE HOME PHARMACY COMES BACK WITH IT, and this is the right place for
+     * it rather than a second endpoint.
+     *
+     * University Health assigns each driver to one counter, and until now
+     * the only screen that said which was the dispatcher's roster. The
+     * driver themselves -- who is the person who has to be standing at the
+     * right counter at noon -- could not see it anywhere, and on 1 November
+     * thirty-five of them start at once.
+     *
+     * It belongs on the membership because that is where homeSiteId already
+     * lives (settings.homeSiteId, set by load-roster.mjs), and the
+     * membership is what this endpoint returns. A courier fetches this at
+     * sign-in regardless, so it costs no extra request on a phone.
+     *
+     * LEFT JOIN, scoped to the same project: a membership with no home site
+     * is a floater, which is a real state and not an error, and a settings
+     * value pointing at a site that was later removed must not drop the
+     * whole project out of somebody's list. Both come back null. */
     const rows = await dbAll(`
-        SELECT p.id, p.code, p.name, p.timezone, m.role
+        SELECT p.id, p.code, p.name, p.timezone, m.role,
+               si.code AS home_site_code, si.name AS home_site_name
         FROM memberships m
         JOIN users u ON u.id = m.user_id
         JOIN projects p ON p.id = m.project_id
+        LEFT JOIN sites si ON si.id = json_extract(m.settings, '$.homeSiteId')
+             AND si.project_id = p.id
         WHERE u.username = ?
         ORDER BY p.name
     `, [req.session.user.username]);
-    res.json(rows);
+    res.json(rows.map((r) => ({
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        timezone: r.timezone,
+        role: r.role,
+        homeSite: r.home_site_code == null ? null : { code: r.home_site_code, name: r.home_site_name },
+    })));
 });
 
 // One project, for members only.

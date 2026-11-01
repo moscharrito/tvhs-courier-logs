@@ -27,9 +27,21 @@ import { CameraButton } from './Camera';
 
 type Track = { stop: ReturnType<typeof vi.fn> };
 
-function fakeStream() {
-    const track: Track = { stop: vi.fn() };
-    return { track, stream: { getTracks: () => [track] } as unknown as MediaStream };
+function fakeStream(muted = false) {
+    /* Enough of a MediaStreamTrack for the component: the stop spy, the
+       `muted` flag, and listeners so a test can flip it the way a phone
+       does when another app gives the camera back. */
+    const listeners: Record<string, Array<() => void>> = {};
+    const track = {
+        stop: vi.fn(),
+        muted,
+        readyState: 'live',
+        addEventListener: (name: string, fn: () => void) => { (listeners[name] ??= []).push(fn); },
+        removeEventListener: () => {},
+        fire(name: string) { for (const fn of listeners[name] ?? []) fn(); },
+    };
+    const stream = { getTracks: () => [track], getVideoTracks: () => [track] } as unknown as MediaStream;
+    return { track: track as unknown as Track, raw: track, stream };
 }
 
 /** Install a mediaDevices jsdom does not have. */
@@ -233,5 +245,63 @@ describe('where the camera is rendered', () => {
 
         expect(container.querySelector('.izy-cam')).toBeNull();
         expect(document.body.querySelector('.izy-cam')).not.toBeNull();
+    });
+});
+
+describe('a camera that opens and sends nothing', () => {
+    /* THE STATE THE WHOLE REPORT TURNED OUT TO BE.
+     *
+     * A track can be `live` and `muted` at once, and `muted` is not a user
+     * setting -- no browser has a control for it. It means the SOURCE is
+     * producing no frames: another app holds the camera, a privacy switch
+     * is off, a managed profile forbids it.
+     *
+     * getUserMedia resolves. No exception, no error name, nothing in the
+     * console, and a black rectangle on the phone. Three fixes shipped
+     * before this one and not one of them could have seen it, because by
+     * every check they made the camera was working. */
+    it('says the phone is holding the camera back, instead of showing black', async () => {
+        const { stream } = fakeStream(true);
+        withCamera(async () => stream);
+        render(<CameraButton name="courier-form" onPhoto={vi.fn()} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Take a picture' }));
+
+        const said = await screen.findByRole('status');
+        expect(said).toHaveTextContent(/not letting the camera send any picture/i);
+        /* And it is said at once -- not after the four-second watchdog --
+           because the track reported it the moment the stream arrived. */
+        expect(screen.getByRole('button', { name: /try the camera again/i })).toBeInTheDocument();
+    });
+
+    it('clears the message when the camera is handed back', async () => {
+        /* A courier closes whatever had the camera and the picture appears.
+           Leaving the warning up would send them to the photo library for a
+           camera that had started working. */
+        const { stream, raw } = fakeStream(true);
+        withCamera(async () => stream);
+        render(<CameraButton name="courier-form" onPhoto={vi.fn()} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Take a picture' }));
+        await screen.findByRole('status');
+
+        await act(async () => { raw.muted = false; raw.fire('unmute'); });
+
+        await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    });
+
+    it('says so when the camera is taken away mid-session', async () => {
+        /* `ended` without us stopping it: something else on the phone asked
+           for the camera while the courier was aiming at a doorstep. */
+        const { stream, raw } = fakeStream();
+        withCamera(async () => stream);
+        render(<CameraButton name="courier-form" onPhoto={vi.fn()} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Take a picture' }));
+        await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+        await act(async () => { raw.fire('ended'); });
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(/taken away while it was open/i);
     });
 });

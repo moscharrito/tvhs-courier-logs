@@ -78,6 +78,31 @@ describe('the content security policy', () => {
         expect(d.get('img-src')).toContain('blob:');
     });
 
+    it('lets the courier camera play, because default-src alone does not', () => {
+        /* THE REPORT BEHIND THIS. A black camera on a driver's handset,
+           open since 30 October and still open after three fixes. With no
+           media-src the directive falls back to default-src 'self', which
+           permits a same-origin URL and nothing else; a live camera is
+           neither -- it arrives as a MediaStream on `srcObject` and a still
+           frame is read back through a blob.
+
+           The specification says `srcObject` is not a fetch and so is not
+           governed here, and on a current browser that holds. It has not
+           always held, this is a fleet of personal Android handsets of
+           unknown vintage, and the failure it produces is a black rectangle
+           with no error anywhere -- which is the shape of the report.
+
+           Asserted both ways round: the two values the page actually plays
+           are there, and nothing REMOTE is, because the point was never to
+           open media up. */
+        const d = directives(buildCsp({ isProduction: true }));
+        expect(d.get('media-src')).toContain("'self'");
+        expect(d.get('media-src')).toContain('blob:');
+        expect(d.get('media-src')).toContain('mediastream:');
+        expect(d.get('media-src')).not.toContain('*');
+        expect((d.get('media-src') ?? []).some((v) => v.startsWith('http'))).toBe(false);
+    });
+
     it('keeps frame-src none unless an origin is named, and names only the map', () => {
         /* frame-src was 'none' from ticket 4.2 until the courier map in 5.13
            needed one origin. The thing worth asserting is that it is still

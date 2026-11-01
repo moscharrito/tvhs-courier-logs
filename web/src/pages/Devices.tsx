@@ -81,6 +81,28 @@ export function Devices() {
        everybody else. Same split as Discrepancies and the driver record,
        and the same helper the shell uses to decide the rail. */
     const courier = isCourierOnly(projects);
+    /* Only for somebody who drives: an administrator is enrolled in every
+       project at boot and has no counter, and a lead manages one rather
+       than driving from it. Reading it off the courier membership keeps
+       this true however many projects the account is on. */
+    const myPost = (() => {
+        const driving = projects.filter((p) => p.role === 'courier');
+        if (driving.length !== 1) return null;
+        const mine = driving[0]!;
+        /* THREE ANSWERS, NOT TWO, and collapsing them would be a lie.
+             a site      -> this is your counter
+             null        -> the server says you have none: a floater
+             undefined   -> the server did not say, because this phone is
+                            holding a bundle from across a deploy. Say
+                            NOTHING. Printing "wherever the day needs you"
+                            here would tell a driver who has a counter that
+                            they have not got one, on the morning they are
+                            supposed to drive to it. */
+        if (mine.homeSite === undefined) return null;
+        return mine.homeSite === null
+            ? { where: 'Wherever the day needs you', note: `No fixed counter on ${mine.name}. Dispatch gives you the round.` }
+            : { where: mine.homeSite.name, note: `Your counter on ${mine.name}` };
+    })();
     const navigate = useNavigate();
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
     const [devices, setDevices] = useState<EnrolledDevice[] | null>(null);
@@ -374,6 +396,23 @@ export function Devices() {
                             <p className="izy-lede-note">{handleUnder(user)}</p>
                         )}
                     </Panel>
+                    {/* WHERE THEY DRIVE FROM, on the screen that answers
+                        "who am I signed in as".
+                        University Health assigns each driver to one counter
+                        and until now the only place that said which was the
+                        dispatcher's roster. On 1 November thirty-five people
+                        start at once and every one of them needs to know
+                        where to be at noon; being told it by a supervisor
+                        over the phone is how somebody ends up at the wrong
+                        pharmacy. A floater has no home site, which is a real
+                        assignment and not a gap, so it says so in words. */}
+                    {myPost !== null && (
+                        <Panel>
+                            <h2 className="izy-lede-kicker">You drive from</h2>
+                            <p className="izy-lede">{myPost.where}</p>
+                            <p className="izy-lede-note">{myPost.note}</p>
+                        </Panel>
+                    )}
                 </Context>
                 <Sheet>
                     {page}

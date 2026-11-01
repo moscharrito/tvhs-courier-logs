@@ -52,11 +52,21 @@ describe('membership bootstrap', () => {
     it('GET /api/me/projects lists the caller\'s projects with their role', async () => {
         const admin = await srv.login('admin');
         /* Sorted by code, so demo leads. An admin is a member of all three
-           seeded projects; the reviewer's demo project is 0048. */
+           seeded projects; the reviewer's demo project is 0048.
+
+           homeSite joined the row on 31 October so a driver can see which
+           counter they are based at -- see me-home-site.test.mjs for what it
+           means and the three cases it has to keep apart. It is null for an
+           administrator, who is enrolled in every project at boot and drives
+           from none of them. Asserted as a whole object rather than matched
+           loosely, deliberately: this payload is the project picker, the
+           timezone every screen formats in and the role every guard reads,
+           and a field appearing or vanishing from it unnoticed is how one of
+           those quietly changes meaning. */
         expect((await admin.get('/api/me/projects')).body).toEqual([
-            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin' },
-            { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin' },
-            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' },
+            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin', homeSite: null },
+            { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null },
+            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null },
         ]);
         const north = await srv.login('north');
         expect((await north.get('/api/me/projects')).body[0]).toMatchObject({ code: 'tvhs', role: 'courier' });

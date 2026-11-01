@@ -109,6 +109,20 @@ export interface ProjectMembership {
      * Found on 29 October by signing in as the site manager and clicking
      * every link on the page. */
     role: 'admin' | 'lead' | 'courier' | 'pharmacy';
+    /** The counter this person is based at, from the membership's
+     *  settings.homeSiteId.
+     *
+     *  NULL IS A REAL ANSWER and means a floater, not a missing record:
+     *  some drivers cover wherever the day needs them.
+     *
+     *  OPTIONAL IS ALSO REAL, and the type says so deliberately. A phone
+     *  holds its bundle across a deploy, so a client that knows about this
+     *  field can be talking to a server that does not yet send it, and the
+     *  other way round for the minute a rollout takes. Anything reading it
+     *  has to survive the field being absent, and a required type would
+     *  have let that go unwritten -- it already did once, as a blank screen
+     *  wherever the field was missing. */
+    homeSite?: { code: string; name: string } | null;
 }
 
 export interface DriverPick {

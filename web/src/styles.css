@@ -1310,3 +1310,23 @@ body {
 .izy-cam-shutter:disabled { opacity: 0.4; cursor: default; }
 .izy-cam-shutter:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .izy-cam-bar .izy-card-btn { width: auto; margin: 0; background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+
+/* ── The camera report ──────────────────────────────────────────────────────
+ * Label above value, because this is read on a 375px phone in a car park and
+ * then photographed and sent to somebody. .izy-table would have done at a
+ * glance and carries a 560px floor on narrow screens so a dispatcher's
+ * columns scroll rather than crush -- correct there, and here it would push
+ * half the answers off the right edge of the one page whose whole purpose is
+ * being read. See pages/CameraCheck.tsx. */
+.izy-report { margin: var(--izy-s-md) 0; }
+.izy-report > div { padding: 10px 0; border-bottom: 1px solid var(--izy-line); }
+.izy-report dt {
+    font-size: 12px; color: var(--izy-muted);
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+}
+.izy-report dd {
+    margin: 3px 0 0; font-size: 15px;
+    /* A user agent string has no spaces where it needs them. */
+    overflow-wrap: anywhere;
+}
+.izy-report dd.is-bad { color: var(--izy-danger); font-weight: 700; }

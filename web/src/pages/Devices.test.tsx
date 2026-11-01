@@ -318,3 +318,59 @@ describe('a courier on the same page', () => {
     });
 
 });
+
+describe('where a driver is based', () => {
+    /* University Health assigns each driver to one counter and the only
+       screen that said which was the dispatcher's roster. On 1 November
+       thirty-five people start at once, and "which pharmacy am I at" was a
+       question only a supervisor on the phone could answer. */
+    const uh = (homeSite: unknown) => ({
+        'GET /api/me/projects': [
+            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier', ...(homeSite === undefined ? {} : { homeSite }) },
+        ],
+    });
+
+    it('names the counter on the screen that answers "who am I signed in as"', async () => {
+        renderDevices(uh({ code: 'wheatley', name: 'University Health Wheatley Pharmacy' }));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.getByRole('heading', { name: 'You drive from' })).toBeInTheDocument();
+        expect(screen.getByText('University Health Wheatley Pharmacy')).toBeInTheDocument();
+    });
+
+    it('says a floater is a floater, rather than leaving them wondering', async () => {
+        /* Null is an assignment, not a gap. Some drivers cover wherever the
+           day needs them and silence would read as a missing record. */
+        renderDevices(uh(null));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.getByText('Wherever the day needs you')).toBeInTheDocument();
+    });
+
+    it('says NOTHING when the server did not say, which is not the same as having no counter', async () => {
+        /* THE BUG THIS PINS, found by running the suite. A phone keeps its
+           bundle across a deploy, so a client that knows this field can be
+           talking to a server that does not send it yet. Treating absent as
+           null would tell a driver who HAS a counter that they have not got
+           one, on the morning they are supposed to drive to it -- and the
+           first version of this crashed on it outright. */
+        renderDevices(uh(undefined));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.queryByRole('heading', { name: 'You drive from' })).not.toBeInTheDocument();
+        expect(screen.queryByText('Wherever the day needs you')).not.toBeInTheDocument();
+    });
+
+    it('tells an administrator nothing, because they drive from nowhere', async () => {
+        /* An Izy administrator is enrolled in every project at boot. A
+           counter on their account would be fiction. */
+        renderDevices({
+            'GET /api/me/projects': [
+                { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null },
+            ],
+        });
+        await screen.findByRole('heading', { name: 'Devices and sign-in' });
+
+        expect(screen.queryByRole('heading', { name: 'You drive from' })).not.toBeInTheDocument();
+    });
+});
