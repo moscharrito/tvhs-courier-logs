@@ -143,7 +143,21 @@ export interface ProjectMembership {
      *  has to survive the field being absent, and a required type would
      *  have let that go unwritten -- it already did once, as a blank screen
      *  wherever the field was missing. */
-    homeSite?: { code: string; name: string } | null;
+    homeSite?: {
+        code: string;
+        name: string;
+        /** One line, already punctuated, from the site's own columns.
+         *
+         *  OPTIONAL FOR THE SAME REASON AS THE FIELD AROUND IT: a bundle
+         *  that knows about the address can be talking to a server from
+         *  before it existed, and the counter's NAME is still worth
+         *  showing on its own. Anything reading this renders nothing when
+         *  it is absent rather than an empty line under the name.
+         *
+         *  Named as the sites endpoint names it, and punctuated the same
+         *  way: one address, one spelling of it. */
+        fullAddress?: string;
+    } | null;
 }
 
 export interface DriverPick {

@@ -99,9 +99,32 @@ export function Devices() {
                             they have not got one, on the morning they are
                             supposed to drive to it. */
         if (mine.homeSite === undefined) return null;
-        return mine.homeSite === null
-            ? { where: 'Wherever the day needs you', note: `No fixed counter on ${mine.name}. Dispatch gives you the round.` }
-            : { where: mine.homeSite.name, note: `Your counter on ${mine.name}` };
+        if (mine.homeSite === null) {
+            return {
+                where: 'Wherever the day needs you',
+                address: null,
+                note: `No fixed counter on ${mine.name}. Dispatch gives you the round.`,
+            };
+        }
+        /* THE ADDRESS TAKES THE NOTE'S LINE RATHER THAN ADDING ONE.
+           A counter's name is which pharmacy; the address is where to
+           drive, and a driver standing in a car park at ten to twelve
+           wants the second one. The line it replaces said "Your counter on
+           UH Pharmacy Courier", which the top bar of this very screen
+           already says -- so the panel gained the useful half and lost the
+           restatement, and did not get taller on a screen where the space
+           above the sheet is already spoken for.
+           The FLOATER keeps its note, because there is no address to put
+           there and "wherever the day needs you" on its own reads like a
+           record that failed to load.
+           Empty is treated as absent: a site recorded with no street would
+           otherwise print a blank line where the address goes. */
+        const street = mine.homeSite.fullAddress?.trim() ?? '';
+        return {
+            where: mine.homeSite.name,
+            address: street === '' ? null : street,
+            note: street === '' ? `Your counter on ${mine.name}` : null,
+        };
     })();
     const navigate = useNavigate();
     const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
@@ -410,7 +433,12 @@ export function Devices() {
                         <Panel>
                             <h2 className="izy-lede-kicker">You drive from</h2>
                             <p className="izy-lede">{myPost.where}</p>
-                            <p className="izy-lede-note">{myPost.note}</p>
+                            {myPost.address !== null && (
+                                <p className="izy-lede-address">{myPost.address}</p>
+                            )}
+                            {myPost.note !== null && (
+                                <p className="izy-lede-note">{myPost.note}</p>
+                            )}
                         </Panel>
                     )}
                 </Context>

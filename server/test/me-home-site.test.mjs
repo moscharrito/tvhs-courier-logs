@@ -29,6 +29,16 @@
  * holding a bundle from across a deploy. The web side has its own tests
  * for that third one; what matters here is that the server never blurs the
  * first two.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE ADDRESS CAME WITH IT ON 1 NOVEMBER.
+ *
+ * A counter's NAME is which pharmacy and not where it is. Pavilion and
+ * Discharge are both on Medical Drive a few hundred yards apart, and Vida
+ * and Wheatley mean nothing at all to somebody hired last week, so the name
+ * on its own is a thing to go and ask a supervisor about. `fullAddress`
+ * comes back on the same object, assembled from the site's own columns and
+ * punctuated the way the sites endpoint punctuates it.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -69,12 +79,40 @@ describe('a driver asking where they are based', () => {
         const agent = await driver('home.based', { homeSiteId: wheatley.id });
 
         const row = await uhRow(agent);
-        expect(row.homeSite).toEqual({ code: wheatley.code, name: wheatley.name });
+        expect(row.homeSite).toEqual({
+            code: wheatley.code,
+            name: wheatley.name,
+            fullAddress: wheatley.fullAddress,
+        });
+        /* Asserted against the SITES ENDPOINT'S OWN STRING rather than one
+           spelled out here. A literal would pass while the two drifted
+           apart, which is the only failure this field has: a driver reading
+           one address on the phone and a dispatcher reading another on the
+           sites screen, both correct-looking. */
+        expect(row.homeSite.fullAddress).toMatch(/, San Antonio, TX \d{5}$/);
         /* And nothing else about the membership changed shape, because the
            picker and the timezone helper both read this same row. */
         expect(row.role).toBe('courier');
         expect(row.code).toBe('uh');
         expect(typeof row.timezone).toBe('string');
+    });
+
+    it('gives the address of THEIR counter, not of some pharmacy', async () => {
+        /* Two drivers at two different counters, because a join that
+           resolves the name correctly and the address off the wrong row
+           would pass the test above: wheatley.fullAddress is whatever the
+           query returned. Here the two must differ, and each must match
+           its own site. */
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const [one, two] = [sites[0], sites.find((s) => s.id !== sites[0].id)];
+        expect(two, 'the UH seed must have more than one pharmacy').toBeTruthy();
+        expect(one.fullAddress).not.toBe(two.fullAddress);
+
+        const first = await uhRow(await driver('home.addr.one', { homeSiteId: one.id }));
+        const second = await uhRow(await driver('home.addr.two', { homeSiteId: two.id }));
+
+        expect(first.homeSite.fullAddress).toBe(one.fullAddress);
+        expect(second.homeSite.fullAddress).toBe(two.fullAddress);
     });
 
     it('gets null, not a guess, when they are a floater', async () => {
@@ -121,7 +159,8 @@ describe('a driver asking where they are based', () => {
         expect((await agent.post('/api/login').send({ username, password: `${username}-pass-1` })).status).toBe(200);
         const rows = (await agent.get('/api/me/projects')).body;
 
-        expect(rows.find((p) => p.code === 'uh').homeSite).toEqual({ code: wheatley.code, name: wheatley.name });
+        expect(rows.find((p) => p.code === 'uh').homeSite)
+            .toEqual({ code: wheatley.code, name: wheatley.name, fullAddress: wheatley.fullAddress });
         expect(rows.find((p) => p.code === 'tvhs').homeSite).toBeNull();
         expect(uhSiteIds.has(wheatley.id)).toBe(true);
     });

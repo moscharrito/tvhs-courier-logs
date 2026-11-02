@@ -62,7 +62,11 @@ describe('membership bootstrap', () => {
            loosely, deliberately: this payload is the project picker, the
            timezone every screen formats in and the role every guard reads,
            and a field appearing or vanishing from it unnoticed is how one of
-           those quietly changes meaning. */
+           those quietly changes meaning.
+
+           Still a bare `null` for an administrator after the address was
+           added on 1 November: the whole homeSite object is null when there
+           is no counter, so there is no address half to be absent. */
         expect((await admin.get('/api/me/projects')).body).toEqual([
             { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin', homeSite: null },
             { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null },

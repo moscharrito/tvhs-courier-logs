@@ -923,6 +923,10 @@ body {
 .izy-lede-kicker { margin: 0; font-size: var(--izy-t-meta); font-weight: 600; color: var(--izy-muted); letter-spacing: 0.6px; }
 .izy-lede { margin: var(--izy-s-xs) 0 0; font-size: 24px; font-weight: 700; color: var(--izy-ink); }
 .izy-lede-note { margin: 2px 0 0; font-size: var(--izy-t-body); line-height: 25px; color: var(--izy-ink); }
+/* The street under the counter's name. Body size and full ink, not muted:
+   it is the half a driver reads in a car park, and the note below it -- which
+   says what KIND of assignment this is -- is the part that can be quieter. */
+.izy-lede-address { margin: 4px 0 0; font-size: var(--izy-t-body); line-height: 23px; color: var(--izy-ink); }
 .izy-chips { display: flex; flex-wrap: wrap; gap: var(--izy-s-sm); margin-top: 12px; }
 
 /* ── A SHEET IS THE SURFACE, SO NOTHING INSIDE IT IS A CARD ────────────────

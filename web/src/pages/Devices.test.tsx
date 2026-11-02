@@ -338,6 +338,57 @@ describe('where a driver is based', () => {
         expect(screen.getByText('University Health Wheatley Pharmacy')).toBeInTheDocument();
     });
 
+    it('prints the street under the name, because a name is not a place', async () => {
+        /* Pavilion and Discharge are both on Medical Drive a few hundred
+           yards apart; Vida and Wheatley mean nothing to somebody hired
+           last week. The name says which counter and the address says
+           where, and the second is the one somebody needs standing in a
+           car park at ten to twelve. */
+        renderDevices(uh({
+            code: 'wheatley',
+            name: 'University Health Wheatley Pharmacy',
+            fullAddress: '3860 Interstate Highway 10 East, San Antonio, TX 78220',
+        }));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.getByText('3860 Interstate Highway 10 East, San Antonio, TX 78220')).toBeInTheDocument();
+        expect(screen.getByText('University Health Wheatley Pharmacy')).toBeInTheDocument();
+        /* The same lookup the two tests below use to prove the line is
+           ABSENT. Without this one they would pass against a typo in the
+           selector and prove nothing at all. */
+        const panel = screen.getByRole('heading', { name: 'You drive from' }).parentElement;
+        expect(panel!.querySelector('.izy-lede-address')?.textContent)
+            .toBe('3860 Interstate Highway 10 East, San Antonio, TX 78220');
+        /* AND THE NOTE IS GONE, which is the other half of the change: the
+           address TAKES that line rather than adding one, because the line
+           it replaced said "Your counter on UH Pharmacy Courier" and the
+           top bar of this screen already says so. Pinned, or somebody puts
+           the restatement back and the panel grows a line on a screen
+           where the space above the sheet is already spoken for. */
+        expect(screen.queryByText(/Your counter on/)).not.toBeInTheDocument();
+    });
+
+    it('still names the counter when the server sent no address', async () => {
+        /* Same reason the field is optional in the type: a bundle that
+           knows about the address can be talking to a server from before
+           it existed. Half the answer beats none, and it must not print a
+           blank line under the name. */
+        renderDevices(uh({ code: 'wheatley', name: 'University Health Wheatley Pharmacy' }));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        const panel = screen.getByRole('heading', { name: 'You drive from' }).parentElement;
+        expect(panel).not.toBeNull();
+        expect(panel!.querySelector('.izy-lede-address')).toBeNull();
+    });
+
+    it('treats an empty address as no address rather than printing a gap', async () => {
+        renderDevices(uh({ code: 'wheatley', name: 'University Health Wheatley Pharmacy', fullAddress: '   ' }));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        const panel = screen.getByRole('heading', { name: 'You drive from' }).parentElement;
+        expect(panel!.querySelector('.izy-lede-address')).toBeNull();
+    });
+
     it('says a floater is a floater, rather than leaving them wondering', async () => {
         /* Null is an assignment, not a gap. Some drivers cover wherever the
            day needs them and silence would read as a missing record. */
@@ -345,6 +396,10 @@ describe('where a driver is based', () => {
         await screen.findByRole('heading', { name: 'Your account' });
 
         expect(screen.getByText('Wherever the day needs you')).toBeInTheDocument();
+        /* The floater KEEPS its note. There is no address to put on that
+           line, and "wherever the day needs you" on its own reads like a
+           record that failed to load rather than an assignment. */
+        expect(screen.getByText(/No fixed counter on UH Pharmacy Courier/)).toBeInTheDocument();
     });
 
     it('says NOTHING when the server did not say, which is not the same as having no counter', async () => {

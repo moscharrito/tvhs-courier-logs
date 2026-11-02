@@ -198,6 +198,28 @@ async function requireProject(req, res, next) {
     next();
 }
 
+/* "903 W. Martin Street, San Antonio, TX 78207" from the sites columns.
+ *
+ * THE SAME PUNCTUATION AS `fullAddress` on modules/uh/sites.ts, and the same
+ * field name, on purpose: a driver reading their counter's address on the
+ * phone and a dispatcher reading it on the sites screen are reading one fact,
+ * and two spellings of it is how somebody later wonders which is right. The
+ * assembly is repeated rather than shared because this file is the CommonJS
+ * half of the server and that one is the TypeScript half; if a third place
+ * ever needs it, that is the moment to move it across the bridge.
+ *
+ * Every part is skipped if it is empty, which that one does not do. Nothing
+ * reachable through the API can have an empty street -- addressLine is
+ * min(1) -- so this is a guard against a row written another way, not a
+ * difference in output. */
+function fullSiteAddress(r) {
+    const street = String(r.home_site_address ?? '').trim();
+    const city = String(r.home_site_city ?? '').trim();
+    const region = [String(r.home_site_state ?? '').trim(), String(r.home_site_zip ?? '').trim()]
+        .filter((s) => s !== '').join(' ');
+    return [street, city, region].filter((s) => s !== '').join(', ');
+}
+
 // Projects the caller belongs to, with their role in each. Drives the
 // project switcher in the frontend shell.
 app.get('/api/me/projects', requireAuth, async (req, res) => {
@@ -221,7 +243,9 @@ app.get('/api/me/projects', requireAuth, async (req, res) => {
      * whole project out of somebody's list. Both come back null. */
     const rows = await dbAll(`
         SELECT p.id, p.code, p.name, p.timezone, m.role,
-               si.code AS home_site_code, si.name AS home_site_name
+               si.code AS home_site_code, si.name AS home_site_name,
+               si.address_line AS home_site_address, si.city AS home_site_city,
+               si.state AS home_site_state, si.zip AS home_site_zip
         FROM memberships m
         JOIN users u ON u.id = m.user_id
         JOIN projects p ON p.id = m.project_id
@@ -236,7 +260,24 @@ app.get('/api/me/projects', requireAuth, async (req, res) => {
         name: r.name,
         timezone: r.timezone,
         role: r.role,
-        homeSite: r.home_site_code == null ? null : { code: r.home_site_code, name: r.home_site_name },
+        homeSite: r.home_site_code == null ? null : {
+            code: r.home_site_code,
+            name: r.home_site_name,
+            /* THE ADDRESS IS PART OF THE ANSWER, not a detail.
+             *
+             * "University Health Southwest Pharmacy" tells a driver which
+             * counter and not where it is, and the nine UH sites are spread
+             * across San Antonio with names that do not place them: Vida and
+             * Wheatley mean nothing to somebody hired last week, and
+             * Pavilion and Discharge are both on Medical Drive, four
+             * hundred yards apart. A name on its own is a thing to go and
+             * ask somebody about.
+             *
+             * One string rather than four fields, because every reader of
+             * this wants the same line of text and assembling it in each of
+             * them is how two screens end up punctuating it differently. */
+            fullAddress: fullSiteAddress(r),
+        },
     })));
 });
 
