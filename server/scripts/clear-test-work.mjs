@@ -76,7 +76,24 @@ const picked = arg('order')
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isInteger(n) && n > 0);
 const byId = picked.length > 0;
+/* Which service dates in a range actually hold work, one `DATE COUNT` per
+ * line and nothing else.
+ *
+ * FOR THE CALLER THAT HAS TO SPLIT. A wide range must be cleared a day at a
+ * time (see MAX_ORDERS below), and a wrapper looping over every date between
+ * two months spends most of its life starting tsx to be told there is
+ * nothing on a Sunday -- sixty-two startups to clear eight days, with the
+ * eight buried in the output. This answers "which days" in one query so the
+ * loop visits only those.
+ *
+ * Deliberately not pretty-printed: it is parsed. The human version is the
+ * breakdown the refusal prints. */
+const listDays = process.argv.includes('--days');
 
+if (listDays && byId) {
+    console.error('--days describes a range. It makes no sense with --order.');
+    process.exit(1);
+}
 if (!byId && (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))) {
     console.error('Usage: --from YYYY-MM-DD [--to YYYY-MM-DD] [--project uh] [--apply]');
     console.error('   or: --order 253[,254] [--project uh] [--apply]');
@@ -170,6 +187,17 @@ if (!project) {
 }
 const pid = Number(project.id);
 
+if (listDays) {
+    for (const r of (await run(
+        `SELECT service_date AS d, COUNT(*) AS n FROM orders
+          WHERE project_id = ? AND service_date BETWEEN ? AND ?
+          GROUP BY service_date ORDER BY service_date`,
+        [pid, from, to],
+    )).rows) console.log(`${r.d} ${r.n}`);
+    client.close();
+    process.exit(0);
+}
+
 console.log(`Database: ${config.db.url}   (${config.db.kind === 'file' ? 'THIS LAPTOP' : 'REMOTE'})`);
 console.log(`Project:  ${projectCode}`);
 console.log(byId ? `Orders:   ${picked.join(', ')}` : `Dates:    ${from} to ${to}`);
@@ -192,11 +220,104 @@ if (ids.length === 0) {
     client.close();
     process.exit(0);
 }
+/* ─────────────────────────────────────────────────────────────────────────
+ * A RANGE TOO BIG TO DO IN ONE STATEMENT IS REFUSED, NOT ATTEMPTED.
+ *
+ * Every delete below names the orders with `IN (?, ?, ...)`, one bind each.
+ * SQLite has a ceiling on how many a statement may carry, and a range wide
+ * enough to pass it fails -- but it fails on one of a dozen statements
+ * executed in sequence, which is the worst possible place: the objects are
+ * already gone from the bucket, some tables are emptied, and the
+ * append-only trigger is dropped. A half-cleared day with an unprotected
+ * evidence table is much worse than a clear that did not start.
+ *
+ * SPLIT BY DATE, WHICH IS SAFE BY CONSTRUCTION. A collection form is
+ * photographed once at one counter on one day, so the orders sharing it
+ * never span two service dates: clearing a month one day at a time gives
+ * exactly the same result as clearing it in one go. Splitting by ID would
+ * not -- an arbitrary cut can put half a trolley in each half, and each
+ * half would then decide the form is still needed.
+ * ───────────────────────────────────────────────────────────────────────── */
+const MAX_ORDERS = 400;
+if (ids.length > MAX_ORDERS) {
+    console.error(`
+Refusing: ${ids.length} orders is more than this can remove in one pass.`);
+    console.error('');
+    console.error(`  Every delete names them one bind each and SQLite has a ceiling on that.`);
+    console.error('  Going ahead would fail partway through, with the bucket already emptied');
+    console.error('  and the append-only trigger on custody_events dropped.');
+    console.error('');
+    console.error('  Do it a day at a time, or a few days at a time. A collection form never');
+    console.error('  spans two service dates, so splitting by DATE gives the same result as');
+    console.error('  one big run. Splitting by order id does not.');
+    console.error('');
+    if (!byId) {
+        const days = (await run(
+            `SELECT service_date AS d, COUNT(*) AS n FROM orders
+              WHERE project_id = ? AND service_date BETWEEN ? AND ?
+              GROUP BY service_date ORDER BY service_date`,
+            [pid, from, to],
+        )).rows;
+        console.error(`  ${days.length} day(s) in this range:`);
+        for (const d of days) console.error(`    ${d.d}  ${d.n} order(s)`);
+        console.error('');
+    }
+    client.close();
+    process.exit(1);
+}
 if (byId && ids.length !== picked.length) {
     const missing = picked.filter((n) => !ids.includes(n));
     console.log(`  not in ${projectCode}, ignored: ${missing.join(', ')}`);
 }
 const list = ids.map(() => '?').join(',');
+
+/**
+ * The batch documents this clear should remove: a collection form whose
+ * every order is going away.
+ *
+ * THREE QUERIES RATHER THAN ONE JOIN, TO KEEP THE BIND COUNT DOWN.
+ *
+ * The obvious version is a single statement with `order_id IN (...)` twice
+ * -- once to find the forms and once for the NOT EXISTS -- and it binds the
+ * id list twice. Every other statement in this script binds it once, so that
+ * one query would halve the number of orders the script can handle before
+ * SQLite refuses the statement for too many variables, and it would do it
+ * invisibly: the failure arrives as a range that used to work.
+ *
+ * So: the file ids named by these orders' events, then the ones that are
+ * batch documents, then one small question per document. A pickup batch is
+ * a handful of forms, so the loop is short.
+ */
+async function batchDocuments() {
+    const named = (await run(
+        `SELECT DISTINCT file_id FROM custody_events
+          WHERE order_id IN (${list}) AND file_id IS NOT NULL`, ids,
+    )).rows.map((r) => Number(r.file_id));
+    if (named.length === 0) return [];
+
+    /* `order_id IS NULL` is what makes it a batch document. A form
+       photographed at the door carries an order id, is already found by the
+       files delete, and must not be counted twice. */
+    const docs = (await run(
+        `SELECT id, s3_key FROM files
+          WHERE id IN (${named.map(() => '?').join(',')}) AND order_id IS NULL`, named,
+    )).rows.map((r) => ({ id: Number(r.id), key: String(r.s3_key ?? '') }));
+
+    /* ONE FORM COVERS A WHOLE TROLLEY. Clearing three of its eleven orders
+       must not delete the document the other eight are still evidenced by,
+       so each one is asked whether anything outside this set still points at
+       it. Asked per document rather than as a NOT EXISTS over the join, for
+       the bind-count reason in the header. */
+    const keep = [];
+    for (const doc of docs) {
+        const other = await count(
+            `SELECT COUNT(*) AS n FROM custody_events
+              WHERE file_id = ? AND order_id NOT IN (${list})`, [doc.id, ...ids],
+        );
+        if (other === 0) keep.push(doc);
+    }
+    return keep;
+}
 
 const before = {
     orders: ids.length,
@@ -238,15 +359,7 @@ const before = {
      * orders; clearing three of them must not delete the document the other
      * eight are still evidenced by. The NOT EXISTS is that test, and it is
      * what makes this safe to run with --order as well as with a date. */
-    batchDocs: await count(
-        `SELECT COUNT(DISTINCT f.id) AS n
-           FROM custody_events e
-           JOIN files f ON f.id = e.file_id
-          WHERE e.order_id IN (${list}) AND f.order_id IS NULL
-            AND NOT EXISTS (SELECT 1 FROM custody_events k
-                             WHERE k.file_id = f.id AND k.order_id NOT IN (${list}))`,
-        [...ids, ...ids],
-    ),
+    batchDocs: (await batchDocuments()).length,
     /* Runs and shifts belong to a day, not to an order, so clearing one order
        leaves them alone. Reported as zero rather than omitted, so the two
        modes print the same shape. */
@@ -284,19 +397,11 @@ const bound = (await run(
     `SELECT s3_key FROM files WHERE order_id IN (${list}) AND s3_key <> ''`, ids,
 )).rows.map((r) => String(r.s3_key));
 
-/* The batch documents counted above, as ids and keys. Read BEFORE the
-   custody events are deleted: the only path to them is through
-   custody_events.file_id, so afterwards there is nothing left to join on and
-   the form becomes unreachable rather than removed. */
-const batch = (await run(
-    `SELECT DISTINCT f.id, f.s3_key
-       FROM custody_events e
-       JOIN files f ON f.id = e.file_id
-      WHERE e.order_id IN (${list}) AND f.order_id IS NULL
-        AND NOT EXISTS (SELECT 1 FROM custody_events k
-                         WHERE k.file_id = f.id AND k.order_id NOT IN (${list}))`,
-    [...ids, ...ids],
-)).rows.map((r) => ({ id: Number(r.id), key: String(r.s3_key ?? '') }));
+/* The batch documents counted above. Read BEFORE the custody events are
+   deleted: the only path to them is through custody_events.file_id, so
+   afterwards there is nothing left to join on and the form becomes
+   unreachable rather than removed. */
+const batch = await batchDocuments();
 const batchIds = batch.map((b) => b.id);
 const keys = [...bound, ...batch.map((b) => b.key).filter((k) => k !== '')];
 
