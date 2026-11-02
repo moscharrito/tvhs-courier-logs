@@ -219,6 +219,34 @@ const before = {
      * that is gone. */
     files: await count(`SELECT COUNT(*) AS n FROM files WHERE order_id IN (${list})`, ids),
     texts: await count(`SELECT COUNT(*) AS n FROM patient_messages WHERE order_id IN (${list})`, ids),
+    /* BATCH DOCUMENTS, WHICH `WHERE order_id IN (...)` CANNOT SEE.
+     *
+     * A collection form photographed at a pharmacy covers the whole
+     * trolley. Its files row is written with order_id NULL -- deliberately,
+     * because it belongs to no single delivery -- and modules/uh/pickup.ts
+     * puts its id on EVERY order's picked_up custody event instead.
+     *
+     * So the line above missed it, exactly as modules/uh/pod-photos.ts
+     * missed it until 1 November: the same `WHERE order_id = ?` blind spot,
+     * in the script whose job is to leave nothing behind. The custody events
+     * naming the form were deleted and the form was not, which leaves a
+     * photograph of a signed pharmacy form in the bucket with nothing left
+     * that explains why we hold it -- and a files row the retention purge
+     * will eventually strip the object from without ever removing the row.
+     *
+     * ONLY WHEN NOTHING ELSE STILL POINTS AT IT. One form covers eleven
+     * orders; clearing three of them must not delete the document the other
+     * eight are still evidenced by. The NOT EXISTS is that test, and it is
+     * what makes this safe to run with --order as well as with a date. */
+    batchDocs: await count(
+        `SELECT COUNT(DISTINCT f.id) AS n
+           FROM custody_events e
+           JOIN files f ON f.id = e.file_id
+          WHERE e.order_id IN (${list}) AND f.order_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM custody_events k
+                             WHERE k.file_id = f.id AND k.order_id NOT IN (${list}))`,
+        [...ids, ...ids],
+    ),
     /* Runs and shifts belong to a day, not to an order, so clearing one order
        leaves them alone. Reported as zero rather than omitted, so the two
        modes print the same shape. */
@@ -252,9 +280,25 @@ if (!apply) {
  * record anywhere of why. So the keys are read first and the objects are
  * deleted first; a failure here stops the whole thing, because an orphaned
  * row is recoverable and an orphaned object is not findable. */
-const keys = (await run(
+const bound = (await run(
     `SELECT s3_key FROM files WHERE order_id IN (${list}) AND s3_key <> ''`, ids,
 )).rows.map((r) => String(r.s3_key));
+
+/* The batch documents counted above, as ids and keys. Read BEFORE the
+   custody events are deleted: the only path to them is through
+   custody_events.file_id, so afterwards there is nothing left to join on and
+   the form becomes unreachable rather than removed. */
+const batch = (await run(
+    `SELECT DISTINCT f.id, f.s3_key
+       FROM custody_events e
+       JOIN files f ON f.id = e.file_id
+      WHERE e.order_id IN (${list}) AND f.order_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM custody_events k
+                         WHERE k.file_id = f.id AND k.order_id NOT IN (${list}))`,
+    [...ids, ...ids],
+)).rows.map((r) => ({ id: Number(r.id), key: String(r.s3_key ?? '') }));
+const batchIds = batch.map((b) => b.id);
+const keys = [...bound, ...batch.map((b) => b.key).filter((k) => k !== '')];
 
 if (keys.length > 0) {
     const storage = createFileStorage(config);
@@ -288,6 +332,12 @@ try {
     await run(`DELETE FROM files WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM patient_messages WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM custody_events WHERE order_id IN (${list})`, ids);
+    /* After the events, because until they are gone the NOT EXISTS above is
+       the only thing standing between this and a document another order is
+       still evidenced by, and the row is how that document is found. */
+    if (batchIds.length > 0) {
+        await run(`DELETE FROM files WHERE id IN (${batchIds.map(() => '?').join(',')})`, batchIds);
+    }
     await run(`DELETE FROM notifications WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM delivery_requests WHERE order_id IN (${list})`, ids);
     await run(`DELETE FROM run_stops WHERE order_id IN (${list})`, ids);

@@ -69,6 +69,7 @@ check-pod.ps1
 apply-roster.ps1
 new-logins.ps1
 mail-doctor.ps1
+clear-yesterday.ps1
 list-drivers.mjs
 
 # The driver roster for create-drivers.mjs and load-roster.mjs. SAME REASON
