@@ -70,6 +70,7 @@ apply-roster.ps1
 new-logins.ps1
 mail-doctor.ps1
 clear-uh-test.ps1
+auto-assign-off.ps1
 list-drivers.mjs
 
 # The driver roster for create-drivers.mjs and load-roster.mjs. SAME REASON
