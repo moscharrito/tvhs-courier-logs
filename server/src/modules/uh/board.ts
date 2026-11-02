@@ -19,6 +19,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { leadScope } from './lead-scope';
+import { coverList } from './roster';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -410,6 +411,7 @@ export function createBoardRouter({ client }: { client: Client }): Router {
         const presence = await client.execute({
             sql: `SELECT u.username, u.name, m.role AS project_role, u.status AS user_status,
                          json_extract(m.settings, '$.homeSiteId') AS home_site_id,
+                         json_extract(m.settings, '$.alsoCovers') AS also_covers,
                          MAX(s.last_seen_at) AS last_seen,
                          MAX(CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END) AS on_shift,
                          MIN(sh.started_at) AS shift_started
@@ -453,6 +455,14 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                 /** Their standing pharmacy, or null for a floater. */
                 homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined
                     ? null : Number(r['home_site_id']),
+                /** Other counters they may be given work for.
+                 *
+                 *  THE ASSIGNMENT DROPDOWN READS THIS. A pharmacy offers its
+                 *  own drivers, and without a cover list Wheatley -- which
+                 *  nobody is based at, because it is run from Vida as part of
+                 *  the same round -- would have an empty dropdown and an
+                 *  unassignable list. */
+                alsoCovers: coverList(r['also_covers']),
                 projectRole: role,
                 /** On shift for a reason the roster does not otherwise allow.
                  *  Shown, because the person is real; flagged, because the
@@ -579,7 +589,7 @@ export function createBoardRouter({ client }: { client: Client }): Router {
                     ...(courierByUsername.get(username) ?? {
                         username, name: username, lastSeenAt: null, minutesSinceSeen: null,
                         present: false, onShift: false, shiftStartedAt: null,
-                        homeSiteId: null, projectRole: '', offRoster: false, inactive: true,
+                        homeSiteId: null, alsoCovers: [], projectRole: '', offRoster: false, inactive: true,
                     }),
                     position: positionByUsername.get(username) ?? null,
                 },

@@ -77,7 +77,48 @@ function parse<S extends z.ZodTypeAny>(schema: S, body: unknown, res: Response):
 const SetHomeSite = z.object({
     /** A site id, or null to make them a floater again. */
     homeSiteId: z.number().int().positive().nullable(),
+    /**
+     * Other counters this driver may be given work for.
+     *
+     * ONE DRIVER, TWO COUNTERS, AND A MEMBERSHIP THAT HOLDS ONE HOME.
+     * One driver runs Vida and Wheatley as a single round, about ten miles
+     * apart and eighteen deliveries between them; the weekend driver covers
+     * Pavilion plus the other weekend sites. Recording each at the counter
+     * they are BASED at was accurate and not enough: the
+     * moment the assignment dropdown only offers a pharmacy its own drivers,
+     * Wheatley has nobody and its list cannot be assigned at all.
+     *
+     * So the home pharmacy stays what it is -- where they start, what the
+     * roster counts, what the planner prefers -- and this is the list of
+     * counters they ALSO appear under. Omitted means unchanged; an empty
+     * array clears it.
+     *
+     * Not a second home: nothing here changes the per-counter driver counts
+     * or the planner's first choice. It changes who may be offered the work.
+     */
+    alsoCovers: z.array(z.number().int().positive()).max(9).optional(),
 });
+
+/**
+ * The cover list as stored, which json_extract returns as JSON text.
+ *
+ * EXPORTED, AND READ BY board.ts THROUGH THIS. The dispatch board offers the
+ * assignment dropdown and therefore has to know who covers what, so it needs
+ * the same answer this module writes. A second parser beside the second query
+ * is how modules/uh/pod-photos.ts came to exist -- two copies of "find the
+ * photographs for a delivery", one of which was forgotten. One copy, owned by
+ * the module that writes the field.
+ */
+export function coverList(raw: unknown): number[] {
+    if (raw === null || raw === undefined) return [];
+    try {
+        const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+    } catch {
+        return [];
+    }
+}
 
 export function createRosterRouter({ client }: { client: Client }): Router {
     const router = Router({ mergeParams: true });
@@ -98,6 +139,7 @@ export function createRosterRouter({ client }: { client: Client }): Router {
         const rs = await run(
             `SELECT u.username, u.name, u.email, u.status, m.role,
                     json_extract(m.settings, '$.homeSiteId') AS home_site_id,
+                    json_extract(m.settings, '$.alsoCovers') AS also_covers,
                     si.code AS home_site_code, si.name AS home_site_name,
                     CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END AS on_shift
                FROM users u
@@ -118,6 +160,10 @@ export function createRosterRouter({ client }: { client: Client }): Router {
             status: String(r['status']),
             role: String(r['role']),
             homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined ? null : Number(r['home_site_id']),
+            /* json_extract hands back the JSON text of an array, so it is
+               parsed here rather than trusted. A blob hand-edited into the
+               wrong shape becomes an empty list, not a crash in a read. */
+            alsoCovers: coverList(r['also_covers']),
             homeSiteCode: r['home_site_code'] === null ? null : String(r['home_site_code']),
             homeSiteName: r['home_site_name'] === null ? null : String(r['home_site_name']),
             onShift: Number(r['on_shift']) === 1,
@@ -186,6 +232,35 @@ export function createRosterRouter({ client }: { client: Client }): Router {
             }
         }
 
+        /* THE SAME CHECK FOR THE COVER LIST, for the same reason: an id from
+           another contract stores cleanly and reads back as nothing, which
+           looks like "never set" rather than like a mistake. Deduplicated,
+           and the home counter is never repeated in it -- a driver appearing
+           twice under their own pharmacy would be a dropdown with their name
+           in it twice. */
+        let covers: number[] | undefined;
+        if (body.alsoCovers !== undefined) {
+            const wanted = [...new Set(body.alsoCovers)].filter((id) => id !== body.homeSiteId);
+            if (wanted.length > 0) {
+                const found2 = await run(
+                    `SELECT id FROM sites
+                      WHERE project_id = ? AND status = 'active'
+                        AND id IN (${wanted.map(() => '?').join(',')})`,
+                    [project.id, ...wanted],
+                );
+                const real = new Set(found2.rows.map((r) => Number(r['id'])));
+                const unknown = wanted.filter((id) => !real.has(id));
+                if (unknown.length > 0) {
+                    res.status(400).json({
+                        error: 'No active pharmacy on this project has that id.',
+                        details: unknown.map((id) => `alsoCovers: ${id}`),
+                    });
+                    return;
+                }
+            }
+            covers = wanted;
+        }
+
         /* Merge, never replace. The blob may hold settings this route has
            never heard of -- tvhs couriers keep a route in here -- and a
            home-site change that dropped them would be a silent one. */
@@ -198,15 +273,30 @@ export function createRosterRouter({ client }: { client: Client }): Router {
         if (body.homeSiteId === null) delete settings['homeSiteId'];
         else settings['homeSiteId'] = body.homeSiteId;
 
+        /* Absent means unchanged, an empty array means cleared. A driver
+           losing their home counter keeps whatever cover they had: the two
+           are separate facts and taking somebody off a roster is not a
+           statement about which counters they know. */
+        if (covers !== undefined) {
+            if (covers.length === 0) delete settings['alsoCovers'];
+            else settings['alsoCovers'] = covers;
+        }
+
         await run(
             'UPDATE memberships SET settings = ? WHERE user_id = ? AND project_id = ?',
             [JSON.stringify(settings), Number(row['id']), project.id],
         );
         await req.audit('roster.homeSite', 'membership', `${username}:${project.code}`, {
             username, homeSiteId: body.homeSiteId,
+            /* Audited only when this request said something about it, so the
+               trail distinguishes "set to none" from "not mentioned". */
+            ...(covers === undefined ? {} : { alsoCovers: covers }),
         });
 
-        res.json({ ok: true, username, homeSiteId: body.homeSiteId });
+        res.json({
+            ok: true, username, homeSiteId: body.homeSiteId,
+            alsoCovers: (settings['alsoCovers'] as number[] | undefined) ?? [],
+        });
     }));
 
     return router;

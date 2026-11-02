@@ -33,7 +33,15 @@ const onBoard = (b, username) => b.couriers.find((c) => c.username === username)
 
 async function driverOnShift(username, name, role) {
     await admin.post('/api/users').send({ username, name, password: `${username}-pass-1`, role: 'driver' });
-    await admin.put(`/api/users/${username}/memberships/uh`).send({ role, settings: {} });
+    /* WITH A HOME PHARMACY, because going on shift needs one since
+       2 November 2026 and this helper's whole job is a driver who is on
+       shift. A courier role gets one; an admin or a lead does not, since
+       the gate does not apply to them and `roster.desk` exists to prove a
+       home pharmacy is refused for a non-driver. */
+    await admin.put(`/api/users/${username}/memberships/uh`).send({
+        role,
+        settings: role === 'courier' ? { homeSiteId: shiftSiteId } : {},
+    });
     const agent = srv.agent();
     const login = await agent.post('/api/login').send({ username, password: `${username}-pass-1` });
     expect(login.status, login.text).toBe(200);
@@ -42,9 +50,13 @@ async function driverOnShift(username, name, role) {
     return agent;
 }
 
+let shiftSiteId;
+
 beforeAll(async () => {
     srv = await startServer();
     admin = await srv.login('admin');
+    /* Somewhere for a courier to be based, so they can go on shift. */
+    shiftSiteId = (await admin.get(`${UH}/sites`)).body.find((s) => s.code === 'discharge').id;
 }, 60_000);
 
 afterAll(async () => { await srv?.stop(); });
@@ -152,6 +164,79 @@ describe('the roster a plan is built from', () => {
         const idle = roster.drivers.find((d) => d.username === 'roster.idle');
         expect(idle.homeSiteId).toBeNull();
         expect(idle.homeSiteName).toBeNull();
+    });
+
+    it('records the other counters a driver covers, without moving their home', async () => {
+        /* ONE DRIVER RUNS VIDA AND WHEATLEY as a single round -- ten miles
+           apart, eighteen deliveries between them -- and a membership holds
+           one home pharmacy. Recorded at Vida that was correct and
+           invisible: the moment the assignment dropdown offers a pharmacy
+           only its own drivers, Wheatley has nobody and its list cannot be
+           assigned at all. */
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const vida = sites.find((s) => s.code === 'vida');
+        const wheatley = sites.find((s) => s.code === 'wheatley');
+
+        const set = await admin.put(`${UH}/roster/roster.idle`)
+            .send({ homeSiteId: vida.id, alsoCovers: [wheatley.id] });
+        expect(set.status, set.text).toBe(200);
+        expect(set.body.alsoCovers).toEqual([wheatley.id]);
+
+        const driver = (await admin.get(`${UH}/roster`)).body.drivers
+            .find((d) => d.username === 'roster.idle');
+        expect(driver.homeSiteId).toBe(vida.id);
+        expect(driver.alsoCovers).toEqual([wheatley.id]);
+
+        /* NOT A SECOND HOME. The per-counter counts are what tells a
+           dispatcher a pharmacy is short, and cover must not fill that in:
+           Wheatley still has nobody BASED there, which is true and is the
+           thing somebody should see. */
+        const roster = (await admin.get(`${UH}/roster`)).body;
+        const atWheatley = roster.counts.find((c) => c.siteId === wheatley.id)?.drivers ?? 0;
+        const basedThere = roster.drivers.filter((d) => d.homeSiteId === wheatley.id).length;
+        expect(atWheatley).toBe(basedThere);
+    });
+
+    it('will not put a driver under their own pharmacy twice', async () => {
+        /* Their name in the same dropdown twice, which reads as two drivers
+           with one name rather than as a cover rule. */
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const green = sites.find((s) => s.code === 'green');
+        const res = await admin.put(`${UH}/roster/roster.idle`)
+            .send({ homeSiteId: green.id, alsoCovers: [green.id, green.id] });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.alsoCovers).toEqual([]);
+    });
+
+    it('refuses cover at a pharmacy from another contract', async () => {
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const green = sites.find((s) => s.code === 'green');
+        const res = await admin.put(`${UH}/roster/roster.idle`)
+            .send({ homeSiteId: green.id, alsoCovers: [999999] });
+        expect(res.status).toBe(400);
+        expect(res.body.details.join(' ')).toMatch(/alsoCovers: 999999/);
+    });
+
+    it('keeps the cover list when the home pharmacy is taken away', async () => {
+        /* Two separate facts. Taking somebody off a roster is not a
+           statement about which counters they know, and re-rostering them
+           should not mean re-typing it. */
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const vida = sites.find((s) => s.code === 'vida');
+        const wheatley = sites.find((s) => s.code === 'wheatley');
+        expect((await admin.put(`${UH}/roster/roster.idle`)
+            .send({ homeSiteId: vida.id, alsoCovers: [wheatley.id] })).status).toBe(200);
+
+        expect((await admin.put(`${UH}/roster/roster.idle`).send({ homeSiteId: null })).status).toBe(200);
+
+        const driver = (await admin.get(`${UH}/roster`)).body.drivers
+            .find((d) => d.username === 'roster.idle');
+        expect(driver.homeSiteId).toBeNull();
+        expect(driver.alsoCovers).toEqual([wheatley.id]);
+
+        /* Put back how the other tests expect to find it. */
+        expect((await admin.put(`${UH}/roster/roster.idle`)
+            .send({ homeSiteId: null, alsoCovers: [] })).status).toBe(200);
     });
 
     it('counts how many drivers each pharmacy has, so gaps are visible', async () => {

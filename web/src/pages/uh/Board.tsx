@@ -59,6 +59,10 @@ interface Courier {
     onShift: boolean; shiftStartedAt: string | null;
     /** Their standing pharmacy, or null for a floater. */
     homeSiteId: number | null;
+    /** Other counters they may be given work for. See the picker below:
+     *  one driver is based at Vida and runs Wheatley as part of the same
+     *  round, and nobody is based at Wheatley at all. */
+    alsoCovers: number[];
     /** On shift under a membership that is not courier or lead. */
     offRoster: boolean;
     /** Disabled mid-shift. They may still be carrying. */
@@ -570,12 +574,45 @@ export function Board() {
             .map(([username, name]) => ({ username, name })),
     ].sort((a, b) => a.name.localeCompare(b.name));
 
-    /* Split for the picker. Somebody the server suggested but whom the board
-       holds no record for counts as working: it staffed the plan from the
-       shift table, so it knows something this list does not. */
-    const chooseFrom = {
-        working: courierChoices.filter((c) => c.onShift !== false),
-        away: courierChoices.filter((c) => c.onShift === false),
+    /* ── WHO A PARTICULAR ROUTE MAY BE GIVEN TO ───────────────────────────
+     *
+     * A PHARMACY OFFERS ITS OWN DRIVERS AND NOBODY ELSE'S. The list used to
+     * be every idle courier on the contract, so a Southwest wave could be
+     * handed to a Robert B. Green driver by picking the wrong line of a
+     * thirty-name dropdown -- and with the unclaimed sweep also handing work
+     * to whoever was on shift, that is the mess this is undoing.
+     *
+     * THREE WAYS ONTO THE LIST, and the third is why it is not a one-line
+     * filter:
+     *
+     *   based here      homeSiteId is one of the route's pharmacies.
+     *   covers here     alsoCovers names one of them. One driver is based
+     *                   at Vida and runs Wheatley on the same round;
+     *                   nobody is based at Wheatley, so without this its
+     *                   dropdown is empty and its list cannot be assigned.
+     *   suggested       the server named them for THIS route. It staffed the
+     *                   plan from the shift table and the roster, so it
+     *                   knows things this list does not -- and dropping a
+     *                   name the server put there would blank a dropdown
+     *                   that already had the right answer in it.
+     *
+     * A route can collect from more than one pharmacy, so this takes the
+     * list and matches any of them.
+     */
+    const chooseFor = (siteIds: readonly number[], suggestedUsername: string | null) => {
+        const wanted = new Set(siteIds);
+        const forThisRoute = courierChoices.filter((c) => {
+            if (suggestedUsername !== null && c.username === suggestedUsername) return true;
+            if (c.homeSiteId !== null && c.homeSiteId !== undefined && wanted.has(c.homeSiteId)) return true;
+            return (c.alsoCovers ?? []).some((id) => wanted.has(id));
+        });
+        /* Split for the picker. Somebody the server suggested but whom the
+           board holds no record for counts as working, for the same reason
+           as above. */
+        return {
+            working: forThisRoute.filter((c) => c.onShift !== false),
+            away: forThisRoute.filter((c) => c.onShift === false),
+        };
     };
 
     return (
@@ -959,6 +996,11 @@ export function Board() {
                                                 const i = pagedProposal.from - 1 + onPage;
                                                 const picked = takeWith[i] ?? '';
                                                 const hint = (proposal.suggested ?? [])[i] ?? null;
+                                                /* Only this route's pharmacies. See chooseFor:
+                                                   a Southwest wave must not offer a Robert B.
+                                                   Green driver, and Wheatley must still offer
+                                                   the man who runs it from Vida. */
+                                                const choices = chooseFor(run.siteIds, hint?.username ?? null);
                                                 return (
                                                 <tr key={run.orderIds.join(',')}>
                                                     <td>
@@ -986,7 +1028,17 @@ export function Board() {
                                                                 value={picked}
                                                                 onChange={(e) => setTakeWith({ ...takeWith, [i]: e.target.value })}
                                                             >
-                                                                <option value="">Choose a courier</option>
+                                                                <option value="">
+                                                                    {/* AN EMPTY DROPDOWN NEEDS TO SAY WHY.
+                                                                        A pharmacy with no driver based at
+                                                                        or covering it reads as a broken
+                                                                        screen otherwise, and the fix is a
+                                                                        roster change rather than anything
+                                                                        on this page. */}
+                                                                    {choices.working.length + choices.away.length === 0
+                                                                        ? 'Nobody covers this pharmacy'
+                                                                        : 'Choose a courier'}
+                                                                </option>
                                                                 {/* ON SHIFT FIRST, IN THEIR OWN GROUP.
                                                                     Flat, this was thirty-two names in
                                                                     alphabetical order with the six people
@@ -996,21 +1048,21 @@ export function Board() {
                                                                     are at home. The group label does the
                                                                     work "(not on shift)" was doing one
                                                                     row at a time. */}
-                                                                {chooseFrom.working.length > 0 && (
+                                                                {choices.working.length > 0 && (
                                                                     <optgroup label="On shift">
-                                                                        {chooseFrom.working.map((c) => (
+                                                                        {choices.working.map((c) => (
                                                                             <option key={c.username} value={c.username}>
                                                                                 {c.name}{courierNote(c)}
                                                                             </option>
                                                                         ))}
                                                                     </optgroup>
                                                                 )}
-                                                                {chooseFrom.away.length > 0 && (
+                                                                {choices.away.length > 0 && (
                                                                     /* Still offered. A dispatcher ringing
                                                                        somebody to come in needs to put the
                                                                        run on them before they arrive. */
                                                                     <optgroup label="Not on shift">
-                                                                        {chooseFrom.away.map((c) => (
+                                                                        {choices.away.map((c) => (
                                                                             <option key={c.username} value={c.username}>
                                                                                 {c.name}
                                                                             </option>

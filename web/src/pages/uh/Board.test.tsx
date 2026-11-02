@@ -33,6 +33,11 @@ const courier = (over = {}) => ({
        shift is open. They are different questions and the board used to
        answer the second with the first -- see courierNote() in Board.tsx. */
     minutesSinceSeen: 2, present: true, onShift: true, shiftStartedAt: '2026-09-14T13:00:00.000Z',
+    /* BASED SOMEWHERE, because since 2 November the assignment dropdown only
+       offers a route the drivers of its own pharmacy. 7 is the Discharge
+       Pharmacy every fixture in this file collects from, so the default
+       courier is one who can actually be given the default route. */
+    homeSiteId: 7, alsoCovers: [],
     position: null, ...over,
 });
 
@@ -615,6 +620,105 @@ describe('Board', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
         return r;
     };
+
+    it('offers a route only the drivers of its own pharmacy', async () => {
+        /* THE MESS THIS UNDOES. The dropdown was every idle courier on the
+           contract -- thirty-odd names -- so a Southwest wave could be handed
+           to a Robert B. Green driver by picking the wrong line. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                idleCouriers: [
+                    courier({ username: 'here.courier', name: 'Here Courier', homeSiteId: 7 }),
+                    courier({ username: 'elsewhere.courier', name: 'Elsewhere Courier', homeSiteId: 99 }),
+                ],
+            }),
+            'GET /api/projects/uh/uh/runs/propose*': staffed({ suggested: [null, null] }),
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        const pick = await screen.findByLabelText('Courier for proposed route 1');
+        const names = [...pick.querySelectorAll('option')].map((o) => o.textContent);
+        expect(names.join(' ')).toMatch(/Here Courier/);
+        expect(names.join(' ')).not.toMatch(/Elsewhere Courier/);
+    });
+
+    it('offers the driver who COVERS a pharmacy nobody is based at', async () => {
+        /* ONE DRIVER IS WHY alsoCovers EXISTS: based at Vida, running
+           Wheatley on the same round, and nobody is based at Wheatley.
+           Without the cover list its dropdown is empty and its list cannot
+           be assigned at all -- the filter above would have created exactly
+           that, which is why these two tests arrived together. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                idleCouriers: [
+                    courier({ username: 'vida.driver', name: 'Vida Driver', homeSiteId: 21, alsoCovers: [22] }),
+                    courier({ username: 'elsewhere.courier', name: 'Elsewhere Courier', homeSiteId: 99, alsoCovers: [] }),
+                ],
+            }),
+            /* A Wheatley route: site 22, which is nobody's home. */
+            'GET /api/projects/uh/uh/runs/propose*': staffed({
+                runs: [{ kind: 'standard', orderIds: [1], zips: ['78220'], siteIds: [22], earliestDueAt: null }],
+                suggested: [null],
+            }),
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        const pick = await screen.findByLabelText('Courier for proposed route 1');
+        const names = [...pick.querySelectorAll('option')].map((o) => o.textContent);
+        expect(names.join(' ')).toMatch(/Vida Driver/);
+        expect(names.join(' ')).not.toMatch(/Elsewhere Courier/);
+    });
+
+    it('says why a dropdown is empty rather than just being empty', async () => {
+        /* A pharmacy with nobody based at or covering it reads as a broken
+           screen, and the fix is a roster change rather than anything on
+           this page. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                idleCouriers: [courier({ username: 'elsewhere.courier', name: 'Elsewhere Courier', homeSiteId: 99, alsoCovers: [] })],
+            }),
+            'GET /api/projects/uh/uh/runs/propose*': staffed({
+                runs: [{ kind: 'standard', orderIds: [1], zips: ['78220'], siteIds: [22], earliestDueAt: null }],
+                suggested: [null],
+            }),
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        const pick = await screen.findByLabelText('Courier for proposed route 1');
+        expect(pick.textContent).toMatch(/Nobody covers this pharmacy/);
+    });
+
+    it('keeps a driver the server suggested, whatever this screen knows about them', async () => {
+        /* The server staffs from the shift table and the roster, so it knows
+           things the board's courier list does not. Dropping a name it put
+           there would blank a dropdown that already had the right answer in
+           it -- and the preselected value would point at an option that is
+           not there. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({ idleCouriers: [] }),
+            'GET /api/projects/uh/uh/runs/propose*': staffed({
+                runs: [{ kind: 'standard', orderIds: [1], zips: ['78220'], siteIds: [22], earliestDueAt: null }],
+                suggested: [{ username: 'ghost.courier', name: 'Ghost Courier', why: 'cover' }],
+            }),
+            'POST /api/projects/uh/uh/runs': { id: 44 },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
+
+        const pick = await screen.findByLabelText('Courier for proposed route 1');
+        expect(pick).toHaveValue('ghost.courier');
+        expect(pick.textContent).toMatch(/Ghost Courier/);
+    });
 
     it('preselects the driver the server suggested for each route', async () => {
         /* The point of the exercise. Twenty-three dropdowns picked by hand
