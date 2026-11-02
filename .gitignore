@@ -66,6 +66,8 @@ reset-uh-portals.py
 purge-drivers.ps1
 stage-wheatley.ps1
 check-pod.ps1
+apply-roster.ps1
+new-logins.ps1
 list-drivers.mjs
 
 # The driver roster for create-drivers.mjs and load-roster.mjs. SAME REASON
@@ -76,6 +78,16 @@ list-drivers.mjs
 drivers.csv
 *.drivers.csv
 roster.csv
+roster.csv.*
+roster-*.csv
+*.roster.csv
+
+# AND THE KEPT COPIES OF THEM, which is the rule that was missing. The
+# roster was replaced on 1 November when University Health confirmed
+# thirty-one drivers out of the thirty-five, and the sensible thing to do
+# with the old one -- keep it beside the new one so the change can be read
+# -- produced roster.csv.bak-20261030, a file the rule above did not cover.
+# A rota is a rota whatever it is called afterwards.
 
 # The never-delete list for courier-inventory.mjs. Same reason as the files
 # above: a driver's username is their personal email address.

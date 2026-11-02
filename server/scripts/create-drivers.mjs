@@ -51,6 +51,9 @@
  *     ... --file drivers.csv --apply --reset
  *         For accounts that already exist: a new password for each.
  *
+ *     ... --file drivers.csv --apply --silent
+ *         Creates them and prints NO password. See below.
+ *
  *     ... --base https://logs.izyglobalservices.com --i-mean-production --apply
  *
  * The file is `username,name,email` per line. Blank lines and # comments are
@@ -64,6 +67,25 @@
  *
  * The generated passwords are printed ONCE and written nowhere. If the
  * output is lost, run again with --reset.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * --silent PRINTS NO PASSWORD AT ALL, AND IS FOR ONE PAIRING.
+ *
+ * driver-passwords.py generates a password, sets it, and writes it into a
+ * Word document -- printing nothing but a username and whether it worked.
+ * That document is then the only copy, which is the point of it.
+ *
+ * Run this script first to make the accounts and then that one to issue the
+ * credential, and WITHOUT --silent the terminal ends up holding a set of
+ * live passwords that were superseded ten seconds later. They sit in the
+ * scrollback, in whatever recorded it, and in whatever that was pasted
+ * into, and a password that has been in three places is not a password.
+ *
+ * So --silent creates the account with a password NOBODY HAS. That is not a
+ * usable account on its own and the script says so on the way out: either
+ * driver-passwords.py follows immediately, or the driver has to use
+ * "Forgot your password?" -- which works, because the email address is
+ * required here and is written whatever else happens.
  */
 
 import path from 'node:path';
@@ -90,6 +112,7 @@ const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(bas
 const projectCode = value('project', 'uh');
 const apply = has('apply');
 const reset = has('reset');
+const silent = has('silent');
 const file = value('file', '');
 
 if (!isLocal && !has('i-mean-production')) {
@@ -98,6 +121,11 @@ if (!isLocal && !has('i-mean-production')) {
 }
 if (!isLocal && !/^https:/i.test(base)) {
     console.error('Refusing to send credentials over plain HTTP to a remote host.');
+    process.exit(1);
+}
+if (silent && reset) {
+    console.error('--silent and --reset together would set a new password and tell nobody what it is.');
+    console.error('Use --reset on its own, or driver-passwords.py, which writes them into a document.');
     process.exit(1);
 }
 if (file === '') {
@@ -292,6 +320,11 @@ async function main() {
         say('  Each one would also get the courier membership on the project, which is');
         say('  what gives them work: a driver without it signs in to an empty run.');
         say();
+        if (silent) {
+            say('  --silent: no password will be printed. driver-passwords.py has to follow,');
+            say('  or these accounts can only be reached through "Forgot your password?".');
+            say('');
+        }
         say('  Nothing was changed. Add --apply when the plan above reads correctly.');
         return;
     }
@@ -339,6 +372,25 @@ async function main() {
     /* ------------------------------------------------------------- output */
 
     say();
+    if (silent) {
+        /* See the header. No password reaches the screen, so the next step
+           is not optional and is named rather than implied. */
+        const issued = made.filter((p) => p.pass !== null).length;
+        say(`  ${issued} account${issued === 1 ? '' : 's'} created with a password NOBODY HAS, because --silent.`);
+        say();
+        say('  NOT USABLE YET. Issue the credential now:');
+        say();
+        const prod = isLocal ? '' : ' --i-mean-production';
+        say(`      python server/scripts/driver-passwords.py --file ${file} --base ${base}${prod} --apply --out new-driver-passwords.docx`);
+        say();
+        say('  That sets a password for each and writes them into one Word document,');
+        say('  which is then the only copy. Until it runs, these drivers can only get');
+        say('  in through "Forgot your password?" -- which does work: the email');
+        say('  address is on the account.');
+        say();
+        say('  docs/driver-app-install.md is the sheet to send with the login.');
+        return;
+    }
     say('  SHOWN ONCE. Not written anywhere; re-run with --reset if this is lost.');
     say();
     for (const p of made) {

@@ -42,6 +42,24 @@
  * here. See roster.csv on the machine that holds it.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * `none` TAKES A PHARMACY AWAY, AND THAT IS WHY IT EXISTS.
+ *
+ * A file that can only ADD an assignment cannot describe a rota somebody
+ * has left. On 1 November University Health confirmed thirty-one drivers
+ * out of the thirty-five with accounts, and five of the four left over were
+ * holding a counter from the 30 October list. Without a way to say "not any
+ * more" the only options were to edit five memberships by hand or to leave
+ * five people the planner would go on offering work to -- and the planner
+ * offering a run to somebody who is no longer driving is a stop nobody
+ * covers.
+ *
+ * It does NOT retire the account, suspend it, or touch anything else. The
+ * driver can still sign in and the record of what they already delivered is
+ * untouched; they simply have no counter, which is the same state as a
+ * driver who has not been given one yet. Reversible by putting the code
+ * back in the file.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  *   node server/scripts/load-roster.mjs --file roster.csv
  *       What it would change. Writes nothing.
  *
@@ -128,6 +146,11 @@ fs.readFileSync(resolved, 'utf8').split(/\r?\n/).forEach((raw, i) => {
         problems.push(`${at}: both a username and a site code are needed`);
         return;
     }
+    /* Spelt out rather than left as an empty second column. A blank cell is
+       what a half-finished line looks like, and this says "take the counter
+       away" -- which is a decision, so the file has to look like somebody
+       made one. */
+    const clear = site === 'none';
     /* A username twice is two different answers to "where does this person
        drive from", and which one wins would be a matter of row order. */
     if (seen.has(username)) {
@@ -135,7 +158,7 @@ fs.readFileSync(resolved, 'utf8').split(/\r?\n/).forEach((raw, i) => {
         return;
     }
     seen.add(username);
-    rows.push({ username, site, at });
+    rows.push({ username, site, clear, at });
 });
 
 if (problems.length > 0) {
@@ -195,15 +218,25 @@ async function main() {
     const driverBy = new Map(drivers.map((d) => [d.username.toLowerCase(), d]));
 
     const toSet = [];
+    const toClear = [];
     const already = [];
     const missingDriver = [];
     const missingSite = [];
 
     for (const r of rows) {
-        const site = siteByCode.get(r.site);
-        if (!site) { missingSite.push(r); continue; }
+        const site = r.clear ? null : siteByCode.get(r.site);
+        if (!r.clear && !site) { missingSite.push(r); continue; }
         const driver = driverBy.get(r.username);
+        /* A `none` row for somebody who is not on the project is NOT a
+           problem to report: there is nothing to take away. Said quietly
+           among the skips rather than as a warning, so a file that lists
+           everybody who ever drove here stays clean to run. */
         if (!driver) { missingDriver.push(r); continue; }
+        if (r.clear) {
+            if (driver.homeSiteId === null) already.push({ ...r, driver, site: null });
+            else toClear.push({ ...r, driver, site: null });
+            continue;
+        }
         if (driver.homeSiteId === site.id) already.push({ ...r, driver, site });
         else toSet.push({ ...r, driver, site });
     }
@@ -212,6 +245,7 @@ async function main() {
         say('  NO SUCH PHARMACY on this project — these rows are skipped:');
         for (const r of missingSite) say(`    ${r.at}  ${r.username} -> "${r.site}"`);
         say(`    known codes: ${[...siteByCode.keys()].join(', ')}`);
+        say('    or "none", which takes the pharmacy away from a driver.');
         say('');
     }
     if (missingDriver.length > 0) {
@@ -233,17 +267,33 @@ async function main() {
         say('');
     }
 
-    if (toSet.length === 0) {
+    if (toSet.length === 0 && toClear.length === 0) {
         say('  Nothing to change.');
         return missingDriver.length > 0 || missingSite.length > 0 ? 2 : 0;
     }
 
-    say(`  WOULD SET (${toSet.length}):`);
-    for (const r of toSet) {
-        const from = r.driver.homeSiteName ?? 'no home pharmacy';
-        say(`    ${r.driver.name.padEnd(24)} ${from}  ->  ${r.site.name}`);
+    if (toSet.length > 0) {
+        say(`  WOULD SET (${toSet.length}):`);
+        for (const r of toSet) {
+            const from = r.driver.homeSiteName ?? 'no home pharmacy';
+            say(`    ${r.driver.name.padEnd(24)} ${from}  ->  ${r.site.name}`);
+        }
+        say('');
     }
-    say('');
+
+    /* Listed separately and second, because it is the half worth reading
+       twice: a driver losing their counter stops being offered work, and
+       the dry run is the only place that is visible before it happens. */
+    if (toClear.length > 0) {
+        say(`  WOULD TAKE THE PHARMACY AWAY (${toClear.length}):`);
+        for (const r of toClear) {
+            say(`    ${r.driver.name.padEnd(24)} ${r.driver.homeSiteName}  ->  no home pharmacy`);
+        }
+        say('');
+        say('    The accounts stay active and signed-in; the planner stops offering');
+        say('    them a run. Reversible: put the pharmacy code back in the file.');
+        say('');
+    }
 
     if (!apply) {
         say('  Report only. Nothing was changed. Add --apply to write it.');
@@ -252,21 +302,26 @@ async function main() {
 
     if (!isLocal) {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        const answer = await new Promise((r) => rl.question(`  Type 'yes' to change ${toSet.length} on ${base}: `, r));
+        const answer = await new Promise((r) => rl.question(`  Type 'yes' to change ${toSet.length + toClear.length} on ${base}: `, r));
         rl.close();
         if (answer.trim().toLowerCase() !== 'yes') { say('  Nothing was changed.'); return 1; }
     }
 
     let ok = 0;
     const failed = [];
-    for (const r of toSet) {
-        const res = await call('PUT', `/api/projects/${project}/uh/roster/${encodeURIComponent(r.username)}`, { homeSiteId: r.site.id });
-        if (res.status === 200) { ok += 1; say(`    ok      ${r.driver.name} -> ${r.site.name}`); }
+    /* Clears first. If a run stops halfway the state it stops in should be
+       people without counters rather than two drivers holding the same one
+       for reasons nobody can see. */
+    for (const r of [...toClear, ...toSet]) {
+        const homeSiteId = r.site === null ? null : r.site.id;
+        const res = await call('PUT', `/api/projects/${project}/uh/roster/${encodeURIComponent(r.username)}`, { homeSiteId });
+        const where = r.site === null ? 'no home pharmacy' : r.site.name;
+        if (res.status === 200) { ok += 1; say(`    ok      ${r.driver.name} -> ${where}`); }
         else { failed.push({ r, res }); say(`    FAILED  ${r.username}  HTTP ${res.status}`); }
     }
 
     say('');
-    say(`  Set ${ok} of ${toSet.length}.`);
+    say(`  Changed ${ok} of ${toSet.length + toClear.length}.`);
     if (failed.length > 0) {
         say('  These were not changed:');
         for (const f of failed) {
