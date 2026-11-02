@@ -29,7 +29,8 @@ let projectId;
 
 async function courier(username) {
     await admin.post('/api/users').send({ username, name: username, password: 'note-pass-1', role: 'driver' });
-    await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'courier', settings: {} });
+    /* With a home pharmacy: going on shift is refused without one. */
+    await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'courier', settings: { homeSiteId: siteId } });
     const a = srv.agent();
     const res = await a.post('/api/login').send({ username, password: 'note-pass-1' });
     expect(res.status, res.text).toBe(200);

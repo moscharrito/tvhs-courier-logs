@@ -46,7 +46,13 @@ beforeAll(async () => {
     siteId = (await admin.get(`${UH}/sites`)).body.find((s) => s.code === 'discharge').id;
 
     await admin.post('/api/users').send({ username: 'ana.shift', name: 'Ana Shift', password: 'shift-pass-1', role: 'driver' });
-    await admin.put('/api/users/ana.shift/memberships/uh').send({ role: 'courier', settings: {} });
+    /* WITH A HOME PHARMACY, which stopped being optional on 2 November 2026:
+       going on shift is refused without one. Every test in this file used to
+       create a courier with `settings: {}` and all twelve of them failed the
+       moment the gate went in -- which is the gate working, and a useful
+       measure of how much of this suite assumed a courier with no counter
+       could work a day. */
+    await admin.put('/api/users/ana.shift/memberships/uh').send({ role: 'courier', settings: { homeSiteId: siteId } });
     ana = srv.agent();
     const login = await ana.post('/api/login').send({ username: 'ana.shift', password: 'shift-pass-1' });
     expect(login.status, login.text).toBe(200);
@@ -61,6 +67,49 @@ describe('going on shift', () => {
         expect(res.body.open).toBe(true);
         expect(res.body.alreadyOn).toBe(false);
         expect(res.body.courierUsername).toBe('ana.shift');
+    });
+
+    it('refuses a courier with no pharmacy, and says who to ring', async () => {
+        /* Until 2 November the only test was "is a courier on this project",
+           which on University Health is thirty-nine accounts including the
+           eight who are not on the confirmed roster. All of them could tap
+           Go on shift, and while the unclaimed sweep was handing work to
+           whoever was on shift and least loaded, several of them got real
+           deliveries. */
+        await admin.post('/api/users').send({ username: 'nohome.shift', name: 'No Home', password: 'shift-pass-1', role: 'driver' });
+        await admin.put('/api/users/nohome.shift/memberships/uh').send({ role: 'courier', settings: {} });
+        const them = srv.agent();
+        expect((await them.post('/api/login').send({ username: 'nohome.shift', password: 'shift-pass-1' })).status).toBe(200);
+
+        const res = await them.post(`${UH}/shifts/start`);
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('shift.noHomeSite');
+        /* Told what to do, not told they are not a courier -- which would be
+           both wrong and no help to somebody standing at a counter. */
+        expect(res.body.error).toMatch(/ring dispatch/i);
+
+        /* And no shift was opened, which the status alone does not prove. */
+        expect((await them.get(`${UH}/shifts/mine`)).body.shift).toBeNull();
+    });
+
+    it('still answers a courier who is already on shift when their pharmacy is taken away', async () => {
+        /* THE ORDERING BUG THIS PINS. The gate was written above the
+           idempotent answer, so a courier already on shift who tapped again
+           on one bar was refused -- told they cannot go on shift while
+           standing at a counter on one. The second tap is the phone, not the
+           person. */
+        await admin.post('/api/users').send({ username: 'lost.shift', name: 'Lost Counter', password: 'shift-pass-1', role: 'driver' });
+        await admin.put('/api/users/lost.shift/memberships/uh').send({ role: 'courier', settings: { homeSiteId: siteId } });
+        const them = srv.agent();
+        expect((await them.post('/api/login').send({ username: 'lost.shift', password: 'shift-pass-1' })).status).toBe(200);
+        expect((await them.post(`${UH}/shifts/start`)).status).toBe(201);
+
+        /* Taken off the roster while out on a round. */
+        await admin.put(`${UH}/roster/lost.shift`).send({ homeSiteId: null });
+
+        const again = await them.post(`${UH}/shifts/start`);
+        expect(again.status).toBe(200);
+        expect(again.body.alreadyOn).toBe(true);
     });
 
     it('answers a second tap with the shift they are already on', async () => {

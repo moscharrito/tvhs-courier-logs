@@ -32,6 +32,33 @@
  * anything still `picked_up`. The refusal names the count and points at the
  * screen that fixes it, which is Take back undelivered.
  *
+ * GOING ON SHIFT NEEDS A PHARMACY, SINCE 2 NOVEMBER 2026.
+ *
+ * Until then the only test was "is a courier on this project", which on
+ * University Health is thirty-nine accounts -- including the eight who are
+ * not on the confirmed roster and have no counter. All of them could tap Go
+ * on shift, and for as long as the unclaimed-work sweep was handing out
+ * deliveries to whoever was on shift and least loaded, several of them got
+ * real work. Being on shift is the answer to "who may be given a delivery",
+ * so a gate that admits everybody makes that question meaningless.
+ *
+ * The test is `settings.homeSiteId` on the membership, which is the same
+ * fact the planner and the roster screen already use. A driver with no
+ * pharmacy is refused and told to ring dispatch -- not told they are not a
+ * courier, which is both wrong and no help.
+ *
+ * WHAT THIS COSTS, so nobody files it as a bug: a genuine floater -- no
+ * fixed counter, covers wherever the day needs them -- cannot go on shift.
+ * There is no such driver on the contract today, and /api/me/projects
+ * already shows "Wherever the day needs you" for one, so the screen can
+ * describe somebody the shift route now refuses. If one is ever hired, give
+ * them a counter or this rule needs an exception, and the exception belongs
+ * on the membership rather than in this file.
+ *
+ * STAFF ARE NOT GATED. An administrator or a site manager holding a shift is
+ * doing it to cover a round, and they have no home counter to check: an
+ * admin is enrolled in every project at boot. The rule is about couriers.
+ *
  * AND THERE IS AN ESCAPE HATCH, BUT NOT IN THE DRIVER'S HANDS. A pharmacy
  * closes; a courier cannot hand anything back at eleven at night. Dispatch
  * can end anybody's shift with a reason, and that is recorded against a named
@@ -141,15 +168,50 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
 
     /* ------------------------------------------------------------ a courier */
 
+    /**
+     * The pharmacy this courier is based at, or null.
+     *
+     * Read off the membership rather than passed in, because the session
+     * says who is asking and nothing else: a route that trusted a body
+     * field here would let a driver name a counter to get past the gate.
+     */
+    async function homeSiteOf(projectId: number, username: string): Promise<number | null> {
+        const rs = await run(
+            `SELECT json_extract(m.settings, '$.homeSiteId') AS home_site_id
+               FROM memberships m JOIN users u ON u.id = m.user_id
+              WHERE m.project_id = ? AND u.username = ?`,
+            [projectId, username],
+        );
+        const v = rs.rows[0]?.['home_site_id'];
+        return v === null || v === undefined ? null : Number(v);
+    }
+
     router.post('/start', couriers, wrap(async (req, res) => {
         const project = req.project!;
         const me = actorOf(req);
 
+        /* THE IDEMPOTENT ANSWER COMES FIRST, BEFORE THE GATE.
+           The gate was written above this and that was wrong: a courier who
+           is ALREADY on shift and taps again on one bar would have been
+           refused because their pharmacy had since been taken away -- told
+           they cannot go on shift while standing at a counter on one. The
+           second tap is the phone, not the person, and they are on shift
+           either way. The gate is about STARTING one. */
         const already = await openShiftFor(project.id, me);
         if (already) {
-            /* Not an error. See the header: the second tap is the phone, not
-               the person, and they are on shift either way. */
             res.json({ ...present(already as unknown as Record<string, unknown>), alreadyOn: true });
+            return;
+        }
+
+        /* See the header. Couriers only: staff have no home counter and are
+           covering a round when they hold a shift at all. */
+        if (req.membership?.role === 'courier' && (await homeSiteOf(project.id, me)) === null) {
+            await req.audit('shift.start_refused', 'membership', me, { reason: 'no home pharmacy' });
+            res.status(409).json({
+                error: 'You are not assigned to a pharmacy, so you cannot go on shift. '
+                    + 'Ring dispatch and they will sort it out.',
+                code: 'shift.noHomeSite',
+            });
             return;
         }
 

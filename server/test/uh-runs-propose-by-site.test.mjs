@@ -85,11 +85,20 @@ beforeAll(async () => {
     sites = (await admin.get(`${UH}/sites`)).body;
 
     /* Green has one on shift and one at home; southeast has one on shift.
-       `nowhere.driver` is the held case: an account, no counter. */
+       `nowhere.driver` is the held case: an account, no counter.
+
+       NOT ON SHIFT SINCE 2 NOVEMBER 2026, AND THAT IS THE POINT. Going on
+       shift now requires a home pharmacy, so "held and on shift" is a state
+       the system can no longer be in -- this fixture used to create it and
+       the shift route answered 409. The three `not.toContain` assertions
+       below are unchanged and now rest on a stronger guarantee: the planner
+       filters a held driver out, AND they could not have been on shift to be
+       filtered. Left in the file rather than deleted, because a held driver
+       who is somehow on shift is exactly what those assertions are for. */
     await driver('green.on', 'green', { onShift: true });
     await driver('green.off', 'green', { onShift: false });
     await driver('southeast.on', 'southeast', { onShift: true });
-    await driver('nowhere.driver', null, { onShift: true });
+    await driver('nowhere.driver', null, { onShift: false });
 
     for (let i = 0; i < 3; i += 1) await order('green');
     for (let i = 0; i < 3; i += 1) await order('southeast');

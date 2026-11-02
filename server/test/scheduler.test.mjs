@@ -24,7 +24,8 @@ beforeAll(async () => {
     admin = await srv.login('admin');
     siteId = (await admin.get(`${UH}/sites`)).body.find((s) => s.code === 'discharge').id;
     await admin.post('/api/users').send({ username: 'ana.sched', name: 'Ana Sched', password: 'sched-pass-1', role: 'driver' });
-    await admin.put('/api/users/ana.sched/memberships/uh').send({ role: 'courier', settings: {} });
+    /* With a home pharmacy: going on shift is refused without one. */
+    await admin.put('/api/users/ana.sched/memberships/uh').send({ role: 'courier', settings: { homeSiteId: siteId } });
     ana = srv.agent();
     await ana.post('/api/login').send({ username: 'ana.sched', password: 'sched-pass-1' });
 }, 60_000);

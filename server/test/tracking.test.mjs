@@ -25,6 +25,8 @@ let srv;
 let admin;
 let ana;
 
+let siteId;
+
 const fix = (over = {}) => ({ at: new Date().toISOString(), lat: 29.4241, lng: -98.4936, accuracyM: 8, ...over });
 
 beforeAll(async () => {
@@ -33,8 +35,11 @@ beforeAll(async () => {
     process.env.RETENTION_LOCATION_TRACE_DAYS = '30';
     srv = await startServer();
     admin = await srv.login('admin');
+    /* A HOME PHARMACY FOR EVERY COURIER HERE. Going on shift is refused
+       without one since 2 November 2026, and tracking is bound to a shift. */
+    siteId = (await admin.get(`${UH}/sites`)).body.find((s) => s.code === 'discharge').id;
     await admin.post('/api/users').send({ username: 'ana.track', name: 'Ana Track', password: 'track-pass-1', role: 'driver' });
-    await admin.put('/api/users/ana.track/memberships/uh').send({ role: 'courier', settings: {} });
+    await admin.put('/api/users/ana.track/memberships/uh').send({ role: 'courier', settings: { homeSiteId: siteId } });
     ana = srv.agent();
     const res = await ana.post('/api/login').send({ username: 'ana.track', password: 'track-pass-1' });
     expect(res.status, res.text).toBe(200);
@@ -136,7 +141,7 @@ describe('the live board', () => {
         /* The most interesting row on the screen. An inner join would hide
            exactly the person a dispatcher needs to ring. */
         await admin.post('/api/users').send({ username: 'silent.track', name: 'Silent', password: 'track-pass-1', role: 'driver' });
-        await admin.put('/api/users/silent.track/memberships/uh').send({ role: 'courier', settings: {} });
+        await admin.put('/api/users/silent.track/memberships/uh').send({ role: 'courier', settings: { homeSiteId: siteId } });
         const silent = srv.agent();
         await silent.post('/api/login').send({ username: 'silent.track', password: 'track-pass-1' });
         await silent.post(`${UH}/shifts/start`).send({});
