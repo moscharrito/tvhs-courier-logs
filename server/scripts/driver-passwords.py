@@ -97,6 +97,48 @@ class Api:
             return err.code, err.read().decode()
 
 
+def check_can_write():
+    """Can we write the document at all? Asked BEFORE the first password.
+
+    THE AFTERNOON THIS EXISTS BECAUSE OF, 1 November 2026.
+
+    python-docx was imported inside write_docx, which runs last. So the
+    script signed in, generated four passwords, SET ALL FOUR ON PRODUCTION,
+    and then died on `ModuleNotFoundError: No module named 'docx'`. The
+    passwords existed only in the memory of the process that had just
+    stopped. Four accounts on a live contract were left holding a
+    credential nobody in the world knew -- not us, not the driver.
+
+    It survived a rehearsal because this machine has two Pythons: the one
+    on Git Bash's PATH had python-docx and the one on PowerShell's did not.
+    Rehearsing under the wrong interpreter proves the wrong thing.
+
+    An import that decides whether work can be RECORDED belongs before the
+    work, not after it. The recovery was cheap here -- run again, get new
+    passwords -- but only because setting a password twice is harmless.
+    """
+    try:
+        import docx  # noqa: F401
+    except ImportError:
+        sys.exit("\n".join([
+            "",
+            "  python-docx is not installed for this interpreter:",
+            f"    {sys.executable}",
+            "",
+            "  NOTHING WAS CHANGED. The document is the only copy of the passwords",
+            "  this script generates, so it refuses to set one it cannot write down.",
+            "",
+            "  Install it and run again:",
+            "",
+            f"    {sys.executable} -m pip install python-docx",
+            "",
+            "  WATCH WHICH PYTHON. More than one is usually installed, and the one",
+            "  on PowerShell's PATH need not be the one on Git Bash's. The path",
+            "  printed above is the one that matters.",
+            "",
+        ]))
+
+
 def write_docx(rows, out_path, base):
     from docx import Document
     from docx.shared import Pt
@@ -197,7 +239,13 @@ def main():
             print(f"    {d['username']:<16} {d['name']}")
         print()
         print("  Report only. No password was changed and no file was written.")
+        # Reported on the dry run too: that is where somebody looks before
+        # committing, and "this will fail at the end" is worth knowing then.
+        check_can_write()
         return
+
+    # Before anything is set. See check_can_write.
+    check_can_write()
 
     user = os.environ.get("SEED_ADMIN_USER", "admin")
     pw = os.environ.get("SEED_ADMIN_PASS", "")
