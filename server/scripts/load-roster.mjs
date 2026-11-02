@@ -28,6 +28,27 @@
  * --apply, then this.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * `vida+wheatley` IS A HOME AND A COVER LIST.
+ *
+ * The first code is where they are BASED -- what the roster counts, what the
+ * planner prefers, what the driver's own account page shows. Every code after
+ * a `+` is a counter they also appear under in the assignment dropdown.
+ *
+ * It is written the way the assignment list writes it. That sheet has a row
+ * headed "Vida + Wheatley" for the one driver who runs both as a single
+ * round, and a file that said it some other way would be a translation
+ * somebody has to do in their head every time the two are compared.
+ *
+ * WHY IT IS NEEDED AT ALL: from 2 November the dropdown offers a pharmacy
+ * only its own drivers. Nobody is BASED at Wheatley -- it is run from Vida on
+ * the same round -- so without a cover list its dropdown is empty and its
+ * list cannot be assigned by anybody.
+ *
+ * The cover list is REPLACED from the file, not merged: this file is the
+ * whole answer to "where does everybody drive from", so a code removed from
+ * a line is removed from the rota. `vida` on its own clears any cover.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  * ONE HOME PHARMACY PER DRIVER, WHICH IS A REAL CONSTRAINT.
  *
  * memberships_user_project_unique gives one membership per person per
@@ -141,9 +162,29 @@ fs.readFileSync(resolved, 'utf8').split(/\r?\n/).forEach((raw, i) => {
         problems.push(`${at}: expected username,site — got ${cells.length} column${cells.length === 1 ? '' : 's'}`);
         return;
     }
-    const [username, site] = cells.map((c) => c.toLowerCase());
-    if (username === '' || site === '') {
+    const [username, siteCell] = cells.map((c) => c.toLowerCase());
+    if (username === '' || siteCell === '') {
         problems.push(`${at}: both a username and a site code are needed`);
+        return;
+    }
+    /* `home+cover+cover`. The first is where they are based and the rest are
+       counters they also appear under; see the header. */
+    const codes = siteCell.split('+').map((c) => c.trim()).filter((c) => c !== '');
+    if (codes.length === 0) {
+        problems.push(`${at}: no site code in "${siteCell}"`);
+        return;
+    }
+    const site = codes[0];
+    const covers = codes.slice(1);
+    if (covers.includes(site)) {
+        /* Their own counter in their own cover list: harmless to store and
+           impossible to mean, so it is more likely a typo in a line somebody
+           is about to trust. */
+        problems.push(`${at}: ${username} covers "${site}", which is already where they are based`);
+        return;
+    }
+    if (site === 'none' && covers.length > 0) {
+        problems.push(`${at}: ${username} has no pharmacy, so "${covers.join('+')}" cannot be cover for one`);
         return;
     }
     /* Spelt out rather than left as an empty second column. A blank cell is
@@ -158,7 +199,7 @@ fs.readFileSync(resolved, 'utf8').split(/\r?\n/).forEach((raw, i) => {
         return;
     }
     seen.add(username);
-    rows.push({ username, site, clear, at });
+    rows.push({ username, site, covers, clear, at });
 });
 
 if (problems.length > 0) {
@@ -223,9 +264,27 @@ async function main() {
     const missingDriver = [];
     const missingSite = [];
 
+    /** Site codes to ids, reporting any the project does not have. */
+    const resolveCovers = (r) => {
+        const ids = [];
+        for (const code of r.covers) {
+            const found = siteByCode.get(code);
+            if (!found) return null;
+            ids.push(found.id);
+        }
+        return ids;
+    };
+    /** Same set, order ignored: the server stores it deduplicated and the
+     *  order of a cover list means nothing. */
+    const sameSet = (a, b) => a.length === b.length && [...a].sort().join(',') === [...b].sort().join(',');
+
     for (const r of rows) {
         const site = r.clear ? null : siteByCode.get(r.site);
         if (!r.clear && !site) { missingSite.push(r); continue; }
+        const coverIds = resolveCovers(r);
+        if (coverIds === null) { missingSite.push(r); continue; }
+        r.coverIds = coverIds;
+        r.coverNames = r.covers.map((c) => siteByCode.get(c)?.name ?? c);
         const driver = driverBy.get(r.username);
         /* A `none` row for somebody who is not on the project is NOT a
            problem to report: there is nothing to take away. Said quietly
@@ -237,7 +296,12 @@ async function main() {
             else toClear.push({ ...r, driver, site: null });
             continue;
         }
-        if (driver.homeSiteId === site.id) already.push({ ...r, driver, site });
+        /* THE COVER LIST COUNTS AS A CHANGE. Without this, adding a cover to
+           a driver who is already at the right counter would report "already
+           set" and write nothing -- which is exactly the line somebody adds
+           when a pharmacy's dropdown is empty. */
+        const coverNow = driver.alsoCovers ?? [];
+        if (driver.homeSiteId === site.id && sameSet(coverNow, coverIds)) already.push({ ...r, driver, site });
         else toSet.push({ ...r, driver, site });
     }
 
@@ -276,9 +340,16 @@ async function main() {
         say(`  WOULD SET (${toSet.length}):`);
         for (const r of toSet) {
             const from = r.driver.homeSiteName ?? 'no home pharmacy';
-            say(`    ${r.driver.name.padEnd(24)} ${from}  ->  ${r.site.name}`);
+            const cover = r.coverNames.length > 0 ? `   + covers ${r.coverNames.join(', ')}` : '';
+            say(`    ${r.driver.name.padEnd(24)} ${from}  ->  ${r.site.name}${cover}`);
         }
         say('');
+        if (toSet.some((r) => r.coverNames.length > 0)) {
+            say('    A COVER IS NOT A SECOND HOME. It does not change the per-counter driver');
+            say('    counts or who the planner picks first; it decides who the assignment');
+            say('    dropdown offers for that pharmacy.');
+            say('');
+        }
     }
 
     /* Listed separately and second, because it is the half worth reading
@@ -314,8 +385,15 @@ async function main() {
        for reasons nobody can see. */
     for (const r of [...toClear, ...toSet]) {
         const homeSiteId = r.site === null ? null : r.site.id;
-        const res = await call('PUT', `/api/projects/${project}/uh/roster/${encodeURIComponent(r.username)}`, { homeSiteId });
-        const where = r.site === null ? 'no home pharmacy' : r.site.name;
+        /* alsoCovers is sent on EVERY row, including an empty one. The
+           endpoint treats it as unchanged when absent, and this file is the
+           whole answer to where everybody drives from -- so a code taken off
+           a line has to come off the rota. */
+        const res = await call('PUT', `/api/projects/${project}/uh/roster/${encodeURIComponent(r.username)}`, {
+            homeSiteId, alsoCovers: r.coverIds ?? [],
+        });
+        const cover = (r.coverNames ?? []).length > 0 ? ` + ${r.coverNames.join(', ')}` : '';
+        const where = (r.site === null ? 'no home pharmacy' : r.site.name) + cover;
         if (res.status === 200) { ok += 1; say(`    ok      ${r.driver.name} -> ${where}`); }
         else { failed.push({ r, res }); say(`    FAILED  ${r.username}  HTTP ${res.status}`); }
     }
