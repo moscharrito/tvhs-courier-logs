@@ -202,6 +202,29 @@ export interface DispatchSettings {
     phone: string;
     /** What the courier app calls them: "Izy dispatch". */
     name: string;
+    /**
+     * Whether the unclaimed-work sweep may hand deliveries out by itself.
+     *
+     * FALSE MEANS A HUMAN CHOOSES THE DRIVER, EVERY TIME. The sweep still
+     * runs, still works out which deliveries are near their deadline with
+     * nobody on them, and still reports it -- it simply assigns nothing and
+     * raises nothing. Dispatch assigns from the board.
+     *
+     * Turned off for University Health on 2 November 2026. The sweep picks
+     * "on shift and least loaded", and anybody with a courier membership can
+     * go on shift, so on a contract with thirty-nine accounts and no roster
+     * gate it handed work to whoever had tapped the button -- including the
+     * eight who are not on the confirmed list. The rule was reasonable and
+     * the input to it was not.
+     *
+     * NOT the same as SWEEP_INTERVAL_SECONDS, and that distinction is the
+     * point of having this at all: that environment variable is the timer
+     * for the whole tick, which also drains queued notification email and
+     * sends patient texts. Switching it off to stop the assigning would stop
+     * those too, silently, and nothing on the health endpoint would say that
+     * is why the mail stopped moving.
+     */
+    autoAssign: boolean;
 }
 
 export interface ReturnSettings {
@@ -412,7 +435,10 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     /* No default number: a wrong one is worse than none, because a courier
        standing at a door with a problem would dial it and reach a stranger.
        The courier app hides the button until someone sets this. */
-    dispatch: { phone: '', name: 'Dispatch' },
+    /* autoAssign true keeps the behaviour every project had before this
+       setting existed. A default that silently stopped a STAT being handed
+       out would be a worse surprise than one that keeps doing it. */
+    dispatch: { phone: '', name: 'Dispatch', autoAssign: true },
     returns: { afterHoursSiteCode: 'discharge' },
     /* No recipients, so nothing is sent until somebody names one. */
     reporting: { dailyRecipients: [], days: [0, 1, 2, 3, 4, 5, 6] },
@@ -501,6 +527,10 @@ export const SettingsPatch = z.object({
            It only ever becomes a tel: link. */
         phone: z.string().trim().max(40).regex(/^[0-9+()\-.\s]*$/, 'digits and + ( ) - . only').optional(),
         name: z.string().trim().max(60).optional(),
+        /* Who may be given a delivery without a person deciding. A contract
+           decision like delivery.personalHandoverOnly, and audited the same
+           way. */
+        autoAssign: z.boolean().optional(),
     }).strict().optional(),
     returns: z.object({
         /* Validated as a site code, not checked against the sites table here:

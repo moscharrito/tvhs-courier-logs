@@ -37,7 +37,9 @@ const STREET = '4410 Callaghan Rd';
 
 async function courier(username) {
     await admin.post('/api/users').send({ username, name: username, password: 'req-pass-1', role: 'driver' });
-    await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'courier', settings: {} });
+    /* WITH A HOME PHARMACY. Going on shift is refused without one since
+       2 November 2026, and every courier in this file goes on shift. */
+    await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'courier', settings: { homeSiteId: siteId } });
     const a = srv.agent();
     const res = await a.post('/api/login').send({ username, password: 'req-pass-1' });
     expect(res.status, res.text).toBe(200);
@@ -110,6 +112,49 @@ describe('what nobody asks for', () => {
         expect(order.body.custody.find((e) => e.type === 'assigned').actor).toBe('system');
     });
 
+    it('assigns nothing when the contract assigns by hand', async () => {
+        /* dispatch.autoAssign false, set for University Health on 2 November
+           2026. The sweep picks "on shift and least loaded", and anybody with
+           a courier membership can go on shift, so on a contract with
+           thirty-nine accounts it handed work to whoever had tapped the
+           button -- including people who are not on the confirmed roster.
+
+           PROVED AGAINST THE SAME ORDER THAT WOULD OTHERWISE BE TAKEN, in
+           the same breath, because "nothing was assigned" is also true of a
+           quiet afternoon and a test that only looked at the second half
+           would pass against a sweep that found nothing at all. */
+        const id = await poolOrder({ serviceType: 'stat' });
+        await dueIn(id, SWEEP_THRESHOLDS.stat - 10);
+        const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
+
+        const manual = await sweepUnclaimed(core(), {
+            projectId, serviceDate, now: new Date(),
+            projectSettings: { dispatch: { autoAssign: false } },
+        });
+        expect(manual.autoAssign).toBe(false);
+        /* Nothing is reported as assigned, because nothing was. The courier
+           the sweep would have chosen is still offered, as a suggestion to
+           whoever is now choosing. */
+        expect(manual.assigned).toEqual([]);
+        expect(manual.needsAssigning.map((a) => a.orderId)).toContain(id);
+
+        /* Nothing was written either: the order is still unassigned and on
+           nobody's run. A dry run that reported correctly and assigned
+           anyway would pass the two lines above. */
+        const after = (await admin.get(`${UH}/orders/${id}`)).body;
+        expect(after.assignedTo ?? null).toBeNull();
+
+        /* And with the setting left alone, the very same order IS taken --
+           so the first half of this test is about the setting and not about
+           an order the sweep was never going to reach. */
+        const auto = await sweepUnclaimed(core(), {
+            projectId, projectSettings: {}, serviceDate, now: new Date(),
+        });
+        expect(auto.autoAssign).toBe(true);
+        expect(auto.assigned.map((a) => a.orderId)).toContain(id);
+        expect(auto.needsAssigning).toEqual([]);
+    });
+
     it('says so loudly when there is nobody to give it to', async () => {
         /* The case the sweep cannot fix. Saying nothing would leave it as
            invisible as it was before there was a sweep at all. */
@@ -164,10 +209,23 @@ describe('what nobody asks for', () => {
            readings lead to opposite behaviour: one person presses it every
            ten minutes for nothing, the next assumes it is automatic and a
            STAT sits there. SWEEP_INTERVAL_SECONDS is unset in the test
-           environment, as it is everywhere else today. */
+           environment, as it is everywhere else today.
+
+           TWO HALVES SINCE 2 NOVEMBER, because either alone misleads. The
+           timer and the permission to assign are separate switches -- the
+           tick also drains notification email and sends patient texts, so
+           stopping the assigning by stopping the timer would stop those too.
+           `automatic` is the AND of them, which is the question a dispatcher
+           is actually asking: is work being handed out without me. */
         const res = await admin.get(ESC);
         expect(res.status).toBe(200);
-        expect(res.body.sweep).toEqual({ automatic: false, everySeconds: null });
+        expect(res.body.sweep).toEqual({
+            automatic: false,
+            everySeconds: null,
+            timerRunning: false,
+            /* Default, and unchanged for a project that never set it. */
+            autoAssign: true,
+        });
     });
 });
 

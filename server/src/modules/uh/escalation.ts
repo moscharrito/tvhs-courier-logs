@@ -68,11 +68,18 @@ export function createEscalationRouter({ client, config }: { client: Client; con
      * the two readings lead to opposite behaviour -- one person presses it
      * every ten minutes for no reason, the next assumes it is automatic and a
      * STAT sits there. */
-    router.get('/', staff, wrap(async (_req, res) => {
+    router.get('/', staff, wrap(async (req, res) => {
+        /* BOTH HALVES, because either one alone is a misleading answer. The
+           timer can be running while the contract assigns by hand, and
+           "automatic: true" on its own would tell a dispatcher that work is
+           being handed out when nothing is. */
+        const autoAssign = resolveSettings(req.project!.settings).dispatch.autoAssign;
         res.json({
             sweep: {
-                automatic: config?.sweepIntervalSeconds !== undefined,
+                automatic: config?.sweepIntervalSeconds !== undefined && autoAssign,
                 everySeconds: config?.sweepIntervalSeconds ?? null,
+                timerRunning: config?.sweepIntervalSeconds !== undefined,
+                autoAssign,
             },
         });
     }));
@@ -117,6 +124,28 @@ export interface SweepOutcome {
     assigned: Array<{ orderId: number; courierUsername: string; courierName: string; serviceType: string; minutesToDue: number; runId: number | null }>;
     /** Past the threshold and nobody to give it to. The loud case. */
     unassignable: Array<{ orderId: number; serviceType: string; minutesToDue: number; reason: string }>;
+    /** Near its deadline, nobody on it, and NOT handed out because this
+     *  contract assigns by hand. The dispatcher's to-do list.
+     *
+     *  A SEPARATE FIELD RATHER THAN `assigned`. In a dry run `assigned`
+     *  means "would be given to this courier", which is the right shape for
+     *  a preview somebody asked for. Reusing it here would have every screen
+     *  and every script reading a list of deliveries as handed out when
+     *  nobody has them -- the courier named on each row has not been told
+     *  and is not carrying it. Caught by its own test, which expected an
+     *  empty `assigned` and got the preview.
+     *
+     *  The courier on each row is still the one the sweep WOULD have picked,
+     *  which is worth keeping: least-loaded on shift is a reasonable opening
+     *  suggestion for the person now choosing. */
+    needsAssigning: Array<{ orderId: number; courierUsername: string; courierName: string; serviceType: string; minutesToDue: number }>;
+    /** Whether the sweep was allowed to assign at all.
+     *
+     *  REPORTED RATHER THAN INFERRED FROM AN EMPTY `assigned`. "Nothing was
+     *  handed out" is true of a quiet afternoon, of a dry run, and of a
+     *  contract that assigns by hand, and those are three different things
+     *  for whoever is reading it. */
+    autoAssign: boolean;
     /** On shift and how much each is already carrying, for the record. */
     /* `courierName` beside the username on both of these: the username on
        this contract is a personal email address, and the escalation table
@@ -135,6 +164,24 @@ export interface SweepOutcome {
 export async function sweepUnclaimed(client: Client, input: SweepInput): Promise<SweepOutcome> {
     const { projectId, serviceDate, now } = input;
     const run = (sql: string, args: InValue[] = []) => client.execute({ sql, args });
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * MANUAL ASSIGNING IS A DRY RUN THAT STILL REPORTS.
+     *
+     * dispatch.autoAssign false means a person chooses the driver. The
+     * cheapest honest way to do that is to treat the whole sweep as a dry
+     * run: it works out exactly what it would have handed out and to whom,
+     * writes nothing, and -- because the notifications below are already
+     * gated on dryRun -- tells nobody.
+     *
+     * TELLING NOBODY IS DELIBERATE. The timer runs every two minutes. A
+     * "nobody has taken delivery 4182" notification per tick is thirty an
+     * hour for one order, which would be a new mess in place of the one this
+     * setting removes. Dispatch sees unassigned work on the board, which is
+     * where they are already looking.
+     * ───────────────────────────────────────────────────────────────────── */
+    const autoAssign = resolveSettings(input.projectSettings).dispatch.autoAssign;
+    const dryRun = input.dryRun === true || !autoAssign;
 
     const pending = await run(
         `SELECT o.id, o.service_type, o.due_at
@@ -194,7 +241,7 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
         couriers.sort((a, b) => a.open - b.open || a.courierUsername.localeCompare(b.courierUsername));
         const pick = couriers[0]!;
 
-        if (input.dryRun) {
+        if (dryRun) {
             assigned.push({ orderId, courierUsername: pick.courierUsername, serviceType, minutesToDue, runId: null });
             pick.open += 1;
             continue;
@@ -243,7 +290,7 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
        the sweep cannot fix, and until now it was only visible to whoever read
        the response. It goes to every dispatcher by name, because a problem
        that lives in an HTTP body is a problem nobody is holding. */
-    if (unassignable.length > 0 && !input.dryRun) {
+    if (unassignable.length > 0 && !dryRun) {
         const worst = unassignable.reduce((a, b) => (a.minutesToDue <= b.minutesToDue ? a : b));
         await notifyAll(client, await dispatchersOf(client, projectId), {
             projectId,
@@ -265,9 +312,15 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
         ...couriers.map((c) => c.courierUsername),
     ]);
     const named = (u: string) => names.get(u) ?? u;
+    /* MANUAL MODE REPORTS, IT DOES NOT CLAIM. Everything the sweep would
+       have handed out moves to needsAssigning and `assigned` comes back
+       empty, because nothing was. See the field's own note. */
+    const previewed = assigned.map((a) => ({ ...a, courierName: named(a.courierUsername) }));
     return {
         serviceDate,
-        assigned: assigned.map((a) => ({ ...a, courierName: named(a.courierUsername) })),
+        autoAssign,
+        needsAssigning: autoAssign ? [] : previewed.map(({ runId: _runId, ...rest }) => rest),
+        assigned: autoAssign ? previewed : [],
         unassignable,
         couriers: couriers.map((c) => ({ ...c, courierName: named(c.courierUsername) })),
     };
