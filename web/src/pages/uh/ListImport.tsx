@@ -478,7 +478,7 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
             ) : (
                 <>
                 <table className="izy-table">
-                    <thead><tr><th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Sheet</th></tr></thead>
                     <tbody>
                         {pagedRecent.rows.map((l) => (
                             <tr key={l.id}>
@@ -492,6 +492,30 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                     lib/people.ts. */}
                                 <td className="izy-muted">
                                     {displayName({ name: l.importedByName ?? '', username: l.importedBy })}
+                                </td>
+                                {/* THE DELIVERIES THIS UPLOAD MADE, as a sheet.
+                                    NOT the uploaded file: nothing keeps that,
+                                    because preview and commit take the same
+                                    bytes and nothing is staged between them, so
+                                    an operator who walks away leaves no patient
+                                    addresses behind. The column is headed Sheet
+                                    rather than File for that reason -- the
+                                    column to its left is already the name of
+                                    something we do not have.
+
+                                    A plain link, not a fetch: the browser
+                                    handles the download, carries the session
+                                    cookie, and needs no JavaScript to hold a
+                                    spreadsheet of patient addresses in memory
+                                    on the way past. */}
+                                <td>
+                                    <a
+                                        className="izy-btn secondary small"
+                                        href={`${base}/${l.id}/export.xlsx`}
+                                        aria-label={`Download the deliveries from the ${l.serviceDate} ${l.site.name} list`}
+                                    >
+                                        Download
+                                    </a>
                                 </td>
                             </tr>
                         ))}

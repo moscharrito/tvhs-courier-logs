@@ -541,6 +541,80 @@ describe('access control', () => {
         expect(orderProjects.map((r) => r.code)).toEqual(['uh']);
     });
 });
+/* ---------------------------------------------- taking a list away (2 Nov) */
+
+describe('a list as a file', () => {
+    /* "Send me the list the pharmacy sent" was answered by filtering the
+       orders export to a date and a pharmacy, which is wrong twice: a
+       pharmacy can send two lists for one day, and an order added by hand
+       afterwards falls inside the same filter without belonging to any
+       list. */
+    it('returns a spreadsheet of exactly the deliveries that upload created', async () => {
+        await reset();
+        const first = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        expect(first.status, first.text).toBe(201);
+        const listId = first.body.id;
+        const made = first.body.summary.imported;
+        expect(made).toBeGreaterThan(0);
+
+        /* AN ORDER ADDED BY HAND, on the same day and the same pharmacy. It
+           belongs to no list, and a date-and-pharmacy filter would sweep it
+           in -- which is the whole reason this endpoint is keyed on the list
+           rather than on the filters. */
+        const byHand = await admin.post(`${BASE.replace('/imports', '')}/orders`).send({
+            siteId: dischargeId, serviceType: 'adhoc', recipientName: 'Added By Hand',
+            addressLine: '1 Nowhere St', zip: '78229', description: 'Cold pack', quantity: 1,
+            serviceDate: '2026-09-14',
+        });
+        expect(byHand.status, byHand.text).toBe(201);
+
+        const res = await admin.get(`${BASE}/${listId}/export.xlsx`);
+        expect(res.status, res.text).toBe(200);
+        expect(String(res.headers['content-type'])).toMatch(/spreadsheet|officedocument/);
+        /* Named after the list and its day, not after today: this gets opened
+           next to the pharmacy's own copy, possibly weeks later. */
+        expect(String(res.headers['content-disposition'])).toMatch(/list-\d+-discharge-2026-09-14\.xlsx/);
+        /* Not asserting on the body's size: supertest hands a binary response
+           back in a shape that varies, and the two headers above already say
+           a spreadsheet came out. What this test is actually about is WHICH
+           rows went into it, which is checked against the database below. */
+
+        /* The row count is checked against the database rather than read out
+           of the spreadsheet: what is being pinned is WHICH rows it asks for,
+           and the hand-added order must not be among them. */
+        const inList = await sql('SELECT COUNT(*) AS n FROM orders WHERE daily_list_id = ?', [listId]);
+        expect(Number(inList.rows[0].n)).toBe(made);
+        const onTheDay = await sql(
+            "SELECT COUNT(*) AS n FROM orders WHERE service_date = '2026-09-14' AND site_id = ?",
+            [dischargeId],
+        );
+        expect(Number(onTheDay.rows[0].n)).toBe(made + 1);
+    });
+
+    it('answers 404 for a list that does not exist', async () => {
+        const res = await admin.get(`${BASE}/999999/export.xlsx`);
+        expect(res.status).toBe(404);
+    });
+
+    it('records the export as its own action, not as reading the list', async () => {
+        /* Reading a list on a screen and taking a copy of it out of the
+           building are different events. A trail that called them the same
+           thing could not answer which one happened. */
+        await reset();
+        const made = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        expect(made.status, made.text).toBe(201);
+
+        await admin.get(`${BASE}/${made.body.id}/export.xlsx`);
+
+        const rows = await sql(
+            "SELECT action FROM audit_events WHERE entity_id = ? AND action IN ('list.export','list.read')",
+            [String(made.body.id)],
+        );
+        expect(rows.rows.map((r) => r.action)).toContain('list.export');
+        expect(rows.rows.map((r) => r.action)).not.toContain('list.read');
+    });
+});
+
 /* ------------------------------------------------- one transaction (4.9) */
 
 describe('the import is all or nothing', () => {

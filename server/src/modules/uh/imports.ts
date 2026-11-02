@@ -801,6 +801,131 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         res.json({ ok: true, siteId });
     }));
 
+    /* ─────────────────────────────────────────── one list, as a file
+     *
+     * "Send me the list the pharmacy sent" was answered by filtering the
+     * orders export to a date and a pharmacy, and that answer is wrong
+     * twice: a pharmacy can send two lists for one day, and an order added
+     * by hand afterwards falls inside the same filter without belonging to
+     * any list. Keyed on daily_list_id, this is exactly the rows that import
+     * created and nothing else.
+     *
+     * IT IS NOT THE UPLOADED FILE. Nothing keeps that: preview and commit
+     * take the same bytes and nothing is staged between them, so an operator
+     * who walks away leaves no patient addresses behind -- see the header of
+     * this file. What this returns is what the import MADE of that file,
+     * which is the thing that can be reconciled against it.
+     *
+     * THE SCOPING IS THE SAME AS '/:id' BELOW, including answering 404 and
+     * not 403 for a list belonging to another pharmacy. This is keyed by an
+     * id, and "not yours" to a number lets somebody count how many lists
+     * another pharmacy has uploaded by walking ids. A copy of that rule that
+     * answered 403 here would hand that back through the export instead.
+     */
+    router.get('/:id/export.xlsx', readers, wrap(async (req, res) => {
+        const id = Number(req.params['id']);
+        if (!Number.isInteger(id) || id <= 0) { res.status(404).json({ error: 'Import not found' }); return; }
+
+        const listRs = await client.execute({
+            sql: `SELECT l.*, s.code AS site_code, s.name AS site_name
+                  FROM daily_lists l JOIN sites s ON s.id = l.site_id
+                  WHERE l.project_id = ? AND l.id = ?`,
+            args: [req.project!.id, id],
+        });
+        const l = listRs.rows[0];
+        if (!l) { res.status(404).json({ error: 'Import not found' }); return; }
+        const allowed = allowedSiteIds(req);
+        if (allowed !== null && !allowed.includes(Number(l['site_id']))) {
+            res.status(404).json({ error: 'Import not found' });
+            return;
+        }
+
+        const rs = await client.execute({
+            sql: `SELECT o.*, (SELECT SUM(quantity) FROM packages p WHERE p.order_id = o.id) AS package_qty
+                  FROM orders o
+                  WHERE o.project_id = ? AND o.daily_list_id = ?
+                  ORDER BY o.id
+                  LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            args: [req.project!.id, id],
+        });
+        if (tooManyRows(res, rs.rows.length, 'orders')) return;
+
+        const rows = rs.rows.map((o) => ({
+            reference: String(o['external_ref'] ?? ''),
+            serviceType: String(o['service_type'] ?? ''),
+            status: String(o['status'] ?? ''),
+            patient: String(o['recipient_name'] ?? ''),
+            address: [String(o['address_line'] ?? ''), String(o['address_line2'] ?? '')].filter(Boolean).join(', '),
+            city: String(o['city'] ?? ''),
+            zip: String(o['zip'] ?? ''),
+            /* The words rather than a blank, as the orders export does: an
+               empty cell for an out-of-area delivery reads as missing data. */
+            zone: o['zone'] === null ? 'out of area' : Number(o['zone']),
+            packages: o['package_qty'] === null ? 0 : Number(o['package_qty']),
+            signature: o['signature_required'] ? 'required' : '',
+            notes: String(o['delivery_notes'] ?? ''),
+            courier: String(o['assigned_to_username'] ?? ''),
+            dueAt: String(o['due_at'] ?? ''),
+            deliveredAt: String(o['delivered_at'] ?? ''),
+            failureReason: String(o['failure_reason'] ?? '').replace(/_/g, ' '),
+        }));
+
+        const skipped = Number(l['skipped_count'] ?? 0);
+        await sendSpreadsheet(req, res, {
+            sheetName: 'List',
+            columns: [
+                /* The pharmacy's own handle first: this sheet exists to be
+                   read beside the file they sent, and the reference is the
+                   column both sides have. */
+                { header: 'Reference', key: 'reference', width: 16 },
+                { header: 'Service', key: 'serviceType', width: 10 },
+                { header: 'Status', key: 'status', width: 13 },
+                { header: 'Patient', key: 'patient', width: 24 },
+                { header: 'Address', key: 'address', width: 34 },
+                { header: 'City', key: 'city', width: 16 },
+                { header: 'ZIP', key: 'zip', width: 8 },
+                { header: 'Zone', key: 'zone', width: 10 },
+                { header: 'Packages', key: 'packages', width: 10 },
+                { header: 'Signature', key: 'signature', width: 11 },
+                { header: 'Notes', key: 'notes', width: 30 },
+                { header: 'Courier', key: 'courier', width: 16 },
+                { header: 'Due', key: 'dueAt', width: 22 },
+                { header: 'Delivered', key: 'deliveredAt', width: 22 },
+                { header: 'Not delivered because', key: 'failureReason', width: 22 },
+            ],
+            rows,
+            /* Named after the list rather than after today: this file is
+               about one upload and gets opened next to the pharmacy's copy
+               of it, possibly weeks later. */
+            filename: `list-${id}-${String(l['site_code'])}-${String(l['service_date'])}.xlsx`,
+            about: [
+                ['What this is', 'The deliveries this upload created. NOT the uploaded file, which is not kept.'],
+                ['Pharmacy', String(l['site_name'])],
+                ['Service date', String(l['service_date'])],
+                ['Uploaded file', String(l['source_filename'] ?? '')],
+                ['Received', String(l['received_at'] ?? '')],
+                ['Uploaded by', String(l['imported_by'] ?? '')],
+                /* Rows in against deliveries out, stated rather than left to
+                   be worked out from two numbers. A list where they differ
+                   is the one somebody is reconciling. */
+                ['Rows in the file', String(l['row_count'] ?? '')],
+                ['Deliveries created', String(l['order_count'] ?? '')],
+                ['Rows skipped', skipped === 0 ? 'none' : String(skipped)],
+                ['Times', req.project!.timezone],
+            ],
+            /* Patient names and home addresses are in the List sheet. */
+            containsPatientData: true,
+            /* A DISTINCT ACTION FROM list.read. Reading a list on a screen
+               and taking a copy of it out of the building are different
+               events, and a trail that called them the same thing could not
+               answer which one happened. */
+            auditAction: 'list.export',
+            auditEntity: 'daily_list',
+            auditEntityId: String(id),
+            auditDetail: { siteId: Number(l['site_id']), orders: rows.length },
+        });
+    }));
+
     router.get('/:id', readers, wrap(async (req, res) => {
         const id = Number(req.params['id']);
         if (!Number.isInteger(id) || id <= 0) { res.status(404).json({ error: 'Import not found' }); return; }

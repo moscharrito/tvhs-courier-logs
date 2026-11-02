@@ -204,6 +204,36 @@ describe('ListImport', () => {
         expect(within(row3).getByText('2026-09-14')).toBeInTheDocument();
         expect(within(row3).getByText('5')).toBeInTheDocument();
     });
+
+    it('offers each list as a download, pointed at that list and no other', async () => {
+        /* "Send me the list the pharmacy sent" used to mean filtering the
+           orders export to a date and a pharmacy, which is wrong twice: a
+           pharmacy can send two lists for one day, and an order added by
+           hand afterwards falls inside the same filter. The link is keyed on
+           the list id so it cannot pick up either. */
+        stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [{
+                id: 3, site: { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+                serviceDate: '2026-09-14', status: 'released', receivedAt: '2026-09-14T17:00:00.000Z',
+                sourceFilename: 'manifest.xlsx', rowCount: 8, orderCount: 5, skippedCount: 3, importedBy: 'admin',
+            }, {
+                id: 4, site: { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+                serviceDate: '2026-09-14', status: 'released', receivedAt: '2026-09-14T19:00:00.000Z',
+                sourceFilename: 'second-run.xlsx', rowCount: 2, orderCount: 2, skippedCount: 0, importedBy: 'admin',
+            }],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+
+        /* TWO LISTS, ONE PHARMACY, ONE DAY -- the case a filtered export
+           cannot tell apart. Each row's link must carry its own id. */
+        const first = (await screen.findByText('manifest.xlsx')).closest('tr')!;
+        const second = (await screen.findByText('second-run.xlsx')).closest('tr')!;
+        expect(within(first).getByRole('link', { name: /Download/ }))
+            .toHaveAttribute('href', '/api/projects/uh/uh/imports/3/export.xlsx');
+        expect(within(second).getByRole('link', { name: /Download/ }))
+            .toHaveAttribute('href', '/api/projects/uh/uh/imports/4/export.xlsx');
+    });
     /* ───────── the preview and the import disagreeing (28 October 2026) */
 
     const previewed = async () => {

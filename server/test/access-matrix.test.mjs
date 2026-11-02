@@ -358,6 +358,10 @@ const MATRIX = [
     ['GET', `${UH}/imports`, UH_CLIENT_VIEW, 'reading one discloses what uploading one did'],
     ['GET', `${UH}/imports/export.xlsx`, UH_CLIENT_VIEW, 'which list arrived when, scoped like the list'],
     ['GET', `${UH}/imports/999999`, UH_CLIENT_VIEW, ''],
+    /* Scoped exactly like reading one, because it IS reading one: a pharmacy
+       may take its own list away as a sheet, and a list belonging to another
+       counter answers 404 rather than 403 so ids cannot be walked. */
+    ['GET', `${UH}/imports/999999/export.xlsx`, UH_CLIENT_VIEW, 'a pharmacy takes its own list away as a file'],
     /* The saved mapping stays ours: reading or clearing it is a repair, and a
        pharmacy gets everything it needs from a preview instead. */
     ['GET', `${UH}/imports/mappings/999999`, UH_STAFF, 'the saved mapping is a dispatch repair'],

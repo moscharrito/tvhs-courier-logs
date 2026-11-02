@@ -223,6 +223,32 @@ describe('the counter next door', () => {
         expect(res.status).toBe(404);
         expect(JSON.stringify(res.body)).not.toMatch(/recipient|address|patient/i);
     });
+
+    it('cannot be downloaded as a sheet either, by the same rule', async () => {
+        /* THE EXPORT IS A SECOND DOOR ONTO THE SAME ROOM, added 2 November.
+           Scoping the screen and forgetting the file would hand over every
+           patient name and home address on another counter's list -- in the
+           most portable form there is, with no further request needed. */
+        const theirs = await upload(admin, BASE, { siteId: green.id, serviceDate: ownDay() });
+        expect(theirs.status, JSON.stringify(theirs.body).slice(0, 200)).toBe(201);
+
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        const res = await them.get(`${BASE}/${theirs.body.id}/export.xlsx`);
+        expect(res.status).toBe(404);
+        /* And no spreadsheet came back under the 404, which the status alone
+           does not prove. */
+        expect(String(res.headers['content-type'] ?? '')).not.toMatch(/spreadsheet|officedocument/);
+    });
+
+    it('can download its own, which is the point of the button', async () => {
+        const mine = await upload(admin, BASE, { siteId: discharge.id, serviceDate: ownDay() });
+        expect(mine.status, JSON.stringify(mine.body).slice(0, 200)).toBe(201);
+
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        const res = await them.get(`${BASE}/${mine.body.id}/export.xlsx`);
+        expect(res.status, res.text).toBe(200);
+        expect(String(res.headers['content-type'])).toMatch(/spreadsheet|officedocument/);
+    });
 });
 
 describe('an account with no counters named', () => {
