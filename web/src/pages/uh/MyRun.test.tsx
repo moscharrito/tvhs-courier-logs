@@ -70,8 +70,15 @@ function renderRun(routes: Record<string, unknown>) {
     );
 }
 
-/** The sheet's controls for the stop a courier is driving to right now. */
-const thisStop = () => screen.getByRole('group', { name: 'This stop' });
+/** The row of All stops for the stop a courier is driving to right now.
+ *
+ *  It used to be a group of cards in the sheet -- Open the stop, Directions,
+ *  Details -- which went on 3 November: all three are on every row of the
+ *  list below, including this one, so the cards were three ways to reach
+ *  what a link eight lines further down already reached. The tests that were
+ *  about Directions follow it to the row; the two that were about the cards
+ *  themselves are rewritten below. */
+const thisStop = () => screen.getAllByRole('listitem')[0] as HTMLElement;
 
 const base = (over = {}) => ({
     'GET /api/session': session,
@@ -308,10 +315,19 @@ describe('MyRun', () => {
         expect(within(next).queryAllByRole('link')).toHaveLength(0);
         expect(within(next).queryAllByRole('button')).toHaveLength(0);
 
-        /* And the controls for it are together, in the sheet, named. */
-        const sheet = thisStop();
-        expect(within(sheet).getByRole('link', { name: 'Open the stop' })).toBeInTheDocument();
-        expect(within(sheet).getByRole('link', { name: 'Directions' })).toBeInTheDocument();
+        /* THE CONTROLS ARE ON THE ROW, and only there. The sheet carried a
+           second copy of all three until 3 November; what has to stay true
+           is that the panel is information and the controls are reachable,
+           not which of two places they are in. */
+        expect(within(thisStop()).getByRole('link', { name: 'Open the stop' })).toBeInTheDocument();
+        expect(within(thisStop()).getByRole('link', { name: 'Directions' })).toBeInTheDocument();
+        /* AND NOWHERE ELSE. Counted against the list rather than against a
+           number, because the fixture’s stop count is not the point: what
+           is being pinned is that no copy of this control survives outside
+           the row it belongs to. */
+        const list = screen.getAllByRole('list')[0] as HTMLElement;
+        expect(screen.getAllByRole('link', { name: 'Open the stop' }))
+            .toHaveLength(within(list).getAllByRole('link', { name: 'Open the stop' }).length);
     });
 
     it('names a card after its action, not after the whole card', async () => {
@@ -324,14 +340,18 @@ describe('MyRun', () => {
            The detail is still announced — as a description. Both halves are
            asserted, because pinning the name by DELETING the explanation
            would pass the first half and be a worse screen. */
-        renderRun(base());
-        await screen.findByRole('heading', { name: 'Today' });
-        /* Scoped, because the list below has one per row and they share this
-           name — which is the point: before this they could not. */
-        const open = within(thisStop()).getByRole('link', { name: 'Open the stop' });
-        expect(open.getAttribute('aria-describedby')).not.toBeNull();
-        expect(document.getElementById(open.getAttribute('aria-describedby')!)?.textContent)
-            .toContain('Stop 1 for Ines Vargas');
+        /* Pointed at Collect from a pharmacy since 3 November. The card
+           this was written for -- Open the stop, in the sheet -- is gone,
+           but the rule belongs to CardLink and every card still obeys it. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' })] }],
+            }),
+        }));
+        const collect = await screen.findByRole('link', { name: 'Collect from a pharmacy' });
+        expect(collect.getAttribute('aria-describedby')).not.toBeNull();
+        expect(document.getElementById(collect.getAttribute('aria-describedby')!)?.textContent)
+            .toContain('waiting to be picked up');
     });
 
     it('offers to collect from a pharmacy rather than naming a run number', async () => {

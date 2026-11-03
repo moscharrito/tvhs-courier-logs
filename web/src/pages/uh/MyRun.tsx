@@ -58,8 +58,8 @@ import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
 import { ShiftBar } from './ShiftBar';
 import { Section } from '../../app/Section';
-import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
-import { BoxIcon, HistoryIcon, NavigateIcon, PinIcon } from '../../app/Icons';
+import { CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { BoxIcon, HistoryIcon } from '../../app/Icons';
 
 interface Stop {
     sequence: number;
@@ -307,36 +307,16 @@ export function MyRun() {
                  * ones". A partial list is the same disclosure made quieter,
                  * and a courier part-way through a pickup should be finishing
                  * it. */}
-                {!collectFirst && current !== null && (
-                    <div role="group" aria-label="This stop">
-                        <CardLink
-                            to={`/projects/${code}/orders/${current.orderId}/stop`}
-                            title="Open the stop"
-                            Icon={PinIcon}
-                            tone="primary"
-                            detail={`Stop ${current.sequence} for ${current.recipientName}`}
-                        />
-                        <Directions
-                            code={code}
-                            orderId={current.orderId}
-                            embed={embed}
-                            className="izy-card-btn is-quiet"
-                            mapsUrl={mapsUrl(current)}
-                            Icon={NavigateIcon}
-                            detail="Opens your own maps app with the address only"
-                        />
-                        {/* The stop is the work. Details is for looking
-                            something up, so it is the quiet, short one. */}
-                        <CardLink
-                            to={`/projects/${code}/orders/${current.orderId}`}
-                            title="Details"
-                            tone="quiet"
-                            compact
-                            detail="Everything recorded against this delivery"
-                        />
-                    </div>
-                )}
+                {/* NO "OPEN THE STOP", "DIRECTIONS" OR "DETAILS" HERE.
+                    All three acted on the next stop, and all three are on
+                    every row of All stops below -- including that same next
+                    stop, which is row one. Three cards to reach what a link
+                    eight lines down already reaches.
 
+                    All stops opens by default, so the links are on screen
+                    when a driver lands here. It does remember being folded,
+                    which is the one case where this costs a tap: the section
+                    header is still the first thing under the panel. */}
 
                 {!collectFirst && stops.length > 0 && (
                     /* THE ONLY THING ON THIS SCREEN THAT FOLDS.
