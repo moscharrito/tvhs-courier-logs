@@ -89,6 +89,51 @@ if (orderIds.length > 0) {
     say('');
 }
 
+/* ------------------------------------------- what is a courier still holding */
+
+/* The same rule as carrying() in modules/uh/shifts.ts, which is what decides
+   whether a shift may end: picked up, or attempted and never handed back.
+   Asked through the orders list so this stays a GET. */
+const carryingWho = value('carrying', '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+for (const who of carryingWho) {
+    say(`  WHAT ${who} IS CARRYING`);
+    say('  ' + '-'.repeat(20 + who.length));
+    const rows = [];
+    for (const status of ['picked_up', 'failed']) {
+        const r = await get(`/api/projects/${project}/uh/orders?assignedTo=${encodeURIComponent(who)}&status=${status}&limit=200`);
+        if (r.status !== 200 || !Array.isArray(r.body?.orders)) {
+            say(`    could not read ${status} (HTTP ${r.status}). This is NOT "none".`);
+            continue;
+        }
+        for (const o of r.body.orders) {
+            /* A failed delivery that WAS handed back is no longer carried.
+               Without this the count here would not match the one the shift
+               endpoint refuses on, which is the number being explained. */
+            if (status === 'failed' && o.returnedAt) continue;
+            rows.push(o);
+        }
+    }
+    if (rows.length === 0) say('    nothing.');
+    /* NO PATIENT NAMES. The reference says whether a row is test data -- the
+       seeded prefixes are SIM-, STAGE-, SEED-, DEMO- -- and the date and
+       pharmacy say where it came from. That is the whole question here, and
+       this file gets pasted around. */
+    const byDate = {};
+    for (const o of rows) {
+        const k = `${o.serviceDate}  site ${o.siteId}`;
+        (byDate[k] ??= []).push(o);
+    }
+    for (const [k, list] of Object.entries(byDate).sort()) {
+        say(`    ${k}   ${list.length} order(s)`);
+        for (const o of list.slice(0, 8)) {
+            say(`      #${String(o.id).padEnd(6)} ${String(o.status).padEnd(10)} ${String(o.externalRef ?? '').slice(0, 24)}`);
+        }
+        if (list.length > 8) say(`      ... and ${list.length - 8} more`);
+    }
+    say(`    TOTAL ${rows.length}`);
+    say('');
+}
+
 /* --------------------------------------------------- is anything auto-assigning */
 
 say('  AUTO ASSIGNMENT');
