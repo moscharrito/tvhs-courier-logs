@@ -59,7 +59,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { ShiftBar } from './ShiftBar';
 import { Section } from '../../app/Section';
 import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
-import { BoxIcon, FlagIcon, HistoryIcon, NavigateIcon, PhoneIcon, PinIcon, ReturnIcon } from '../../app/Icons';
+import { BoxIcon, HistoryIcon, NavigateIcon, PhoneIcon, PinIcon } from '../../app/Icons';
 
 interface Stop {
     sequence: number;
@@ -418,30 +418,14 @@ export function MyRun() {
                     </Section>
                 )}
 
-                {/* The three things done once a day rather than once a stop,
-                    compact so they read as routine beside the cards above. */}
-                {/* Always offered, not only when today's run has a failure on
-                    it: a package can sit in a van overnight, and a screen
-                    that hides the way to hand it back is how it stays there. */}
-                <CardLink
-                    to={`/projects/${code}/returns`}
-                    title="Take back undelivered"
-                    Icon={ReturnIcon}
-                    tone="quiet"
-                    compact
-                    detail="To the pharmacy it came from"
-                />
-                {/* The shadow week only works if the people at the door can
-                    file what they see (ticket 5.2). This is their only
-                    screen. */}
-                <CardLink
-                    to={`/projects/${code}/discrepancies`}
-                    title="Something did not match"
-                    Icon={FlagIcon}
-                    tone="quiet"
-                    compact
-                    detail="Wrong name, wrong count, nobody in"
-                />
+                {/* TAKE BACK UNDELIVERED AND SOMETHING DID NOT MATCH ARE NOT
+                    HERE ANY MORE. Today is the stops; these two are the
+                    once-a-day jobs and they were competing with the work.
+                    Take back now sits under the earnings on My deliveries,
+                    which is the screen a courier opens at the end of a round
+                    with packages still in the van; the discrepancy form sits
+                    on You, with the other things that are about them rather
+                    than about a stop. Both routes are unchanged. */}
                 {/* Their own record: what they have delivered by day, month
                     and year, and what it comes to.
 
@@ -462,15 +446,12 @@ export function MyRun() {
                         detail="Everything you have finished"
                     />
                 </div>
-                {/* The app pulls down to refresh. A browser has no such
-                    gesture to borrow, so it is a control. */}
-                <CardButton
-                    title="Refresh"
-                    tone="quiet"
-                    compact
-                    onClick={() => { void load(); }}
-                    detail="Ask dispatch for the latest"
-                />
+                {/* NO REFRESH BUTTON. It was here because the app pulls
+                    down and a browser has no gesture to borrow -- but a
+                    browser has a reload, every screen already re-reads when
+                    a shift changes or a stop is recorded, and a button whose
+                    whole job is “try that again” teaches a courier that the
+                    screen cannot be trusted without it. */}
             </Sheet>
         </Screen>
     );

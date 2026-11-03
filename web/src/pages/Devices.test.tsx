@@ -36,6 +36,11 @@ const phone = {
     createdAt: '2026-09-01T08:00:00Z', lastSeenAt: '2026-09-13T12:00:00Z', revokedAt: null, current: true,
 };
 
+const DEVICE_ROUTES = {
+    'GET /api/me/devices': [],
+    'GET /api/me/sessions': [],
+};
+
 function renderDevices(routes: Record<string, unknown>) {
     const mocked = mockFetch({
         'GET /api/session': courier,
@@ -427,5 +432,17 @@ describe('where a driver is based', () => {
         await screen.findByRole('heading', { name: 'Devices and sign-in' });
 
         expect(screen.queryByRole('heading', { name: 'You drive from' })).not.toBeInTheDocument();
+    });
+});
+
+describe('the once-a-day job that moved here', () => {
+    it('offers the discrepancy form, which used to be on Today', async () => {
+        /* Today is the stops. This one is about what the courier saw, so it
+           belongs with the other things that are about them. Moved
+           2 November. */
+        renderDevices({});
+        const link = await screen.findByRole('link', { name: 'Something did not match' });
+        /* Project-scoped, pointed at the one contract this account drives. */
+        expect(link).toHaveAttribute('href', '/projects/tvhs/discrepancies');
     });
 });

@@ -349,17 +349,22 @@ describe('MyRun', () => {
             .toContain('2 orders are waiting');
     });
 
-    it('offers the way back and the way to complain on every run, finished or not', async () => {
-        /* Both were a grey link in a row at the bottom. A package can sit in
-           a van overnight, and a screen that hides the way to hand it back
-           is how it stays there; the discrepancy form is the only screen the
-           people at the door have for the shadow week. */
+    it('keeps the once-a-day jobs off the screen that is about the stops', async () => {
+        /* MOVED 2 NOVEMBER, not dropped. Take back undelivered now sits
+           under the earnings on My deliveries -- the screen a courier opens
+           at the end of a round, which is the same moment they are standing
+           at a van with packages that did not go out. The discrepancy form
+           went to You, with the other things that are about them rather than
+           about a stop. Their own screens pin that they arrived.
+
+           Refresh went entirely: every screen re-reads on its own, and a
+           button whose job is "try that again" teaches a courier that the
+           screen cannot be trusted without it. */
         renderRun(base());
         await screen.findByRole('heading', { name: 'Today' });
-        expect(screen.getByRole('link', { name: 'Take back undelivered' }))
-            .toHaveAttribute('href', '/projects/uh/returns');
-        expect(screen.getByRole('link', { name: 'Something did not match' }))
-            .toHaveAttribute('href', '/projects/uh/discrepancies');
+        expect(screen.queryByRole('link', { name: 'Take back undelivered' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Something did not match' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^Refresh/ })).not.toBeInTheDocument();
     });
 
     it('says nothing about PINs, on a set-up phone or an unenrolled one', async () => {

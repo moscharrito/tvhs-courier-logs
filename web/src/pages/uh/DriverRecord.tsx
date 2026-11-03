@@ -30,7 +30,8 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { daysBeforeIn, todayIn } from '../../lib/when';
 import { money } from './Drivers';
 import { handleUnder } from '../../lib/people';
-import { Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { ReturnIcon } from '../../app/Icons';
 
 interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
@@ -257,7 +258,29 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                         </div>
                     </Panel>
                 </Context>
-                <Sheet>{page}</Sheet>
+                <Sheet>
+                    {/* DIRECTLY UNDER WHAT THEY EARNED, and that placement is
+                        the point rather than a tidy-up. This is the screen a
+                        courier opens at the end of a round -- to see what the
+                        day came to -- and it is the same moment they are
+                        standing at a van with packages that did not go out.
+                        Section 9 of the offer letter wants those back at
+                        their own pharmacy the same day.
+
+                        Always offered, not only when today's run has a
+                        failure on it: a package can sit in a van overnight,
+                        and a screen that hides the way to hand it back is how
+                        it stays there. */}
+                    <CardLink
+                        to={`/projects/${code}/returns`}
+                        title="Take back undelivered"
+                        Icon={ReturnIcon}
+                        tone="quiet"
+                        compact
+                        detail="To the pharmacy it came from"
+                    />
+                    {page}
+                </Sheet>
             </Screen>
         );
     }

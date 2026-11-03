@@ -51,7 +51,8 @@ import { Pager, usePaged } from '../app/Pager';
 import { SecretInput } from '../app/SecretInput';
 import { confirmSignOut } from '../lib/outbox';
 import { useNavigate } from 'react-router-dom';
-import { CardButton, Context, Panel, Screen, ScreenHeader, Sheet } from '../app/Glass';
+import { CardButton, CardLink, Context, Panel, Screen, ScreenHeader, Sheet } from '../app/Glass';
+import { FlagIcon } from '../app/Icons';
 import { isCourierOnly } from '../lib/pharmacy';
 import { displayName, handleUnder } from '../lib/people';
 
@@ -85,6 +86,13 @@ export function Devices() {
        project at boot and has no counter, and a lead manages one rather
        than driving from it. Reading it off the courier membership keeps
        this true however many projects the account is on. */
+    /* The one contract they drive, or null. Same rule as myPost below: a
+       project-scoped link needs exactly one answer, and two is not one. */
+    const drivingCode = (() => {
+        const driving = projects.filter((p) => p.role === 'courier');
+        return driving.length === 1 ? driving[0]!.code : null;
+    })();
+
     const myPost = (() => {
         const driving = projects.filter((p) => p.role === 'courier');
         if (driving.length !== 1) return null;
@@ -443,6 +451,26 @@ export function Devices() {
                     )}
                 </Context>
                 <Sheet>
+                    {/* SOMETHING DID NOT MATCH, moved off Today. It is about
+                        what the courier saw rather than about a stop, and
+                        Today is the stops.
+
+                        Only for somebody who actually drives one contract.
+                        The route is project-scoped and this page is not, so
+                        with no courier membership -- or with two -- there is
+                        no single code to send them to, and a link that
+                        guesses is worse than one that is not offered. The
+                        same rule as myPost above. */}
+                    {drivingCode !== null && (
+                        <CardLink
+                            to={`/projects/${drivingCode}/discrepancies`}
+                            title="Something did not match"
+                            Icon={FlagIcon}
+                            tone="quiet"
+                            compact
+                            detail="Wrong name, wrong count, nobody in"
+                        />
+                    )}
                     {page}
                     {/* The app's You tab ends with this and so does ours.
                         The top bar carries one too, but it is a small pill
