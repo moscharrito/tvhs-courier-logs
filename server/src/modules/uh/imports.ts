@@ -63,7 +63,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { scopeFor } from './client-portal';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { todayIn } from '../../core/dates';
-import { custodyEventStatement } from './order-events';
+import { custodyEventStatement, recordOrderEvent, type OrderStateRow } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
 import { resolveZone } from './pricing';
 import { zipZoneMap } from './zones';
@@ -923,6 +923,202 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             auditEntity: 'daily_list',
             auditEntityId: String(id),
             auditDetail: { siteId: Number(l['site_id']), orders: rows.length },
+        });
+    }));
+
+    /* ─────────────────────────────────────── taking a list back off
+     *
+     * "We sent the wrong file" is the commonest thing that goes wrong with an
+     * upload, and the only answer used to be cancelling seventy deliveries
+     * one at a time.
+     *
+     * IT CANCELS; IT DOES NOT DELETE THE ROWS, and that is not a half
+     * measure. `custody_events` is append-only by database trigger, so
+     * removing the orders would mean dropping that trigger inside a web
+     * request -- with other requests in flight, and a window in which a crash
+     * leaves the evidence table unprotected for good.
+     * `scripts/clear-test-work.mjs` is allowed to do that because it is one
+     * process, doing one thing, watched. A server carrying traffic is not.
+     *
+     * AND CANCELLED IS WHAT THIS SYSTEM ALREADY MEANS BY GONE. The board
+     * excludes it, so do the ETA sweep, the patient texts and the overdue
+     * list -- and, the part that actually fixes the operator's problem, so
+     * does the duplicate check on the next upload (the `status != 'cancelled'`
+     * in the preview query above). The corrected file imports clean instead
+     * of being skipped row for row against the list it is replacing. A hard
+     * delete would buy nothing here that this does not already give.
+     *
+     * IT REFUSES ONCE A COURIER HAS TOUCHED ANYTHING, and it checks before it
+     * writes. The lifecycle table allows `cancelled` only from pending, ready
+     * and assigned, so a list carrying one picked-up delivery would otherwise
+     * cancel the sixty-nine in front of it and then throw. Half a withdrawn
+     * list is worse than a refused one: nobody can explain the screen that
+     * results, and there is no undo.
+     *
+     * DISPATCH ONLY, unlike upload and download. A pharmacy may send a list
+     * and read its own back, but withdrawing one takes work off a board that
+     * dispatch is now assigning by hand -- see the 2 November change that
+     * turned auto-assignment off. The counter that uploaded the wrong file
+     * rings dispatch, which is a phone call; the alternative is a list
+     * vanishing from under whoever is mid-way through planning it.
+     */
+    const Withdraw = z.object({ reason: z.string().trim().max(200).optional() });
+
+    router.delete('/:id', dispatchOnly, wrap(async (req, res) => {
+        const id = Number(req.params['id']);
+        if (!Number.isInteger(id) || id <= 0) { res.status(404).json({ error: 'Import not found' }); return; }
+
+        const parsedBody = Withdraw.safeParse(req.body ?? {});
+        if (!parsedBody.success) {
+            res.status(400).json({ error: 'Invalid request', details: parsedBody.error.issues.map((i) => i.message) });
+            return;
+        }
+
+        const listRs = await client.execute({
+            sql: `SELECT l.*, s.code AS site_code, s.name AS site_name
+                  FROM daily_lists l JOIN sites s ON s.id = l.site_id
+                  WHERE l.project_id = ? AND l.id = ?`,
+            args: [req.project!.id, id],
+        });
+        const l = listRs.rows[0];
+        if (!l) { res.status(404).json({ error: 'Import not found' }); return; }
+        /* The same 404-not-403 as the two routes above it. Dispatch sees every
+           list today, so this cannot currently fire -- it is here because the
+           day somebody scopes an admin, the three routes keyed on this id must
+           not start disagreeing about what a stranger's id looks like. */
+        const allowed = allowedSiteIds(req);
+        if (allowed !== null && !allowed.includes(Number(l['site_id']))) {
+            res.status(404).json({ error: 'Import not found' });
+            return;
+        }
+
+        const ordersRs = await client.execute({
+            sql: 'SELECT * FROM orders WHERE project_id = ? AND daily_list_id = ? ORDER BY id',
+            args: [req.project!.id, id],
+        });
+        const rows = ordersRs.rows;
+
+        /* ALREADY WITHDRAWN IS A SUCCESS, NOT A CONFLICT. Two operators on the
+           same screen, or one impatient double-click, must not produce an
+           error beside a list that is in exactly the state they asked for. */
+        const live = rows.filter((o) => String(o['status']) !== 'cancelled');
+        if (String(l['status']) === 'cancelled' && live.length === 0) {
+            res.json({ ok: true, id, cancelled: 0, alreadyWithdrawn: true, orders: rows.length });
+            return;
+        }
+
+        /* THE REFUSAL, BEFORE A SINGLE WRITE. */
+        const started = live.filter((o) => ['picked_up', 'delivered', 'failed'].includes(String(o['status'])));
+        if (started.length > 0) {
+            const byStatus: Record<string, number> = {};
+            for (const o of started) {
+                const k = String(o['status']);
+                byStatus[k] = (byStatus[k] ?? 0) + 1;
+            }
+            const words = Object.entries(byStatus)
+                .map(([k, n]) => `${n} ${k === 'failed' ? 'attempted' : k.replace('_', ' ')}`)
+                .join(', ');
+            res.status(409).json({
+                error: `A courier has already started on this list (${words}), so it cannot be taken off. `
+                    + 'Cancel the deliveries that have not been collected one at a time instead.',
+                code: 'list.workStarted',
+                started: started.length,
+                of: live.length,
+                byStatus,
+            });
+            return;
+        }
+
+        const settings = resolveSettings(req.project!.settings);
+        const actor = req.session.user?.username ?? '';
+        const at = new Date();
+        const given = parsedBody.data.reason ?? '';
+        /* The reason says WHY the delivery died rather than naming the button
+           that killed it: it is read months later from the order's own
+           history, where "withdrawn" on its own explains nothing. */
+        const reason = (`The ${String(l['service_date'])} ${String(l['site_name'])} list was taken off`
+            + (given === '' ? '' : `: ${given}`)).slice(0, 300);
+
+        let unassigned = 0;
+        for (const order of live) {
+            /* Off the courier first. `cancelled` is reachable from `assigned`,
+               so this is not needed to make the transition legal -- it is
+               needed because `cancelled` leaves assigned_to_username where it
+               found it, and a cancelled delivery still showing a courier's
+               name is the thing the operator asked us to clear. Going through
+               the event rather than an UPDATE keeps the chain readable:
+               assigned, unassigned, cancelled. */
+            let current = Object.fromEntries(Object.entries(order)) as unknown as OrderStateRow & { status: string };
+            if (current.status === 'assigned') {
+                await recordOrderEvent(client, {
+                    projectId: req.project!.id, order: current, actor, settings,
+                    event: { type: 'unassigned', at },
+                });
+                current = { ...current, status: 'ready' };
+                unassigned += 1;
+            }
+            await recordOrderEvent(client, {
+                projectId: req.project!.id, order: current, actor, settings,
+                event: { type: 'cancelled', at, reason },
+            });
+        }
+
+        /* The planned stops go with them. A cancelled order is off the board
+           either way, but a run that still lists it reads as work to do on the
+           courier's own screen. */
+        let stops = 0;
+        if (live.length > 0) {
+            const ids = live.map((o) => Number(o['id']));
+            const marks = ids.map(() => '?').join(',');
+            stops = Number((await client.execute({
+                sql: `SELECT COUNT(*) AS n FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
+                args: [req.project!.id, ...ids],
+            })).rows[0]!['n']);
+            await client.execute({
+                sql: `DELETE FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
+                args: [req.project!.id, ...ids],
+            });
+        }
+
+        /* A PLANNED run emptied by that is a round nobody is doing, and left
+           behind it sits on the board as a courier with a shift and no work.
+           Only the ones this emptied: a run still holding stops belongs to
+           another list.
+
+           NOT a started one, even when it is now empty. Planning a round and
+           setting off on it are different facts, and the second is a thing
+           that happened: deleting it to tidy the board would remove the
+           record that a courier went out. It reads oddly for the rest of the
+           day and it is true, which is the right way round. */
+        const emptied = await client.execute({
+            sql: `DELETE FROM runs
+                   WHERE project_id = ? AND service_date = ? AND status = 'planned'
+                     AND id NOT IN (SELECT run_id FROM run_stops)`,
+            args: [req.project!.id, String(l['service_date'])],
+        });
+
+        await req.audit('list.withdraw', 'daily_list', String(id), {
+            siteId: Number(l['site_id']),
+            serviceDate: String(l['service_date']),
+            sourceFilename: String(l['source_filename'] ?? ''),
+            cancelled: live.length,
+            unassigned,
+            stopsRemoved: stops,
+            reason,
+        });
+
+        await client.execute({
+            sql: `UPDATE daily_lists SET status = 'cancelled' WHERE project_id = ? AND id = ?`,
+            args: [req.project!.id, id],
+        });
+
+        res.json({
+            ok: true, id,
+            cancelled: live.length,
+            unassigned,
+            stopsRemoved: stops,
+            runsRemoved: Number(emptied.rowsAffected ?? 0),
+            orders: rows.length,
         });
     }));
 

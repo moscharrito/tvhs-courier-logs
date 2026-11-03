@@ -132,8 +132,13 @@ export interface ImportSite { id: number; code: string; name: string; status?: s
 const mappingKey = (m: Record<string, string>): string =>
     JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]]));
 
-export function ListImport({ projectCode, timezone, canImport, sites: given, title, intro, refusal }: {
+export function ListImport({ projectCode, timezone, canImport, canWithdraw, sites: given, title, intro, refusal }: {
     projectCode: string; timezone: string; canImport: boolean;
+    /* DISPATCH ONLY, and separate from canImport for that reason. A pharmacy
+       may send a list and read its own back; taking one off removes work from
+       a board dispatch is now assigning by hand. The server enforces it --
+       this only decides whether to offer a button that would be refused. */
+    canWithdraw?: boolean | undefined;
     /** Supplied by the pharmacy portal, which may not read GET /sites. When
      *  absent this loads the full list, which is the dispatch case. */
     sites?: ImportSite[] | undefined;
@@ -195,6 +200,53 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
     useEffect(() => { void loadSites(); void loadRecent(); }, [loadSites, loadRecent]);
 
     const reset = () => { setPreview(null); setSkipRows([]); setAcceptDup([]); setMapping({}); setMsg(null); };
+
+    /** The list currently being taken off, so only its own button goes quiet. */
+    const [withdrawing, setWithdrawing] = useState<number | null>(null);
+
+    /* TAKING A LIST BACK OFF.
+     *
+     * The commonest thing that goes wrong with an upload is the wrong file,
+     * and the only answer used to be cancelling seventy deliveries one at a
+     * time. The server cancels them instead of deleting the rows -- custody
+     * is append-only -- which is what the confirmation says in as many words,
+     * because "Delete" on a button and "kept on the record" in the database
+     * must not be a surprise to the person clicking it. */
+    async function withdraw(l: ImportSummary) {
+        const ok = confirm(
+            `Take the ${l.serviceDate} ${l.site.name} list off?\n\n`
+            + `Its ${l.orderCount} ${l.orderCount === 1 ? 'delivery is' : 'deliveries are'} cancelled and `
+            + 'anyone assigned to them is taken off. They come off the board and off the drivers’ phones, '
+            + 'and the pharmacy can send a corrected file for the same day without it being skipped as a duplicate.\n\n'
+            + 'The deliveries stay on the record as cancelled. This cannot be undone.',
+        );
+        if (!ok) return;
+        setWithdrawing(l.id);
+        setMsg(null);
+        try {
+            const res = await api<{ cancelled: number; unassigned: number; alreadyWithdrawn?: boolean }>(
+                `${base}/${l.id}`, { method: 'DELETE' },
+            );
+            setMsg({
+                kind: 'ok',
+                text: res.alreadyWithdrawn
+                    ? 'That list was already off.'
+                    : `Took the ${l.serviceDate} ${l.site.name} list off: ${res.cancelled} `
+                        + `${res.cancelled === 1 ? 'delivery' : 'deliveries'} cancelled`
+                        + (res.unassigned > 0 ? `, ${res.unassigned} taken off a courier` : '') + '.',
+            });
+            await loadRecent();
+        } catch (err) {
+            /* The 409 carries the reason a courier has already started, which
+               is the whole value of the refusal. Swallowing it would leave a
+               button that does nothing. */
+            setMsg(err instanceof ApiError
+                ? { kind: 'error', text: err.message, details: err.details }
+                : { kind: 'error', text: 'Could not take that list off.' });
+        } finally {
+            setWithdrawing(null);
+        }
+    }
 
     async function send(dryRun: boolean) {
         if (!file || siteId === '') return;
@@ -478,12 +530,24 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
             ) : (
                 <>
                 <table className="izy-table">
-                    <thead><tr><th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Sheet</th></tr></thead>
+                    <thead><tr>
+                        <th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Sheet</th>
+                        {canWithdraw === true && <th>Remove</th>}
+                    </tr></thead>
                     <tbody>
                         {pagedRecent.rows.map((l) => (
-                            <tr key={l.id}>
+                            /* A withdrawn list stays in the table rather than
+                               vanishing from it. Somebody reconciling a day
+                               needs to see that a list was sent and taken
+                               back off; a row that disappears turns that into
+                               a mystery, which is the opposite of what this
+                               screen is for. Its sheet still downloads. */
+                            <tr key={l.id} className={l.status === 'cancelled' ? 'izy-row-off' : undefined}>
                                 <td>{l.serviceDate}</td>
-                                <td>{l.site.name}</td>
+                                <td>
+                                    {l.site.name}
+                                    {l.status === 'cancelled' && <><br /><span className="izy-muted">taken off</span></>}
+                                </td>
                                 <td>{l.orderCount}</td>
                                 <td>{l.skippedCount}</td>
                                 <td className="izy-muted">{l.sourceFilename || 'unnamed'}</td>
@@ -517,6 +581,23 @@ export function ListImport({ projectCode, timezone, canImport, sites: given, tit
                                         Download
                                     </a>
                                 </td>
+                                {canWithdraw === true && (
+                                    <td>
+                                        {l.status === 'cancelled' ? (
+                                            <span className="izy-muted">—</span>
+                                        ) : (
+                                            <button
+                                                className="izy-btn danger small"
+                                                type="button"
+                                                disabled={withdrawing !== null}
+                                                aria-label={`Take the ${l.serviceDate} ${l.site.name} list off`}
+                                                onClick={() => { void withdraw(l); }}
+                                            >
+                                                {withdrawing === l.id ? 'Removing…' : 'Delete'}
+                                            </button>
+                                        )}
+                                    </td>
+                                )}
                             </tr>
                         ))}
                     </tbody>

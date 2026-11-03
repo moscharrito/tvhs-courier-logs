@@ -262,6 +262,10 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-btn.danger { background: #fff; color: var(--izy-danger); border-color: var(--izy-danger-soft); }
 .izy-btn:disabled { opacity: 0.5; cursor: default; }
 .izy-btn.small { padding: 5px 10px; font-size: 12px; }
+/* A list that was taken back off. Dimmed rather than removed: the row is the
+   record that it was sent and withdrawn, and its sheet still downloads. Not
+   struck through, because the file name and the counts stay true. */
+.izy-row-off > td { opacity: 0.55; }
 
 .izy-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .izy-table th, .izy-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--izy-line); vertical-align: top; }

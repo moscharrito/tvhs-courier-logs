@@ -72,6 +72,119 @@ const baseRoutes = {
     'GET /api/projects/uh/uh/imports': [],
 };
 
+const aList = (over: Record<string, unknown> = {}) => ({
+    id: 41,
+    site: { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+    serviceDate: '2026-11-02',
+    status: 'released',
+    receivedAt: '2026-11-02T17:00:00.000Z',
+    sourceFilename: 'Courier and fedex 11.02.xlsx',
+    rowCount: 79, orderCount: 79, skippedCount: 0,
+    importedBy: 'uh.discharge', importedByName: 'Discharge Pharmacy',
+    ...over,
+});
+
+describe('taking a list back off', () => {
+    const withRecent = (lists: unknown[]) => ({
+        ...baseRoutes,
+        'GET /api/projects/uh/uh/imports': lists,
+    });
+
+    it('offers no way to do it unless the caller is dispatch', async () => {
+        /* The portal renders this same component. A pharmacy may send a list
+           and read its own back; withdrawing one is dispatch's. */
+        stub(withRecent([aList()]));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        expect(screen.queryByRole('columnheader', { name: 'Remove' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Take the .* list off/ })).not.toBeInTheDocument();
+    });
+
+    it('asks before it does anything, and does nothing when the answer is no', async () => {
+        const { calls } = stub(withRecent([aList()]));
+        vi.stubGlobal('confirm', vi.fn(() => false));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
+        await waitFor(() => { expect(confirm).toHaveBeenCalled(); });
+        expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
+    });
+
+    it('says how many deliveries go, so nobody deletes seventy-nine of them by eye', async () => {
+        stub(withRecent([aList()]));
+        const asked = vi.fn((_text?: string) => false);
+        vi.stubGlobal('confirm', asked);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
+        await waitFor(() => { expect(asked).toHaveBeenCalled(); });
+        const text = String(asked.mock.calls[0]?.[0] ?? '');
+        expect(text).toMatch(/79 deliveries are cancelled/);
+        /* And it does not promise a deletion the server will not perform:
+           the rows stay, cancelled, because custody is append-only. */
+        expect(text).toMatch(/stay on the record as cancelled/);
+    });
+
+    it('sends the delete and reports what went with it', async () => {
+        const { calls } = stub({
+            ...withRecent([aList()]),
+            'DELETE /api/projects/uh/uh/imports/41': { cancelled: 79, unassigned: 4 },
+        });
+        vi.stubGlobal('confirm', vi.fn(() => true));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
+
+        await screen.findByText(/79 deliveries cancelled, 4 taken off a courier/);
+        expect(calls).toContain('DELETE /api/projects/uh/uh/imports/41');
+        /* Reloaded, so the table is not left claiming the list is still on. */
+        expect(calls.filter((c) => c === 'GET /api/projects/uh/uh/imports').length).toBeGreaterThan(1);
+    });
+
+    it('shows the refusal when a courier has already collected something', async () => {
+        /* THE REFUSAL IS THE USEFUL PART. A button that failed silently here
+           would leave the operator believing a list came off a board it is
+           still on. */
+        stub({
+            ...withRecent([aList()]),
+            'DELETE /api/projects/uh/uh/imports/41': {
+                status: 409,
+                body: {
+                    error: 'A courier has already started on this list (3 picked up), so it cannot be taken off. '
+                        + 'Cancel the deliveries that have not been collected one at a time instead.',
+                    code: 'list.workStarted',
+                },
+            },
+        });
+        vi.stubGlobal('confirm', vi.fn(() => true));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
+
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent(/already started on this list \(3 picked up\)/);
+    });
+
+    it('keeps a withdrawn list on the screen, marked, with its sheet still downloadable', async () => {
+        /* Somebody reconciling a day needs to see that a list was sent and
+           taken back off. A row that vanished would turn that into a
+           mystery, which is the opposite of what this screen is for. */
+        stub(withRecent([aList({ status: 'cancelled' })]));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        expect(screen.getByText('taken off')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Take the .* list off/ })).not.toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /Download the deliveries/ }))
+            .toHaveAttribute('href', '/api/projects/uh/uh/imports/41/export.xlsx');
+    });
+});
+
 describe('ListImport', () => {
     it('will not import anything until the file has been reviewed', async () => {
         stub(baseRoutes);

@@ -362,6 +362,12 @@ const MATRIX = [
        may take its own list away as a sheet, and a list belonging to another
        counter answers 404 rather than 403 so ids cannot be walked. */
     ['GET', `${UH}/imports/999999/export.xlsx`, UH_CLIENT_VIEW, 'a pharmacy takes its own list away as a file'],
+    /* NOT scoped like reading one, and the narrowing is deliberate. Sending a
+       list and reading it back concern a pharmacy's own counter; taking one
+       off removes work from a board dispatch now assigns by hand, so a
+       counter that sent the wrong file rings dispatch rather than having a
+       list vanish from under whoever is part way through planning it. */
+    ['DELETE', `${UH}/imports/999999`, UH_STAFF, 'withdrawing a list is dispatch, unlike sending or reading one'],
     /* The saved mapping stays ours: reading or clearing it is a repair, and a
        pharmacy gets everything it needs from a preview instead. */
     ['GET', `${UH}/imports/mappings/999999`, UH_STAFF, 'the saved mapping is a dispatch repair'],

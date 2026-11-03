@@ -95,7 +95,7 @@ export function ProjectHome() {
             </nav>
 
             {/* The daily job, so it stays open. */}
-            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} />
+            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} canWithdraw={canManage} />
 
             {/* Everything below folds away and remembers that it did. These
                 are reference and occasional work: a phone order, the site

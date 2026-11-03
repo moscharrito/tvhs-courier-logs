@@ -351,6 +351,25 @@ describe('what stays a dispatch job', () => {
         expect(res.body.mappingSource).toBeTruthy();
         expect(res.body.headerFingerprint).toBeTruthy();
     });
+
+    it('does not let a pharmacy take its own list back off, which upload and download both allow', async () => {
+        /* THE ASYMMETRY IS THE POINT, and it is a judgement rather than an
+           oversight. Sending a list and reading it back are about a
+           pharmacy's own counter. Withdrawing one takes work off a board
+           dispatch now assigns by hand, so a counter that sent the wrong
+           file rings dispatch -- a phone call -- rather than having a list
+           disappear from under whoever is part way through planning it. */
+        const mine = await upload(admin, BASE, { siteId: discharge.id, serviceDate: ownDay() });
+        expect(mine.status, JSON.stringify(mine.body).slice(0, 200)).toBe(201);
+
+        const them = await agentFor('uh.uploader', 'upload-pass-1');
+        expect((await them.delete(`${BASE}/${mine.body.id}`)).status).toBe(403);
+
+        /* And it did not half-happen on the way to being refused. */
+        const still = await them.get(`${BASE}/${mine.body.id}`);
+        expect(still.status).toBe(200);
+        expect(String(still.body.status)).not.toBe('cancelled');
+    });
 });
 
 describe('who may not upload at all', () => {
