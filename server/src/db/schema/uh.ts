@@ -532,7 +532,7 @@ export const custodyEvents = sqliteTable(
         /* PHI: Scope 1.2.8 requires the printed name of the sending and the
          * receiving personnel on the proof of delivery. */
         signedName: text('signed_name').notNull().default(''),
-        /** Where the signature is. See modules/uh/pickup for the shape. */
+        /** Where the signature is: `local:signature:<id>`. */
         signatureKey: text('signature_key').notNull().default(''),
         /** The photo that proves a doorstep delivery (ticket 1.8 stores it). */
         fileId: integer('file_id'),

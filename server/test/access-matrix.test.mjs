@@ -464,8 +464,6 @@ const MATRIX = [
     ['DELETE', `${UH}/runs/999999/stops/999999`, UH_REASSIGN, ''],
     ['PUT', `${UH}/runs/999999/sequence`, UH_DISPATCH, ''],
     ['POST', `${UH}/runs/999999/sequence/auto`, UH_DISPATCH, ''],
-    ['GET', `${UH}/runs/999999/pickup`, UH_OPERATES, ''],
-    ['POST', `${UH}/runs/999999/pickup`, UH_OPERATES, ''],
 
     /* --- medication coming back. */
     ['GET', `${UH}/returns`, UH_DISPATCH_AND_COURIER, 'handling what came back is half the site manager role'],

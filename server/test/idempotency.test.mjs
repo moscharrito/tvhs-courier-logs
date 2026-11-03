@@ -119,8 +119,11 @@ describe('a retry carrying the id the phone chose', () => {
         const ada = await courierAgent();
         const k = key();
 
-        // Malformed on purpose: countedPackages is required and absent.
-        const bad = await ada.post(`${RUNS}/1/pickup`).send({ clientEventId: k, siteId: dischargeId });
+        /* Malformed on purpose. It used to be a collection missing its
+           countedPackages; that endpoint went on 3 November, so it is now a
+           delivery missing the name of whoever received it. The property is
+           about the idempotency key, not about which path refused. */
+        const bad = await ada.post(`${ORDERS}/1/deliver`).send({ clientEventId: k });
         expect(bad.status).toBe(400);
 
         /* Nothing is left holding the id. */
@@ -293,27 +296,10 @@ describe('the sweep', () => {
 });
 
 describe('the rest of the courier write paths', () => {
-    it('does not take a pickup twice', async () => {
-        const order = await pickedUpOrder();
-        // A fresh order to collect, this time left assigned.
-        seq += 1;
-        const created = await admin.post(ORDERS).send({
-            siteId: dischargeId, serviceType: 'stat', recipientName: `Recipient ${seq}`,
-            addressLine: `${seq} Test Street`, zip: '78215', description: 'Oral solids', quantity: 2,
-        });
-        const run = await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Pickup run', orderIds: [created.body.id] });
-        const ada = await courierAgent();
-        const body = { clientEventId: key(), siteId: dischargeId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 2 };
-
-        const first = await ada.post(`${RUNS}/${run.body.id}/pickup`).send(body);
-        expect(first.status, JSON.stringify(first.body)).toBe(201);
-        const retry = await ada.post(`${RUNS}/${run.body.id}/pickup`).send(body);
-        expect(retry.body.replayed).toBe(true);
-
-        const events = (await sql('SELECT id FROM custody_events WHERE order_id = ? AND type = ?', [created.body.id, 'picked_up'])).rows;
-        expect(events).toHaveLength(1);
-        expect(order.id).toBeDefined();
-    });
+    /* "does not take a pickup twice" was here. It pinned the idempotency
+       of the collection endpoint, which went on 3 November with the screen
+       that called it. The same property on the paths that remain -- arrive,
+       deliver, doorstep, attempt -- is covered above. */
 
     it('does not hand a return back twice', async () => {
         const order = await pickedUpOrder();

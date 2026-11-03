@@ -59,7 +59,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { ShiftBar } from './ShiftBar';
 import { Section } from '../../app/Section';
 import { CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
-import { BoxIcon, HistoryIcon } from '../../app/Icons';
+import { HistoryIcon } from '../../app/Icons';
 
 interface Stop {
     sequence: number;
@@ -182,8 +182,6 @@ export function MyRun() {
        which is every server until somebody sets UH_MAPS_EMBED, behaves the
        way it did before ticket 5.13. */
     const embed = data.directions?.embed === true;
-    /* A courier with two runs in a day collects against each of them. */
-    const waiting = data.runs.filter((r) => r.stops.some((s) => s.status === 'assigned'));
     const subtitle = [user?.name, data.serviceDate, `${done} of ${stops.length} done`]
         .filter((part) => part !== undefined && part !== '')
         .join(' · ');
@@ -246,25 +244,12 @@ export function MyRun() {
             <Sheet>
                 {error !== null && <div className="izy-alert warn" role="status">{error}</div>}
 
-                {/* The run id used to be the label on this: "Pick up for run
-                    10". A driver has no idea what run 10 is, and does not need
-                    to — what they need is the pharmacy and how much is there.
-                    The wave's name only appears when there are two of them to
-                    tell apart. */}
-                {waiting.map((r) => {
-                    const count = r.stops.filter((s) => s.status === 'assigned').length;
-                    return (
-                        <CardLink
-                            key={r.id}
-                            to={`/projects/${code}/runs/${r.id}/pickup`}
-                            title="Collect from a pharmacy"
-                            Icon={BoxIcon}
-                            tone="primary"
-                            detail={`${count} ${count === 1 ? 'order is' : 'orders are'} waiting to be picked up`
-                                + (waiting.length > 1 ? ` · ${r.label}` : '')}
-                        />
-                    );
-                })}
+                {/* NO "COLLECT FROM A PHARMACY". Drivers stopped recording
+                    collections on 3 November -- the server writes the
+                    custody event itself when a courier first acts on a
+                    delivery -- so a card that opened a collection screen
+                    was offering a step that no longer exists. The screen
+                    and its endpoint went with it. */}
 
                 {/* ───────────────── THE ROUND IS ON SCREEN ONCE IT IS ASSIGNED
                  *

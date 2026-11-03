@@ -39,15 +39,11 @@ export interface Refusal {
    would be a server change for a client problem. Each pattern is anchored on
    words the transition table actually produces. */
 const RULES: ReadonlyArray<{ test: RegExp; make: (m: RegExpMatchArray) => Omit<Refusal, 'original'> }> = [
-    {
-        /* The one that was on screen. */
-        test: /Cannot record "arrived".*must be picked_up/i,
-        make: () => ({
-            text: 'Collect this from the pharmacy before you arrive at the stop. '
-                + 'Today, then Collect from a pharmacy.',
-            action: 'collect',
-        }),
-    },
+        /* THE "COLLECT THIS FIRST" REFUSAL IS GONE. The server could
+           refuse an arrival against something not yet picked up; since
+           3 November it records the custody event itself when a courier
+           first acts on a delivery, so that refusal cannot be returned and
+           a rule matching it would be dead text pretending to be help. */
     {
         test: /Cannot record "(delivered|attempted)".*must be (picked_up|arrived)/i,
         make: () => ({

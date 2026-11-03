@@ -164,11 +164,13 @@ describe('the run screen survives its own data arriving', () => {
         expect(text).not.toContain('Test Patient 30');
     });
 
-    it('shows no part of the round until the pickup is recorded', async () => {
-        /* The same rule as the web's MyRun, and it has to stay the same:
-           every driver works in the browser for the first month and then
-           moves to this. Two screens that disagree about what a courier may
-           see is the kind of difference that gets noticed at a counter. */
+    it('shows the round as soon as it is assigned', async () => {
+        /* THE OPPOSITE OF WHAT WAS HERE. The round used to be replaced by
+           "Collect first" until custody was recorded, matching the web.
+           Both dropped that on 3 November: drivers stopped recording
+           collections, the server writes the custody event itself, and
+           there is nothing left to wait for before showing somebody the
+           stops they were assigned. */
         get.mockResolvedValue(runWith([
             stop(1, { status: 'assigned' } as Partial<Stop>),
             stop(2, { status: 'picked_up' } as Partial<Stop>),
@@ -176,12 +178,11 @@ describe('the run screen survives its own data arriving', () => {
         const tree = await mount();
         const text = textOf(tree.toJSON());
 
-        expect(text).toContain('Collect first');
-        expect(text).toContain('Your stops appear once you have recorded the pickup');
-        /* All of it, not merely the uncollected one. */
-        expect(text).not.toContain('Test Patient 1');
-        expect(text).not.toContain('Test Patient 2');
-        expect(text).not.toContain('Rehearsal Way');
-        expect(text).not.toContain('Open the stop');
+        expect(text).not.toContain('Collect first');
+        expect(text).not.toContain('Collect from a pharmacy');
+        /* Both of them, collected or not: the gate was all-or-nothing and
+           so is its absence. */
+        expect(text).toContain('Test Patient 1');
+        expect(text).toContain('Test Patient 2');
     });
 });

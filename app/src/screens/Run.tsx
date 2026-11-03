@@ -34,12 +34,11 @@ import { theme } from '../theme';
 import { get, type MyRun, type Project, type Stop as StopRow } from '../lib/api';
 import { ApiError, isUnauthorized } from '../lib/http';
 import { Stop } from './Stop';
-import { Collect } from './Collect';
 import { CardButton, Chip, Ground, Notice, Panel, Sheet } from '../ui/Glass';
 import { Pager, usePaged } from '../ui/Pager';
 import { summarise } from '../lib/refusals';
 import { TopBar } from '../ui/Nav';
-import { BoxIcon, NavigateIcon, PinIcon } from '../ui/Icons';
+import { NavigateIcon, PinIcon } from '../ui/Icons';
 import { pendingLabel, type OutboxState } from '../lib/outbox';
 import { dismissRejections, flush, readQueue } from '../lib/queue';
 
@@ -84,7 +83,6 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     /* Which run we are collecting for. Null when not collecting. */
-    const [collecting, setCollecting] = useState<number | null>(null);
     const [working, setWorking] = useState<StopRow | null>(null);
     const [outbox, setOutbox] = useState<OutboxState | null>(null);
 
@@ -140,19 +138,6 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         return <View style={styles.centre}><ActivityIndicator color={theme.green} /></View>;
     }
 
-    if (collecting !== null) {
-        return (
-            <Collect
-                token={token}
-                code={project.code}
-                runId={collecting}
-                onDone={() => { setCollecting(null); void load(); void readQueue().then(setOutbox); }}
-                onCancel={() => setCollecting(null)}
-                onSignedOut={onSignedOut}
-            />
-        );
-    }
-
     if (working !== null) {
         return (
             <Stop
@@ -169,27 +154,15 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
     const next = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
     const zone = data?.timezone ?? project.timezone;
-    /* Anything still to be collected lives on a run, and a courier with two
-       runs in a day (a second wave) collects against the current one. */
-    const runId = data?.runs[0]?.id ?? null;
-    const toCollect = stops.filter((s) => s.status === 'assigned').length;
     /* One problem rather than six identical alerts on a phone screen. */
     const refused = summarise(outbox?.rejected ?? []);
 
-    /* ───────────────────── NOTHING OF THE ROUND UNTIL IT IS COLLECTED
-     *
-     * The same rule as the web's MyRun, and it has to BE the same: every
-     * driver works in the browser for the first month and then moves to
-     * this, and two screens that disagree about what a courier may see is
-     * the kind of difference that gets noticed at a counter.
-     *
-     * While anything is still behind the counter, the round is one
-     * instruction -- go and collect. The names, the addresses and the
-     * deadlines arrive with custody.
-     *
-     * All or nothing, not "hide the uncollected ones": a partial list is
-     * the same disclosure made quieter. */
-    const collectFirst = toCollect > 0;
+    /* NO COLLECT GATE. The round used to be replaced by "go and collect"
+       until custody was recorded, matching the web -- and it still matches
+       the web, which dropped the gate on 3 November when drivers stopped
+       recording collections at all. The server writes the custody event
+       itself now, so there is nothing for a courier to do at a counter and
+       nothing to wait for before showing them their stops. */
 
     return (
         <Ground>
@@ -212,20 +185,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 subtitle={data === null ? undefined : `${data.serviceDate} · ${done} of ${stops.length} done`}
             />
 
-            {collectFirst && (
-                <Panel style={styles.nextPanel}>
-                    <Text style={styles.nextLabel}>Collect first</Text>
-                    <Text style={styles.nextName}>
-                        {toCollect} {toCollect === 1 ? 'order is' : 'orders are'} still at the pharmacy
-                    </Text>
-                    <Text style={styles.nextAddress}>
-                        You cannot deliver what you have not taken custody of. Your stops appear
-                        once you have recorded the pickup.
-                    </Text>
-                </Panel>
-            )}
-
-            {!collectFirst && next !== null && (
+            {next !== null && (
                 <Panel style={styles.nextPanel}>
                     <Text style={styles.nextLabel}>Next: stop {next.sequence}</Text>
                     <Text style={styles.nextName}>{next.recipientName}</Text>
@@ -267,15 +227,6 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 {refused !== null && (
                     <View style={styles.refusal}>
                         <Notice text={refused.headline + '. ' + refused.refusal.text} tone="bad" />
-                        {refused.refusal.action === 'collect' && runId !== null && (
-                            <CardButton
-                                title="Collect from a pharmacy"
-                                Icon={BoxIcon}
-                                detail="What these were waiting on"
-                                tone="primary"
-                                onPress={() => setCollecting(runId)}
-                            />
-                        )}
                         <CardButton
                             title="I have read this"
                             detail="Clears the message. Anything still waiting to send is kept."
@@ -286,28 +237,13 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 )}
                 {error !== null && <Notice text={error} tone="bad" />}
 
-                {/* The gap found on the first day anybody held this app:
-                    collection was web-only, so a driver could not do a whole
-                    day on the phone. */}
-                {runId !== null && (
-                    <CardButton
-                        title="Collect from a pharmacy"
-                        Icon={BoxIcon}
-                        detail={toCollect > 0
-                            ? toCollect + (toCollect === 1 ? ' order is' : ' orders are') + ' waiting to be picked up'
-                            : 'Nothing is waiting to be picked up right now'}
-                        tone={toCollect > 0 ? 'primary' : 'secondary'}
-                        onPress={() => setCollecting(runId)}
-                    />
-                )}
-
-                {!collectFirst && next !== null && (
+                {next !== null && (
                     <>
                         <CardButton
                             title="Open the stop"
                             Icon={PinIcon}
                             detail={'Stop ' + next.sequence + ' for ' + next.recipientName}
-                            tone={toCollect > 0 ? 'secondary' : 'primary'}
+                            tone="primary"
                             onPress={() => setWorking(next)}
                         />
                         <CardButton
@@ -320,7 +256,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                     </>
                 )}
 
-                {!collectFirst && stops.length > 0 && (
+                {stops.length > 0 && (
                     <View style={styles.allStops}>
                         <Text style={styles.cardTitle}>All stops</Text>
                         {paged.rows.map((s) => (

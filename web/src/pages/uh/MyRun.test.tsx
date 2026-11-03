@@ -275,22 +275,6 @@ describe('MyRun', () => {
         expect(screen.getByRole('link', { name: 'Open the stop' })).toBeInTheDocument();
     });
 
-    it('still offers the way into the pickup screen, which is the only one there is', async () => {
-        /* THE REGRESSION THIS CHANGE COULD HAVE CAUSED. Collect from a
-           pharmacy is the single link to /runs/:id/pickup anywhere in the
-           web app -- taking it out with the gate would have left no way to
-           record a collection at all, and collection is half the contract.
-           It no longer stands in FRONT of the work; it still has to be
-           there. */
-        renderRun(base({
-            'GET /api/projects/uh/uh/runs/mine': mine({
-                runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' })] }],
-            }),
-        }));
-        const collect = await screen.findByRole('link', { name: 'Collect from a pharmacy' });
-        expect(collect).toHaveAttribute('href', '/projects/uh/runs/10/pickup');
-    });
-
     it('shows collected and uncollected stops together', async () => {
         /* The gate was all-or-nothing on purpose, so this was its mirror:
            one picked up and one still at the counter used to hide both.
@@ -356,42 +340,40 @@ describe('MyRun', () => {
 
     it('names a card after its action, not after the whole card', async () => {
         /* A card is a glyph, a verb and a sentence under it, and left alone
-           its accessible name is all three: "Open the stop Stop 1 for Ines
-           Vargas". That is a name no two cards can share even when they are
-           the same action, so a voice-control user asking for "Open the
-           stop" matches nothing and a screen reader reads a paragraph.
+           its accessible name is all three: "My deliveries Everything you
+           have finished". That is a name no two cards can share even when
+           they are the same action, so a voice-control user asking for "My
+           deliveries" matches nothing and a screen reader reads a paragraph.
 
-           The detail is still announced — as a description. Both halves are
+           The detail is still announced -- as a description. Both halves are
            asserted, because pinning the name by DELETING the explanation
-           would pass the first half and be a worse screen. */
-        /* Pointed at Collect from a pharmacy since 3 November. The card
-           this was written for -- Open the stop, in the sheet -- is gone,
-           but the rule belongs to CardLink and every card still obeys it. */
+           would pass the first half and be a worse screen.
+
+           Pointed at My deliveries since 3 November: the cards this was
+           written for have all moved or gone, and the rule belongs to
+           CardLink rather than to any one of them. */
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        const card = screen.getByRole('link', { name: 'My deliveries' });
+        expect(card.getAttribute('aria-describedby')).not.toBeNull();
+        expect(document.getElementById(card.getAttribute('aria-describedby')!)?.textContent)
+            .toContain('Everything you have finished');
+    });
+
+    it('offers no way to record a collection, because there is no longer one', async () => {
+        /* Drivers stopped recording collections on 3 November -- the server
+           writes the custody event itself when a courier first acts on a
+           delivery. The card, the screen and the endpoint behind it all went
+           together, which is the part worth pinning: a card that opens a
+           route nobody serves is worse than no card. */
         renderRun(base({
             'GET /api/projects/uh/uh/runs/mine': mine({
                 runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' })] }],
             }),
         }));
-        const collect = await screen.findByRole('link', { name: 'Collect from a pharmacy' });
-        expect(collect.getAttribute('aria-describedby')).not.toBeNull();
-        expect(document.getElementById(collect.getAttribute('aria-describedby')!)?.textContent)
-            .toContain('waiting to be picked up');
-    });
-
-    it('offers to collect from a pharmacy rather than naming a run number', async () => {
-        /* It used to read "Pick up for run 10". A driver has no idea what
-           run 10 is and does not need to: what they need is that there is
-           something at a counter and how much of it. The app's wording. */
-        renderRun(base({
-            'GET /api/projects/uh/uh/runs/mine': mine({
-                runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' }), stop({ sequence: 2, orderId: 22, status: 'assigned' })] }],
-            }),
-        }));
-        const collect = await screen.findByRole('link', { name: 'Collect from a pharmacy' });
-        expect(collect).toHaveAttribute('href', '/projects/uh/runs/10/pickup');
-        expect(screen.queryByText(/run 10/i)).not.toBeInTheDocument();
-        expect(document.getElementById(collect.getAttribute('aria-describedby')!)?.textContent)
-            .toContain('2 orders are waiting');
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.queryByRole('link', { name: /Collect/ })).not.toBeInTheDocument();
+        expect(screen.queryByText(/waiting to be picked up/)).not.toBeInTheDocument();
     });
 
     it('keeps the once-a-day jobs off the screen that is about the stops', async () => {

@@ -505,10 +505,15 @@ describe('what the board says is happening now', () => {
         const run = await makeRun({ orderIds: [order.id], label: 'Feed run' });
         const ada = srv.agent();
         await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
-        await ada.post(`${RUNS}/${run.id}/pickup`).send({
-            siteId: over.siteId ?? dischargeId, signedName: 'Pharmacy Tech',
-            strokes: [[{ x: 0.1, y: 0.5, t: 0 }, { x: 0.5, y: 0.2, t: 20 }, { x: 0.9, y: 0.6, t: 40 }]],
-            countedPackages: 1, lat: 29.5085, lng: -98.5768,
+        /* The collection endpoint went on 3 November with the screen that
+           called it; the generic event path records the same custody row,
+           which is all this helper ever wanted. */
+        await ada.post(`${ORDERS}/${order.id}/events`).send({
+            type: 'picked_up', signedName: 'Pharmacy Tech',
+            /* The position came with the collection before 3 November. The
+               board reads it to say where a courier last was, so it still
+               has to arrive on something. */
+            lat: 29.5085, lng: -98.5768,
         });
         return { order, run, ada };
     }

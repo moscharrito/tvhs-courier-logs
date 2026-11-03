@@ -14,7 +14,6 @@ import { ProjectHome } from '../pages/ProjectHome';
 import { Orders } from '../pages/uh/Orders';
 import { Board } from '../pages/uh/Board';
 import { MyRun } from '../pages/uh/MyRun';
-import { Pickup } from '../pages/uh/Pickup';
 import { Stop } from '../pages/uh/Stop';
 import { Returns } from '../pages/uh/Returns';
 import { ClientPortal } from '../pages/uh/ClientPortal';
@@ -103,7 +102,6 @@ export function App() {
                 <Route path="/" element={<Home />} />
                 <Route path="/projects/:code/board" element={<DriverRoutesOnly><Board /></DriverRoutesOnly>} />
                 <Route path="/projects/:code/my-run" element={<MyRun />} />
-                <Route path="/projects/:code/runs/:runId/pickup" element={<Pickup />} />
                 <Route path="/projects/:code/returns" element={<Returns />} />
                 <Route path="/projects/:code/deliveries" element={<DriverRoutesOnly><ClientPortal /></DriverRoutesOnly>} />
                 {/* The reporting Karthik Munnam asked for, read by the client

@@ -125,7 +125,10 @@ describe('delivering something that was never collected', () => {
         expect(types).toEqual(['created', 'assigned', 'picked_up', 'delivered']);
 
         const pickup = (await detail(order.id)).body.custody.find((e) => e.type === 'picked_up');
-        expect(pickup.signedName ?? '').toBe('');
+        /* A ROLE, NOT A PERSON. The pharmacy did hand it over, which is what
+           the chain asserts; which member of staff is what this contract
+           stopped capturing, and naming one would be invented. */
+        expect(pickup.signedName).toBe('Site staff');
         expect(pickup.reason).toMatch(/does not collect a signature at the counter/);
     });
 

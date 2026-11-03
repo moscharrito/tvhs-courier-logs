@@ -58,7 +58,6 @@ import { createReattemptRouter } from './modules/uh/reattempt';
 import { createStopRouter } from './modules/uh/stop';
 import { createRunsRouter } from './modules/uh/runs';
 import { createDriverRecordsRouter } from './modules/uh/driver-records';
-import { createPickupRouter } from './modules/uh/pickup';
 import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
 import { createApplicationsRouter, createPublicApplicationsRouter } from './core/onboarding/routes';
@@ -418,9 +417,12 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        otherwise answer /:id/reattempt with a 404 from its own 404 handler. */
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, idempotent, createReattemptRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/orders', requireProject, createOrdersRouter({ client: database.client, storage: fileStorage }));
-    // Pickup first: its /:id/pickup must be matched before the runs
-    // router's /:id, which would otherwise swallow it.
-    legacy.app.use('/api/projects/:pid/uh/runs', requireProject, idempotent, createPickupRouter({ client: database.client }));
+    /* NO PICKUP ROUTER. Drivers stopped recording collections on 3 November:
+       the server writes the custody event itself when a courier first acts on
+       a delivery (modules/uh/order-events.ts), so the screen that recorded a
+       collection at a counter, and the endpoint behind it, no longer have a
+       caller. Its note about route order went with it -- there is nothing
+       left that has to be matched before the runs router's /:id. */
     legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/drivers', requireProject, createDriverRecordsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/returns', requireProject, idempotent, createReturnsRouter({ client: database.client }));

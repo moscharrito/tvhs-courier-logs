@@ -402,7 +402,15 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         }
         page.text(stamp(event.at, data.timezone), MARGIN, y, { size: 9, grey: 0.35 });
         page.text(EVENT_LABEL[event.type] ?? event.type, MARGIN + 130, y, { size: 9 });
-        const detail = [event.by, event.signedName && `signed ${event.signedName}`, event.reason && event.reason.replace(/_/g, ' ')]
+        /* "from" ON A COLLECTION, "signed" EVERYWHERE ELSE. Since 3 November
+           a collection is recorded automatically and carries a role rather
+           than a signature -- "Site staff" -- so printing "signed Site staff"
+           would assert a signature nobody gave, in the one document that is
+           read as evidence that they did. */
+        const who = event.signedName
+            ? (event.type === 'picked_up' ? `from ${event.signedName}` : `signed ${event.signedName}`)
+            : '';
+        const detail = [event.by, who, event.reason && event.reason.replace(/_/g, ' ')]
             .filter(Boolean).join('  ·  ');
         page.text(detail, MARGIN + 270, y, { size: 9, grey: 0.35 });
         y -= 12;

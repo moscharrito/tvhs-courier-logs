@@ -8,12 +8,17 @@
 import { describe, it, expect } from 'vitest';
 import { explain, summarise } from './refusals';
 
-const ARRIVED = 'Cannot record "arrived" while the order is assigned: the order must be picked_up.';
+/* The arrival-before-collection refusal that used to be here cannot happen
+   any more: since 3 November the server records the custody event itself
+   when a courier first acts on a delivery, so an arrival against an
+   uncollected order is no longer refused. This is a refusal that still
+   occurs -- recording the outcome before tapping Arrive. */
+const ARRIVED = 'Cannot record "delivered" while the order is assigned: the order must be picked_up.';
 
 describe('the one that was on screen', () => {
     it('says what to do instead of naming a status', () => {
         const out = explain(ARRIVED);
-        expect(out.text).toMatch(/Collect this from the pharmacy/);
+        expect(out.text).toMatch(/Tap Arrive at the stop/);
         expect(out.action).toBe('collect');
         /* No internal status leaks through to the driver. */
         expect(out.text).not.toMatch(/picked_up|assigned|transition/i);
@@ -77,7 +82,7 @@ describe('a pile of them', () => {
         const out = summarise([{ why: ARRIVED }, { why: ARRIVED }, { why: ARRIVED }]);
         expect(out).not.toBeNull();
         expect(out!.headline).toBe('3 things could not be recorded, all for the same reason');
-        expect(out!.refusal.text).toMatch(/Collect this from the pharmacy/);
+        expect(out!.refusal.text).toMatch(/Tap Arrive at the stop/);
     });
 
     it('is singular for one', () => {

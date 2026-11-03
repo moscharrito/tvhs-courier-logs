@@ -120,6 +120,22 @@ export async function insertCustodyEvent(client: Client, e: CustodyEventInput): 
  */
 export const CUSTODY_ON_ASSIGNMENT = 'Recorded automatically: this contract does not collect a signature at the counter.';
 
+/**
+ * Who handed the packages over, on an automatic pickup.
+ *
+ * A ROLE, NOT A PERSON, and the distinction is the whole of why this is
+ * allowed to be here. The pharmacy did hand the delivery over -- that part
+ * is true and is what the custody chain is asserting. What this contract
+ * stopped capturing on 3 November is WHICH member of staff, so naming one
+ * would be the only invented line in a document University Health reads as
+ * evidence. "Site staff" says exactly as much as we know.
+ *
+ * It reads through to the proof of delivery, where the custody table prints
+ * it as "from site staff" rather than "signed ...": no signature was taken
+ * and the document must not imply one.
+ */
+export const CUSTODY_FROM = 'Site staff';
+
 /* The courier actions that can only happen to something already in the van.
    Each is `from: ['picked_up']` in the transition table. */
 const NEEDS_CUSTODY = new Set(['arrived', 'delivered', 'attempted']);
@@ -155,12 +171,14 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
      * It cannot recurse: the event it records is `picked_up`, which is not
      * in NEEDS_CUSTODY.
      *
-     * NOT A SIGNATURE. picked_up_by is left empty and the reason says why,
-     * so a proof-of-delivery document never shows a name nobody gave. */
+     * NOT A SIGNATURE. picked_up_by says "Site staff" -- a role, which is
+     * true, rather than a person, which would be invented -- and the reason
+     * says it was recorded automatically. The proof of delivery prints it as
+     * "from site staff" and never as "signed", because nobody signed. */
     if (NEEDS_CUSTODY.has(event.type) && String(order.status) === 'assigned') {
         await recordOrderEvent(client, {
             ...opts,
-            event: { type: 'picked_up', at: event.at, reason: CUSTODY_ON_ASSIGNMENT },
+            event: { type: 'picked_up', at: event.at, signedName: CUSTODY_FROM, reason: CUSTODY_ON_ASSIGNMENT },
         });
         /* Re-read: the status this event is about to be applied against has
            just moved, and applyEvent refuses a transition from the old one. */

@@ -83,7 +83,7 @@ export const EVENT_RULES: Record<CustodyEventType, EventRule> = {
          * this event when dispatch assigns the delivery, and there is
          * nobody at a counter to sign it.
          *
-         * THE PICKUP SCREEN STILL DEMANDS ONE. modules/uh/pickup.ts has its
+         * NOTHING DEMANDS ONE ANY MORE. modules/uh/pickup.ts had its
          * own `signedName: z.string().trim().min(1)`, so a human collection
          * recorded through that route is unchanged and still carries the
          * name of whoever handed the packages over. What this rule stops

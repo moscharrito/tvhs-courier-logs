@@ -59,9 +59,29 @@ async function deliveredOrder(over = {}) {
 
     const ada = srv.agent();
     await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
-    await ada.post(`${RUNS}/${run.body.id}/pickup`).send({
-        siteId, signedName: 'Pharmacy Tech', strokes: STROKES, countedPackages: 2, lat: 29.5, lng: -98.5,
+    /* THE COLLECTION ENDPOINT WENT on 3 November with the screen that called
+       it, and with it the last path that captured a signature. The custody
+       row is recorded through the generic event path instead.
+
+       The signature is written first and referenced by key, because
+       custody_events is append-only in both directions -- the trigger
+       refuses an UPDATE as flatly as a DELETE -- so it cannot be attached
+       afterwards. That is the fixture, not a shortcut: nothing in the
+       running system creates one any longer, and a record carrying strokes
+       is exactly what a pre-change delivery is. The proof of delivery still
+       has to draw them, because quietly ceasing to would rewrite the
+       evidence for handovers that already happened. */
+    const sig = await srv.core.client.execute({
+        sql: `INSERT INTO signatures (project_id, kind, signed_name, strokes, capture_method, captured_at)
+              VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'pickup', ?, ?, 'drawn', ?) RETURNING id`,
+        args: ['Pharmacy Tech', JSON.stringify(STROKES), new Date().toISOString()],
     });
+    await ada.post(`${ORDERS}/${order.id}/events`).send({
+        type: 'picked_up',
+        signedName: 'Pharmacy Tech',
+        signatureKey: `local:signature:${Number(sig.rows[0].id)}`,
+    });
+
     await ada.post(`${ORDERS}/${order.id}/arrive`).send({});
     await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm(srv) });
     return order;

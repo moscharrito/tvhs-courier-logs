@@ -70,47 +70,6 @@ interface Courier {
     position: Position | null;
 }
 
-interface ProposedRun {
-    kind: 'stat' | 'standard';
-    orderIds: number[];
-    zips: string[];
-    siteIds: number[];
-    earliestDueAt: string | null;
-}
-
-/** Who the server suggests for a run, and on what grounds. */
-interface Suggested {
-    username: string;
-    name: string;
-    why: 'home' | 'floater' | 'cover';
-}
-
-interface Proposal {
-    serviceDate: string;
-    settings: { drivers: number; maxStopsPerRun: number; maxSitesPerRun: number; maxStopsPerStatRun: number };
-    runs: ProposedRun[];
-    unplaced: Array<{ orderId: number; why: string }>;
-    notes: string[];
-    driversNeeded: number;
-    /* OPTIONAL, ALL FOUR, and not because the server might omit them: it
-       always sends them. A deployed bundle can be talking to the previous
-       server for the minute or two a deploy takes, and the board is the one
-       screen where a missing field must degrade to a missing sentence
-       rather than to a white page. */
-    /** Parallel to `runs`. Null where nobody was left. */
-    suggested?: Array<Suggested | null>;
-    /** On shift and not needed by this plan. */
-    spare?: Array<{ username: string; name: string; homeSiteId: number | null }>;
-    /** Whether it was built from people on shift or from the roster list. */
-    planningFrom?: 'onShift' | 'roster';
-    fleet?: { onShift: number; roster: number };
-    /** The pharmacy this plan is for, or null for the whole day. */
-    site?: { id: number; code: string; name: string } | null;
-    /** 'site' is that counter's own drivers, 'anyDriver' the widened list. */
-    scope?: 'all' | 'site' | 'anyDriver';
-    /** Why the list is short. Counts, so the screen can say it in words. */
-    excluded?: { held: number; otherSite: number; offShift: number };
-}
 
 interface Activity {
     id: number; at: string; minutesAgo: number; actor: string; courierName: string;
@@ -219,32 +178,15 @@ export function Board() {
     const [dragging, setDragging] = useState<number | null>(null);
     const [stale, setStale] = useState(false);
     const [newRunCourier, setNewRunCourier] = useState('');
-    const [proposal, setProposal] = useState<Proposal | null>(null);
     /* Eighteen on paper. A dispatcher with fifteen on shift needs to see
        what fifteen looks like before they start ringing people, so it is a
        box on the screen and not a setting in a file. */
     /* Typed by hand until 17 October, defaulting to eighteen -- the number in
        the contract rather than the number standing in a car park. Proposing a
        wave for eighteen drivers when five are on shift produces a plan that
-       cannot be driven, and the dispatcher finds out by assigning it. */
-    const [fleet, setFleet] = useState('');
     /* Narrows the lanes below. Not in the URL: it is a glance at one
        driver during a wave, not a view somebody links to. */
     const [laneFilter, setLaneFilter] = useState('');
-    const [fleetTouched, setFleetTouched] = useState(false);
-    /* WHICH COUNTER THIS WAVE IS FOR. Empty is the whole day, which is what
-       it did before and still the right answer for a quiet afternoon.
-       University Health drops a list per pharmacy, so the ordinary morning
-       is one of these at a time, staffed by the people hired to drive from
-       there. */
-    const [planSite, setPlanSite] = useState('');
-    /* The way past that counter's own roster, for the morning when its
-       drivers are all off and the work still has to move. Deliberately not
-       a fallback: widening is an act the dispatcher takes and can see they
-       took. Reset whenever the counter changes, so it cannot be left on
-       from a previous pharmacy. */
-    const [anyDriver, setAnyDriver] = useState(false);
-    const [takeWith, setTakeWith] = useState<Record<number, string>>({});
     const pollRef = useRef<number | null>(null);
     /* The cards we already hold, and the cursor that says what we have seen.
        Refs rather than state: a poll reads and replaces both, and making them
@@ -326,10 +268,6 @@ export function Board() {
        own, in PoolGroup and LaneStops, because one page number shared across
        nine pharmacies would turn to page 2 for all of them at once. */
     const pagedFeed = usePaged(data?.activity ?? []);
-    /* The proposal's own runs. Eighteen on a good day and nearer thirty-five
-       on a Tuesday, each with a courier picker beside it, which was a long
-       scroll in a panel that is meant to be read quickly at noon. */
-    const pagedProposal = usePaged(proposal?.runs ?? []);
     /* The driver lanes. Three fitted on a screen and twenty-three do not:
        each lane is a card carrying every stop on the run, so the contract's
        full fleet is several thousand pixels of scroll with the lane you
@@ -395,121 +333,6 @@ export function Board() {
         `Run ${runId} sequenced.`,
     );
 
-    /* The proposal is held, not refetched on every render: it is a
-       suggestion a dispatcher is reading and comparing against the board,
-       and having it change underneath them on the fifteen-second poll is
-       the one thing it must not do. It is cleared when one is taken, so
-       what is on screen is never a plan that has already half happened. */
-    /* THE FLEET SIZE IS THE SERVER'S ANSWER UNLESS SOMEBODY OVERRODE IT.
-       It used to be this box, always, pre-filled by counting onShift on the
-       client. The server now reads the shifts table itself and staffs the
-       plan from it, so sending a number we counted here would override the
-       better answer with a worse one. `?drivers=` is kept for the "what
-       would ten look like" question, which is what the box is now for. */
-    /* `widen` is an ARGUMENT and not read from state, because the button
-       that widens also sets it, and a setState has not landed by the time
-       the handler runs. Reading the state here would send the OLD value and
-       the dispatcher would have to press it twice. */
-    const proposeRoutes = (widen = anyDriver) => act(
-        () => api<Proposal>(`${base}/runs/propose?${new URLSearchParams({
-            ...(fleetTouched && fleet !== '' ? { drivers: fleet } : {}),
-            ...(data?.serviceDate ? { serviceDate: data.serviceDate } : {}),
-            ...(planSite !== '' ? { site: planSite } : {}),
-            ...(planSite !== '' && widen ? { anyDriver: '1' } : {}),
-        }).toString()}`).then((p) => {
-            setProposal(p);
-            /* Preselect the server's suggestion so the ordinary case is one
-               click. A dispatcher who disagrees changes the dropdown; the
-               suggestion is a default and never an assignment. */
-            setTakeWith(Object.fromEntries(
-                (p.suggested ?? []).map((s, i) => [i, s?.username ?? '']).filter(([, u]) => u !== ''),
-            ));
-        }),
-        'Routes proposed. Nothing is assigned yet.',
-    );
-
-    /* `suggested` is parallel to `runs` and `takeWith` is keyed by position,
-       so removing a run has to move all three or the names slide onto the
-       wrong routes -- and each one still looks individually plausible,
-       which is the kind of mistake nobody catches by reading the screen. */
-    const dropProposed = (taken: ProposedRun[]) => {
-        const gone = new Set(taken);
-        setProposal((p) => {
-            if (p === null) return null;
-            const keep = p.runs.map((r, i) => ({ r, s: (p.suggested ?? [])[i] ?? null })).filter(({ r }) => !gone.has(r));
-            setTakeWith(Object.fromEntries(keep.map(({ s }, i) => [i, s?.username ?? ''])));
-            return { ...p, runs: keep.map(({ r }) => r), suggested: keep.map(({ s }) => s) };
-        });
-    };
-
-    /* One proposed run becomes a real one through POST /runs with its
-       orderIds -- the path the board already uses, with the lifecycle
-       checks and the audit trail it already has. */
-    const takeProposed = (run: ProposedRun, index: number, courier: string) => act(
-        () => api(`${base}/runs`, {
-            method: 'POST',
-            json: {
-                courierUsername: courier,
-                label: run.kind === 'stat' ? 'STAT' : `Wave ${index + 1}`,
-                serviceDate: data?.serviceDate,
-                orderIds: run.orderIds,
-            },
-        }),
-        `Run created for ${courier} with ${run.orderIds.length} ${run.orderIds.length === 1 ? 'stop' : 'stops'}.`,
-    ).then(() => dropProposed([run]));
-
-    /* ─────────────────────────────────────────── the whole wave at once
-     *
-     * Twenty-three runs created one dropdown at a time is the slowest part
-     * of the morning, and it is the part happening while deadlines run.
-     *
-     * SEQUENTIAL, NOT Promise.all. Each POST /runs takes custody of its
-     * orders and the lifecycle checks behind it are not written to run
-     * against themselves twenty-three times over. It also means a failure
-     * halfway leaves the runs before it created and the rest still on the
-     * proposal, which is a state a dispatcher can read and finish by hand.
-     *
-     * Only runs with a driver. A run whose dropdown is empty stays on the
-     * proposal rather than being quietly skipped and forgotten. */
-    const createAllRuns = () => {
-        const pending = (proposal?.runs ?? [])
-            .map((run, index) => ({ run, index, courier: takeWith[index] ?? '' }))
-            .filter((x) => x.courier !== '');
-        if (pending.length === 0) return;
-
-        setBusy(true);
-        void (async () => {
-            const made: ProposedRun[] = [];
-            try {
-                for (const { run, index, courier } of pending) {
-                    await api(`${base}/runs`, {
-                        method: 'POST',
-                        json: {
-                            courierUsername: courier,
-                            label: run.kind === 'stat' ? 'STAT' : `Wave ${index + 1}`,
-                            serviceDate: data?.serviceDate,
-                            orderIds: run.orderIds,
-                        },
-                    });
-                    made.push(run);
-                }
-                setMsg({ kind: 'ok', text: `${made.length} ${made.length === 1 ? 'run' : 'runs'} created.` });
-            } catch (err) {
-                /* Names how far it got. "Could not create the runs" after
-                   nine of them were created is worse than no message. */
-                setMsg({
-                    kind: 'error',
-                    text: `${made.length} of ${pending.length} runs created, then: `
-                        + (err instanceof ApiError ? err.message : 'the request failed'),
-                    details: err instanceof ApiError ? err.details : [],
-                });
-            } finally {
-                dropProposed(made);
-                setBusy(false);
-                void load(true);
-            }
-        })();
-    };
 
     const startRun = () => act(
         () => api(`${base}/runs`, { method: 'POST', json: { courierUsername: newRunCourier, label: 'Wave', serviceDate: data?.serviceDate } }),
@@ -580,88 +403,12 @@ export function Board() {
     const twiceOver = new Set([...runsPer].filter(([, n]) => n > 1).map(([u]) => u));
 
     const s = data.summary;
-    /* Follows the roster until somebody types over it. Planning for a number
-       nobody chose is how a proposal gets built for a fleet that is not
-       there. */
-    const fleetValue = fleetTouched ? fleet : String(onShiftCount);
 
     /* The pharmacy a run collects from, by name. `bySite` is every counter
        with work today, which is every counter a proposed run can name. */
     const siteNames = new Map(data.bySite.map((b) => [b.site.id, b.site.name]));
     const siteName = (id: number) => siteNames.get(id) ?? sites.find((x) => x.id === id)?.name ?? `site ${id}`;
 
-    /* WHO MAY BE PICKED FOR A PROPOSED ROUTE.
-       `idleCouriers` is everyone without a run, which is the right default
-       and is not quite enough: the server staffs from the on-shift roster,
-       and somebody it suggested may have picked up a run since the proposal
-       was fetched. Dropping them from the list would blank a dropdown that
-       already had the right answer in it. So: idle, plus anybody suggested,
-       in roster order. */
-    const suggestedNames = new Map(
-        (proposal?.suggested ?? []).filter((x): x is Suggested => x !== null)
-            .map((x) => [x.username, x.name]),
-    );
-    /* How many of the proposed runs have a driver chosen. The Create-all
-       button names it rather than saying "Create all" over a plan where
-       three routes have nobody. */
-    const readyToCreate = (proposal?.runs ?? []).filter((_, i) => (takeWith[i] ?? '') !== '').length;
-
-    const courierChoices: Array<{ username: string; name: string } & Partial<Courier>> = [
-        ...data.idleCouriers,
-        ...[...suggestedNames]
-            .filter(([u]) => !data.idleCouriers.some((c) => c.username === u))
-            .map(([username, name]) => ({ username, name })),
-    ].sort((a, b) => a.name.localeCompare(b.name));
-
-    /* ── WHO A PARTICULAR ROUTE MAY BE GIVEN TO ───────────────────────────
-     *
-     * A PHARMACY OFFERS ITS OWN DRIVERS AND NOBODY ELSE'S. The list used to
-     * be every idle courier on the contract, so a Southwest wave could be
-     * handed to a Robert B. Green driver by picking the wrong line of a
-     * thirty-name dropdown -- and with the unclaimed sweep also handing work
-     * to whoever was on shift, that is the mess this is undoing.
-     *
-     * THREE WAYS ONTO THE LIST, and the third is why it is not a one-line
-     * filter:
-     *
-     *   based here      homeSiteId is one of the route's pharmacies.
-     *   covers here     alsoCovers names one of them. One driver is based
-     *                   at Vida and runs Wheatley on the same round;
-     *                   nobody is based at Wheatley, so without this its
-     *                   dropdown is empty and its list cannot be assigned.
-     *   suggested       the server named them for THIS route. It staffed the
-     *                   plan from the shift table and the roster, so it
-     *                   knows things this list does not -- and dropping a
-     *                   name the server put there would blank a dropdown
-     *                   that already had the right answer in it.
-     *
-     * A route can collect from more than one pharmacy, so this takes the
-     * list and matches any of them.
-     */
-    const chooseFor = (siteIds: readonly number[], suggestedUsername: string | null) => {
-        const wanted = new Set(siteIds);
-        const forThisRoute = courierChoices.filter((c) => {
-            if (suggestedUsername !== null && c.username === suggestedUsername) return true;
-            if (c.homeSiteId !== null && c.homeSiteId !== undefined && wanted.has(c.homeSiteId)) return true;
-            return (c.alsoCovers ?? []).some((id) => wanted.has(id));
-        });
-        /* OFF-SHIFT DRIVERS ARE NOT OFFERED AT ALL ANY MORE.
-           They used to appear under an "away" heading, on the reasoning that
-           dispatch sometimes knows a driver is about to start. In practice it
-           put the whole roster in a list that was supposed to be the people
-           who could take the work, and a name in a dropdown reads as
-           available however it is grouped. A driver who is not on shift
-           cannot be given work: they go on shift first.
-
-           Somebody the server suggested but whom the board holds no record
-           for still counts as working, for the same reason as above -- a
-           missing record must not blank a dropdown that had the right answer
-           in it. */
-        return {
-            working: forThisRoute.filter((c) => c.onShift !== false),
-            away: [] as typeof forThisRoute,
-        };
-    };
 
     return (
         <>

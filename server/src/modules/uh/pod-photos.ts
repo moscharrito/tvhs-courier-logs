@@ -75,7 +75,7 @@ export async function storedPhoto(
  * One form covers the whole trolley. A courier collecting eleven orders
  * photographs one sheet, so the `files` row is written with order_id NULL
  * -- deliberately, because it does not belong to any single delivery -- and
- * modules/uh/pickup.ts puts its id on EVERY order's `picked_up` custody
+ * the collection flow put its id on EVERY order's `picked_up` custody
  * event instead. That is the correct shape for the fact being recorded.
  *
  * `storedPhoto` above looks photographs up with `WHERE order_id = ?`. So
