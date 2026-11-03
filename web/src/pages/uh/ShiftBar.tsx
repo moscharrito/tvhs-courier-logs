@@ -48,15 +48,25 @@ export function ShiftBar({ code, onChanged }: Props) {
     const [state, setState] = useState<ShiftState | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    /** The read failed, so the bar does not know. Said plainly, not shouted. */
+    const [unread, setUnread] = useState(false);
 
     const load = useCallback(async () => {
         try {
             setState(await api<ShiftState>(`/api/projects/${code}/uh/shifts/mine`));
-        } catch (err) {
-            /* A courier who cannot read their own shift is a courier who
-               should still see their stops, so this reports and does not
-               throw. */
-            setError(err instanceof ApiError ? err.message : 'Could not check whether you are on shift.');
+            setUnread(false);
+        } catch {
+            /* QUIETLY, AND THAT CHANGED WHEN THIS MOVED INTO THE TOP BAR.
+               It used to raise an alert, which was right while it sat on one
+               screen. The bar is now on every screen of the driver portal,
+               so a read that fails would put a red alert over whatever the
+               courier was actually doing -- and on a page with an alert of
+               its own, two. Nobody asked for this request; it is the bar
+               checking on its own behalf.
+
+               A failed TOGGLE is the opposite and still shouts: that one the
+               courier asked for, and the answer is the whole point. */
+            setUnread(true);
         }
     }, [code]);
 
@@ -76,6 +86,14 @@ export function ShiftBar({ code, onChanged }: Props) {
             await api(`/api/projects/${code}/uh/shifts/${onShift ? 'end' : 'start'}`, { method: 'POST', json: {} });
             await load();
             onChanged?.();
+            /* THE SCREEN THAT CARES IS NO LONGER THE ONE THIS IS INSIDE.
+               It moved into the driver's top bar, which is rendered by the
+               shell and knows nothing about a run. What a courier may do
+               changes the moment a shift opens, so the screen has to re-read
+               -- and an event is the smallest thing that crosses that gap
+               without the shell importing the page or the page importing the
+               shell. */
+            window.dispatchEvent(new CustomEvent('izy:shift-changed'));
         } catch (err) {
             /* The server is the truth about whether a shift is open, so ask
                again rather than assuming the button did what it was asked. */
@@ -86,45 +104,43 @@ export function ShiftBar({ code, onChanged }: Props) {
         }
     }
 
-    const carrying = state?.carrying ?? [];
-
     return (
-        <div className="izy-card izy-shift">
-            <div className="izy-row-between">
-                <div>
-                    <p className="izy-shift-state" role="status" aria-live="polite">
-                        <span className={onShift ? 'izy-dot on' : 'izy-dot off'} aria-hidden="true" />
-                        {!known
-                            ? 'Checking whether you are on shift…'
-                            : onShift
-                                ? 'On shift. Dispatch can give you work and see where your deliveries happen.'
-                                : 'Off shift. Dispatch cannot assign you anything until you go on shift.'}
-                    </p>
-                </div>
-                <button
-                    className={onShift ? 'izy-btn secondary' : 'izy-btn'}
-                    type="button"
-                    onClick={() => { void toggle(); }}
-                    disabled={busy || !known}
-                    aria-busy={busy}
-                >
-                    {busy ? (onShift ? 'Going off…' : 'Going on…') : (onShift ? 'Go off shift' : 'Go on shift')}
-                </button>
-            </div>
+        <div className="izy-shift-pill">
+            <span
+                className={onShift ? 'izy-dot on' : 'izy-dot off'}
+                aria-hidden="true"
+            />
+            {/* THREE WORDS, NOT THREE SENTENCES.
+                This used to explain, beside the dot, that dispatch can give
+                you work and see where your deliveries happen, and then add a
+                line about the packages still in the car. It sat at the top of
+                the one screen a driver works from all day, and by the second
+                day nobody is reading it: what they need from this control is
+                which state they are in and how to change it.
 
-            {error !== null && <p className="izy-alert warn" role="alert">{error}</p>}
+                The packages line has not been thrown away, it has been moved
+                to where it bites. The server refuses to end a shift while
+                undelivered packages are still with you and says so in a
+                sentence written for the driver; that refusal now shows here,
+                at the moment somebody tries, instead of standing on screen
+                all day for the hours when it is not true. */}
+            <span className="izy-shift-word" role="status" aria-live="polite">
+                {unread && !known ? 'Shift unknown' : !known ? 'Checking…' : onShift ? 'On shift' : 'Off shift'}
+            </span>
+            <button
+                className={onShift ? 'izy-btn secondary small' : 'izy-btn small'}
+                type="button"
+                onClick={() => { void toggle(); }}
+                disabled={busy || !known}
+                aria-busy={busy}
+            >
+                {busy ? (onShift ? 'Going off…' : 'Going on…') : (onShift ? 'Go off shift' : 'Go on shift')}
+            </button>
 
-            {/* GOING OFF SHIFT HOLDING SOMETHING IS THE CASE WORTH NAMING.
-                Section 9 of the courier offer letter requires every
-                undelivered package back at the pharmacy it came from the same
-                day, so a courier about to end their shift with items in the
-                car needs telling before they drive home, not after. */}
-            {onShift && carrying.length > 0 && (
-                <p className="izy-muted izy-shift-carrying">
-                    You are still carrying {carrying.length} {carrying.length === 1 ? 'package' : 'packages'}.
-                    They go back to the pharmacy they came from before you finish.
-                </p>
-            )}
+            {/* Wraps to its own line inside the top bar: it is a sentence,
+                and squeezing it between the contract name and Sign out is
+                how it ends up truncated on the phone it is written for. */}
+            {error !== null && <p className="izy-shift-error" role="alert">{error}</p>}
         </div>
     );
 }

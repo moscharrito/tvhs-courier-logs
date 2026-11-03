@@ -737,12 +737,96 @@ describe('Board', () => {
         expect(screen.getByText('drives this pharmacy')).toBeInTheDocument();
     });
 
-    it('puts the drivers who are working at the top of the picker', async () => {
-        /* Flat, this was every courier in alphabetical order with the few
-           actually on shift scattered among them, so changing a suggestion
-           meant scrolling past drivers who are at home. On a local board
-           with thirty-two couriers and six working that is the "hard to
-           assign" complaint in one control. */
+    it('offers a waiting order only the lanes of drivers at that pharmacy, on shift', async () => {
+        /* THE HALF THAT WAS MISSED. The run-proposal picker was narrowed to
+           a counter's own drivers on 2 November; this one -- the "Assign
+           to..." on every card in the unassigned pool, which is what
+           dispatch actually uses all day -- was not. Every card waiting at
+           Wheatley offered every lane on the board, including drivers based
+           across the city. Reported 2 November.
+
+           Three lanes: one driver based here and working, one based here
+           who has gone home, one working but based somewhere else. Only the
+           first may be offered. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [
+                    {
+                        run: { id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14', label: '', status: 'planned', startedAt: null },
+                        courier: courier({ username: 'ada.courier', name: 'Ada Courier', homeSiteId: 7, onShift: true }),
+                        stops: [], currentStop: null, counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+                    },
+                    {
+                        run: { id: 11, courierUsername: 'gone.courier', serviceDate: '2026-09-14', label: '', status: 'planned', startedAt: null },
+                        /* A LANE OUTLIVES THE SHIFT THAT MADE IT. Went home
+                           at two; the run is still on the board at four. */
+                        courier: courier({ username: 'gone.courier', name: 'Gone Courier', homeSiteId: 7, onShift: false, present: false }),
+                        stops: [], currentStop: null, counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+                    },
+                    {
+                        run: { id: 12, courierUsername: 'far.courier', serviceDate: '2026-09-14', label: '', status: 'planned', startedAt: null },
+                        courier: courier({ username: 'far.courier', name: 'Far Courier', homeSiteId: 9, onShift: true }),
+                        stops: [], currentStop: null, counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+                    },
+                ],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pick = await screen.findByLabelText('Assign order 1 to');
+        expect(within(pick).getByRole('option', { name: /Ada Courier/ })).toBeInTheDocument();
+        expect(within(pick).queryByRole('option', { name: /Gone Courier/ })).not.toBeInTheDocument();
+        expect(within(pick).queryByRole('option', { name: /Far Courier/ })).not.toBeInTheDocument();
+    });
+
+    it('offers a waiting order the lane of somebody who covers that pharmacy', async () => {
+        /* Cover is why alsoCovers exists: one driver based at Vida also
+           works Wheatley. Narrowing the pool must not quietly drop them. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [{
+                    run: { id: 13, courierUsername: 'cov.courier', serviceDate: '2026-09-14', label: '', status: 'planned', startedAt: null },
+                    courier: courier({ username: 'cov.courier', name: 'Cov Courier', homeSiteId: 9, alsoCovers: [7], onShift: true }),
+                    stops: [], currentStop: null, counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pick = await screen.findByLabelText('Assign order 1 to');
+        expect(within(pick).getByRole('option', { name: /Cov Courier/ })).toBeInTheDocument();
+    });
+
+    it('offers no control at all when nobody at that pharmacy is working', async () => {
+        /* Rather than an empty dropdown, which reads as a loading failure.
+           PoolGroup already renders no select when there are no lanes; this
+           pins that narrowing produces that state instead of a stub. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [{
+                    run: { id: 14, courierUsername: 'far.courier', serviceDate: '2026-09-14', label: '', status: 'planned', startedAt: null },
+                    courier: courier({ username: 'far.courier', name: 'Far Courier', homeSiteId: 9, onShift: true }),
+                    stops: [], currentStop: null, counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(screen.queryByLabelText('Assign order 1 to')).not.toBeInTheDocument();
+    });
+
+    it('offers only the drivers who are on shift, and not the ones who are not', async () => {
+        /* IT USED TO OFFER BOTH, under an "On shift" heading and a "Not on
+           shift" one. The reasoning was that dispatch sometimes knows a
+           driver is about to start. In practice it put the whole roster into
+           the control that is supposed to be the people who can take the
+           work, and a name in a dropdown reads as available however it is
+           grouped -- which is half of what was reported on 2 November as
+           "still see all drivers". A driver who is not on shift goes on
+           shift first. */
         const r = renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
                 idleCouriers: [
@@ -758,9 +842,10 @@ describe('Board', () => {
 
         const select = await screen.findByLabelText('Courier for proposed route 1');
         const groups = select.querySelectorAll('optgroup');
-        expect([...groups].map((g) => g.label)).toEqual(['On shift', 'Not on shift']);
+        expect([...groups].map((g) => g.label)).toEqual(['On shift']);
         expect(within(groups[0] as HTMLElement).getByRole('option', { name: /Bo Courier/ })).toBeInTheDocument();
-        expect(within(groups[1] as HTMLElement).getByRole('option', { name: 'Cal Courier' })).toBeInTheDocument();
+        /* Not anywhere in the control, not merely not in the first group. */
+        expect(within(select).queryByRole('option', { name: 'Cal Courier' })).not.toBeInTheDocument();
         return r;
     });
 

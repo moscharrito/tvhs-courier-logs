@@ -57,7 +57,6 @@ import { slaLabel, type Sla } from './Orders';
 import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
-import { ShiftBar } from './ShiftBar';
 import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { BoxIcon, FlagIcon, HistoryIcon, NavigateIcon, PhoneIcon, PinIcon, ReturnIcon } from '../../app/Icons';
 
@@ -147,6 +146,15 @@ export function MyRun() {
         }
     }, [code]);
     useEffect(() => { void load(); }, [load]);
+    /* THE SHIFT CONTROL MOVED INTO THE TOP BAR, which the shell renders and
+       which knows nothing about a run. What a courier may do changes the
+       moment a shift opens, so this listens for the toggle rather than being
+       handed a callback by it. */
+    useEffect(() => {
+        const again = () => { void load(); };
+        window.addEventListener('izy:shift-changed', again);
+        return () => { window.removeEventListener('izy:shift-changed', again); };
+    }, [load]);
 
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
@@ -189,14 +197,6 @@ export function MyRun() {
                 holding status until there is something to draw.
                 ───────────────────────────────────────────────────────────── */}
             <Context>
-                {/* FIRST, ABOVE EVERYTHING, because it gates the day. Dispatch
-                    cannot assign to a courier who is not on shift, and the
-                    escalation for unclaimed work looks for somebody who is —
-                    so a driver who never finds this control is a driver the
-                    board cannot use. The app keeps it above the tabs for the
-                    same reason: there is no state in which it is empty. */}
-                <ShiftBar code={code} onChanged={() => { void load(); }} />
-
                 <ScreenHeader title="Today" subtitle={subtitle} />
 
                 {/* NO PIN PROMPT HERE. It lived above the run between tickets

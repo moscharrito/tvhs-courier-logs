@@ -435,10 +435,27 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     /* No default number: a wrong one is worse than none, because a courier
        standing at a door with a problem would dial it and reach a stranger.
        The courier app hides the button until someone sets this. */
-    /* autoAssign true keeps the behaviour every project had before this
-       setting existed. A default that silently stopped a STAT being handed
-       out would be a worse surprise than one that keeps doing it. */
-    dispatch: { phone: '', name: 'Dispatch', autoAssign: true },
+    /* autoAssign DEFAULTS OFF, and it used to default on.
+     *
+     * The first reasoning was that a default which silently stopped a STAT
+     * being handed out is a worse surprise than one that keeps doing it.
+     * That was wrong about where the surprise lands. Handing real work to
+     * whoever happened to tap a button is not a safe default -- it is the
+     * mess this setting was added to stop, on 2 November, on a contract
+     * with thirty-nine accounts.
+     *
+     * AND A DEFAULT IS THE ONLY PART THAT CANNOT FAIL TO BE APPLIED. The
+     * switch lives in the database, so turning it off means running a
+     * script, and a script that is not run leaves the old behaviour in
+     * place with nothing on any screen saying so. That happened: the
+     * wrapper that flips it is gitignored, a terminal was sitting in a
+     * second checkout that does not contain it, and three days of
+     * assignments were made by a sweep everybody believed was off.
+     *
+     * So the safe state is the one you get by doing nothing. A project that
+     * wants the sweep to assign has to say so, in writing, in its own
+     * settings. */
+    dispatch: { phone: '', name: 'Dispatch', autoAssign: false },
     returns: { afterHoursSiteCode: 'discharge' },
     /* No recipients, so nothing is sent until somebody names one. */
     reporting: { dailyRecipients: [], days: [0, 1, 2, 3, 4, 5, 6] },

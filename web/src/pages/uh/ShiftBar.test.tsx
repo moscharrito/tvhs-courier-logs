@@ -38,13 +38,16 @@ describe('the shift control', () => {
     it('offers a way on when the courier is off shift', async () => {
         renderBar({ [`GET ${MINE}`]: off });
         expect(await screen.findByRole('button', { name: 'Go on shift' })).toBeInTheDocument();
-        expect(screen.getByText(/Dispatch cannot assign you anything/)).toBeInTheDocument();
+        /* TWO WORDS, NOT A SENTENCE. The explanation beside the dot went on
+           2 November: it stood at the top of the one screen a driver works
+           from all day, and by the second day nobody reads it. */
+        expect(screen.getByText('Off shift')).toBeInTheDocument();
     });
 
-    it('offers a way off when they are on, and says what that means', async () => {
+    it('offers a way off when they are on', async () => {
         renderBar({ [`GET ${MINE}`]: on() });
         expect(await screen.findByRole('button', { name: 'Go off shift' })).toBeInTheDocument();
-        expect(screen.getByText(/Dispatch can give you work/)).toBeInTheDocument();
+        expect(screen.getByText('On shift')).toBeInTheDocument();
     });
 
     it('opens the shift against the server, not in the page', async () => {
@@ -77,30 +80,57 @@ describe('the shift control', () => {
            a courier taps Go on shift, is refused by the server, and has no
            idea why. */
         renderBar({ [`GET ${MINE}`]: on() });
-        expect(screen.getByText(/Checking whether you are on shift/)).toBeInTheDocument();
-        expect(screen.queryByText(/Off shift\./)).not.toBeInTheDocument();
+        expect(screen.getByText(/Checking/)).toBeInTheDocument();
+        expect(screen.queryByText('Off shift')).not.toBeInTheDocument();
         await screen.findByRole('button', { name: 'Go off shift' });
     });
 
-    it('warns about packages still in the car before the shift ends', async () => {
-        /* Section 9 of the offer letter: every undelivered package goes back
-           to the pharmacy it came from the same day. A courier needs that
-           before they drive home, not after. */
+    it('tells the courier about the packages when they try to finish', async () => {
+        /* SECTION 9 OF THE OFFER LETTER still holds: every undelivered
+           package goes back to the pharmacy it came from the same day, and a
+           courier needs telling before they drive home.
+
+           WHAT MOVED, on 2 November, IS WHEN. It used to be a paragraph
+           standing under the control all day, including the hours when it
+           was not true. Now the server refuses the request and explains why
+           -- it is the one that knows -- and the refusal appears at the
+           moment somebody tries to go off shift. Fewer words on screen, and
+           the warning lands when it can still change what happens. */
+        renderBar({
+            [`GET ${MINE}`]: on([{ id: 9, reference: 'RX-9', status: 'failed' }]),
+            [`POST /api/projects/uh/uh/shifts/end`]: {
+                status: 409,
+                body: {
+                    error: 'There is 1 package still with you. Deliver it, or hand it back to a pharmacy '
+                        + 'with Take back undelivered, before you go off shift.',
+                    code: 'shift.stillCarrying',
+                },
+            },
+        });
+        fireEvent.click(await screen.findByRole('button', { name: 'Go off shift' }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(/1 package still with you/);
+        /* And they are still on shift, which is the truth: the server said no. */
+        expect(screen.getByRole('button', { name: 'Go off shift' })).toBeInTheDocument();
+    });
+
+    it('says nothing about carrying when nothing has been refused', async () => {
         renderBar({ [`GET ${MINE}`]: on([{ id: 9, reference: 'RX-9', status: 'failed' }]) });
-        expect(await screen.findByText(/still carrying 1 package/)).toBeInTheDocument();
-        expect(screen.getByText(/back to the pharmacy they came from/)).toBeInTheDocument();
-    });
-
-    it('says nothing about carrying when their hands are empty', async () => {
-        renderBar({ [`GET ${MINE}`]: on() });
         await screen.findByRole('button', { name: 'Go off shift' });
-        expect(screen.queryByText(/still carrying/)).not.toBeInTheDocument();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
-    it('keeps the courier on their run when the shift cannot be read', async () => {
-        /* Their stops are the job. A failure here reports and gets out of the
-           way rather than replacing the screen with an error. */
+    it('says it does not know, quietly, when the shift cannot be read', async () => {
+        /* Their stops are the job, so a failure here gets out of the way.
+
+           AND IT DOES NOT RAISE AN ALERT, which changed when this moved into
+           the top bar on 2 November. The bar is now on every screen of the
+           driver portal: a read that fails would put a red alert over
+           whatever the courier was doing, and on a page with an alert of its
+           own there would be two. Nobody asked for this request. A refused
+           TOGGLE still shouts, because that one they did ask for. */
         renderBar({ [`GET ${MINE}`]: { status: 500, body: { error: 'nope' } } });
-        expect(await screen.findByRole('alert')).toBeInTheDocument();
+        expect(await screen.findByText('Shift unknown')).toBeInTheDocument();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 });

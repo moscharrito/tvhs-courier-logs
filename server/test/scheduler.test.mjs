@@ -28,6 +28,12 @@ beforeAll(async () => {
     await admin.put('/api/users/ana.sched/memberships/uh').send({ role: 'courier', settings: { homeSiteId: siteId } });
     ana = srv.agent();
     await ana.post('/api/login').send({ username: 'ana.sched', password: 'sched-pass-1' });
+    /* THE SWEEP ONLY ASSIGNS WHEN THE PROJECT SAYS SO, and since 2 November
+       no project says so unless it is written down: autoAssign defaults off.
+       This file is about the scheduler reaching every project and running
+       the sweep, so it turns the sweep's one permission on and leaves the
+       question of the default to escalation.test.mjs. */
+    await admin.patch('/api/projects/uh/settings').send({ dispatch: { autoAssign: true } });
 }, 60_000);
 
 afterAll(async () => { await srv?.stop(); });

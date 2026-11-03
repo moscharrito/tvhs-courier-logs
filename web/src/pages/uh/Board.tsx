@@ -517,10 +517,29 @@ export function Board() {
         `Run started for ${newRunCourier}.`,
     ).then(() => setNewRunCourier(''));
 
-    const laneOptions = (data?.lanes ?? []).map((l) => ({
-        id: l.run.id,
-        label: `${l.courier.name}${l.run.label ? ` (${l.run.label})` : ''}`,
-    }));
+    /* THE POOL'S "Assign to..." IS A LIST OF LANES, AND IT USED TO BE ALL OF
+     * THEM.
+     *
+     * The run-proposal picker below was narrowed to the counter's own drivers
+     * on 2 November and this one was missed, which is the half that dispatch
+     * actually uses: every card waiting at Wheatley offered every driver on
+     * the board, including drivers based at counters on the other side of the
+     * city. Reported 2 November as "still see all drivers in the dropdown".
+     *
+     * ON SHIFT AND MAPPED TO THAT PHARMACY, both. A lane exists because a run
+     * was made, and a run outlives the shift that started it: a driver who
+     * went home at two still has today's lane, and offering it at four hands
+     * work to somebody who is not working. */
+    const lanesFor = (siteId: number) => (data?.lanes ?? [])
+        .filter((l) => {
+            if (l.courier.onShift !== true) return false;
+            if (l.courier.homeSiteId === siteId) return true;
+            return (l.courier.alsoCovers ?? []).includes(siteId);
+        })
+        .map((l) => ({
+            id: l.run.id,
+            label: `${l.courier.name}${l.run.label ? ` (${l.run.label})` : ''}`,
+        }));
 
     /* ON SHIFT, FROM THE SHIFTS TABLE. Not `present`, which is "used the app
        in the last ten minutes" -- a driver halfway between two addresses is
@@ -606,12 +625,21 @@ export function Board() {
             if (c.homeSiteId !== null && c.homeSiteId !== undefined && wanted.has(c.homeSiteId)) return true;
             return (c.alsoCovers ?? []).some((id) => wanted.has(id));
         });
-        /* Split for the picker. Somebody the server suggested but whom the
-           board holds no record for counts as working, for the same reason
-           as above. */
+        /* OFF-SHIFT DRIVERS ARE NOT OFFERED AT ALL ANY MORE.
+           They used to appear under an "away" heading, on the reasoning that
+           dispatch sometimes knows a driver is about to start. In practice it
+           put the whole roster in a list that was supposed to be the people
+           who could take the work, and a name in a dropdown reads as
+           available however it is grouped. A driver who is not on shift
+           cannot be given work: they go on shift first.
+
+           Somebody the server suggested but whom the board holds no record
+           for still counts as working, for the same reason as above -- a
+           missing record must not blank a dropdown that had the right answer
+           in it. */
         return {
             working: forThisRoute.filter((c) => c.onShift !== false),
-            away: forThisRoute.filter((c) => c.onShift === false),
+            away: [] as typeof forThisRoute,
         };
     };
 
@@ -739,7 +767,7 @@ export function Board() {
                             group={group}
                             projectCode={code}
                             busy={busy}
-                            laneOptions={laneOptions}
+                            laneOptions={lanesFor(group.site.id)}
                             onDragStart={setDragging}
                             assign={assign}
                         />

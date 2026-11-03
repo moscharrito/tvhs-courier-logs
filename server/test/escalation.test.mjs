@@ -23,6 +23,17 @@ import { startServer } from './helpers/server.mjs';
 import { sweepUnclaimed, SWEEP_THRESHOLDS } from '../src/modules/uh/escalation.ts';
 
 const UH = '/api/projects/uh/uh';
+/* OPTING IN, because autoAssign now defaults OFF.
+ *
+ * It defaulted on until 2 November, so `{}` used to mean "the sweep assigns".
+ * It no longer does: handing real work to whoever happened to tap a button
+ * is not a safe thing to get by doing nothing, and the switch lives in the
+ * database where a script that never ran leaves the old behaviour in place.
+ * Tests about the sweep ASSIGNING therefore have to say so, which is the
+ * right way round -- the ones that do not say it are now testing the
+ * default, and the default is off. */
+const AUTO = { dispatch: { autoAssign: true } };
+
 const ESC = `${UH}/escalation`;
 
 let srv;
@@ -89,7 +100,7 @@ describe('what nobody asks for', () => {
         const id = await poolOrder();
         await dueIn(id, SWEEP_THRESHOLDS.adhoc + 30);
         const out = await sweepUnclaimed(core(), {
-            projectId, projectSettings: {}, serviceDate: (await admin.get(`${UH}/orders/${id}`)).body.serviceDate,
+            projectId, projectSettings: AUTO, serviceDate: (await admin.get(`${UH}/orders/${id}`)).body.serviceDate,
             now: new Date(), dryRun: true,
         });
         expect(out.assigned.map((a) => a.orderId)).not.toContain(id);
@@ -100,7 +111,7 @@ describe('what nobody asks for', () => {
         await dueIn(id, SWEEP_THRESHOLDS.stat - 10);
         const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
 
-        const out = await sweepUnclaimed(core(), { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const out = await sweepUnclaimed(core(), { projectId, projectSettings: AUTO, serviceDate, now: new Date() });
         const got = out.assigned.find((a) => a.orderId === id);
         expect(got, 'the STAT was handed out').toBeDefined();
         expect(out.couriers.map((c) => c.courierUsername)).toContain(got.courierUsername);
@@ -144,15 +155,45 @@ describe('what nobody asks for', () => {
         const after = (await admin.get(`${UH}/orders/${id}`)).body;
         expect(after.assignedTo ?? null).toBeNull();
 
-        /* And with the setting left alone, the very same order IS taken --
+        /* And with the setting turned ON, the very same order IS taken --
            so the first half of this test is about the setting and not about
            an order the sweep was never going to reach. */
         const auto = await sweepUnclaimed(core(), {
-            projectId, projectSettings: {}, serviceDate, now: new Date(),
+            projectId, projectSettings: AUTO, serviceDate, now: new Date(),
         });
         expect(auto.autoAssign).toBe(true);
         expect(auto.assigned.map((a) => a.orderId)).toContain(id);
         expect(auto.needsAssigning).toEqual([]);
+    });
+
+    it('assigns nothing to a project that has not said it may', async () => {
+        /* THE DEFAULT IS THE ONLY PART THAT CANNOT FAIL TO BE APPLIED.
+           autoAssign used to default on, so switching it off meant running a
+           script against production -- and a script that is not run leaves
+           the old behaviour in place with nothing on any screen saying so.
+           That is exactly what happened: the wrapper that flips it is
+           gitignored, a terminal was sitting in a second checkout that does
+           not contain it, and work kept being handed out by a sweep
+           everybody believed was off.
+
+           So this pins the safe state as the one you get by doing nothing,
+           with no settings passed at all. */
+        const id = await poolOrder({ serviceType: 'stat' });
+        await dueIn(id, SWEEP_THRESHOLDS.stat - 10);
+        const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
+
+        const out = await sweepUnclaimed(core(), {
+            projectId, projectSettings: {}, serviceDate, now: new Date(),
+        });
+
+        expect(out.autoAssign).toBe(false);
+        expect(out.assigned).toEqual([]);
+        /* Still reported, so dispatch sees what is waiting: refusing to
+           assign is not the same as going quiet. */
+        expect(out.needsAssigning.map((a) => a.orderId)).toContain(id);
+
+        const after = (await admin.get(`${UH}/orders/${id}`)).body;
+        expect(after.assignedTo ?? null).toBeNull();
     });
 
     it('says so loudly when there is nobody to give it to', async () => {
@@ -165,7 +206,7 @@ describe('what nobody asks for', () => {
         await dueIn(id, 5);
         const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
 
-        const out = await sweepUnclaimed(core(), { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const out = await sweepUnclaimed(core(), { projectId, projectSettings: AUTO, serviceDate, now: new Date() });
         const stuck = out.unassignable.find((u) => u.orderId === id);
         expect(stuck).toBeDefined();
         expect(stuck.reason).toMatch(/Nobody is on shift/);
@@ -180,7 +221,7 @@ describe('what nobody asks for', () => {
         for (const id of ids) await dueIn(id, 10);
         const serviceDate = (await admin.get(`${UH}/orders/${ids[0]}`)).body.serviceDate;
 
-        const out = await sweepUnclaimed(core(), { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const out = await sweepUnclaimed(core(), { projectId, projectSettings: AUTO, serviceDate, now: new Date() });
         const mine = out.assigned.filter((a) => ids.includes(a.orderId));
         expect(mine).toHaveLength(2);
         expect(new Set(mine.map((a) => a.courierUsername)).size, 'two vans, not one').toBe(2);
@@ -191,7 +232,7 @@ describe('what nobody asks for', () => {
         await dueIn(id, 5);
         const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
 
-        const out = await sweepUnclaimed(core(), { projectId, projectSettings: {}, serviceDate, now: new Date(), dryRun: true });
+        const out = await sweepUnclaimed(core(), { projectId, projectSettings: AUTO, serviceDate, now: new Date(), dryRun: true });
         expect(out.assigned.map((a) => a.orderId)).toContain(id);
         expect((await admin.get(`${UH}/orders/${id}`)).body.status).toBe('ready');
     });
@@ -223,8 +264,9 @@ describe('what nobody asks for', () => {
             automatic: false,
             everySeconds: null,
             timerRunning: false,
-            /* Default, and unchanged for a project that never set it. */
-            autoAssign: true,
+            /* OFF BY DEFAULT since 2 November, and this is the line that
+               says so. A project that never set it does not assign. */
+            autoAssign: false,
         });
     });
 });

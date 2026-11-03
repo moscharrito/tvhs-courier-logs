@@ -266,6 +266,30 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    record that it was sent and withdrawn, and its sheet still downloads. Not
    struck through, because the file name and the counts stay true. */
 .izy-row-off > td { opacity: 0.55; }
+/* The shift control, centred in the driver's top bar between the contract
+   name and Sign out. flex:1 with centred content is what keeps it in the
+   middle of the row whatever the two beside it are as wide as. */
+.izy-shift-pill {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+}
+.izy-shift-word { font-size: 13px; font-weight: 600; color: var(--izy-ink); white-space: nowrap; }
+.izy-shift-pill .izy-btn { white-space: nowrap; }
+/* Its own line, full width of the bar: a refusal runs to two lines and must
+   not be squeezed between the name and the button. */
+.izy-shift-error {
+    flex-basis: 100%;
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--izy-danger);
+    text-align: center;
+}
 /* The filter on the Recent imports heading row. The fields shrink to their
    labels so the heading keeps the left of the row, and the whole thing wraps
    under the heading on a narrow screen rather than squeezing both. */

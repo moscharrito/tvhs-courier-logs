@@ -233,22 +233,26 @@ describe('Stop', () => {
         expect(form).toHaveAttribute('accept', expect.stringContaining('image/'));
     });
 
-    it('offers a camera of our own beside every photo field', async () => {
-        /* 31 OCTOBER, AND THE THIRD FIX FOR THE SAME REPORT. The file input
-           hands the whole business to the operating system: it opens the
-           phone's camera app, and when THAT comes up black there is no line
-           of ours in the path. So there is a second way in -- getUserMedia,
-           a frame we own, a canvas -- and the point of it is not elegance.
-           It is that when it fails it fails with a name the courier can be
-           told, instead of a black rectangle.
+    it('offers no camera of its own: the file chooser is the only way in', async () => {
+        /* IT WAS A SECOND DOOR WE BUILT OURSELVES, on 31 October, after a
+           courier tapped the field, chose Take Photo and got a black frame.
+           The operating system’s chooser turned out to be fine -- on both
+           collection and drop-off -- and the extra button sat under the one
+           screen a driver uses at a doorstep, confusing it. Removed on
+           2 November at the owner’s instruction.
 
-           One per field, because a delivery needs the form AND, when the
-           pharmacy stamped it, the identification. */
+           This is the screen that had two of them, for the form and for the
+           identification, so it is the one worth pinning at zero. */
         renderStop(routes({ 'GET /api/projects/uh/uh/orders/21': order({ idRequired: true }) }));
         await screen.findByRole('heading', { name: 'Stop' });
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
 
-        expect(screen.getAllByRole('button', { name: 'Take a picture' })).toHaveLength(2);
+        expect(screen.queryAllByRole('button', { name: 'Take a picture' })).toHaveLength(0);
+        /* And both fields still take a photograph, which is the thing that
+           must not have been removed with the button. */
+        for (const f of screen.getAllByLabelText(/Photo of/)) {
+            expect(f).toHaveAttribute('accept', 'image/*');
+        }
     });
 
     it('names a file the server would refuse, rather than letting it become a four-hundred', async () => {

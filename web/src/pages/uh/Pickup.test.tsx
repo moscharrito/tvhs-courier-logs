@@ -282,13 +282,20 @@ describe('Pickup', () => {
 });
 
 describe('the camera beside the photo field', () => {
-    it("is there, because the phone's own camera came up black at a counter", async () => {
-        /* 31 October: tapping the field, choosing Take Photo, and getting a
-           black frame. That camera belongs to the operating system and no
-           line of ours is in its path, so there is a second way in that we
-           own -- and that reports what went wrong. See app/Camera.tsx. */
+    it('is gone: the file chooser is the only way in, and it works', async () => {
+        /* IT WAS A SECOND DOOR WE BUILT OURSELVES, on 31 October, after a
+           courier tapped the field, chose Take Photo and got a black frame.
+           The operating system's chooser turned out to be fine -- on both
+           collection and drop-off -- and the extra button sat under the
+           field confusing the one screen a driver uses at a doorstep.
+           Removed 2 November at the owner's instruction.
+
+           accept="image/*" is what keeps this whole: on a phone that
+           chooser still offers Take Photo as well as the library, so
+           nothing was lost by taking our own camera away. */
         renderPickup();
-        await screen.findByLabelText(/Photo of the signed form/);
-        expect(screen.getByRole('button', { name: 'Take a picture' })).toBeInTheDocument();
+        const field = await screen.findByLabelText(/Photo of the signed form/);
+        expect(field).toHaveAttribute('accept', 'image/*');
+        expect(screen.queryByRole('button', { name: 'Take a picture' })).not.toBeInTheDocument();
     });
 });

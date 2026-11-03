@@ -61,6 +61,12 @@ beforeAll(async () => {
 
 afterAll(async () => { await srv?.stop(); });
 
+/* OPTING IN: autoAssign defaults OFF since 2 November, so `{}` no longer
+   means "the sweep assigns". Every test here is about what a courier or a
+   dispatcher is TOLD when the sweep hands work out, so the sweep has to be
+   allowed to hand work out. */
+const AUTO = { dispatch: { autoAssign: true } };
+
 describe('what a courier is told', () => {
     /* THREE TESTS WENT FROM HERE ON 16 OCTOBER 2026, with the feature they
        covered: a courier's request being approved, being pipped by another
@@ -79,7 +85,7 @@ describe('what a courier is told', () => {
             args: [new Date(Date.now() + 10 * 60_000).toISOString(), id],
         });
         const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
-        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: AUTO, serviceDate, now: new Date() });
         const who = out.assigned.find((a) => a.orderId === id).courierUsername;
 
         const got = await inbox(who === 'ana.note' ? ana : bo);
@@ -108,7 +114,7 @@ describe('mine means mine', () => {
             args: [new Date(Date.now() + 10 * 60_000).toISOString(), id],
         });
         const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
-        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: AUTO, serviceDate, now: new Date() });
         const who = out.assigned.find((a) => a.orderId === id).courierUsername;
         const owner = who === 'ana.note' ? ana : bo;
         const other = who === 'ana.note' ? bo : ana;
@@ -143,7 +149,7 @@ describe('the loud case', () => {
         });
         const serviceDate = (await admin.get(`${UH}/orders/${id}`)).body.serviceDate;
 
-        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: {}, serviceDate, now: new Date() });
+        const out = await sweepUnclaimed(srv.core.client, { projectId, projectSettings: AUTO, serviceDate, now: new Date() });
         expect(out.unassignable.length).toBeGreaterThan(0);
 
         const note = (await inbox(admin)).notifications.find((n) => n.kind === 'work.unclaimed');
@@ -155,7 +161,7 @@ describe('the loud case', () => {
     it('says nothing on a dry run, because a rehearsal is not an alarm', async () => {
         const before = (await inbox(admin)).notifications.filter((n) => n.kind === 'work.unclaimed').length;
         const serviceDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
-        await sweepUnclaimed(srv.core.client, { projectId, projectSettings: {}, serviceDate, now: new Date(), dryRun: true });
+        await sweepUnclaimed(srv.core.client, { projectId, projectSettings: AUTO, serviceDate, now: new Date(), dryRun: true });
         const after = (await inbox(admin)).notifications.filter((n) => n.kind === 'work.unclaimed').length;
         expect(after).toBe(before);
     });

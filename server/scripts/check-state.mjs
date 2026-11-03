@@ -89,6 +89,21 @@ if (orderIds.length > 0) {
     say('');
 }
 
+/* --------------------------------------------------- is anything auto-assigning */
+
+say('  AUTO ASSIGNMENT');
+say('  ---------------');
+const esc = await get(`/api/projects/${project}/uh/escalation`);
+const sweep = esc.body?.sweep;
+if (esc.status !== 200 || !sweep) {
+    say(`    could not be read (HTTP ${esc.status}). This is NOT "it is off".`);
+} else {
+    say(`    autoAssign    ${sweep.autoAssign === true ? "ON  <-- work is being handed out without you" : "off"}`);
+    say(`    timer running ${sweep.timerRunning === true ? "yes" : "no"}   (also drains mail and patient texts)`);
+    say(`    assigning now ${sweep.automatic === true ? "YES" : "no"}`);
+}
+say('');
+
 /* ----------------------------------------------------------- whose shift */
 
 say('  OPEN SHIFTS');

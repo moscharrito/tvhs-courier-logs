@@ -1,0 +1,32 @@
+-- Turn automatic assignment off everywhere it is switched on.
+--
+-- University Health assigns every delivery by hand. That was decided on
+-- 2 November and `dispatch.autoAssign` was added for it, but the sweep kept
+-- handing work out for three more days, and the reason is this row:
+--
+--   uh -> {"phone":"...","name":"Izy dispatch","autoAssign":true}
+--
+-- A STORED VALUE BEATS A DEFAULT. autoAssign was written into the project's
+-- settings as `true` -- not by anybody choosing it, but because settings are
+-- merged a section at a time, so a PATCH that set the dispatch PHONE carried
+-- the then-default `autoAssign: true` into the row with it. After that,
+-- changing the default in code could not reach this project, and the only
+-- thing that could was a script somebody had to remember to run against
+-- production. It was not run: the wrapper that runs it is gitignored, and
+-- the terminal it was typed in was sitting in a second checkout that does
+-- not contain it. Nothing on any screen said so.
+--
+-- So it is done here instead, where it travels with the deploy and cannot be
+-- forgotten, skipped, or run against the wrong database.
+--
+-- ONLY WHERE IT IS CURRENTLY TRUE. A project with nothing stored is left
+-- alone and picks up the new default (off) on its own; writing a key into
+-- every project would put a value nobody chose into rows that do not need
+-- one, which is the mistake this migration exists to undo.
+--
+-- REVERSIBLE, and by the supported route: PATCH /api/projects/:code/settings
+-- with dispatch.autoAssign true, or server/scripts/set-auto-assign.mjs. This
+-- changes the state, not the capability.
+UPDATE projects
+   SET settings = json_set(settings, '$.dispatch.autoAssign', json('false'))
+ WHERE json_extract(settings, '$.dispatch.autoAssign') = 1;

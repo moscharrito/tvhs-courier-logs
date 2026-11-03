@@ -407,6 +407,13 @@
       "when": 1793150025229,
       "tag": "0057_zip_points",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1793150026229,
+      "tag": "0058_auto_assign_off",
+      "breakpoints": true
     }
   ]
 }

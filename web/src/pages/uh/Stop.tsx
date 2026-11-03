@@ -20,7 +20,6 @@ import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
-import { CameraButton } from '../../app/Camera';
 import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { NavigateIcon, PhoneIcon, PinIcon, RouteIcon } from '../../app/Icons';
 
@@ -468,11 +467,6 @@ export function Stop() {
                                         : `Ready to send: ${formPhoto.name}`}
                                 </span>
                             </label>
-                            {/* The camera, as a path of our own. The phone's own
-                                camera came up black for a courier on 31 October
-                                and nothing in the file input above can reach
-                                that; see app/Camera.tsx. */}
-                            <CameraButton name="courier-form" disabled={busy} onPhoto={(file) => { setMsg(null); setFormPhoto(file); }} />
 
                             {order.idRequired === true && (
                                 <div className="izy-card izy-id-required">
@@ -500,7 +494,6 @@ export function Stop() {
                                                 : `Ready to send: ${idPhoto.name}`}
                                         </span>
                                     </label>
-                                    <CameraButton name="patient-id" disabled={busy} onPhoto={(file) => { setMsg(null); setIdPhoto(file); }} />
                                 </div>
                             )}
 
@@ -650,11 +643,6 @@ export function Stop() {
                                     }}
                                 />
                             </label>
-                            <CameraButton
-                                name="doorstep"
-                                disabled={busy || filesAvailable === false}
-                                onPhoto={(file) => { setMsg(null); setPhoto(file); }}
-                            />
                             {photo && <p className="izy-muted">Photo ready, {Math.round(photo.size / 1024)} KB.</p>}
                             <label className="izy-field">Why nobody signed
                                 <input value={noSignatureReason} onChange={(e) => setNoSignatureReason(e.target.value)}
