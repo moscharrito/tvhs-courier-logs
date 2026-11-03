@@ -95,6 +95,15 @@ if (orderIds.length > 0) {
    whether a shift may end: picked up, or attempted and never handed back.
    Asked through the orders list so this stays a GET. */
 const carryingWho = value('carrying', '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+/* Site ids mean nothing to a reader deciding whether 22 orders are real
+   work or leftovers. "site 3" sent that question back for another round. */
+const siteCode = new Map();
+if (carryingWho.length > 0) {
+    const sr = await get(`/api/projects/${project}/uh/sites`);
+    if (sr.status === 200 && Array.isArray(sr.body)) {
+        for (const x of sr.body) siteCode.set(Number(x.id), String(x.code));
+    }
+}
 for (const who of carryingWho) {
     say(`  WHAT ${who} IS CARRYING`);
     say('  ' + '-'.repeat(20 + who.length));
@@ -120,15 +129,25 @@ for (const who of carryingWho) {
        this file gets pasted around. */
     const byDate = {};
     for (const o of rows) {
-        const k = `${o.serviceDate}  site ${o.siteId}`;
+        const k = `${o.serviceDate}  ${siteCode.get(Number(o.siteId)) ?? `site ${o.siteId}`}`;
         (byDate[k] ??= []).push(o);
     }
     for (const [k, list] of Object.entries(byDate).sort()) {
         say(`    ${k}   ${list.length} order(s)`);
         for (const o of list.slice(0, 8)) {
-            say(`      #${String(o.id).padEnd(6)} ${String(o.status).padEnd(10)} ${String(o.externalRef ?? '').slice(0, 24)}`);
+            /* "(no reference)" rather than a blank: an empty column reads
+               as missing output, and whether the pharmacy sent references
+               at all is part of telling real work from seeded rows. */
+            const ref = String(o.externalRef ?? '').trim();
+            say(`      #${String(o.id).padEnd(6)} ${String(o.status).padEnd(10)} ${ref === '' ? '(no reference)' : ref.slice(0, 24)}`);
         }
         if (list.length > 8) say(`      ... and ${list.length - 8} more`);
+        /* The id range, so a clear can be checked against it without the
+           list being printed in full. */
+        if (list.length > 1) {
+            const ids = list.map((x) => Number(x.id)).sort((a, b) => a - b);
+            say(`      ids ${ids[0]}-${ids[ids.length - 1]}: ${ids.join(',')}`);
+        }
     }
     say(`    TOTAL ${rows.length}`);
     say('');
