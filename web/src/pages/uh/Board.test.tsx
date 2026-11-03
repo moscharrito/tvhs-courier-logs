@@ -460,6 +460,52 @@ describe('Board', () => {
         expect(within(picker).queryByRole('option', { name: /Off Shift/ })).not.toBeInTheDocument();
     });
 
+    it('offers only drivers of the pharmacy the board is filtered to', async () => {
+        /* THE FILTER AT THE TOP NOW MEANS SOMETHING HERE TOO. This panel
+           offered every driver on shift anywhere, so a dispatcher working
+           Wheatley saw eighteen names of whom one drives Wheatley -- the
+           same complaint as the assignment dropdown, in the one control
+           that creates a run rather than fills it. Reported 3 November.
+
+           Home counter or cover, the same rule as the pool picker and
+           lanesFor: three places answer "who may take this pharmacy's work"
+           and they have to answer it the same way. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                idleCouriers: [
+                    courier({ username: 'here', name: 'Based Here', onShift: true, homeSiteId: 7 }),
+                    courier({ username: 'covers', name: 'Covers Here', onShift: true, homeSiteId: 9, alsoCovers: [7] }),
+                    courier({ username: 'far', name: 'Far Away', onShift: true, homeSiteId: 9 }),
+                ],
+            }),
+        }), '/projects/uh/board?siteId=7');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const picker = screen.getByLabelText('Courier');
+        expect(within(picker).getByRole('option', { name: /Based Here/ })).toBeInTheDocument();
+        expect(within(picker).getByRole('option', { name: /Covers Here/ })).toBeInTheDocument();
+        expect(within(picker).queryByRole('option', { name: /Far Away/ })).not.toBeInTheDocument();
+    });
+
+    it('offers everybody when no pharmacy is chosen', async () => {
+        /* Unfiltered means unnarrowed: the board is showing the whole
+           contract and so does this. A filter that narrowed even when it
+           was not set would hide drivers nobody asked to hide. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                idleCouriers: [
+                    courier({ username: 'here', name: 'Based Here', onShift: true, homeSiteId: 7 }),
+                    courier({ username: 'far', name: 'Far Away', onShift: true, homeSiteId: 9 }),
+                ],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const picker = screen.getByLabelText('Courier');
+        expect(within(picker).getByRole('option', { name: /Based Here/ })).toBeInTheDocument();
+        expect(within(picker).getByRole('option', { name: /Far Away/ })).toBeInTheDocument();
+    });
+
     it('says nobody is on shift rather than that everybody has a run', async () => {
         /* Two different nothings. A dispatcher who reads "everybody has a
            run" at eight in the morning goes looking for runs that do not
@@ -475,26 +521,6 @@ describe('Board', () => {
            says, which is the point of the test. */
         fireEvent.click(screen.getByRole('button', { name: /Start a run/ }));
         expect(await screen.findByText(/Nobody is on shift/)).toBeInTheDocument();
-    });
-
-    it('plans the wave for the number of drivers actually on shift', async () => {
-        /* It defaulted to eighteen, the number in the contract rather than
-           the number standing in a car park. Proposing for eighteen when
-           five are working produces a plan that cannot be driven, and the
-           dispatcher finds out by assigning it. */
-        renderBoard(routes({
-            'GET /api/projects/uh/uh/board*': boardData({
-                couriers: [
-                    courier({ username: 'a', name: 'A', onShift: true }),
-                    courier({ username: 'b', name: 'B', onShift: true }),
-                    courier({ username: 'c', name: 'C', onShift: false }),
-                ],
-            }),
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        expect(await screen.findByLabelText('Drivers on shift')).toHaveValue('2');
-        expect(screen.getByText(/2 on shift now/)).toBeInTheDocument();
     });
 
     it('gives each pharmacy its own page number', async () => {
@@ -521,76 +547,6 @@ describe('Board', () => {
     });
 
     /* ──────────────────────────────────── proposing the noon wave (7.9) */
-    it('proposes routes without assigning anything', async () => {
-        /* The property the whole panel rests on. What is being suggested is
-           where eighteen people spend their day; a suggestion that has
-           already happened is not one. */
-        const { calls } = renderBoard(routes({
-            'GET /api/projects/uh/uh/runs/propose*': {
-                serviceDate: '2026-09-14',
-                settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
-                runs: [
-                    { kind: 'stat', orderIds: [3], zips: ['78215'], siteIds: [7], earliestDueAt: '2026-09-14T19:00:00.000Z' },
-                    { kind: 'standard', orderIds: [1, 2], zips: ['78207', '78228'], siteIds: [7], earliestDueAt: '2026-09-14T20:00:00.000Z' },
-                ],
-                unplaced: [],
-                notes: [],
-                driversNeeded: 2,
-            },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        expect(await screen.findByText('78207, 78228')).toBeInTheDocument();
-        /* Scoped to the proposal row: "STAT" is also the service level on
-           the order cards, so an unscoped match finds the board, not this. */
-        const statRow = screen.getByText('78215').closest('tr')!;
-        expect(within(statRow).getByText('STAT')).toBeInTheDocument();
-        /* Read, and nothing written. */
-        expect(calls.filter((c) => c.startsWith('POST'))).toHaveLength(0);
-    });
-
-    it('says how many more drivers the day needs, before the routes', async () => {
-        /* A dispatcher who learns at 12:05 that today needs six more
-           drivers can do something about it. At four o'clock they cannot. */
-        renderBoard(routes({
-            'GET /api/projects/uh/uh/runs/propose*': {
-                serviceDate: '2026-09-14',
-                settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
-                runs: [],
-                unplaced: [{ orderId: 9, why: 'no_driver_left' }],
-                notes: ['217 deliveries have no driver. Today needs 24 and 18 are available.'],
-                driversNeeded: 24,
-            },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        expect(await screen.findByText(/Today needs 24 and 18 are available/)).toBeInTheDocument();
-    });
-
-    it('turns a proposed route into a run through the path that already exists', async () => {
-        const { calls } = renderBoard(routes({
-            'GET /api/projects/uh/uh/runs/propose*': {
-                serviceDate: '2026-09-14',
-                settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
-                runs: [{ kind: 'standard', orderIds: [1, 2], zips: ['78207'], siteIds: [7], earliestDueAt: null }],
-                unplaced: [], notes: [], driversNeeded: 1,
-            },
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        fireEvent.change(await screen.findByLabelText('Courier for proposed route 1'), { target: { value: 'bo.courier' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Create run' }));
-
-        await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs'));
-    });
 
     /* ───────────────────── staffing the wave from the roster (28 Oct) */
 
@@ -620,122 +576,6 @@ describe('Board', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
         return r;
     };
-
-    it('offers a route only the drivers of its own pharmacy', async () => {
-        /* THE MESS THIS UNDOES. The dropdown was every idle courier on the
-           contract -- thirty-odd names -- so a Southwest wave could be handed
-           to a Robert B. Green driver by picking the wrong line. */
-        renderBoard(routes({
-            'GET /api/projects/uh/uh/board*': boardData({
-                idleCouriers: [
-                    courier({ username: 'here.courier', name: 'Here Courier', homeSiteId: 7 }),
-                    courier({ username: 'elsewhere.courier', name: 'Elsewhere Courier', homeSiteId: 99 }),
-                ],
-            }),
-            'GET /api/projects/uh/uh/runs/propose*': staffed({ suggested: [null, null] }),
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        const pick = await screen.findByLabelText('Courier for proposed route 1');
-        const names = [...pick.querySelectorAll('option')].map((o) => o.textContent);
-        expect(names.join(' ')).toMatch(/Here Courier/);
-        expect(names.join(' ')).not.toMatch(/Elsewhere Courier/);
-    });
-
-    it('offers the driver who COVERS a pharmacy nobody is based at', async () => {
-        /* ONE DRIVER IS WHY alsoCovers EXISTS: based at Vida, running
-           Wheatley on the same round, and nobody is based at Wheatley.
-           Without the cover list its dropdown is empty and its list cannot
-           be assigned at all -- the filter above would have created exactly
-           that, which is why these two tests arrived together. */
-        renderBoard(routes({
-            'GET /api/projects/uh/uh/board*': boardData({
-                idleCouriers: [
-                    courier({ username: 'vida.driver', name: 'Vida Driver', homeSiteId: 21, alsoCovers: [22] }),
-                    courier({ username: 'elsewhere.courier', name: 'Elsewhere Courier', homeSiteId: 99, alsoCovers: [] }),
-                ],
-            }),
-            /* A Wheatley route: site 22, which is nobody's home. */
-            'GET /api/projects/uh/uh/runs/propose*': staffed({
-                runs: [{ kind: 'standard', orderIds: [1], zips: ['78220'], siteIds: [22], earliestDueAt: null }],
-                suggested: [null],
-            }),
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        const pick = await screen.findByLabelText('Courier for proposed route 1');
-        const names = [...pick.querySelectorAll('option')].map((o) => o.textContent);
-        expect(names.join(' ')).toMatch(/Vida Driver/);
-        expect(names.join(' ')).not.toMatch(/Elsewhere Courier/);
-    });
-
-    it('says why a dropdown is empty rather than just being empty', async () => {
-        /* A pharmacy with nobody based at or covering it reads as a broken
-           screen, and the fix is a roster change rather than anything on
-           this page. */
-        renderBoard(routes({
-            'GET /api/projects/uh/uh/board*': boardData({
-                idleCouriers: [courier({ username: 'elsewhere.courier', name: 'Elsewhere Courier', homeSiteId: 99, alsoCovers: [] })],
-            }),
-            'GET /api/projects/uh/uh/runs/propose*': staffed({
-                runs: [{ kind: 'standard', orderIds: [1], zips: ['78220'], siteIds: [22], earliestDueAt: null }],
-                suggested: [null],
-            }),
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        const pick = await screen.findByLabelText('Courier for proposed route 1');
-        expect(pick.textContent).toMatch(/Nobody covers this pharmacy/);
-    });
-
-    it('keeps a driver the server suggested, whatever this screen knows about them', async () => {
-        /* The server staffs from the shift table and the roster, so it knows
-           things the board's courier list does not. Dropping a name it put
-           there would blank a dropdown that already had the right answer in
-           it -- and the preselected value would point at an option that is
-           not there. */
-        renderBoard(routes({
-            'GET /api/projects/uh/uh/board*': boardData({ idleCouriers: [] }),
-            'GET /api/projects/uh/uh/runs/propose*': staffed({
-                runs: [{ kind: 'standard', orderIds: [1], zips: ['78220'], siteIds: [22], earliestDueAt: null }],
-                suggested: [{ username: 'ghost.courier', name: 'Ghost Courier', why: 'cover' }],
-            }),
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        const pick = await screen.findByLabelText('Courier for proposed route 1');
-        expect(pick).toHaveValue('ghost.courier');
-        expect(pick.textContent).toMatch(/Ghost Courier/);
-    });
-
-    it('preselects the driver the server suggested for each route', async () => {
-        /* The point of the exercise. Twenty-three dropdowns picked by hand
-           is the slowest part of the morning, and it happens while
-           deadlines run. */
-        await openProposal(staffed());
-        expect(await screen.findByLabelText('Courier for proposed route 1')).toHaveValue('ada.courier');
-        expect(screen.getByLabelText('Courier for proposed route 2')).toHaveValue('bo.courier');
-    });
-
-    it('says when a suggestion is somebody covering another pharmacy', async () => {
-        /* A counter with nobody left is news, and it should be visible
-           before the wave goes out rather than at four o'clock. */
-        await openProposal(staffed());
-        expect(await screen.findByText('covering another pharmacy')).toBeInTheDocument();
-        expect(screen.getByText('drives this pharmacy')).toBeInTheDocument();
-    });
 
     it('offers a waiting order only the lanes of drivers at that pharmacy, on shift', async () => {
         /* THE HALF THAT WAS MISSED. The run-proposal picker was narrowed to
@@ -818,179 +658,7 @@ describe('Board', () => {
         expect(screen.queryByLabelText('Assign order 1 to')).not.toBeInTheDocument();
     });
 
-    it('offers only the drivers who are on shift, and not the ones who are not', async () => {
-        /* IT USED TO OFFER BOTH, under an "On shift" heading and a "Not on
-           shift" one. The reasoning was that dispatch sometimes knows a
-           driver is about to start. In practice it put the whole roster into
-           the control that is supposed to be the people who can take the
-           work, and a name in a dropdown reads as available however it is
-           grouped -- which is half of what was reported on 2 November as
-           "still see all drivers". A driver who is not on shift goes on
-           shift first. */
-        const r = renderBoard(routes({
-            'GET /api/projects/uh/uh/board*': boardData({
-                idleCouriers: [
-                    courier({ username: 'bo.courier', name: 'Bo Courier', onShift: true }),
-                    courier({ username: 'cal.courier', name: 'Cal Courier', onShift: false, present: false }),
-                ],
-            }),
-            'GET /api/projects/uh/uh/runs/propose*': staffed(),
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Propose routes' }));
-
-        const select = await screen.findByLabelText('Courier for proposed route 1');
-        const groups = select.querySelectorAll('optgroup');
-        expect([...groups].map((g) => g.label)).toEqual(['On shift']);
-        expect(within(groups[0] as HTMLElement).getByRole('option', { name: /Bo Courier/ })).toBeInTheDocument();
-        /* Not anywhere in the control, not merely not in the first group. */
-        expect(within(select).queryByRole('option', { name: 'Cal Courier' })).not.toBeInTheDocument();
-        return r;
-    });
-
-    it('creates every staffed run in one click', async () => {
-        const { calls } = await openProposal(staffed());
-        fireEvent.click(await screen.findByRole('button', { name: 'Create all 2 runs' }));
-        await waitFor(() => {
-            expect(calls.filter((c) => c === 'POST /api/projects/uh/uh/runs')).toHaveLength(2);
-        });
-        expect(await screen.findByRole('status')).toHaveTextContent('2 runs created.');
-    });
-
-    it('does not say "all 1 runs" for a single route', async () => {
-        /* Most of a quiet morning is one route, and "Create all 1 runs" was
-           what the button said on it. */
-        await openProposal(staffed({
-            runs: [{ kind: 'standard', orderIds: [1], zips: ['78224'], siteIds: [7], earliestDueAt: null }],
-            suggested: [{ username: 'ada.courier', name: 'Ada Courier', why: 'home' }],
-        }));
-        expect(await screen.findByRole('button', { name: 'Create the run' })).toBeEnabled();
-    });
-
-    it('will not claim to create a run that has nobody against it', async () => {
-        /* A route the server could not staff stays on the proposal rather
-           than being quietly skipped and forgotten. */
-        await openProposal(staffed({
-            suggested: [{ username: 'ada.courier', name: 'Ada Courier', why: 'home' }, null],
-        }));
-        expect(await screen.findByRole('button', { name: 'Create 1 of 2 runs' })).toBeEnabled();
-    });
-
-    it('says whether the plan came from people on shift or from a list', async () => {
-        /* A plan built from who normally drives is a different thing from
-           one built from who turned up, and acting on it means knowing. */
-        await openProposal(staffed({ planningFrom: 'roster', fleet: { onShift: 0, roster: 23 } }));
-        expect(await screen.findByText(/nobody on shift — staffed from the 23-driver roster/)).toBeInTheDocument();
-    });
-
-    it('renders a proposal from a server that sends no staffing at all', async () => {
-        /* A deployed bundle talks to the previous server for the minute or
-           two a deploy takes. A missing field has to degrade to a missing
-           sentence, never to a blank board. */
-        await openProposal({
-            serviceDate: '2026-09-14',
-            settings: { drivers: 18, maxStopsPerRun: 40, maxSitesPerRun: 2, maxStopsPerStatRun: 4 },
-            runs: [{ kind: 'standard', orderIds: [1], zips: ['78207'], siteIds: [7], earliestDueAt: null }],
-            unplaced: [], notes: [], driversNeeded: 1,
-        });
-        expect(await screen.findByLabelText('Courier for proposed route 1')).toHaveValue('');
-        expect(screen.getByRole('heading', { name: 'Dispatch board' })).toBeInTheDocument();
-    });
-
     /* ── Planning one pharmacy ─────────────────────────────────────────── */
-
-    it('plans one pharmacy when one is chosen, and the whole day otherwise', async () => {
-        /* University Health drops a list per counter, and the wave that
-           answers it is driven by the people hired to drive from there. */
-        const { calls } = renderBoard(routes({
-            'GET /api/projects/uh/uh/runs/propose*': staffed(),
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-
-        /* The default is what this panel did before: everything. */
-        const pick = await screen.findByLabelText('Pharmacy to plan for');
-        expect(pick).toHaveValue('');
-
-        fireEvent.change(pick, { target: { value: 'discharge' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Propose routes' }));
-
-        await waitFor(() => expect(calls.some((c) => c.includes('site=discharge'))).toBe(true));
-    });
-
-    it('offers to widen when the pharmacy has nobody on shift, and widens on one click', async () => {
-        /* Strict by default: a dispatcher planning Southeast at one o'clock
-           is asking who can take this NOW, and a list of people who are not
-           on shift reads as an answer to that. The widening is a button
-           rather than a fallback, because anybody it brings in is driving
-           from somebody else's counter. */
-        const { calls } = renderBoard(routes({
-            'GET /api/projects/uh/uh/runs/propose*': staffed({
-                site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' },
-                scope: 'site',
-                suggested: [null, null],
-                planningFrom: 'onShift',
-                fleet: { onShift: 0, roster: 4 },
-                excluded: { held: 0, otherSite: 19, offShift: 4 },
-            }),
-            'POST /api/projects/uh/uh/runs': { id: 44 },
-        }));
-        await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.click(screen.getByRole('button', { name: /Plan the wave/ }));
-        fireEvent.change(await screen.findByLabelText('Pharmacy to plan for'), { target: { value: 'discharge' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Propose routes' }));
-
-        const widen = await screen.findByRole('button', { name: 'Widen to everyone on shift' });
-        fireEvent.click(widen);
-
-        /* The widening has to be on the FIRST click. It is passed as an
-           argument rather than read back out of state, which would send
-           the old value and make the dispatcher press it twice. */
-        await waitFor(() => expect(calls.some((c) => c.includes('anyDriver=1'))).toBe(true));
-    });
-
-    it('does not offer to widen a plan that has drivers', async () => {
-        await openProposal(staffed({
-            site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' },
-            scope: 'site',
-            fleet: { onShift: 2, roster: 4 },
-        }));
-        await screen.findByLabelText('Courier for proposed route 1');
-        expect(screen.queryByRole('button', { name: 'Widen to everyone on shift' })).not.toBeInTheDocument();
-        expect(screen.getByText(/Discharge Pharmacy: staffed from 2 on shift of 4/)).toBeInTheDocument();
-    });
-
-    it('says how many drivers have no pharmacy, and links to where that is fixed', async () => {
-        /* A driver with no counter is not offered anywhere, which is the
-           right default and a silent one. The count is what makes it a gap
-           somebody closes rather than a name that quietly never appears. */
-        await openProposal(staffed({ excluded: { held: 7, otherSite: 0, offShift: 3 } }));
-        expect(await screen.findByText(/7 drivers have no/)).toBeInTheDocument();
-        expect(screen.getByRole('link', { name: 'Assign them' })).toHaveAttribute('href', '/projects/uh/roster');
-    });
-
-    it('keeps the dropdown keyed to the route, not to the row on the page', async () => {
-        /* Page two starting again at nought collided with page one: the
-           names sat on the wrong routes and every row still looked
-           individually plausible. */
-        const many = Array.from({ length: 10 }, (_, i) => ({
-            kind: 'standard', orderIds: [100 + i], zips: ['78207'], siteIds: [7], earliestDueAt: null,
-        }));
-        await openProposal(staffed({
-            runs: many,
-            suggested: many.map((_, i) => ({ username: `d${i}`, name: `Driver ${i}`, why: 'home' })),
-        }));
-
-        await screen.findByLabelText('Courier for proposed route 1');
-        const panel = screen.getByLabelText('routes pages');
-        fireEvent.click(within(panel).getByRole('button', { name: 'Next' }));
-
-        /* Page two is routes 9 and 10, labelled as such -- not 1 and 2. */
-        expect(await screen.findByLabelText('Courier for proposed route 9')).toBeInTheDocument();
-        expect(screen.queryByLabelText('Courier for proposed route 1')).not.toBeInTheDocument();
-    });
 
     it('can assign without a mouse, which a drag-only board cannot', async () => {
         const { calls } = renderBoard(routes({ 'POST /api/projects/uh/uh/runs/10/stops': { added: [1], rejected: [] } }));

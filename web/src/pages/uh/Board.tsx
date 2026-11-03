@@ -27,7 +27,6 @@ import { Pager, usePaged, PAGE_SIZE } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
-import { Escalation } from './Escalation';
 import { mergeBoard, type BoardView, type BoardWire, type SiteRef } from '../../lib/board';
 
 const POLL_MS = 15_000;
@@ -547,8 +546,29 @@ export function Board() {
        See courierNote() for the same distinction on the lane pills. */
     const onShift = (data?.couriers ?? []).filter((c) => c.onShift);
     const onShiftCount = onShift.length;
-    /* Somebody who can be given a run right now: on shift, and without one. */
-    const startable = (data?.idleCouriers ?? []).filter((c) => c.onShift);
+    /* Somebody who can be given a run right now: on shift, without one,
+       AND based at the pharmacy the board is filtered to.
+     *
+     * THE FILTER AT THE TOP NOW MEANS SOMETHING HERE TOO. This panel offered
+     * every driver on shift anywhere, so a dispatcher working Wheatley was
+     * shown eighteen names of whom one drives Wheatley -- the same complaint
+     * as the assignment dropdown, in the one control that creates a run
+     * rather than fills it.
+     *
+     * Home counter or cover, the same rule as lanesFor and the pool picker:
+     * three places now answer "who may take this pharmacy’s work" and they
+     * have to answer it the same way.
+     *
+     * UNFILTERED MEANS UNNARROWED. With no pharmacy chosen the board is
+     * showing the whole contract, and so does this. */
+    const startable = (data?.idleCouriers ?? [])
+        .filter((c) => c.onShift)
+        .filter((c) => {
+            const wanted = Number(get('siteId'));
+            if (!Number.isInteger(wanted) || wanted <= 0) return true;
+            if (c.homeSiteId === wanted) return true;
+            return (c.alsoCovers ?? []).includes(wanted);
+        });
 
     if (data === null) return <div className="izy-card"><Loading label="Loading the board" /></div>;
 
@@ -744,7 +764,6 @@ export function Board() {
                 a courier standing still behind it, waiting to be told yes or
                 no. Staff only, so a courier who reaches /board directly does
                 not fire a request the server will refuse. */}
-            {project.role === 'admin' && <Escalation projectCode={code} />}
 
             <div className="izy-board">
                 <Section
@@ -804,7 +823,14 @@ export function Board() {
                             <p className="izy-muted">
                                 {onShiftCount === 0
                                     ? 'Nobody is on shift. A driver has to go on shift in the app before they can be given a run.'
-                                    : 'Every driver on shift already has a run today.'}
+                                    : get('siteId') !== ''
+                                        /* A THIRD NOTHING, since the list is
+                                           narrowed to one counter: "everybody
+                                           has a run" would be false about the
+                                           contract and send a dispatcher
+                                           looking for work that is not there. */
+                                        ? 'No driver on shift at this pharmacy is free. Clear the pharmacy filter to see the rest.'
+                                        : 'Every driver on shift already has a run today.'}
                             </p>
                         ) : (
                             <div className="izy-row">
@@ -823,319 +849,14 @@ export function Board() {
                         )}
                     </Section>
 
-                    {/* THE NOON WAVE, BEFORE IT IS ANYBODY'S DAY.
-
-                        Nine counters release by noon and a Tuesday is 1,417
-                        deliveries. Moving those onto runs a card at a time
-                        is the afternoon this gives back.
-
-                        It proposes and stops. Nothing here is assigned
-                        until a courier is chosen against a run, because
-                        what is being suggested is where eighteen people
-                        spend their day, and a suggestion that has already
-                        happened is not one. Folded by default: it has
-                        nothing to say until it is asked. */}
-                    <Section
-                        id="uh.board.propose"
-                        /* Not "Propose routes", which is the button inside
-                           it. A panel and its own button reading the same
-                           words is two controls a screen reader cannot tell
-                           apart, and a sighted reader clicks the wrong one. */
-                        title="Plan the wave"
-                        defaultOpen={false}
-                        summary={proposal === null
-                            ? 'group the unassigned work into runs'
-                            : `${proposal.runs.length} proposed, ${proposal.unplaced.length} with no driver`}
-                    >
-                        <div className="izy-row">
-                            {/* THE PHARMACY THIS WAVE IS FOR, first in the
-                                row because it changes what every other
-                                control means. Picking one plans that
-                                counter's list with that counter's drivers;
-                                leaving it on the whole day is what this
-                                panel did before. */}
-                            <label className="izy-field" style={{ maxWidth: 260 }}>Pharmacy
-                                <select
-                                    value={planSite}
-                                    aria-label="Pharmacy to plan for"
-                                    onChange={(e) => { setPlanSite(e.target.value); setAnyDriver(false); }}
-                                >
-                                    <option value="">The whole day, every pharmacy</option>
-                                    {sites.map((st) => (
-                                        <option key={st.code} value={st.code}>{st.name}</option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label className="izy-field" style={{ maxWidth: 170 }}>Drivers on shift
-                                <input
-                                    value={fleetValue}
-                                    onChange={(e) => { setFleetTouched(true); setFleet(e.target.value.replace(/[^0-9]/g, '')); }}
-                                    inputMode="numeric"
-                                    aria-label="Drivers on shift"
-                                />
-                                {/* What the roster actually says, beside the
-                                    box, so an overridden number is visibly an
-                                    override rather than a fact. */}
-                                <span className="izy-muted izy-field-note">
-                                    {onShiftCount === 0
-                                        ? 'nobody is on shift'
-                                        : `${onShiftCount} on shift now`}
-                                    {fleetTouched && fleetValue !== String(onShiftCount) ? ' — overridden' : ''}
-                                </span>
-                            </label>
-                            {/* ZERO ON SHIFT IS NOT A REASON TO REFUSE.
-                                This was disabled whenever the box read '0',
-                                which at 11:55 -- before anybody has tapped
-                                Go on shift -- is every morning. The server
-                                plans from the roster in that case and says
-                                it did; disabling the button put that behind
-                                a door the dispatcher could not open.
-
-                                Refused only when somebody TYPED a zero,
-                                which is a request for a plan for nobody. */}
-                            <button className="izy-btn" type="button" disabled={busy || (fleetTouched && fleet === '0')}
-                                onClick={() => { void proposeRoutes(); }}>
-                                {proposal === null ? 'Propose routes' : 'Propose again'}
-                            </button>
-                            {proposal !== null && (
-                                <button className="izy-btn secondary" type="button" disabled={busy}
-                                    onClick={() => { setProposal(null); setTakeWith({}); }}>
-                                    Discard
-                                </button>
-                            )}
-                        </div>
-
-                        {proposal !== null && (
-                            <>
-                                {/* Said before the runs, not after them. A
-                                    dispatcher who can see at 12:05 that the
-                                    day needs six more drivers can do
-                                    something about it; one who finds out at
-                                    four o'clock cannot. */}
-                                {proposal.notes.map((n) => (
-                                    <div key={n} className="izy-alert warn" role="status">{n}</div>
-                                ))}
-
-                                {proposal.runs.length === 0 ? (
-                                    <p className="izy-muted">Nothing left to group.</p>
-                                ) : (
-                                    <>
-                                    {/* ─────────── ACCEPT THE PLAN IN ONE GO.
-                                        Twenty-three dropdowns one at a time is
-                                        the slowest part of the morning. Every
-                                        run still has its own Create button, for
-                                        the dispatcher who wants to send four
-                                        and think about the rest. */}
-                                    <div className="izy-row-between">
-                                        <button
-                                            className="izy-btn"
-                                            type="button"
-                                            disabled={busy || readyToCreate === 0}
-                                            onClick={createAllRuns}
-                                        >
-                                            {/* "Create all 1 runs" was on screen for a
-                                                single-route wave, which is most of a
-                                                quiet morning. One route is not a set to
-                                                say "all" about. */}
-                                            {readyToCreate === proposal.runs.length
-                                                ? (readyToCreate === 1 ? 'Create the run' : `Create all ${readyToCreate} runs`)
-                                                : `Create ${readyToCreate} of ${proposal.runs.length} ${proposal.runs.length === 1 ? 'run' : 'runs'}`}
-                                        </button>
-                                        {/* Said plainly, because it is the
-                                            difference between a plan built from
-                                            people and one built from a list of
-                                            who normally drives.
-
-                                            Rendered only when the server sent
-                                            it. A bundle can be newer than the
-                                            server it is talking to for the few
-                                            minutes a deploy takes, and reading
-                                            through an absent `fleet` would turn
-                                            that into a blank board rather than
-                                            a missing sentence. */}
-                                        {proposal.fleet !== undefined && (
-                                            <span className="izy-muted">
-                                                {proposal.site ? `${proposal.site.name}: ` : ''}
-                                                {proposal.planningFrom === 'onShift'
-                                                    ? `staffed from ${proposal.fleet.onShift} on shift of ${proposal.fleet.roster} on the roster`
-                                                    : `nobody on shift — staffed from the ${proposal.fleet.roster}-driver roster`}
-                                            </span>
-                                        )}
-                                        {/* THE WIDENING, OFFERED WHERE IT IS
-                                            NEEDED AND NOWHERE ELSE.
-
-                                            A counter whose drivers are all
-                                            off cannot be planned, and the
-                                            dispatcher's next question is
-                                            always "then who can take it".
-                                            Answering it costs one click
-                                            here; the alternative is leaving
-                                            them to work out that the
-                                            pharmacy dropdown is the thing
-                                            standing in their way.
-
-                                            It is a button and not a
-                                            fallback: anybody it brings in
-                                            is driving from somebody else's
-                                            counter, which the plan marks
-                                            cover, and that is worth a
-                                            deliberate act. */}
-                                        {proposal.scope === 'site' && proposal.fleet?.onShift === 0 && (
-                                            <button
-                                                className="izy-btn secondary"
-                                                type="button"
-                                                disabled={busy}
-                                                onClick={() => { setAnyDriver(true); void proposeRoutes(true); }}
-                                            >
-                                                Widen to everyone on shift
-                                            </button>
-                                        )}
-                                        {proposal.excluded !== undefined && proposal.excluded.held > 0 && (
-                                            <span className="izy-muted">
-                                                {proposal.excluded.held}{' '}
-                                                {proposal.excluded.held === 1 ? 'driver has' : 'drivers have'} no
-                                                pharmacy yet and {proposal.excluded.held === 1 ? 'is' : 'are'} not
-                                                offered here. <Link to={`/projects/${code}/roster`}>Assign them</Link>
-                                            </span>
-                                        )}
-                                    </div>
-                                    <table className="izy-table">
-                                        <thead>
-                                            <tr>
-                                                <th scope="col">Route</th>
-                                                <th scope="col">Stops</th>
-                                                <th scope="col">Where</th>
-                                                <th scope="col">First due</th>
-                                                <th scope="col">Give it to</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {pagedProposal.rows.map((run, onPage) => {
-                                                /* THE INDEX HAS TO BE THE ONE IN
-                                                   proposal.runs, NOT THE ONE ON
-                                                   THIS PAGE. takeWith is keyed by
-                                                   position and `suggested` is
-                                                   parallel to the full array, so
-                                                   page two starting again at nought
-                                                   collides with page one -- every
-                                                   row still looking perfectly
-                                                   plausible while the names sit on
-                                                   the wrong routes. */
-                                                const i = pagedProposal.from - 1 + onPage;
-                                                const picked = takeWith[i] ?? '';
-                                                const hint = (proposal.suggested ?? [])[i] ?? null;
-                                                /* Only this route's pharmacies. See chooseFor:
-                                                   a Southwest wave must not offer a Robert B.
-                                                   Green driver, and Wheatley must still offer
-                                                   the man who runs it from Vida. */
-                                                const choices = chooseFor(run.siteIds, hint?.username ?? null);
-                                                return (
-                                                <tr key={run.orderIds.join(',')}>
-                                                    <td>
-                                                        {run.kind === 'stat'
-                                                            ? <span className="izy-pill">STAT</span>
-                                                            : `Wave ${i + 1}`}
-                                                    </td>
-                                                    <td>{run.orderIds.length}</td>
-                                                    <td>
-                                                        {/* The pharmacy by name, because that is
-                                                            what a driver is assigned to and what
-                                                            the suggestion below is reasoning
-                                                            about. The ZIPs are the detail. */}
-                                                        {run.siteIds.map((id) => siteName(id)).join(' + ')}
-                                                        <br />
-                                                        <span className="izy-muted">{run.zips.join(', ')}</span>
-                                                    </td>
-                                                    <td>{run.earliestDueAt === null
-                                                        ? <span className="izy-muted">not set</span>
-                                                        : clock(run.earliestDueAt)}</td>
-                                                    <td>
-                                                        <div className="izy-row">
-                                                            <select
-                                                                aria-label={`Courier for proposed route ${i + 1}`}
-                                                                value={picked}
-                                                                onChange={(e) => setTakeWith({ ...takeWith, [i]: e.target.value })}
-                                                            >
-                                                                <option value="">
-                                                                    {/* AN EMPTY DROPDOWN NEEDS TO SAY WHY.
-                                                                        A pharmacy with no driver based at
-                                                                        or covering it reads as a broken
-                                                                        screen otherwise, and the fix is a
-                                                                        roster change rather than anything
-                                                                        on this page. */}
-                                                                    {choices.working.length + choices.away.length === 0
-                                                                        ? 'Nobody covers this pharmacy'
-                                                                        : 'Choose a courier'}
-                                                                </option>
-                                                                {/* ON SHIFT FIRST, IN THEIR OWN GROUP.
-                                                                    Flat, this was thirty-two names in
-                                                                    alphabetical order with the six people
-                                                                    actually working scattered through
-                                                                    them -- so changing a suggestion meant
-                                                                    scrolling past twenty-five drivers who
-                                                                    are at home. The group label does the
-                                                                    work "(not on shift)" was doing one
-                                                                    row at a time. */}
-                                                                {choices.working.length > 0 && (
-                                                                    <optgroup label="On shift">
-                                                                        {choices.working.map((c) => (
-                                                                            <option key={c.username} value={c.username}>
-                                                                                {c.name}{courierNote(c)}
-                                                                            </option>
-                                                                        ))}
-                                                                    </optgroup>
-                                                                )}
-                                                                {choices.away.length > 0 && (
-                                                                    /* Still offered. A dispatcher ringing
-                                                                       somebody to come in needs to put the
-                                                                       run on them before they arrive. */
-                                                                    <optgroup label="Not on shift">
-                                                                        {choices.away.map((c) => (
-                                                                            <option key={c.username} value={c.username}>
-                                                                                {c.name}
-                                                                            </option>
-                                                                        ))}
-                                                                    </optgroup>
-                                                                )}
-                                                            </select>
-                                                            <button
-                                                                className="izy-btn secondary small"
-                                                                type="button"
-                                                                disabled={busy || picked === ''}
-                                                                onClick={() => { void takeProposed(run, i, picked); }}
-                                                            >
-                                                                Create run
-                                                            </button>
-                                                        </div>
-                                                        {/* WHY THIS NAME, in one word. `cover`
-                                                            is the one that matters: it means
-                                                            nobody from that counter was left,
-                                                            which is a thing to notice before
-                                                            the wave goes out. */}
-                                                        {hint !== null && picked === hint.username && (
-                                                            <span className={`izy-muted izy-field-note${hint.why === 'cover' ? ' izy-stat-warn' : ''}`}>
-                                                                {hint.why === 'home' ? 'drives this pharmacy'
-                                                                    : hint.why === 'floater' ? 'no home pharmacy set'
-                                                                        : 'covering another pharmacy'}
-                                                            </span>
-                                                        )}
-                                                        {hint !== null && picked !== '' && picked !== hint.username && (
-                                                            <span className="izy-muted izy-field-note">
-                                                                changed from {hint.name}
-                                                            </span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                    </>
-                                )}
-                                <Pager of={pagedProposal} noun="routes" />
-                            </>
-                        )}
-                    </Section>
+                    {/* NO "PLAN THE WAVE" HERE ANY MORE. It proposed runs
+                        for a whole noon release at once, which was the
+                        right tool while the sweep assigned work. Dispatch
+                        now picks every driver by hand from the pool above,
+                        and a second way to create runs -- with its own
+                        courier picker and its own rules about who may be
+                        offered -- was a second place for those rules to
+                        drift. Removed 3 November as redundant. */}
 
                     {/* ───────────────────────────────── THE LANES, IN PAGES.
 
