@@ -132,6 +132,64 @@ export interface ImportSite { id: number; code: string; name: string; status?: s
 const mappingKey = (m: Record<string, string>): string =>
     JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]]));
 
+/**
+ * What to say once a list has been committed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * IT USED TO SAY ONLY WHAT WENT IN, IN GREEN.
+ *
+ * "Imported 1 orders as list 57." That was the whole message on 2 November
+ * for a ninety-two row Southeast file: ninety-one rows were skipped as
+ * duplicates and the sentence did not contain the number 91, or the word
+ * skipped, or any hint that the file had more in it than the list did.
+ *
+ * The feedback that came back called it a capacity limit -- "approximately
+ * 102 entries per upload" -- because from the counter that is exactly what
+ * it looks like. There is no such limit: a 260-row list previews, imports
+ * and reads back whole (server/test/import-capacity.test.mjs). What there
+ * was, was a success message that could not count.
+ *
+ * So the number that matters is now N OF M, the reasons are named, and it
+ * stops being green the moment they differ. A pharmacist who sends ninety-two
+ * and is told ninety-two arrived has been told something; one who is told
+ * "1 of 92" goes and looks, which is the entire point.
+ */
+export function importOutcome(done: { id: number; summary: Summary & { imported: number } }): {
+    kind: 'ok' | 'warn'; text: string; details?: string[];
+} {
+    const { imported, total, blocked, duplicates } = done.summary;
+    const missing = Math.max(0, total - imported);
+    if (missing === 0) {
+        return { kind: 'ok', text: `Imported all ${total} ${total === 1 ? 'row' : 'rows'} as list ${done.id}.` };
+    }
+
+    /* Named rather than totalled. "91 rows did not import" invites a guess;
+       "91 were already on this day's list" is a thing somebody can act on,
+       and the two reasons need opposite actions -- a duplicate is accepted
+       on the preview, a blocked row is fixed in the file. */
+    const why: string[] = [];
+    if (duplicates > 0) {
+        why.push(`${duplicates} ${duplicates === 1 ? 'was' : 'were'} already on this pharmacy's list for that day. `
+            + 'Re-read the file and tick them if they are genuinely new.');
+    }
+    if (blocked > 0) {
+        why.push(`${blocked} ${blocked === 1 ? 'has' : 'have'} a problem that stops it being delivered -- `
+            + 'usually a missing name, street or ZIP. Fix those rows and send the file again.');
+    }
+    const named = duplicates + blocked;
+    if (missing > named) {
+        why.push(`${missing - named} did not import and the reasons above do not cover ${missing - named === 1 ? 'it' : 'them'}. `
+            + 'Download the sheet and compare it against what you sent.');
+    }
+
+    return {
+        kind: 'warn',
+        text: `Imported ${imported} of ${total} rows as list ${done.id}. `
+            + `${missing} ${missing === 1 ? 'row is' : 'rows are'} not on it.`,
+        details: why,
+    };
+}
+
 export function ListImport({ projectCode, timezone, canImport, canWithdraw, sites: given, title, intro, refusal }: {
     projectCode: string; timezone: string; canImport: boolean;
     /* DISPATCH ONLY, and separate from canImport for that reason. A pharmacy
@@ -195,7 +253,10 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
      */
     const [previewedWith, setPreviewedWith] = useState<string>('');
     const [busy, setBusy] = useState<'preview' | 'commit' | null>(null);
-    const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
+    /* 'warn' since 3 November: a list that imported some of its rows is
+       neither a success nor an error, and colouring it as either was how
+       ninety-one skipped prescriptions read as 'Imported 1 orders'. */
+    const [msg, setMsg] = useState<{ kind: 'ok' | 'warn' | 'error'; text: string; details?: string[] } | null>(null);
 
     const loadSites = useCallback(async () => {
         if (given !== undefined) return;
@@ -305,7 +366,7 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                 setPreviewedWith(mappingKey(p.mapping));
             } else {
                 const done = json as { id: number; summary: Summary & { imported: number } };
-                setMsg({ kind: 'ok', text: `Imported ${done.summary.imported} orders as list ${done.id}.` });
+                setMsg(importOutcome(done));
                 setPreview(null);
                 setFile(null);
                 setSkipRows([]);

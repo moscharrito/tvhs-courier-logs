@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
-import { ListImport } from './ListImport';
+import { ListImport, importOutcome } from './ListImport';
 import { mockFetch } from '../../test/setup';
 
 const sites = [
@@ -82,6 +82,54 @@ const aList = (over: Record<string, unknown> = {}) => ({
     rowCount: 79, orderCount: 79, skippedCount: 0,
     importedBy: 'uh.discharge', importedByName: 'Discharge Pharmacy',
     ...over,
+});
+
+describe('what the uploader is told afterwards', () => {
+    const outcome = (over = {}) => importOutcome({
+        id: 57,
+        summary: { total: 92, willImport: 1, blocked: 0, duplicates: 91, outOfArea: 0, warnings: 0, imported: 1, ...over },
+    });
+
+    it('says how many of how many, not just how many', () => {
+        /* THE 2 NOVEMBER REPORT. The message was 'Imported 1 orders as list
+           57.' for a ninety-two row file, in green, with no mention of the
+           ninety-one that were not on it. It came back as a complaint about
+           a capacity limit -- 'approximately 102 entries per upload' --
+           because from the counter that is what it looks like. */
+        const out = outcome();
+        expect(out.text).toMatch(/Imported 1 of 92 rows/);
+        expect(out.text).toMatch(/91 rows are not on it/);
+    });
+
+    it('stops being green the moment a row is missing', () => {
+        /* A success colour is a claim. Ninety-one prescriptions short of a
+           courier manifest is not a success. */
+        expect(outcome().kind).toBe('warn');
+        expect(outcome({ total: 92, imported: 92, duplicates: 0 }).kind).toBe('ok');
+    });
+
+    it('names the reason, because the two need opposite actions', () => {
+        /* A duplicate is accepted on the preview; a blocked row is fixed in
+           the file. '91 rows did not import' invites a guess at which. */
+        const dup = outcome();
+        expect(dup.details?.join(' ')).toMatch(/already on this pharmacy/);
+
+        const bad = outcome({ total: 10, imported: 7, duplicates: 0, blocked: 3 });
+        expect(bad.details?.join(' ')).toMatch(/missing name, street or ZIP/);
+    });
+
+    it('admits when the reasons do not add up', () => {
+        /* Rather than printing a breakdown that is quietly short. A number
+           nobody can explain is the one worth saying out loud. */
+        const odd = outcome({ total: 10, imported: 4, duplicates: 1, blocked: 1 });
+        expect(odd.details?.join(' ')).toMatch(/4 did not import and the reasons above do not cover/);
+    });
+
+    it('says all of them when all of them went', () => {
+        const all = outcome({ total: 79, imported: 79, duplicates: 0 });
+        expect(all.text).toMatch(/Imported all 79 rows/);
+        expect(all.details).toBeUndefined();
+    });
 });
 
 describe('finding an old list', () => {
@@ -364,7 +412,12 @@ describe('ListImport', () => {
         const commit = stub(baseRoutes, { status: 201, body: { id: 12, site: preview.site, serviceDate: '2026-09-14', summary: { ...preview.summary, imported: 1 } } });
         fireEvent.click(screen.getByRole('button', { name: 'Import 1 orders' }));
 
-        expect(await screen.findByText('Imported 1 orders as list 12.')).toBeInTheDocument();
+        /* 'Imported 1 orders as list 12.' until 3 November, in green, with
+           no mention of the two rows that did not make it. This fixture is
+           the same shape as the Southeast file that prompted the report:
+           three rows in, one on the list. */
+        expect(await screen.findByText(/Imported 1 of 3 rows as list 12/)).toBeInTheDocument();
+        expect(screen.getByText(/2 rows are not on it/)).toBeInTheDocument();
         expect(commit.calls).toContain('POST /api/projects/uh/uh/imports');
         expect(calls).toContain('POST /api/projects/uh/uh/imports/preview');
         // The preview is cleared, so the same file cannot be committed twice by accident.
