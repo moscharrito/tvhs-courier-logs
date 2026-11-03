@@ -62,6 +62,53 @@ describe('GET /health', () => {
     });
 
     /* ─────────────────────────────────────────────────────────────────────
+     * WHICH CODE IS ACTUALLY RUNNING.
+     *
+     * `version` is package.json's, and it has read 1.0.0 across every deploy
+     * this year. So confirming that a push had gone out meant arguing from
+     * uptime -- the process restarted ninety seconds after it, so it is
+     * probably it -- which is circumstantial exactly when it matters, on a
+     * change with no visible effect in the browser.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('names the commit it was built from', async () => {
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client, version: '1.2.3', commit: 'abc123def456',
+        }));
+        const res = await request(app).get('/health');
+        expect(res.body.commit).toBe('abc123def456');
+    });
+
+    it('says unknown rather than leaving the field out when nothing said', async () => {
+        /* A deploy that lost the variable must look different from an older
+           build of this endpoint that never had the field. Absent, the two
+           read identically and the wrong one gets believed. */
+        const app = express();
+        app.use(createHealthRouter({ client: srv.core.client, version: '1.2.3' }));
+        const res = await request(app).get('/health');
+        expect(res.body).toHaveProperty('commit');
+        expect(res.body.commit).toBe('unknown');
+
+        const blank = express();
+        blank.use(createHealthRouter({ client: srv.core.client, version: '1.2.3', commit: '' }));
+        expect((await request(blank).get('/health')).body.commit).toBe('unknown');
+    });
+
+    it('carries no more than a commit id, which names nothing about the host', async () => {
+        /* The endpoint's own rule: facts about this process, never a
+           hostname, a bucket, a region, an address or anything from a row.
+           A bare hash passes it; a branch name or a repository URL would
+           not, so neither is read. */
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client, version: '1.2.3', commit: 'abc123def456',
+        }));
+        const body = JSON.stringify((await request(app).get('/health')).body);
+        expect(body).not.toMatch(/github|git@|https?:\/\/|refs\/|branch/i);
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
      * THE DAY A DEAD MAILER LOOKED LIKE A QUIET SUNDAY.
      *
      * Production ran with SES answering 403 to every send -- the credentials

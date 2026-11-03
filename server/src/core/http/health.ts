@@ -51,6 +51,24 @@ import type { MailAttempts } from '../notify/ses';
 interface Deps {
     client: Client;
     version: string;
+    /** The commit this process was built from, short, or undefined when
+     *  nothing said -- a local run from a working copy, where the answer
+     *  would be a guess.
+     *
+     *  WHY IT IS HERE. `version` is package.json's, which has read 1.0.0
+     *  across every deploy this year, so nothing served said which code was
+     *  running. Confirming a server-only deploy therefore meant arguing from
+     *  uptime: the process restarted ninety seconds after the push, so it is
+     *  probably the push. That is circumstantial, and it is the only
+     *  available answer precisely when it matters -- a change with no
+     *  visible effect, which is most of them.
+     *
+     *  IT PASSES THE RULE ABOVE. A commit id is a fact about this process,
+     *  not about the data: it names no host, no bucket, no region, no
+     *  address and no row. The repository is public, so the id reveals
+     *  nothing a reader cannot already clone -- and on a private one it
+     *  would still be a bare hash. */
+    commit?: string | undefined;
     /** Seconds between sweeps, or undefined when the timer is not running. */
     sweepIntervalSeconds?: number | undefined;
     /** Whether outbound email is configured. Not where it goes.
@@ -123,8 +141,8 @@ export type StatisticsState = 'ok' | 'missing' | 'unknown';
 export const STALE_AFTER_MINUTES = 10;
 
 export function createHealthRouter({
-    client, version, sweepIntervalSeconds, mailConfigured, mailRecent, mailAttempts, filesConfigured, smsConfigured,
-    statistics, filesHealth, trackingRetentionDays,
+    client, version, commit, sweepIntervalSeconds, mailConfigured, mailRecent, mailAttempts, filesConfigured,
+    smsConfigured, statistics, filesHealth, trackingRetentionDays,
 }: Deps): Router {
     const router = Router();
     const started = Date.now();
@@ -208,6 +226,10 @@ export function createHealthRouter({
             migrations,
             uptimeSeconds: Math.round((Date.now() - started) / 1000),
             version,
+            /* 'unknown' rather than the field being absent, so a deploy that
+               lost the variable is visible instead of looking like an older
+               build of this endpoint. */
+            commit: commit === undefined || commit === '' ? 'unknown' : commit,
             scheduler: {
                 /* The sweep that escalates unclaimed work to dispatch 45
                    minutes before its deadline, and drains queued email. */

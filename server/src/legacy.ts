@@ -108,6 +108,17 @@ export interface BootedLegacy {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const VERSION: string = (require('../package.json') as { version: string }).version;
 
+/** The commit this build came from, short, or '' when nothing said.
+ *
+ *  RENDER_GIT_COMMIT is set by the platform on every build. The two
+ *  alternatives are read first so the same field works elsewhere -- a
+ *  container build can pass GIT_COMMIT, and nothing has to know which host
+ *  it is on. Trimmed to twelve characters: enough to name a commit without
+ *  printing forty. */
+const COMMIT: string = (process.env['GIT_COMMIT']
+    ?? process.env['RENDER_GIT_COMMIT']
+    ?? '').trim().slice(0, 12);
+
 export function createLogger(config: Config): Logger {
     return new Logger({ level: config.log.level, format: config.log.format }, { app: 'izy-ops', env: config.nodeEnv });
 }
@@ -189,6 +200,9 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
     legacy.app.use(createHealthRouter({
         client: database.client,
         version: VERSION,
+        /* So "is this commit live?" is one request, rather than an argument
+           from how long the process has been up. */
+        commit: COMMIT,
         sweepIntervalSeconds: config.sweepIntervalSeconds,
         mailConfigured: mailer.available,
         /* What the sweep actually did with the last batch, rather than
