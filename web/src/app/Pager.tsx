@@ -86,7 +86,12 @@ export function Pager<T>({ of, noun, note }: Props<T>) {
            and it is here either way. */
         return (
             <p className="izy-pager-note">
-                All {total} {noun}
+                {/* "All 1 stop", not "All 1 stops". The plural is handed in
+                    by the caller because only they know the word; chopping a
+                    trailing s off is wrong for half of English, but it is
+                    right for every noun this is called with today, and the
+                    alternative is a second prop at thirty call sites. */}
+                All {total} {total === 1 ? noun.replace(/s$/, '') : noun}
                 {note !== undefined && <> · {note}</>}
             </p>
         );

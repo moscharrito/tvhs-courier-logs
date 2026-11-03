@@ -270,7 +270,10 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    name and Sign out. flex:1 with centred content is what keeps it in the
    middle of the row whatever the two beside it are as wide as. */
 .izy-shift-pill {
-    flex: 1;
+    /* NOT flex:1 any more. In the top bar it was the middle of three and had
+       to take the slack; on the heading row it sits to the right of a title
+       that should keep the space it needs. */
+    flex: 0 0 auto;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -283,7 +286,11 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 /* Its own line, full width of the bar: a refusal runs to two lines and must
    not be squeezed between the name and the button. */
 .izy-shift-error {
+    /* Still its own line, but now the width of the pill rather than of the
+       bar, so a refusal wraps under the button instead of stretching the
+       heading row. */
     flex-basis: 100%;
+    max-width: 260px;
     margin: 6px 0 0;
     font-size: 12px;
     line-height: 17px;
@@ -956,13 +963,17 @@ body {
    what a driver is looking for — and it is sized as the app's label, which
    is the small line above the big one. */
 .izy-lede-kicker { margin: 0; font-size: var(--izy-t-meta); font-weight: 600; color: var(--izy-muted); letter-spacing: 0.6px; }
-.izy-lede { margin: var(--izy-s-xs) 0 0; font-size: 24px; font-weight: 700; color: var(--izy-ink); }
-.izy-lede-note { margin: 2px 0 0; font-size: var(--izy-t-body); line-height: 25px; color: var(--izy-ink); }
+/* SMALLER THAN IT WAS, which was 24px over a two-line address over four
+   chips: on a 375px phone that panel filled the screen above the fold and
+   pushed the stop list off it. The name still leads -- it is what a courier
+   checks at the door -- but it no longer has to be a headline to do that. */
+.izy-lede { margin: var(--izy-s-xs) 0 0; font-size: 19px; font-weight: 700; line-height: 24px; color: var(--izy-ink); }
+.izy-lede-note { margin: 2px 0 0; font-size: 14px; line-height: 20px; color: var(--izy-ink); }
 /* The street under the counter's name. Body size and full ink, not muted:
    it is the half a driver reads in a car park, and the note below it -- which
    says what KIND of assignment this is -- is the part that can be quieter. */
 .izy-lede-address { margin: 4px 0 0; font-size: var(--izy-t-body); line-height: 23px; color: var(--izy-ink); }
-.izy-chips { display: flex; flex-wrap: wrap; gap: var(--izy-s-sm); margin-top: 12px; }
+.izy-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
 /* ── A SHEET IS THE SURFACE, SO NOTHING INSIDE IT IS A CARD ────────────────
  *
@@ -1057,6 +1068,11 @@ body {
  * middle of a 375px screen with "Tod…" in it, which looks like a flex bug
  * and is a name collision. */
 .izy-courier-top, .izy-tabbar { display: none; }
+/* Shown only where there is NO tab bar, so a card that duplicates a tab is
+   not a second door on the same screen. Paired with the .izy-tabbar rule in
+   the max-width: 900px block below: if one breakpoint moves the other must,
+   or the page either shows the link twice or not at all. */
+.izy-only-no-tabbar { display: contents; }
 
 .izy-courier-back, .izy-courier-out {
     display: inline-flex; align-items: center; gap: var(--izy-s-xs);
@@ -1196,6 +1212,8 @@ body {
         backdrop-filter: var(--izy-blur);
         -webkit-backdrop-filter: var(--izy-blur);
     }
+    /* The tab bar is here, so the card that goes to the same place is not. */
+    .izy-only-no-tabbar { display: none; }
     /* Floats clear of the edge so the glass has something to sit over. */
     .izy-courier .izy-tabbar {
         display: block; flex: 0 0 auto;

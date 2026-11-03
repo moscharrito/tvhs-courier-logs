@@ -40,7 +40,6 @@
 import { NavLink, useLocation, useParams } from 'react-router-dom';
 import { iosWrapper } from '../lib/browser';
 import { HistoryIcon, ProfileIcon, RouteIcon, SignOutIcon } from './Icons';
-import { ShiftBar } from '../pages/uh/ShiftBar';
 
 /* The tab roots. A back control on one of these would point at the screen
    you are already on, which is the kind of dead control that teaches people
@@ -83,12 +82,6 @@ export function DriverTopBar({ code, contract, onSignOut }: {
                     <span>Today</span>
                 </NavLink>
             )}
-            {/* THE SHIFT CONTROL LIVES HERE NOW, between the two, because
-                this row is the only thing on every screen of the driver
-                portal. It used to sit at the top of Today, which meant a
-                courier reading a stop had to go back a screen to go off
-                shift at the end of the day. */}
-            <ShiftBar code={code} />
             <button type="button" className="izy-courier-out" onClick={onSignOut}>
                 <SignOutIcon size={19} />
                 <span>Sign out</span>

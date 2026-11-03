@@ -56,6 +56,7 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
+import { ShiftBar } from './ShiftBar';
 import { Section } from '../../app/Section';
 import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { BoxIcon, FlagIcon, HistoryIcon, NavigateIcon, PhoneIcon, PinIcon, ReturnIcon } from '../../app/Icons';
@@ -197,7 +198,14 @@ export function MyRun() {
                 holding status until there is something to draw.
                 ───────────────────────────────────────────────────────────── */}
             <Context>
-                <ScreenHeader title="Today" subtitle={subtitle} />
+                {/* THE SHIFT CONTROL RIDES THE HEADING, right-hand side.
+                    It spent an afternoon in the top bar beside Sign out,
+                    which put it on every screen but also beside the one
+                    button a courier must never hit by accident at the end of
+                    a round. On the heading row it is next to the day it
+                    belongs to, and the thing immediately under it is the
+                    work the shift is for. */}
+                <ScreenHeader title="Today" subtitle={subtitle} right={<ShiftBar code={code} />} />
 
                 {/* NO PIN PROMPT HERE. It lived above the run between tickets
                     5.4 and this one, offering enrolment to anybody whose phone
@@ -435,17 +443,25 @@ export function MyRun() {
                     detail="Wrong name, wrong count, nobody in"
                 />
                 {/* Their own record: what they have delivered by day, month
-                    and year, and what it comes to. It is also the History
-                    tab, and it stays here because at desktop width there is
-                    no tab bar. */}
-                <CardLink
-                    to={`/projects/${code}/my-deliveries`}
-                    title="My deliveries"
-                    Icon={HistoryIcon}
-                    tone="quiet"
-                    compact
-                    detail="Everything you have finished"
-                />
+                    and year, and what it comes to.
+
+                    HIDDEN WHERE THE TAB BAR EXISTS, which is the whole of
+                    the phone. This is the History tab’s destination exactly,
+                    so on a phone it was the same door twice on one screen.
+                    It is NOT deleted, because the tab bar only appears below
+                    901px: on a desktop there is no History tab and this card
+                    is the only way to reach the page. The breakpoint here is
+                    the tab bar’s own, and the two have to stay in step. */}
+                <div className="izy-only-no-tabbar">
+                    <CardLink
+                        to={`/projects/${code}/my-deliveries`}
+                        title="My deliveries"
+                        Icon={HistoryIcon}
+                        tone="quiet"
+                        compact
+                        detail="Everything you have finished"
+                    />
+                </div>
                 {/* The app pulls down to refresh. A browser has no such
                     gesture to borrow, so it is a control. */}
                 <CardButton
