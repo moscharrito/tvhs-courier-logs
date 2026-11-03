@@ -26,7 +26,7 @@
  *   ticket 1.4 refused until a BAA covers it. It is full size anyway, so a
  *   map drops in later rather than forcing a redesign.
  *
- *   THE SHEET IS ACTIONS. Collect, open the stop, directions, ring dispatch,
+ *   THE SHEET IS ACTIONS. Collect, open the stop, directions,
  *   the whole list, and the three things done once a day. Directions and
  *   "Open the stop" used to sit inside the next-stop card; they are controls,
  *   so they are in the sheet with the other controls, grouped and named
@@ -58,8 +58,8 @@ import { Directions } from './Directions';
 import { Pager, usePaged } from '../../app/Pager';
 import { ShiftBar } from './ShiftBar';
 import { Section } from '../../app/Section';
-import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
-import { BoxIcon, HistoryIcon, NavigateIcon, PhoneIcon, PinIcon } from '../../app/Icons';
+import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { BoxIcon, HistoryIcon, NavigateIcon, PinIcon } from '../../app/Icons';
 
 interface Stop {
     sequence: number;
@@ -185,8 +185,6 @@ export function MyRun() {
     const collectFirst = toCollect.length > 0;
     /* A courier with two runs in a day collects against each of them. */
     const waiting = data.runs.filter((r) => r.stops.some((s) => s.status === 'assigned'));
-    /* Stripped so the phone's dialler accepts it. */
-    const dial = data.dispatch.phone.replace(/[^0-9+]/g, '');
     const subtitle = [user?.name, data.serviceDate, `${done} of ${stops.length} done`]
         .filter((part) => part !== undefined && part !== '')
         .join(' · ');
@@ -230,7 +228,7 @@ export function MyRun() {
                         </p>
                     </Panel>
                 ) : current !== null ? (
-                    <Panel role="group" aria-label="Next stop">
+                    <Panel role="group" aria-label="Next stop" className="izy-next">
                         <h2 className="izy-lede-kicker">Next: stop {current.sequence}</h2>
                         <p className="izy-lede">{current.recipientName}</p>
                         <p className="izy-lede-note">{current.address}<br />{current.city} {current.zip}</p>
@@ -339,33 +337,6 @@ export function MyRun() {
                     </div>
                 )}
 
-                {/* THE NUMBER IS WRITTEN OUT, NOT ONLY LINKED.
-                 *
-                 * `tel:` is a tap on a phone and nothing at all in a desktop
-                 * browser: the button is there, you click it, and the page
-                 * sits where it was. Drivers work in the browser for the
-                 * first month and some of them will be at a laptop, so the
-                 * one piece of information on this control — the number —
-                 * has to be readable rather than only dialable. It is also
-                 * the number somebody writes on their hand before the phone
-                 * dies.
-                 *
-                 * The button, or nothing at all. The missing branch used to
-                 * explain the absence — "an administrator adds one in the
-                 * project's operating settings" — which is an instruction
-                 * addressed to somebody who is not holding this phone, on
-                 * the screen a driver works from. The absence is now silent
-                 * here and loud where it can be acted on: set-dispatch.mjs
-                 * prints it, and the operating settings screen says it. */}
-                {dial !== '' && (
-                    <CardAnchor
-                        href={`tel:${dial}`}
-                        title={`Call ${data.dispatch.name}`}
-                        Icon={PhoneIcon}
-                        tone="quiet"
-                        detail={data.dispatch.phone}
-                    />
-                )}
 
                 {!collectFirst && stops.length > 0 && (
                     /* THE ONLY THING ON THIS SCREEN THAT FOLDS.

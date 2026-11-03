@@ -182,23 +182,24 @@ describe('MyRun', () => {
         expect(document.querySelectorAll('iframe').length).toBe(0);
     });
 
-    it('dials dispatch in one tap', async () => {
-        renderRun(base());
-        const call = await screen.findByRole('link', { name: /Call Izy dispatch/ });
-        // Stripped to digits so the phone dialler accepts it.
-        expect(call).toHaveAttribute('href', 'tel:2105550100');
-    });
+    it('does not offer to dial dispatch, whether a number is set or not', async () => {
+        /* REMOVED 3 NOVEMBER as redundant: a driver has the dispatch number.
+           It is the only place the number appeared to them, so the absence
+           is worth pinning rather than letting a later change quietly put a
+           phone card back on the one screen that is meant to be the stops.
 
-    it('hides the call button rather than offering a number nobody set, and says nothing about it', async () => {
-        /* It used to explain the absence: "an administrator adds one in the
-           project's operating settings". That is an instruction for somebody
-           who is not holding this phone, printed on the screen a driver
-           works from, and the driver reading it is the one person who cannot
-           act on it. */
-        renderRun(base({ 'GET /api/projects/uh/uh/runs/mine': mine({ dispatch: { phone: '', name: 'Dispatch' } }) }));
+           Both ways round, because the old behaviour differed: a number set
+           drew the card, and no number drew nothing. */
+        renderRun(base());
         await screen.findByRole('heading', { name: 'Today' });
         expect(screen.queryByRole('link', { name: /^Call/ })).not.toBeInTheDocument();
-        expect(screen.queryByText(/dispatch number/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/832|dispatch number/i)).not.toBeInTheDocument();
+
+        renderRun(base({ 'GET /api/projects/uh/uh/runs/mine': mine({ dispatch: { phone: '', name: 'Dispatch' } }) }));
+        expect(screen.queryByRole('link', { name: /^Call/ })).not.toBeInTheDocument();
+        /* And still no instruction aimed at somebody who is not holding this
+           phone, which is why the empty branch went silent in the first
+           place. */
         expect(screen.queryByText(/operating settings/i)).not.toBeInTheDocument();
     });
 

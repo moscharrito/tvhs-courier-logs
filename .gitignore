@@ -75,6 +75,7 @@ mail-doctor.ps1
 clear-uh-test.ps1
 clear-orders.ps1
 close-shifts.ps1
+close-shifts.txt
 auto-assign-off.ps1
 list-drivers.mjs
 

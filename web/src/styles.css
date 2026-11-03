@@ -934,6 +934,22 @@ body {
     font-size: var(--izy-t-meta); font-weight: 600; white-space: nowrap;
 }
 .izy-chip.is-neutral { background: rgba(255, 255, 255, 0.6); border-color: var(--izy-glass-hair); color: var(--izy-muted); }
+
+/* THE NEXT STOP PANEL, SMALLER AGAIN.
+   It was cut once on 2 November and was still the tallest thing on the
+   screen: a 19px name over a two-line address over four 30px chips inside
+   20px padding came to roughly 190px, which on a 375px phone is the fold.
+   What this panel has to do is tell a driver who is next and where -- it is
+   not the stop screen, and everything on it is repeated in the list below.
+
+   SCOPED to this one panel, deliberately. .izy-chip and .izy-lede are shared
+   with the stop screen and the earnings panel, where the sizes are right. */
+.izy-next { padding: 12px 14px; }
+.izy-next .izy-lede-kicker { font-size: 11px; letter-spacing: 0.5px; }
+.izy-next .izy-lede { font-size: 16px; line-height: 21px; margin-top: 1px; }
+.izy-next .izy-lede-note { font-size: 13px; line-height: 17px; }
+.izy-next .izy-chips { gap: 5px; margin-top: 7px; }
+.izy-next .izy-chip { min-height: 23px; padding: 0 9px; font-size: 12px; }
 .izy-chip.is-good { background: rgba(22, 163, 74, 0.14); border-color: rgba(22, 163, 74, 0.3); color: #166534; }
 .izy-chip.is-warn { background: rgba(217, 119, 6, 0.14); border-color: rgba(217, 119, 6, 0.3); color: #92400e; }
 .izy-chip.is-bad { background: rgba(185, 28, 28, 0.12); border-color: rgba(185, 28, 28, 0.3); color: var(--izy-danger); }
