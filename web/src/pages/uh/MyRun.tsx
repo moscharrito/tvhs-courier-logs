@@ -173,16 +173,15 @@ export function MyRun() {
 
     const stops = data.runs.flatMap((r) => r.stops);
     const remaining = stops.filter((s) => !DONE.includes(s.status));
-    /* Still at the counter: a courier cannot deliver what they have not
-       collected, so this is the first thing the screen offers. */
-    const toCollect = stops.filter((s) => s.status === 'assigned');
+    /* Carrying it beats still at the counter, then sequence. The preference
+       survives the collect gate going: a courier holding packages should
+       deliver those before driving back for more. */
     const current = remaining.find((s) => s.status !== 'assigned') ?? remaining[0] ?? null;
     const done = stops.length - remaining.length;
     /* Defaults to the link-out. A server that has not been told about maps,
        which is every server until somebody sets UH_MAPS_EMBED, behaves the
        way it did before ticket 5.13. */
     const embed = data.directions?.embed === true;
-    const collectFirst = toCollect.length > 0;
     /* A courier with two runs in a day collects against each of them. */
     const waiting = data.runs.filter((r) => r.stops.some((s) => s.status === 'assigned'));
     const subtitle = [user?.name, data.serviceDate, `${done} of ${stops.length} done`]
@@ -213,21 +212,7 @@ export function MyRun() {
                     account, which is where a setting belongs. University
                     Health drivers do not use a PIN at all. */}
 
-                {collectFirst ? (
-                    <Panel>
-                        <h2 className="izy-lede-kicker">Collect first</h2>
-                        <p className="izy-lede">
-                            {toCollect.length} {toCollect.length === 1 ? 'order is' : 'orders are'} still at the pharmacy
-                        </p>
-                        {/* WHERE THEY ARE GOING IS NOT SHOWN UNTIL THEY HAVE
-                            THE PACKAGES. The addresses, the names and the
-                            deadlines all appear once the pickup is recorded. */}
-                        <p className="izy-lede-note">
-                            You cannot deliver what you have not taken custody of. Your stops appear
-                            once you have recorded the pickup.
-                        </p>
-                    </Panel>
-                ) : current !== null ? (
+                {current !== null ? (
                     <Panel role="group" aria-label="Next stop" className="izy-next">
                         <h2 className="izy-lede-kicker">Next: stop {current.sequence}</h2>
                         <p className="izy-lede">{current.recipientName}</p>
@@ -281,32 +266,28 @@ export function MyRun() {
                     );
                 })}
 
-                {/* ─────────────────────── NOTHING BELOW UNTIL IT IS COLLECTED
+                {/* ───────────────── THE ROUND IS ON SCREEN ONCE IT IS ASSIGNED
                  *
-                 * The round used to be on screen from the moment dispatch
-                 * assigned it: every name, every address, every deadline,
-                 * while the medication was still behind the counter. Two
-                 * reasons that is wrong, and the second is the one that
-                 * matters.
+                 * Until 3 November nothing below appeared until the pickup
+                 * was recorded: the whole list was replaced by "Collect
+                 * first", on the reasoning that showing names, addresses and
+                 * deadlines for medication still behind a counter is a
+                 * patient list on a screen for work that has not begun, and
+                 * that custody is the line.
                  *
-                 * It invites the round to start in the wrong order. A courier
-                 * reading "next: 4 Hickory, due 13:15" before they have been
-                 * to the pharmacy is being shown a destination they cannot
-                 * serve.
+                 * What changed is who draws the line. That gate was built
+                 * when the sweep assigned work on its own, so an unrecorded
+                 * pickup was the only evidence a courier had not started.
+                 * Dispatch now assigns every delivery by hand, to a named
+                 * driver on shift at that pharmacy -- the assignment IS the
+                 * decision the gate was standing in for, and the driver it
+                 * was hiding the round from is the one person who was told
+                 * to drive it.
                  *
-                 * And it is a patient list on a screen, for work that has not
-                 * begun. A phone open at a counter, a browser on a shared
-                 * machine — the names and addresses of people expecting
-                 * medication, belonging to a round the courier is not yet
-                 * carrying. Custody is the line: once they have signed for
-                 * the packages the round is theirs and they need every detail
-                 * of it. Before that they need one instruction, which is to
-                 * go and collect.
-                 *
-                 * Deliberately ALL or nothing, not "hide the uncollected
-                 * ones". A partial list is the same disclosure made quieter,
-                 * and a courier part-way through a pickup should be finishing
-                 * it. */}
+                 * Removed on the drivers' own feedback. Collect from a
+                 * pharmacy is still offered above, and is still the only way
+                 * into the pickup screen; it no longer stands in front of
+                 * the work. */}
                 {/* NO "OPEN THE STOP", "DIRECTIONS" OR "DETAILS" HERE.
                     All three acted on the next stop, and all three are on
                     every row of All stops below -- including that same next
@@ -318,14 +299,13 @@ export function MyRun() {
                     which is the one case where this costs a tap: the section
                     header is still the first thing under the panel. */}
 
-                {!collectFirst && stops.length > 0 && (
-                    /* THE ONLY THING ON THIS SCREEN THAT FOLDS.
-                       Collect-first is a blocker and the next stop is the
-                       work; folding either would hide the reason a driver
-                       opened the page. The whole list is reference once the
-                       next stop is on screen, and a driver who has memorised
-                       their round should be able to put it away and have it
-                       stay away. */
+                {stops.length > 0 && (
+                    /* THE ONLY THING ON THIS SCREEN THAT FOLDS. The next
+                       stop is the work; folding it would hide the reason a
+                       driver opened the page. The whole list is reference
+                       once the next stop is on screen, and a driver who has
+                       memorised their round should be able to put it away
+                       and have it stay away. */
                     <Section
                         id="myrun-all-stops"
                         title="All stops"

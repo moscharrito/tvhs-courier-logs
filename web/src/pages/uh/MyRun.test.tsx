@@ -251,12 +251,17 @@ describe('MyRun', () => {
         expect(within(list).getByText('Ines Vargas')).toBeInTheDocument();
     });
 
-    /* ── Nothing until it is collected ─────────────────────────────────── */
+    /* ── The round is on screen once it is assigned ────────────────────── */
 
-    it('hides the whole round until the pickup is recorded', async () => {
-        /* The names and addresses of people expecting medication, for a
-           round the courier has not taken custody of yet, on a phone open
-           at a pharmacy counter. Custody is the line. */
+    it('shows the round before any pickup is recorded', async () => {
+        /* THIS USED TO BE THE OPPOSITE TEST. Until 3 November the whole list
+           was replaced by "Collect first" until custody was taken, because
+           an unrecorded pickup was the only evidence a courier had not
+           started -- the sweep assigned work on its own. Dispatch now
+           assigns every delivery by hand to a named driver on shift at that
+           pharmacy, so the assignment is the decision the gate stood in
+           for, and the driver it hid the round from is the one person told
+           to drive it. Removed on the drivers' own feedback. */
         renderRun(base({
             'GET /api/projects/uh/uh/runs/mine': mine({
                 runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' })] }],
@@ -264,19 +269,32 @@ describe('MyRun', () => {
         }));
         await screen.findByRole('heading', { name: 'Today' });
 
-        expect(screen.getByRole('heading', { name: 'Collect first' })).toBeInTheDocument();
-        expect(screen.getByText(/Your stops appear once you have recorded the pickup/)).toBeInTheDocument();
-
-        /* Not the name, not the address, not the deadline, and no way in. */
-        expect(screen.queryByText('Ines Vargas')).not.toBeInTheDocument();
-        expect(screen.queryByText(/1100 Broadway St/)).not.toBeInTheDocument();
-        expect(screen.queryByLabelText('Next stop')).not.toBeInTheDocument();
-        expect(screen.queryByRole('link', { name: 'Open the stop' })).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Next stop')).toBeInTheDocument();
+        expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(0);
+        expect(screen.getAllByText(/1100 Broadway St/).length).toBeGreaterThan(0);
+        expect(screen.getByRole('link', { name: 'Open the stop' })).toBeInTheDocument();
     });
 
-    it('hides all of it, not merely the uncollected ones', async () => {
-        /* A partial list is the same disclosure made quieter, and a courier
-           part-way through a pickup should be finishing it. */
+    it('still offers the way into the pickup screen, which is the only one there is', async () => {
+        /* THE REGRESSION THIS CHANGE COULD HAVE CAUSED. Collect from a
+           pharmacy is the single link to /runs/:id/pickup anywhere in the
+           web app -- taking it out with the gate would have left no way to
+           record a collection at all, and collection is half the contract.
+           It no longer stands in FRONT of the work; it still has to be
+           there. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{ ...mine().runs[0], stops: [stop({ status: 'assigned' })] }],
+            }),
+        }));
+        const collect = await screen.findByRole('link', { name: 'Collect from a pharmacy' });
+        expect(collect).toHaveAttribute('href', '/projects/uh/runs/10/pickup');
+    });
+
+    it('shows collected and uncollected stops together', async () => {
+        /* The gate was all-or-nothing on purpose, so this was its mirror:
+           one picked up and one still at the counter used to hide both.
+           Both now show, and the one being carried leads. */
         renderRun(base({
             'GET /api/projects/uh/uh/runs/mine': mine({
                 runs: [{ ...mine().runs[0], stops: [
@@ -286,18 +304,24 @@ describe('MyRun', () => {
             }),
         }));
         await screen.findByRole('heading', { name: 'Today' });
-        expect(screen.queryByText('Marcus Ibarra')).not.toBeInTheDocument();
-        expect(screen.queryByText('Ines Vargas')).not.toBeInTheDocument();
+        expect(screen.getAllByText('Marcus Ibarra').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(0);
+        /* Carrying beats still-at-the-counter: the next stop is the one in
+           the van, not stop 1. */
+        expect(within(screen.getByLabelText('Next stop')).getByText('Marcus Ibarra')).toBeInTheDocument();
     });
 
-    it('shows the round the moment everything is collected', async () => {
+    it('shows the round in both places, the panel and the list', async () => {
         renderRun(base());
         /* Twice over: the Next card and the full list. getAllBy, because
            one of those appearing without the other would be the bug. */
         await screen.findByLabelText('Next stop');
         expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(1);
         expect(screen.getAllByRole('link', { name: 'Open the stop' }).length).toBeGreaterThan(0);
+        /* And the panel that used to stand in front of all of it is gone
+           for good, not merely skipped for this fixture. */
         expect(screen.queryByRole('heading', { name: 'Collect first' })).not.toBeInTheDocument();
+        expect(screen.queryByText(/stops appear once you have recorded the pickup/)).not.toBeInTheDocument();
     });
 
     /* ── The app's shape ──────────────────────────────────────────────── */
