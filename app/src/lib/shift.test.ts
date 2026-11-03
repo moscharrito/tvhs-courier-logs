@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    goOnShift, goOffShift, permissionStep, shiftButton,
+    goOnShift, goOffShift, permissionStep, recoverFromFailedToggle, shiftButton,
 } from './shift';
 
 describe('what to do about location when a shift opens', () => {
@@ -72,6 +72,53 @@ describe('the order of operations', () => {
         expect(goOffShift()).not.toContain('startTracking');
         expect(goOnShift('granted')).not.toContain('endShift');
         expect(goOnShift('undetermined')).not.toContain('endShift');
+    });
+});
+
+describe('a toggle that was refused part way through', () => {
+    /* THE HALF-STATE THAT HAD NO NAME. Going off shift stops the tracker
+       first and ends the shift second, and the server does refuse the
+       second: a shift cannot end while undelivered packages are still in
+       the car. That left the driver on shift with tracking stopped -- the
+       banner claiming they were recorded while they were not, and
+       dispatch's ETAs going stale -- with nothing on screen saying no.
+       Reported 2 November as "the toggle sticks on On shift". */
+    it('starts the tracker again when the shift is still open', () => {
+        expect(recoverFromFailedToggle(true, true)).toEqual(['startTracking']);
+    });
+
+    it('does nothing when the shift did end after all', () => {
+        /* The refusal came from a later step, or the read raced the write.
+           Starting the tracker for a closed shift is the thing goOffShift
+           orders itself to avoid. */
+        expect(recoverFromFailedToggle(true, false)).toEqual([]);
+    });
+
+    it('does nothing when the server could not be asked', () => {
+        /* null is "no answer", not "no shift". A phone that lost signal
+           mid-tap must not start a background tracker on a guess. */
+        expect(recoverFromFailedToggle(true, null)).toEqual([]);
+    });
+
+    it('does nothing on the way ON shift, whatever happened', () => {
+        /* That direction starts the shift FIRST, so a failure after it
+           leaves tracking off and the shift open -- which is exactly the
+           state a driver who declined the permission is in, and is already
+           what the banner describes. */
+        expect(recoverFromFailedToggle(false, true)).toEqual([]);
+        expect(recoverFromFailedToggle(false, false)).toEqual([]);
+        expect(recoverFromFailedToggle(false, null)).toEqual([]);
+    });
+
+    it('never asks to end a shift as part of recovering from one', () => {
+        /* A guard against the obvious wrong fix: "it would not go off, so
+           try harder" closes a shift the server has twice declined to
+           close, with the packages still in the car. */
+        for (const open of [true, false, null]) {
+            for (const wasOff of [true, false]) {
+                expect(recoverFromFailedToggle(wasOff, open)).not.toContain('endShift');
+            }
+        }
     });
 });
 

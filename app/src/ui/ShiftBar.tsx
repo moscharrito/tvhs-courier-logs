@@ -31,12 +31,13 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Confirm } from './Glass';
 import { SPACE, TAP, TYPE, RADIUS, theme } from '../theme';
 import { trackingState, type StopReason } from '../lib/trace';
-import { goOffShift, goOnShift, shiftButton, type Step } from '../lib/shift';
+import { goOffShift, goOnShift, recoverFromFailedToggle, shiftButton, type Step } from '../lib/shift';
 import {
     askPermission, permissionState, startTracking, stopTracking, stoppedBecause,
     type PermissionState,
 } from '../lib/tracking';
 import { myShift, startShift, endShift } from '../lib/api';
+import { ApiError } from '../lib/http';
 
 interface Props {
     token: string;
@@ -50,6 +51,13 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
     const [permission, setPermission] = useState<PermissionState>('undetermined');
     const [stopped, setStopped] = useState<StopReason | null>(null);
     const [busy, setBusy] = useState(false);
+    /* WHY THE REFUSAL HAS TO BE ON SCREEN.
+       The server declines to end a shift while the driver still holds
+       packages, and says so in a sentence written for them. This bar used to
+       catch that, re-read, find the shift still open and redraw "On shift"
+       with nothing shown: the button appeared dead and the toggle looked
+       stuck. The web portal's copy of this bar has always shown it. */
+    const [error, setError] = useState<string | null>(null);
     /* Until the first read answers, the banner would otherwise claim "off
        shift" to somebody who is on one -- which is the one direction this
        must not get wrong. */
@@ -59,16 +67,21 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
        bridges the two without making lib/shift.ts know about React. */
     const [asking, setAsking] = useState<((agreed: boolean) => void) | null>(null);
 
-    const reread = useCallback(async () => {
+    /* Returns whether the shift is open, for the caller that has to know
+       straight away: setState does not land in time for the line after it. */
+    const reread = useCallback(async (): Promise<boolean | null> => {
         try {
             const [state, perm] = await Promise.all([myShift(token, code), permissionState()]);
-            setOnShift(state.shift?.open === true);
+            const open = state.shift?.open === true;
+            setOnShift(open);
             setPermission(perm);
             setStopped(stoppedBecause());
             setKnown(true);
+            return open;
         } catch (err) {
             /* A dead session is the shell's business, not this bar's. */
             if ((err as { status?: number }).status === 401) onSignedOut();
+            return null;
         }
     }, [token, code, onSignedOut]);
 
@@ -108,9 +121,13 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
 
     const toggle = async () => {
         if (busy) return;
+        /* Which way this tap was going, read before anything can change it:
+           the recovery below is only right for one of the two. */
+        const wasOn = onShift;
         setBusy(true);
+        setError(null);
         try {
-            if (onShift) {
+            if (wasOn) {
                 await run(goOffShift());
             } else {
                 /* Read fresh rather than trusting state: the driver may have
@@ -123,7 +140,23 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
             /* Whatever happened, the server is the truth about whether a
                 shift is open. Asking again is more honest than assuming the
                 toggle did what it was asked. */
-            await reread();
+            const open = await reread();
+
+            /* SAY WHAT THE SERVER SAID. It refuses to end a shift while
+               packages are still in the car and explains why; swallowing
+               that is what made this button look broken. */
+            setError(err instanceof ApiError
+                ? err.message
+                : 'That did not go through. Check your signal and try again.');
+
+            /* AND PUT TRACKING BACK where the refusal left it off. The
+               decision is in lib/shift.ts with the rest of the ordering,
+               and tested there; this only carries it out. startTracking
+               re-reads the real permission, so a driver who declined stays
+               untracked rather than being started behind a refusal they
+               never saw. */
+            try { await run(recoverFromFailedToggle(wasOn, open)); } catch { /* the banner already says untracked */ }
+            setStopped(stoppedBecause());
         } finally {
             setBusy(false);
         }
@@ -190,6 +223,11 @@ export function ShiftBar({ token, code, onSignedOut }: Props) {
                 </Text>
             </Pressable>
         </View>
+        {error !== null && (
+            <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+                {error}
+            </Text>
+        )}
         </>
     );
 }
@@ -206,6 +244,16 @@ const styles = StyleSheet.create({
         borderBottomColor: theme.line,
     },
     textSide: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACE.xs },
+    /* Under the bar rather than inside it: the reason a shift will not end
+       runs to two lines, and squeezing it beside the button is how it ends
+       up truncated on the phone it is written for. */
+    error: {
+        paddingHorizontal: SPACE.md,
+        paddingBottom: SPACE.sm,
+        backgroundColor: theme.card,
+        color: theme.danger,
+        fontSize: TYPE.body,
+    },
     dot: { width: 10, height: 10, borderRadius: 5 },
     dotOn: { backgroundColor: theme.greenBright },
     dotOff: { backgroundColor: theme.muted },

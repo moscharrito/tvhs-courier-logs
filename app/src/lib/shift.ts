@@ -99,6 +99,32 @@ export function goOffShift(): Step[] {
     return ['stopTracking', 'endShift'];
 }
 
+/**
+ * What to do after a toggle threw part way through.
+ *
+ * GOING OFF SHIFT STOPS TRACKING FIRST AND ENDS THE SHIFT SECOND, which is
+ * the right order while it works: there is no moment in it where a driver is
+ * off shift and still being followed.
+ *
+ * It is the wrong order when the second step is refused, and the server does
+ * refuse it -- a shift cannot end while undelivered packages are still in the
+ * car. The driver is then on shift with tracking stopped: the banner says
+ * they are being recorded, dispatch's ETAs quietly go stale, and nothing on
+ * screen said no. Starting tracking again is what puts that back.
+ *
+ * `stillOpen` is what the server said when asked again, not what the screen
+ * believed: null means it could not be reached, and guessing in either
+ * direction there is worse than doing nothing.
+ *
+ * Nothing to undo in the other direction. Going ON shift starts the shift
+ * FIRST, so a failure after that leaves tracking off and the shift open --
+ * which is exactly the state a driver who declined the permission is in, and
+ * is already what the banner describes.
+ */
+export function recoverFromFailedToggle(wasGoingOff: boolean, stillOpen: boolean | null): Step[] {
+    return wasGoingOff && stillOpen === true ? ['startTracking'] : [];
+}
+
 /** The label on the one button, so the screen and the tests agree on it. */
 export function shiftButton(onShift: boolean, busy: boolean): string {
     if (busy) return onShift ? 'Going off shift…' : 'Going on shift…';

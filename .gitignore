@@ -68,6 +68,8 @@ stage-wheatley.ps1
 check-pod.ps1
 apply-roster.ps1
 roster-one.ps1
+roster-check.ps1
+roster-check.txt
 new-logins.ps1
 mail-doctor.ps1
 clear-uh-test.ps1
