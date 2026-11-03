@@ -1,7 +1,37 @@
 # Driver training
 
-`driver-training.mp4` — 11m 34s, 1920x1080, 14 MB. Nine screens in the order
-a driver meets them on a real day, with spoken narration.
+`driver-training-nov-2026.mp4` — 12m 56s, 1920x1080, 15 MB, sixteen slides.
+The current one. What a driver sees from signing in to going off shift, in the
+order they meet it, with spoken narration and real screens from the app.
+
+**It is not in this repository.** Six of its slides carry recipient names and
+street addresses, captured from a live driver account, so it falls under the
+same rule as `portal-training.mp4` — see the block in `.gitignore`. It is
+handed to drivers directly.
+
+`driver-training.mp4` — 11m 34s, 14 MB, nine screens. The October cut, kept
+for reference and now out of date: it still shows Collect from Pharmacy and
+the custody step, both of which have since been removed from the app.
+
+## What the November cut covers that the October one did not
+
+The app changed underneath the old video, which is the whole reason this one
+exists. Specifically:
+
+- **Collect from Pharmacy is gone.** There is no collection step, no screen
+  and no button. Custody is recorded for you when you first act on a stop.
+- **Take Picture is gone.** One control chooses or takes a photo, which is
+  what every phone does anyway.
+- **Could not deliver has a slide of its own**, slide 11, with the screen
+  behind the button: one reason per item, the six reasons, the note that
+  "Something else" asks for, and why *Record the attempt* stays greyed out
+  until every item is answered. The October cut named the button and never
+  showed what it opens, which left the one outcome a driver is most hesitant
+  to pick as the only one they had not been shown.
+- **Assignment is manual.** Nothing is auto-assigned; stops appear when
+  dispatch gives them to you.
+- **The shift toggle moved** and the redundant cards are gone, so the Today
+  screen in the video is the Today screen on the phone.
 
 ## How it was made, so it can be remade
 
@@ -19,7 +49,7 @@ the deck, which is the point. The deck is the source and the video is output.
 4. **Assembly** is ffmpeg, the copy that ships inside the installed
    `imageio-ffmpeg` Python package.
 
-### Two things that will bite whoever redoes this
+### Four things that will bite whoever redoes this
 
 **Use `-vf fps=15`, not `-r 15`.** The first cut used `-r` and came out 75
 seconds longer than its own soundtrack: the concat demuxer's per-image
@@ -31,13 +61,26 @@ to 1080px silently clips whatever does not fit, and what did not fit was the
 step number off the top and the controlled-drugs warning off the bottom --
 the two things on the slide a driver most needs. Measure, scale, centre.
 
+**The beat between slides goes into both tracks or neither.** This cut holds
+each slide for its narration plus six tenths of a second, so one slide does
+not begin on the last syllable of the one before. Adding that to the image
+durations alone is `-r 15` by another name: the picture ran steadily ahead of
+the voice and slide sixteen arrived nine seconds after it had started being
+read. Each slide's audio is padded with the same silence.
+
+**The duplicated last image needs `-shortest`.** The concat demuxer ignores
+the final entry's duration, so the last frame is named twice — and that
+duplicate is then held for the whole of the previous duration. Without
+`-shortest` the video ended with forty-one seconds of a frozen summary slide.
+
 ## The voice
 
 It is a synthetic voice, and it sounds like one. That was the trade: it is
 reproducible, it costs nothing, and it can be regenerated the moment a step
 in the app changes, which is the failure this whole thing exists to prevent.
-`driver-voiceover-script.md` is the same words if anybody would rather read
-them aloud and cut a human track over the same frames.
+`driver-voiceover-script-nov-2026.md` is the same words if anybody would
+rather read them aloud and cut a human track over the same frames;
+`driver-voiceover-script.md` is the October one beside it.
 
 ---
 

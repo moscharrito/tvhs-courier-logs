@@ -71,6 +71,9 @@ roster-one.ps1
 check.ps1
 check.txt
 new-logins.ps1
+rbg.drivers.csv
+rbg-logins.ps1
+rbg-driver-passwords.docx
 mail-doctor.ps1
 clear-uh-test.ps1
 clear-orders.ps1
@@ -117,6 +120,14 @@ protected.txt
 # the reset instructions, the READMEs -- carries no names and is committed.
 docs/training/portal-screens/*.png
 docs/training/portal-training.mp4
+#
+# driver-training-nov-2026.mp4 is the same problem by the same route.
+# Its screens were captured from a live driver account, so six of the
+# sixteen slides carry recipient names and street addresses -- test data
+# rather than patients, but a name and a door number on a public repo is
+# the thing this block exists to stop. It is handed to drivers directly.
+# driver-training.mp4, the October cut, predates this and stays tracked.
+docs/training/driver-training-nov-2026.mp4
 retire.txt
 
 # Python bytecode from server/scripts.
