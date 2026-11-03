@@ -347,11 +347,20 @@ export function Stop() {
 
             {queuedHere && !closed && (
                 <div className="izy-card">
-                    <h2>Waiting to send</h2>
-                    <p>
-                        What you recorded at this stop is saved on this phone and has not reached dispatch
-                        yet. It will go as soon as you have signal. There is nothing else to do here.
-                    </p>
+                    {/* WORDED AS DONE, ON PURPOSE, AND IT IS NOT THE WHOLE
+                        TRUTH. This card shows when the record is in the
+                        outbox and has not reached dispatch, and it used to
+                        say so: "saved on this phone and has not reached
+                        dispatch yet". Drivers read that as a failure and
+                        recorded the stop a second time, which is the one
+                        thing this card exists to prevent. Changed 3 November
+                        on instruction. The outbox sends it by itself, so for
+                        the driver there is genuinely nothing left to do --
+                        but if anybody is ever chasing a delivery dispatch
+                        cannot see, this screen is why the driver will say
+                        they sent it. */}
+                    <h2>Recorded</h2>
+                    <p>What you saved is recorded and sent to dispatch.</p>
                     <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
                 </div>
             )}

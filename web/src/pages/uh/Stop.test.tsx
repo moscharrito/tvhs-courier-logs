@@ -475,7 +475,8 @@ describe('Stop', () => {
         expect(waiting[0]!.body).toMatchObject({ signedName: 'Ines Vargas' });
 
         // And the stop stops offering an outcome it has already been given.
-        expect(screen.getByRole('heading', { name: 'Waiting to send' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Recorded' })).toBeInTheDocument();
+        expect(screen.getByText('What you saved is recorded and sent to dispatch.')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
