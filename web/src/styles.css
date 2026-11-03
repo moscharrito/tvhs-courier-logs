@@ -266,6 +266,13 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    record that it was sent and withdrawn, and its sheet still downloads. Not
    struck through, because the file name and the counts stay true. */
 .izy-row-off > td { opacity: 0.55; }
+/* The filter on the Recent imports heading row. The fields shrink to their
+   labels so the heading keeps the left of the row, and the whole thing wraps
+   under the heading on a narrow screen rather than squeezing both. */
+.izy-imports-head { margin-top: 24px; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.izy-imports-find { gap: 8px; align-items: flex-end; margin: 0; }
+.izy-imports-find .izy-field { margin: 0; font-size: 12px; }
+.izy-imports-find .izy-field select, .izy-imports-find .izy-field input { font-size: 13px; padding: 5px 8px; }
 
 .izy-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .izy-table th, .izy-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--izy-line); vertical-align: top; }

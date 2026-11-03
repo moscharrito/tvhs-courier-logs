@@ -84,6 +84,120 @@ const aList = (over: Record<string, unknown> = {}) => ({
     ...over,
 });
 
+describe('finding an old list', () => {
+    const green = aList({ id: 55, site: { id: 9, code: 'green', name: 'University Health Robert B. Green Pharmacy' }, serviceDate: '2026-09-14', sourceFilename: 'RBG 09.14.xlsx' });
+    const discharge = aList({ id: 41, sourceFilename: 'Courier and fedex 11.02.xlsx' });
+
+    it('asks the server rather than sifting the rows it already has', async () => {
+        /* THE WHOLE POINT. Unfiltered, the endpoint answers with the hundred
+           most recent lists. "Where is the one we sent on the 14th" is a
+           question about a list that may be past that edge, and a filter
+           applied in the browser could never find it. */
+        const { calls } = stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [discharge],
+            'GET /api/projects/uh/uh/imports?siteId=9': [green],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.change(screen.getByLabelText('Find pharmacy'), { target: { value: '9' } });
+
+        await screen.findByText('RBG 09.14.xlsx');
+        expect(calls).toContain('GET /api/projects/uh/uh/imports?siteId=9');
+        expect(screen.queryByText('Courier and fedex 11.02.xlsx')).not.toBeInTheDocument();
+    });
+
+    it('filters by service date', async () => {
+        const { calls } = stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [discharge],
+            'GET /api/projects/uh/uh/imports?serviceDate=2026-09-14': [green],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.change(screen.getByLabelText('Find date'), { target: { value: '2026-09-14' } });
+
+        await screen.findByText('RBG 09.14.xlsx');
+        expect(calls).toContain('GET /api/projects/uh/uh/imports?serviceDate=2026-09-14');
+    });
+
+    it('sends both together when both are chosen', async () => {
+        const { calls } = stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [discharge],
+            'GET /api/projects/uh/uh/imports?siteId=9': [green],
+            'GET /api/projects/uh/uh/imports?siteId=9&serviceDate=2026-09-14': [green],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.change(screen.getByLabelText('Find pharmacy'), { target: { value: '9' } });
+        await screen.findByText('RBG 09.14.xlsx');
+        fireEvent.change(screen.getByLabelText('Find date'), { target: { value: '2026-09-14' } });
+
+        await waitFor(() => {
+            expect(calls).toContain('GET /api/projects/uh/uh/imports?siteId=9&serviceDate=2026-09-14');
+        });
+    });
+
+    it('does not say "nothing imported yet" when a filter simply matched nothing', async () => {
+        /* Under a filter that sentence reads as "this pharmacy has never sent
+           one", which is a different and much more alarming claim than "not
+           on that day". */
+        stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [discharge],
+            'GET /api/projects/uh/uh/imports?serviceDate=2026-01-01': [],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.change(screen.getByLabelText('Find date'), { target: { value: '2026-01-01' } });
+
+        await screen.findByText(/No lists match that/);
+        expect(screen.queryByText('Nothing imported yet.')).not.toBeInTheDocument();
+    });
+
+    it('offers Show all only once something is filtered, and it clears both', async () => {
+        const { calls } = stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [discharge],
+            'GET /api/projects/uh/uh/imports?siteId=9': [green],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+        expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Find pharmacy'), { target: { value: '9' } });
+        await screen.findByText('RBG 09.14.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+        expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument();
+        /* Back to the unfiltered URL, not to siteId= with an empty value. */
+        expect(calls.filter((c) => c === 'GET /api/projects/uh/uh/imports').length).toBeGreaterThan(1);
+    });
+
+    it('offers a pharmacy that has closed, because its old lists are still there', async () => {
+        /* The upload select hides inactive counters; this one must not. The
+           day somebody goes looking for a closed pharmacy's list is the day
+           after it closed. */
+        const withClosed = [...sites, { ...sites[0], id: 12, code: 'shut', name: 'Closed Counter', status: 'inactive' }];
+        stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/sites': withClosed,
+            'GET /api/projects/uh/uh/imports': [discharge],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        const find = screen.getByLabelText('Find pharmacy');
+        expect(within(find).getByRole('option', { name: 'Closed Counter' })).toBeInTheDocument();
+    });
+});
+
 describe('taking a list back off', () => {
     const withRecent = (lists: unknown[]) => ({
         ...baseRoutes,

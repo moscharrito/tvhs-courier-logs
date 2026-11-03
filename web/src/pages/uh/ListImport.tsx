@@ -160,6 +160,13 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
        would answer with all nine. */
     const sites: ImportSite[] | null = given ?? loaded;
     const [recent, setRecent] = useState<ImportSummary[] | null>(null);
+    /* WHAT THE LIST IS NARROWED TO, and it is sent to the server rather than
+       applied to the rows already here. Unfiltered, the endpoint answers with
+       the hundred most recent; a pharmacy asking "where is the list we sent
+       on the 14th" is asking about one that may be past that edge, and
+       filtering in the browser could never find it. */
+    const [findSite, setFindSite] = useState<number | ''>('');
+    const [findDate, setFindDate] = useState('');
     const [siteId, setSiteId] = useState<number | ''>('');
     const [serviceDate, setServiceDate] = useState(() => todayIn(timezone));
     const [file, setFile] = useState<File | null>(null);
@@ -195,9 +202,20 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
         try { setLoaded(await api<Site[]>(`/api/projects/${projectCode}/uh/sites`)); } catch { setLoaded([]); }
     }, [projectCode, given]);
     const loadRecent = useCallback(async () => {
-        try { setRecent(await api<ImportSummary[]>(base)); } catch { setRecent([]); }
-    }, [base]);
-    useEffect(() => { void loadSites(); void loadRecent(); }, [loadSites, loadRecent]);
+        const q = new URLSearchParams();
+        if (findSite !== '') q.set('siteId', String(findSite));
+        if (findDate !== '') q.set('serviceDate', findDate);
+        const url = q.toString() === '' ? base : `${base}?${q.toString()}`;
+        /* Null first, so the table says it is loading rather than showing the
+           previous pharmacy's lists under the new pharmacy's name. */
+        setRecent(null);
+        try { setRecent(await api<ImportSummary[]>(url)); } catch { setRecent([]); }
+    }, [base, findSite, findDate]);
+    /* Two effects, not one. The sites are fetched once; the list is fetched
+       again every time the filter moves, and loadSites would otherwise be
+       re-run on each keystroke of a date. */
+    useEffect(() => { void loadSites(); }, [loadSites]);
+    useEffect(() => { void loadRecent(); }, [loadRecent]);
 
     const reset = () => { setPreview(null); setSkipRows([]); setAcceptDup([]); setMapping({}); setMsg(null); };
 
@@ -524,9 +542,65 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                 </>
             )}
 
-            <h3 style={{ marginTop: 24 }}>Recent imports</h3>
+            {/* THE FILTER SITS ON THE HEADING'S OWN ROW, which is where it was
+                asked for and also where it belongs: it describes the table
+                under it, and a control a scroll away from what it changes
+                gets used by nobody. */}
+            <div className="izy-row-between izy-imports-head">
+                <h3 style={{ margin: 0 }}>Recent imports</h3>
+                <div className="izy-row izy-imports-find">
+                    {/* "Find pharmacy", not "Pharmacy". The upload form above
+                        has its own Pharmacy select, and two controls with one
+                        label in a document is ambiguous to a screen reader
+                        reading it aloud as much as to a test querying it. */}
+                    <label className="izy-field">
+                        <span className="izy-muted">Find pharmacy</span>
+                        <select
+                            value={findSite}
+                            onChange={(e) => { setFindSite(e.target.value === '' ? '' : Number(e.target.value)); }}
+                        >
+                            <option value="">Every pharmacy</option>
+                            {/* NOT narrowed to active ones, unlike the upload
+                                select above. A counter that has closed still
+                                has the lists it sent, and the day somebody
+                                goes looking for one is the day after it
+                                closed. */}
+                            {(sites ?? []).map((s) => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="izy-field">
+                        <span className="izy-muted">Find date</span>
+                        <input
+                            type="date"
+                            value={findDate}
+                            onChange={(e) => { setFindDate(e.target.value); }}
+                        />
+                    </label>
+                    {/* Only once there is something to clear: a dead button
+                        beside an unfiltered table is furniture. */}
+                    {(findSite !== '' || findDate !== '') && (
+                        <button
+                            className="izy-btn secondary small"
+                            type="button"
+                            onClick={() => { setFindSite(''); setFindDate(''); }}
+                        >
+                            Show all
+                        </button>
+                    )}
+                </div>
+            </div>
             {recent === null ? <Loading label="Loading imports" /> : recent.length === 0 ? (
-                <div className="izy-muted">Nothing imported yet.</div>
+                /* THE TWO EMPTIES ARE NOT THE SAME SENTENCE. "Nothing imported
+                   yet" under a filter reads as "this pharmacy has never sent
+                   one", which is a different and alarming claim from "not on
+                   that day". */
+                <div className="izy-muted">
+                    {findSite !== '' || findDate !== ''
+                        ? 'No lists match that. Widen it, or Show all.'
+                        : 'Nothing imported yet.'}
+                </div>
             ) : (
                 <>
                 <table className="izy-table">

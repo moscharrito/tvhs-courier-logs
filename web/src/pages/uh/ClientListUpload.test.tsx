@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ClientListUpload } from './ClientListUpload';
 import { AuthProvider } from '../../app/auth';
@@ -55,7 +55,11 @@ describe('the pharmacy upload page', () => {
         renderUpload();
         const picker = await screen.findByLabelText(/Pharmacy/);
         expect(picker).toBeInTheDocument();
-        expect(await screen.findByRole('option', { name: 'University Hospital Discharge Pharmacy' }))
+        /* Scoped to the upload picker. The Recent imports table below has a
+           Find pharmacy select of its own, listing the same counters, so a
+           document-wide query for the option says nothing about which
+           control offers it -- which is the whole claim here. */
+        expect(within(picker).getByRole('option', { name: 'University Hospital Discharge Pharmacy' }))
             .toBeInTheDocument();
     });
 
