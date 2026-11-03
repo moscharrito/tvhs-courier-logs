@@ -678,6 +678,93 @@ describe('withdrawing a list', () => {
         expect(Number((await sql('SELECT COUNT(*) AS n FROM runs WHERE id = ?', [runId])).rows[0].n)).toBe(1);
     });
 
+    it('leaves alone an empty planned run this list never filled', async () => {
+        /* A dispatcher presses Start a run for a driver who has turned up,
+           and it sits there with no stops until work is put on it. If the
+           wrong file is withdrawn in the meantime, that run has nothing to
+           do with the list and must survive it -- otherwise the driver
+           quietly loses their round and nobody can say why. */
+        await reset();
+        const list = await uploaded();
+        await sql(
+            `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_by)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'sim.courier01', '2026-09-14', 'Just started', 'planned', 'admin')`,
+        );
+        const runId = Number((await sql("SELECT id FROM runs WHERE label = 'Just started'")).rows[0].id);
+
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+
+        expect(Number((await sql('SELECT COUNT(*) AS n FROM runs WHERE id = ?', [runId])).rows[0].n)).toBe(1);
+    });
+
+    it('takes the list off the dispatch board, pool and counts', async () => {
+        /* The operator's actual question: "does the button take it off our
+           dispatch". Cancelling is only an answer to that if the board then
+           stops showing the work, so this asserts the board rather than the
+           orders table. */
+        await reset();
+        const list = await uploaded();
+        const ids = (await ordersOf(list.id)).map((o) => Number(o.id));
+        expect(ids.length).toBeGreaterThan(0);
+
+        const before = await admin.get(`/api/projects/uh/uh/board?serviceDate=2026-09-14`);
+        expect(before.status, before.text).toBe(200);
+        const poolBefore = before.body.pool.flatMap((g) => g.orderIds ?? []);
+        expect(poolBefore).toEqual(expect.arrayContaining(ids));
+
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+
+        const after = await admin.get(`/api/projects/uh/uh/board?serviceDate=2026-09-14`);
+        expect(after.status, after.text).toBe(200);
+        const poolAfter = after.body.pool.flatMap((g) => g.orderIds ?? []);
+        for (const id of ids) expect(poolAfter).not.toContain(id);
+        /* And not hiding on a lane instead. */
+        const onLanes = (after.body.lanes ?? []).flatMap((l) => (l.stops ?? []).map((st) => st.orderId));
+        for (const id of ids) expect(onLanes).not.toContain(id);
+        /* The day's unassigned count agrees with the screen. */
+        expect(after.body.summary.unassigned).toBe(0);
+    });
+
+    it('does not double up when the corrected file repeats rows of the withdrawn one', async () => {
+        /* "Whenever we upload new sets, it does not overlap or create
+           duplicates." The withdrawn rows must not block the new file, and
+           the new file must not land beside them: after re-uploading, the
+           live work for that site and day is exactly one list's worth. */
+        await reset();
+        const first = await uploaded();
+        const firstIds = (await ordersOf(first.id)).map((o) => Number(o.id));
+
+        expect((await admin.delete(`${BASE}/${first.id}`)).status).toBe(200);
+
+        const second = await uploaded();
+        expect(second.id).not.toBe(first.id);
+        const secondIds = (await ordersOf(second.id)).map((o) => Number(o.id));
+        /* Every row came in: none skipped as a duplicate of the list that
+           was taken off. */
+        expect(secondIds.length).toBe(firstIds.length);
+
+        /* And the live work for that site and date is the new list alone. */
+        const liveRows = (await sql(
+            `SELECT id FROM orders
+              WHERE service_date = '2026-09-14' AND site_id = ? AND status != 'cancelled' ORDER BY id`,
+            [dischargeId],
+        )).rows.map((r) => Number(r.id));
+        expect(liveRows).toEqual(secondIds);
+        for (const id of firstIds) expect(liveRows).not.toContain(id);
+    });
+
+    it('still catches a genuine duplicate against a list that is live', async () => {
+        /* The other half of the same promise. Withdrawing is what clears the
+           way; without it the same file uploaded twice must not silently
+           create a second delivery for every patient. */
+        await reset();
+        await uploaded();
+
+        const again = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
+        expect(again.status, again.text).toBe(400);
+        expect(String(again.body.error)).toMatch(/No rows would be imported/);
+    });
+
     it('refuses once a courier has collected anything, and changes nothing', async () => {
         /* CHECKED BEFORE THE FIRST WRITE. The lifecycle table allows
            cancelled only from pending, ready and assigned, so without this

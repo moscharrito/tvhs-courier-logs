@@ -1067,13 +1067,19 @@ export function createImportsRouter({ client }: { client: Client }): Router {
            either way, but a run that still lists it reads as work to do on the
            courier's own screen. */
         let stops = 0;
+        /* WHICH RUNS THIS TOUCHED, READ BEFORE THE STOPS GO. The tidy-up
+           below needs to know them, and once the stops are deleted there is
+           nothing left to say which runs held them. */
+        let touched: number[] = [];
         if (live.length > 0) {
             const ids = live.map((o) => Number(o['id']));
             const marks = ids.map(() => '?').join(',');
-            stops = Number((await client.execute({
-                sql: `SELECT COUNT(*) AS n FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
+            const held = await client.execute({
+                sql: `SELECT run_id FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
                 args: [req.project!.id, ...ids],
-            })).rows[0]!['n']);
+            });
+            stops = held.rows.length;
+            touched = [...new Set(held.rows.map((r) => Number(r['run_id'])))];
             await client.execute({
                 sql: `DELETE FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
                 args: [req.project!.id, ...ids],
@@ -1082,20 +1088,31 @@ export function createImportsRouter({ client }: { client: Client }): Router {
 
         /* A PLANNED run emptied by that is a round nobody is doing, and left
            behind it sits on the board as a courier with a shift and no work.
-           Only the ones this emptied: a run still holding stops belongs to
-           another list.
+
+           ONLY THE ONES THIS EMPTIED, AND THAT NOW MEANS IT. This used to
+           match every empty planned run on the service date, which is not
+           the same set: a dispatcher who presses Start a run has an empty
+           planned run sitting there waiting for work, and withdrawing an
+           unrelated list on the same day deleted it. The driver lost their
+           round and nothing on the screen said why. Narrowed to the runs
+           that actually held these orders, read above before the stops went.
 
            NOT a started one, even when it is now empty. Planning a round and
            setting off on it are different facts, and the second is a thing
            that happened: deleting it to tidy the board would remove the
            record that a courier went out. It reads oddly for the rest of the
            day and it is true, which is the right way round. */
-        const emptied = await client.execute({
-            sql: `DELETE FROM runs
-                   WHERE project_id = ? AND service_date = ? AND status = 'planned'
-                     AND id NOT IN (SELECT run_id FROM run_stops)`,
-            args: [req.project!.id, String(l['service_date'])],
-        });
+        let emptiedRuns = 0;
+        if (touched.length > 0) {
+            const marks = touched.map(() => '?').join(',');
+            const emptied = await client.execute({
+                sql: `DELETE FROM runs
+                       WHERE project_id = ? AND status = 'planned' AND id IN (${marks})
+                         AND id NOT IN (SELECT run_id FROM run_stops)`,
+                args: [req.project!.id, ...touched],
+            });
+            emptiedRuns = Number(emptied.rowsAffected ?? 0);
+        }
 
         await req.audit('list.withdraw', 'daily_list', String(id), {
             siteId: Number(l['site_id']),
@@ -1117,7 +1134,7 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             cancelled: live.length,
             unassigned,
             stopsRemoved: stops,
-            runsRemoved: Number(emptied.rowsAffected ?? 0),
+            runsRemoved: emptiedRuns,
             orders: rows.length,
         });
     }));
