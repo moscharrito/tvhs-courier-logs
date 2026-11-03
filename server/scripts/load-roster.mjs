@@ -209,6 +209,37 @@ if (problems.length > 0) {
     say('');
     process.exit(1);
 }
+
+/* ─────────────────────────────────────────────── one line of the file
+ *
+ * `--only <username or email>` applies that row and leaves the rest alone.
+ *
+ * WITHOUT IT, CHANGING ONE PERSON MEANS APPLYING FORTY-ONE. Moving one
+ * driver, or widening a test account's cover, would also push every other
+ * assignment in the file -- including the `none` rows, which take somebody's
+ * pharmacy away and, since 2 November, their ability to go on shift. Those
+ * are decisions worth making on purpose rather than carrying along behind an
+ * unrelated edit.
+ *
+ * THE WHOLE FILE IS STILL VALIDATED, above, before this narrows what gets
+ * sent. The file is the record of where everybody drives from; a typo three
+ * lines down is worth hearing about now rather than the next time somebody
+ * runs it in a hurry. */
+const only = (value('only', '') || '').trim().toLowerCase();
+if (only !== '') {
+    const picked = rows.filter((r) => r.username === only);
+    if (picked.length === 0) {
+        say('');
+        say(`  No line in ${file} is for "${only}". Nothing was done.`);
+        say('  The first column is whatever the account is called there: a username or an email.');
+        say('');
+        process.exit(1);
+    }
+    rows.length = 0;
+    rows.push(...picked);
+    say('');
+    say(`  --only ${only}: one line of ${file}. The other rows were read and checked, not applied.`);
+}
 if (rows.length === 0) {
     say(`  ${resolved} has no rows.`);
     process.exit(1);
