@@ -313,13 +313,42 @@ export function Board() {
         }
     }
 
-    /** Put an order on a run. allowMove covers dragging between lanes. */
-    const assign = (orderId: number, runId: number) => act(
-        () => api(`${base}/runs/${runId}/stops`, { method: 'POST', json: { orderIds: [orderId], allowMove: true } })
-            .then((r) => {
-                const rejected = (r as { rejected?: Array<{ error?: string }> }).rejected ?? [];
-                if (rejected.length > 0) throw new ApiError(409, rejected[0]?.error ?? 'Could not assign that order');
-            }),
+    /** Put an order on a run, or on a driver who has not got one yet.
+     *
+     * The target is `run:<id>` or `courier:<username>`, because the dropdown
+     * now offers both and a bare number could not tell them apart.
+     * allowMove covers dragging between lanes. */
+    const assign = (orderId: number, target: string) => act(
+        async () => {
+            const refused = (r: unknown) => (r as { rejected?: Array<{ error?: string }> }).rejected ?? [];
+            const stop = (r: unknown) => {
+                const no = refused(r);
+                if (no.length > 0) throw new ApiError(409, no[0]?.error ?? 'Could not assign that order');
+            };
+
+            if (target.startsWith('courier:')) {
+                /* ONE CALL, NOT TWO. The create endpoint takes its stops with
+                   it, so there is no window in which a run exists with
+                   nothing on it because the second request failed -- which
+                   would leave an empty lane on the board and the card still
+                   in the pool, looking like the assignment simply vanished. */
+                stop(await api(`${base}/runs`, {
+                    method: 'POST',
+                    json: {
+                        courierUsername: target.slice('courier:'.length),
+                        label: 'Wave',
+                        serviceDate: data?.serviceDate,
+                        orderIds: [orderId],
+                    },
+                }));
+                return;
+            }
+
+            const runId = Number(target.slice('run:'.length));
+            stop(await api(`${base}/runs/${runId}/stops`, {
+                method: 'POST', json: { orderIds: [orderId], allowMove: true },
+            }));
+        },
         `Order ${orderId} assigned.`,
     );
 
@@ -351,17 +380,41 @@ export function Board() {
      * ON SHIFT AND MAPPED TO THAT PHARMACY, both. A lane exists because a run
      * was made, and a run outlives the shift that started it: a driver who
      * went home at two still has today's lane, and offering it at four hands
-     * work to somebody who is not working. */
-    const lanesFor = (siteId: number) => (data?.lanes ?? [])
-        .filter((l) => {
-            if (l.courier.onShift !== true) return false;
-            if (l.courier.homeSiteId === siteId) return true;
-            return (l.courier.alsoCovers ?? []).includes(siteId);
-        })
-        .map((l) => ({
-            id: l.run.id,
-            label: `${l.courier.name}${l.run.label ? ` (${l.run.label})` : ''}`,
-        }));
+     * work to somebody who is not working.
+     *
+     * AND THE OTHER HALF, WHICH WAS MISSING UNTIL 3 NOVEMBER. A lane is a run
+     * that already exists. A driver who has signed in, gone on shift and is
+     * standing at the counter has no run yet, so a list built only from lanes
+     * cannot contain them at all -- reported on 3 November as a driver who
+     * was mapped to the counter and on shift, with only one other name in
+     * the dropdown. He was not being filtered out by the pharmacy rule; he
+     * was never a candidate, because the list was a list of runs wearing
+     * drivers' names, and the other name was there only because that driver
+     * happened to have started one.
+     *
+     * Picking a driver with no run starts one, with the card on it. That is
+     * what choosing them meant. Sending a dispatcher to the Start a run panel
+     * to make an empty run and then come back to fill it is ceremony, and it
+     * is ceremony at the one moment they are busiest. */
+    const targetsFor = (siteId: number) => {
+        const mapped = (c: { homeSiteId: number | null; alsoCovers?: number[] }) =>
+            c.homeSiteId === siteId || (c.alsoCovers ?? []).includes(siteId);
+
+        const running = (data?.lanes ?? [])
+            .filter((l) => l.courier.onShift === true && mapped(l.courier))
+            .map((l) => ({
+                value: `run:${l.run.id}`,
+                label: `${l.courier.name}${l.run.label ? ` (${l.run.label})` : ''}`,
+            }));
+
+        /* idleCouriers is exactly "on the board, with no lane today", so
+           these two lists cannot name the same person twice. */
+        const free = (data?.idleCouriers ?? [])
+            .filter((c) => c.onShift && mapped(c))
+            .map((c) => ({ value: `courier:${c.username}`, label: `${c.name} — starts a run` }));
+
+        return [...running, ...free];
+    };
 
     /* ON SHIFT, FROM THE SHIFTS TABLE. Not `present`, which is "used the app
        in the last ten minutes" -- a driver halfway between two addresses is
@@ -378,7 +431,7 @@ export function Board() {
      * as the assignment dropdown, in the one control that creates a run
      * rather than fills it.
      *
-     * Home counter or cover, the same rule as lanesFor and the pool picker:
+     * Home counter or cover, the same rule as targetsFor and the pool picker:
      * three places now answer "who may take this pharmacy’s work" and they
      * have to answer it the same way.
      *
@@ -533,7 +586,7 @@ export function Board() {
                             group={group}
                             projectCode={code}
                             busy={busy}
-                            laneOptions={lanesFor(group.site.id)}
+                            laneOptions={targetsFor(group.site.id)}
                             onDragStart={setDragging}
                             assign={assign}
                         />
@@ -645,7 +698,7 @@ export function Board() {
                                reader cannot tell apart. */
                             aria-label={`${runName(lane)} for ${lane.courier.name}`}
                             onDragOver={(e) => { e.preventDefault(); }}
-                            onDrop={(e) => { e.preventDefault(); if (dragging !== null) void assign(dragging, lane.run.id); setDragging(null); }}
+                            onDrop={(e) => { e.preventDefault(); if (dragging !== null) void assign(dragging, `run:${lane.run.id}`); setDragging(null); }}
                         >
                             <div className="izy-row-between">
                                 {/* The name alone is the heading until the
@@ -781,9 +834,9 @@ function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign 
     group: { site: SiteRef; orders: BoardOrder[]; overdue: number };
     projectCode: string;
     busy: boolean;
-    laneOptions: Array<{ id: number; label: string }>;
+    laneOptions: Array<{ value: string; label: string }>;
     onDragStart: (id: number | null) => void;
-    assign: (orderId: number, runId: number) => void | Promise<void>;
+    assign: (orderId: number, target: string) => void | Promise<void>;
 }) {
     /* SIX, NOT THE USUAL EIGHT. Nine counters are nine of these stacked down
        one column, so the page size here multiplies by nine rather than
@@ -815,10 +868,10 @@ function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign 
                                 aria-label={`Assign order ${o.id} to`}
                                 value=""
                                 disabled={busy}
-                                onChange={(e) => { if (e.target.value) void assign(o.id, Number(e.target.value)); }}
+                                onChange={(e) => { if (e.target.value) void assign(o.id, e.target.value); }}
                             >
                                 <option value="">Assign to...</option>
-                                {laneOptions.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                                {laneOptions.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
                             </select>
                         </label>
                     )}

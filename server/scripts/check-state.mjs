@@ -219,5 +219,73 @@ if (roster.status !== 200 || drivers === null) {
 }
 say('');
 
+/* ------------------------------------------------------- one driver, in full */
+
+/* WHY A WHOLE SECTION FOR ONE NAME. "X is on shift and mapped to this
+ * pharmacy and is not in the dropdown" cannot be answered by the aggregate
+ * counts above: they say how many drivers have a home pharmacy, not which
+ * one this driver has, and the dropdown is filtered by three separate
+ * things. This prints all three side by side for one person so the failing
+ * one is visible rather than guessed at. Still a GET.
+ *
+ * The dropdown's rule, from startable/lanesFor in web/src/pages/uh/Board.tsx:
+ * on shift, AND (home pharmacy is the chosen one OR the cover list contains
+ * it), AND not already carrying a run today. A floater -- nobody's home,
+ * no cover list -- matches no pharmacy at all and is correctly invisible
+ * once a pharmacy is chosen. That is the usual answer. */
+const who = value('driver', '').trim().toLowerCase();
+if (who !== '') {
+    say('  DRIVER');
+    say('  ------');
+    const roster2 = await get(`/api/projects/${project}/uh/roster`);
+    const all = Array.isArray(roster2.body?.drivers) ? roster2.body.drivers : [];
+    const sites2 = Array.isArray(roster2.body?.sites) ? roster2.body.sites : [];
+    const code2 = (id) => sites2.find((x) => Number(x.id) === Number(id))?.code ?? `#${id}`;
+    const hit = all.filter((d) => String(d?.username ?? '').toLowerCase().includes(who)
+        || String(d?.name ?? '').toLowerCase().includes(who));
+
+    if (hit.length === 0) {
+        say(`    No driver on this project matches "${who}".`);
+        say('    They are not on the roster at all, which is why no pharmacy shows them.');
+    }
+    for (const d of hit) {
+        say(`    ${String(d.name ?? '?')}  (${String(d.username ?? '?')})`);
+        say(`      home pharmacy   ${d.homeSiteId === null || d.homeSiteId === undefined
+            ? 'NONE — a floater, so no pharmacy dropdown will offer them'
+            : code2(d.homeSiteId)}`);
+        const cov = Array.isArray(d.alsoCovers) ? d.alsoCovers : [];
+        say(`      also covers     ${cov.length === 0 ? '(nothing)' : cov.map(code2).join(', ')}`);
+    }
+    say('');
+
+    /* The board's own view: on shift, and whether they already hold a run.
+       Asked for today, because that is what the dispatcher is looking at. */
+    const board = await get(`/api/projects/${project}/uh/board`);
+    if (board.status !== 200) {
+        say(`    board could not be read (HTTP ${board.status}).`);
+    } else {
+        const cs = Array.isArray(board.body?.couriers) ? board.body.couriers : [];
+        const idle = Array.isArray(board.body?.idleCouriers) ? board.body.idleCouriers : [];
+        const match = cs.filter((c) => String(c?.username ?? '').toLowerCase().includes(who)
+            || String(c?.name ?? '').toLowerCase().includes(who));
+        if (match.length === 0) {
+            say('    The board does not list them at all. That means either no active');
+            say('    membership on this project, or a membership whose role is not');
+            say('    courier or lead while no shift is open.');
+        }
+        for (const c of match) {
+            const isIdle = idle.some((x) => x.username === c.username);
+            say(`    ${String(c.name ?? '?')}  (${String(c.username ?? '?')})`);
+            say(`      on shift        ${c.onShift ? `yes, since ${String(c.shiftStartedAt ?? '?')}` : 'NO — this alone hides them'}`);
+            say(`      home pharmacy   ${c.homeSiteId === null ? 'NONE (floater)' : code2(c.homeSiteId)}`);
+            const cov = Array.isArray(c.alsoCovers) ? c.alsoCovers : [];
+            say(`      also covers     ${cov.length === 0 ? '(nothing)' : cov.map(code2).join(', ')}`);
+            say(`      project role    ${String(c.projectRole ?? '?')}`);
+            say(`      already on a run today  ${isIdle ? 'no — free to start one' : 'YES — Start a run will not offer them again'}`);
+        }
+    }
+    say('');
+}
+
 say('  Nothing was changed: this script only sends GET.');
 say('');

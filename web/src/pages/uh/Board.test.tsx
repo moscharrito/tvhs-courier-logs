@@ -398,7 +398,7 @@ describe('Board', () => {
 
         const pool = screen.getByLabelText('Unassigned pool');
         fireEvent.click(within(pool).getByRole('button', { name: 'Next' }));
-        fireEvent.change(within(pool).getByLabelText('Assign order 109 to'), { target: { value: '10' } });
+        fireEvent.change(within(pool).getByLabelText('Assign order 109 to'), { target: { value: 'run:10' } });
 
         await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs/10/stops'));
     });
@@ -639,13 +639,108 @@ describe('Board', () => {
         expect(within(pick).getByRole('option', { name: /Cov Courier/ })).toBeInTheDocument();
     });
 
-    it('offers no control at all when nobody at that pharmacy is working', async () => {
-        /* Rather than an empty dropdown, which reads as a loading failure.
-           PoolGroup already renders no select when there are no lanes; this
-           pins that narrowing produces that state instead of a stub. */
+    it('offers a driver who is on shift at that pharmacy but has no run yet', async () => {
+        /* THE BUG THIS FILE DID NOT CATCH. Every fixture above gives the
+           pharmacy's driver a lane, so "who may take this card" and "whose
+           run already exists" were the same set, and nothing noticed that the
+           dropdown only ever read the second one. On 3 November a driver was
+           signed in, on shift and mapped to the counter, and was not offered
+           at all: he had not started a run, and a list of runs cannot contain
+           somebody who has none. */
         renderBoard(routes({
             'GET /api/projects/uh/uh/board*': boardData({
                 pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [],
+                idleCouriers: [courier({ username: 'idle.courier', name: 'Idle Courier', homeSiteId: 7, onShift: true })],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pick = await screen.findByLabelText('Assign order 1 to');
+        expect(within(pick).getByRole('option', { name: /Idle Courier/ })).toBeInTheDocument();
+    });
+
+    it('does not offer an idle driver from another pharmacy, or one off shift', async () => {
+        /* The narrowing has to hold for this half too, or the fix for one
+           complaint reintroduces the other: eighteen names at a counter one
+           of them drives. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [],
+                idleCouriers: [
+                    courier({ username: 'idle.courier', name: 'Idle Courier', homeSiteId: 7, onShift: true }),
+                    courier({ username: 'far.courier', name: 'Far Courier', homeSiteId: 9, onShift: true }),
+                    courier({ username: 'rest.courier', name: 'Rest Courier', homeSiteId: 7, onShift: false }),
+                ],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pick = await screen.findByLabelText('Assign order 1 to');
+        expect(within(pick).getByRole('option', { name: /Idle Courier/ })).toBeInTheDocument();
+        expect(within(pick).queryByRole('option', { name: /Far Courier/ })).not.toBeInTheDocument();
+        expect(within(pick).queryByRole('option', { name: /Rest Courier/ })).not.toBeInTheDocument();
+    });
+
+    it('starts a run with the card already on it when the driver had none', async () => {
+        /* One call, not two. A create followed by a separate add leaves an
+           empty lane on the board and the card still in the pool if the
+           second one fails, which reads as the assignment vanishing. */
+        const { calls } = renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [],
+                idleCouriers: [courier({ username: 'idle.courier', name: 'Idle Courier', homeSiteId: 7, onShift: true })],
+            }),
+            'POST /api/projects/uh/uh/runs': { id: 21, rejected: [] },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        fireEvent.change(await screen.findByLabelText('Assign order 1 to'), {
+            target: { value: 'courier:idle.courier' },
+        });
+
+        await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs'));
+        expect(calls).not.toContain('POST /api/projects/uh/uh/runs/21/stops');
+        expect(await screen.findByRole('status')).toHaveTextContent('Order 1 assigned.');
+    });
+
+    it('says a refused assignment out loud when it started a run for it', async () => {
+        /* The create endpoint answers 201 with the refusal inside `rejected`,
+           so a run that took none of its stops still looks like success to
+           anything reading only the status code. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                lanes: [],
+                idleCouriers: [courier({ username: 'idle.courier', name: 'Idle Courier', homeSiteId: 7, onShift: true })],
+            }),
+            'POST /api/projects/uh/uh/runs': { id: 21, rejected: [{ error: 'That order is already on another run' }] },
+        }));
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        fireEvent.change(await screen.findByLabelText('Assign order 1 to'), {
+            target: { value: 'courier:idle.courier' },
+        });
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('That order is already on another run');
+    });
+
+    it('offers no control at all when nobody at that pharmacy is working', async () => {
+        /* Rather than an empty dropdown, which reads as a loading failure.
+           PoolGroup already renders no select when there are no targets; this
+           pins that narrowing produces that state instead of a stub.
+
+           idleCouriers is emptied deliberately. Since 3 November a driver on
+           shift at this counter with no run is a target too, so the default
+           fixture's Bo Courier -- idle, on shift, based at 7 -- would be an
+           answer to "who can take this", and the test would be asserting the
+           opposite of its own name. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': boardData({
+                pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+                idleCouriers: [],
                 lanes: [{
                     run: { id: 14, courierUsername: 'far.courier', serviceDate: '2026-09-14', label: '', status: 'planned', startedAt: null },
                     courier: courier({ username: 'far.courier', name: 'Far Courier', homeSiteId: 9, onShift: true }),
@@ -666,7 +761,7 @@ describe('Board', () => {
 
         const assign = screen.getByLabelText('Assign order 1 to');
         expect(assign).toBeInTheDocument();
-        fireEvent.change(assign, { target: { value: '10' } });
+        fireEvent.change(assign, { target: { value: 'run:10' } });
 
         await waitFor(() => expect(calls).toContain('POST /api/projects/uh/uh/runs/10/stops'));
         expect(await screen.findByRole('status')).toHaveTextContent('Order 1 assigned.');
@@ -678,7 +773,7 @@ describe('Board', () => {
             'POST /api/projects/uh/uh/runs/10/stops': { added: [], rejected: [{ error: 'Order 1 is already on run 4.' }] },
         }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
-        fireEvent.change(screen.getByLabelText('Assign order 1 to'), { target: { value: '10' } });
+        fireEvent.change(screen.getByLabelText('Assign order 1 to'), { target: { value: 'run:10' } });
 
         expect(await screen.findByRole('alert')).toHaveTextContent('Order 1 is already on run 4.');
         expect(calls).toContain('POST /api/projects/uh/uh/runs/10/stops');
