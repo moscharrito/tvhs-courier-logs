@@ -156,15 +156,6 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
         }));
     }
 
-    function stillCarrying(held: Array<{ id: number }>) {
-        const n = held.length;
-        return {
-            error: `There ${n === 1 ? 'is 1 package' : `are ${n} packages`} still with you. `
-                + 'Deliver them, or hand them back to a pharmacy with Take back undelivered, before you go off shift.',
-            code: 'shift.stillCarrying',
-            carrying: held,
-        };
-    }
 
     /* ------------------------------------------------------------ a courier */
 
@@ -236,19 +227,38 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
             return;
         }
 
+        /* ENDING A SHIFT IS NO LONGER REFUSED OVER UNDELIVERED PACKAGES.
+         *
+         * It was, for section 9 of the courier offer letter: every
+         * undelivered package back at its own pharmacy the same day. The
+         * refusal said so in a sentence written for the driver, and the bar
+         * printed it.
+         *
+         * Two things emptied it out. Drivers stopped recording collections
+         * on 3 November, so "still with you" no longer means a counter
+         * handed them something -- it means a delivery they opened and did
+         * not finish, which the stops list on Today already shows them.
+         * And the block was answering a question nobody asked at that
+         * moment: a driver tapping Go off shift at the end of a round
+         * cannot un-know what is in the van, and the shift staying open
+         * does not get it back to a pharmacy. What it did get was three
+         * accounts stuck on shift for weeks, offered to dispatch every day
+         * as available.
+         *
+         * STILL WRITTEN DOWN. The count goes in the audit row, because
+         * finishing a day over a loaded van is a thing that happened and
+         * the record should say how loaded it was -- it just is not this
+         * endpoint's job to stop it. */
         const held = await carrying(project.id, me);
-        if (held.length > 0) {
-            await req.audit('shift.end_refused', 'shift', String(open.id), { courier: me, carrying: held.length });
-            res.status(409).json(stillCarrying(held));
-            return;
-        }
 
         await run(
             'UPDATE shifts SET ended_at = ?, ended_by = ?, ended_reason = ? WHERE id = ?',
             [new Date().toISOString(), me, body.reason, open.id],
         );
-        await req.audit('shift.ended', 'shift', String(open.id), { courier: me, endedBy: 'self' });
-        res.json({ ok: true });
+        await req.audit('shift.ended', 'shift', String(open.id), {
+            courier: me, endedBy: 'self', carrying: held.length,
+        });
+        res.json({ ok: true, carrying: held.length });
     }));
 
     router.get('/mine', couriers, wrap(async (req, res) => {

@@ -219,9 +219,18 @@ export function Stop() {
             setNoSignatureReason('');
             await load();
         } catch (err) {
+            /* ANY error with something to say, not only an ApiError. The file
+               service's refusals are plain Errors carrying the server's own
+               words -- putPhoto goes to some trouble to keep them -- and this
+               line dropped every one of them on the floor in favour of "That
+               did not save. Try again.", which is the sentence a driver
+               reported on 3 November after a photograph would not upload.
+               Same mistake as the one putPhoto's own comment describes, one
+               layer up. */
+            const said = err instanceof Error ? err.message.trim() : '';
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'That did not save. Try again.' });
+                : { kind: 'error', text: said === '' ? 'That did not save. Try again.' : said });
         } finally {
             setBusy(false);
         }

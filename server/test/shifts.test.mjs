@@ -153,48 +153,80 @@ describe('going off shift', () => {
         expect((await ana.post(`${SHIFTS}/start`).send({})).status).toBe(201);
     });
 
-    it('refuses while a collected package is still in the van', async () => {
+    it('closes even with a package still in the van, and says how many', async () => {
+        /* IT USED TO REFUSE, with a 409 and a sentence about section 9 of
+           the offer letter. Two things emptied that out. Drivers stopped
+           recording collections on 3 November, so "still with you" no
+           longer means a counter handed them something -- it means a
+           delivery they opened and did not finish, which the stops list on
+           Today already shows them. And refusing did not get anything back
+           to a pharmacy; what it got was three accounts stuck on shift for
+           weeks, offered to dispatch every day as available.
+
+           THE COUNT IS STILL REPORTED AND STILL AUDITED. Finishing a day
+           over a loaded van is a thing that happened and the record should
+           say how loaded it was. It is simply not this endpoint’s job to
+           stop it. */
         const id = await orderInTheVan();
         const res = await ana.post(`${SHIFTS}/end`).send({});
-        expect(res.status).toBe(409);
-        expect(res.body.code).toBe('shift.stillCarrying');
-        expect(res.body.carrying.map((c) => c.id)).toContain(id);
-        expect(res.body.error).toMatch(/Take back undelivered/);
+        expect(res.status).toBe(200);
+        expect(res.body.carrying).toBeGreaterThan(0);
 
-        // Still on shift, because the refusal did not half-close it.
-        expect((await ana.get(`${SHIFTS}/mine`)).body.shift.open).toBe(true);
+        expect((await ana.get(`${SHIFTS}/mine`)).body.shift).toBeNull();
 
-        await admin.post(`${UH}/orders/${id}/events`).send({ type: 'delivered', signedName: 'I. Vargas' });
-        expect((await ana.post(`${SHIFTS}/end`).send({})).status).toBe(200);
+        /* And the delivery is untouched: ending a shift is not a way to
+           make outstanding work disappear. */
+        const after = await admin.get(`${UH}/orders/${id}`);
+        expect(after.body.status).toBe('picked_up');
     });
 
-    it('refuses while a failed delivery has not been handed back', async () => {
-        /* The shape returns.ts named first: attempted, not delivered, and
-           still in the boot. Delivered is gone; this is not. */
+    /** Attempted, not delivered, still in the boot: the shape returns.ts
+     *  named first. Its own setup, because these two used to run in
+     *  sequence -- the second read the shift the first had left open, and
+     *  once the first stopped refusing it also stopped leaving one. */
+    async function failedInTheVan() {
         await ana.post(`${SHIFTS}/start`).send({});
         const id = await orderInTheVan();
         const pkgs = (await ana.get(`${UH}/orders/${id}`)).body.packages;
         await ana.post(`${UH}/orders/${id}/attempt`).send({
             packages: pkgs.map((p) => ({ packageId: p.id, reasonCode: 'recipient_not_located', note: '' })),
         });
+        return id;
+    }
+
+    it('still reports a failed delivery as carried, and still does not hold the shift open', async () => {
+        /* THE INFORMATION SURVIVED THE BLOCK. /mine says what is in the van
+           and the audit row says how much was in it when the day ended --
+           what went on 3 November is the refusal, not the record. */
+        const id = await failedInTheVan();
+
+        const mine = await ana.get(`${SHIFTS}/mine`);
+        expect(mine.body.carrying.map((c) => c.id)).toContain(id);
+        expect(mine.body.carrying.find((c) => c.id === id).status).toBe('failed');
 
         const res = await ana.post(`${SHIFTS}/end`).send({});
-        expect(res.status).toBe(409);
-        expect(res.body.carrying.map((c) => c.id)).toContain(id);
-        expect(res.body.carrying.find((c) => c.id === id).status).toBe('failed');
+        expect(res.status).toBe(200);
+        expect(res.body.carrying).toBeGreaterThan(0);
+        expect((await ana.get(`${SHIFTS}/mine`)).body.shift).toBeNull();
     });
 
-    it('lets them go once it has been handed back', async () => {
-        const mine = await ana.get(`${SHIFTS}/mine`);
-        const stuck = mine.body.carrying.map((c) => c.id);
-        expect(stuck.length).toBeGreaterThan(0);
+    it('clears it from the van when it is handed back, which is still the way', async () => {
+        /* Section 9 has not changed: every undelivered package goes back to
+           the pharmacy it came from the same day. Take back undelivered is
+           still how that is recorded, and it is still what empties the
+           van -- it is no longer what unlocks the button. */
+        const id = await failedInTheVan();
 
         const strokes = [[{ x: 0.1, y: 0.6, t: 0 }, { x: 0.9, y: 0.4, t: 80 }]];
         const back = await ana.post(`${UH}/returns`).send({
-            siteId, orderIds: stuck, countedPackages: stuck.length,
+            siteId, orderIds: [id], countedPackages: 1,
             signedName: 'L. Ortiz, RPh', strokes,
         });
         expect(back.status, back.text).toBe(201);
+
+        /* That one specifically, not the van emptied: these tests share a
+           courier and earlier ones leave their own orders in it. */
+        expect((await ana.get(`${SHIFTS}/mine`)).body.carrying.map((c) => c.id)).not.toContain(id);
         expect((await ana.post(`${SHIFTS}/end`).send({})).status).toBe(200);
     });
 
@@ -207,11 +239,14 @@ describe('going off shift', () => {
 
 describe('the escape hatch', () => {
     it('lets dispatch end a loaded shift, with a reason, under their own name', async () => {
-        /* A pharmacy shuts at eleven and a courier cannot hand anything back.
-           The rule above would otherwise keep them on shift until morning. */
+        /* NOT AN ESCAPE HATCH ANY MORE, and still worth having. It existed
+           because a self-end was refused over a loaded van, which stopped
+           on 3 November; what remains is the only way to end SOMEBODY
+           ELSE’S shift -- a driver who went home without tapping the
+           button -- and it still demands a reason and signs it with the
+           dispatcher’s name. */
         await ana.post(`${SHIFTS}/start`).send({});
         const id = await orderInTheVan();
-        expect((await ana.post(`${SHIFTS}/end`).send({})).status).toBe(409);
 
         const shift = (await ana.get(`${SHIFTS}/mine`)).body.shift;
         const forced = await admin.post(`${SHIFTS}/${shift.id}/end`).send({

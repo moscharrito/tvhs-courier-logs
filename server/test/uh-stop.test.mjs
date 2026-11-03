@@ -71,6 +71,88 @@ async function courierAgent(username) {
 
 const detail = (id) => admin.get(`${ORDERS}/${id}`);
 
+/* ------------------------------------------ custody nobody recorded (3 Nov) */
+
+describe('delivering something that was never collected', () => {
+    /** Assigned to a courier and nothing else: no pickup, as of 3 November. */
+    async function assignedOrder() {
+        seq += 1;
+        const created = await admin.post(ORDERS).send({
+            siteId: dischargeId, serviceType: 'stat',
+            recipientName: `Uncollected ${seq}`, addressLine: `${seq} Test Street`, zip: '78215',
+            description: 'Cold pack', quantity: 1, externalRef: `RX-${7000 + seq}`,
+            signatureRequired: true,
+        });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Run', orderIds: [created.body.id] });
+        return created.body;
+    }
+
+    it('stays assigned until a courier does something, so dispatch can still undo it', async () => {
+        /* THE REASON THIS IS NOT DONE AT ASSIGNMENT. An earlier version of
+           this change wrote the pickup the moment dispatch assigned, which
+           moved every order to picked_up and took two things away:
+           `unassigned` is from: ['assigned'], so a mis-assignment could no
+           longer be undone -- the thing dispatch now does by hand all day --
+           and carrying() counts picked_up, so every assigned delivery would
+           have blocked its driver from going off shift. */
+        const order = await assignedOrder();
+        expect((await detail(order.id)).body.status).toBe('assigned');
+    });
+
+    it('records the collection itself when the courier delivers', async () => {
+        /* Drivers no longer record a collection at all. `delivered` is
+           reachable only from picked_up, so without this the delivery is
+           refused and the round cannot be finished. */
+        const order = await assignedOrder();
+        const res = await admin.post(`${ORDERS}/${order.id}/events`).send({
+            type: 'delivered', signedName: 'A Patient',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect((await detail(order.id)).body.status).toBe('delivered');
+    });
+
+    it('keeps the custody chain whole, with no name nobody gave', async () => {
+        /* The alternative was letting `delivered` start from `assigned`,
+           which would shorten the chain in every document and report that
+           reads it. The link is written instead -- and left honest: a
+           proof-of-delivery that printed a signature for a counter nobody
+           stood at would be the one untrue line in it. */
+        const order = await assignedOrder();
+        await admin.post(`${ORDERS}/${order.id}/events`).send({ type: 'delivered', signedName: 'A Patient' });
+
+        const types = (await detail(order.id)).body.custody.map((e) => e.type);
+        expect(types).toEqual(['created', 'assigned', 'picked_up', 'delivered']);
+
+        const pickup = (await detail(order.id)).body.custody.find((e) => e.type === 'picked_up');
+        expect(pickup.signedName ?? '').toBe('');
+        expect(pickup.reason).toMatch(/does not collect a signature at the counter/);
+    });
+
+    it('does the same for a delivery that failed at the door', async () => {
+        /* `attempted` is from: ['picked_up'] too, and a dry run bills. A
+           courier who could not record the failure would have to invent
+           something else. */
+        const order = await assignedOrder();
+        const res = await admin.post(`${ORDERS}/${order.id}/events`).send({
+            type: 'attempted', reason: 'Nobody answered',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect((await detail(order.id)).body.status).toBe('failed');
+    });
+
+    it('leaves a real collection alone, name and all', async () => {
+        /* The pickup screen still exists and still demands a name of its
+           own (modules/uh/pickup.ts). What changed is that the transition
+           table stopped forbidding the automatic one -- not that a human
+           collection records any less. */
+        const order = await pickedUpOrder();
+        const pickup = (await detail(order.id)).body.custody.find((e) => e.type === 'picked_up');
+        expect(pickup.signedName).toBe('Pharmacy Tech');
+        expect(pickup.reason ?? '').not.toMatch(/does not collect a signature/);
+    });
+});
+
 /* -------------------------------------------------------------- arriving */
 
 describe('arriving', () => {

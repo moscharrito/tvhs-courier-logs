@@ -50,6 +50,9 @@ export function ShiftBar({ code, onChanged }: Props) {
     const [error, setError] = useState<string | null>(null);
     /** The read failed, so the bar does not know. Said plainly, not shouted. */
     const [unread, setUnread] = useState(false);
+    /** Said once when a shift ends over unfinished work. Dismissible, and
+     *  never in the way of anything. */
+    const [notice, setNotice] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -83,7 +86,20 @@ export function ShiftBar({ code, onChanged }: Props) {
         setBusy(true);
         setError(null);
         try {
-            await api(`/api/projects/${code}/uh/shifts/${onShift ? 'end' : 'start'}`, { method: 'POST', json: {} });
+            const res = await api<{ carrying?: number }>(
+                `/api/projects/${code}/uh/shifts/${onShift ? 'end' : 'start'}`,
+                { method: 'POST', json: {} },
+            );
+            /* A NOTICE, NOT A REFUSAL. Going off shift over undelivered work
+               used to be blocked, and the block printed a sentence that sat
+               on the bar. The block went on 3 November -- the stops list
+               already shows what is unfinished -- and this is what is left:
+               said once, when the day ends, and closed with one tap.
+               Nothing waits on it. */
+            if (onShift && typeof res?.carrying === 'number' && res.carrying > 0) {
+                setNotice(`${res.carrying} ${res.carrying === 1 ? 'delivery is' : 'deliveries are'} still open. `
+                    + 'They go back to the pharmacy they came from.');
+            }
             await load();
             onChanged?.();
             /* THE SCREEN THAT CARES IS NO LONGER THE ONE THIS IS INSIDE.
@@ -141,6 +157,20 @@ export function ShiftBar({ code, onChanged }: Props) {
                 and squeezing it between the contract name and Sign out is
                 how it ends up truncated on the phone it is written for. */}
             {error !== null && <p className="izy-shift-error" role="alert">{error}</p>}
+
+            {notice !== null && (
+                <p className="izy-shift-notice" role="status">
+                    {notice}
+                    <button
+                        type="button"
+                        className="izy-shift-notice-close"
+                        aria-label="Close"
+                        onClick={() => { setNotice(null); }}
+                    >
+                        ×
+                    </button>
+                </p>
+            )}
         </div>
     );
 }

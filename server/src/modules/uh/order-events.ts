@@ -112,9 +112,69 @@ export async function insertCustodyEvent(client: Client, e: CustodyEventInput): 
  * that into a 409. Everything it writes is derived from `applyEvent`, so the
  * stored status and the custody row can never disagree about what happened.
  */
+/**
+ * The reason on an automatic pickup, and the way to recognise one.
+ *
+ * Read back out of custody_events months later, "picked_up" with no name
+ * against it is a question. This is the answer, in the row itself.
+ */
+export const CUSTODY_ON_ASSIGNMENT = 'Recorded automatically: this contract does not collect a signature at the counter.';
+
+/* The courier actions that can only happen to something already in the van.
+   Each is `from: ['picked_up']` in the transition table. */
+const NEEDS_CUSTODY = new Set(['arrived', 'delivered', 'attempted']);
+
 export async function recordOrderEvent(client: Client, opts: RecordOptions): Promise<Applied> {
     const { projectId, order, actor, settings, event } = opts;
     const orderId = Number(order.id);
+
+    /* ─────────────── CUSTODY IS RECORDED WHEN IT IS NEEDED, NOT BY A DRIVER
+     *
+     * Drivers stopped recording collections on 3 November: they open a stop,
+     * hand over, photograph the signed form. Nothing else.
+     *
+     * The state machine would not allow that -- `delivered` is reachable
+     * only `from: ['picked_up']` -- so an order nobody picked up could never
+     * be delivered. Rather than let `delivered` start from `assigned`,
+     * which shortens the custody chain in every document and report that
+     * reads it, the chain is kept whole and the server writes the missing
+     * link the moment a courier does something that presupposes it.
+     *
+     * AT THIS MOMENT, NOT AT ASSIGNMENT, and the difference is not stylistic.
+     * Writing it when dispatch assigns moved every order straight to
+     * picked_up, which took two things away: `unassigned` is
+     * `from: ['assigned']`, so dispatch could no longer undo a
+     * mis-assignment -- the thing they now do by hand all day -- and
+     * carrying() counts picked_up, so every assigned delivery would have
+     * blocked its driver from going off shift. The suite caught both.
+     *
+     * HERE RATHER THAN AT THE CALL SITES, because the stop screen, the
+     * offline queue and the generic event endpoint all reach this, and a
+     * copy in each is three places for one to be forgotten.
+     *
+     * It cannot recurse: the event it records is `picked_up`, which is not
+     * in NEEDS_CUSTODY.
+     *
+     * NOT A SIGNATURE. picked_up_by is left empty and the reason says why,
+     * so a proof-of-delivery document never shows a name nobody gave. */
+    if (NEEDS_CUSTODY.has(event.type) && String(order.status) === 'assigned') {
+        await recordOrderEvent(client, {
+            ...opts,
+            event: { type: 'picked_up', at: event.at, reason: CUSTODY_ON_ASSIGNMENT },
+        });
+        /* Re-read: the status this event is about to be applied against has
+           just moved, and applyEvent refuses a transition from the old one. */
+        const fresh = await client.execute({
+            sql: 'SELECT * FROM orders WHERE project_id = ? AND id = ?',
+            args: [projectId, orderId],
+        });
+        if (fresh.rows[0]) {
+            return recordOrderEvent(client, {
+                ...opts,
+                order: Object.fromEntries(Object.entries(fresh.rows[0])) as unknown as OrderStateRow,
+            });
+        }
+    }
 
     const applied = applyEvent(
         {

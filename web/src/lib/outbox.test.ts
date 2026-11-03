@@ -244,6 +244,72 @@ describe('a queued photo', () => {
     });
 });
 
+describe('a phone with no room for the photograph', () => {
+    /* THE CASE THAT WAS LOSING DELIVERIES, reported 3 November: a courier at
+       a door photographed the signed form and got "That did not save. Try
+       again." Trying again did the same thing.
+
+       storageUsable() asks whether IndexedDB OPENS. It does not ask whether
+       it will accept a three-megabyte photograph, and on a phone near its
+       quota it will not: the open succeeds, the write throws, and the
+       exception came straight out of sendOrQueue with the delivery in it. */
+    it('sends it live rather than losing it', async () => {
+        setOnline(true);
+        const put = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(() => {
+            throw new DOMException('quota', 'QuotaExceededError');
+        });
+        try {
+            const { calls } = fetchReturning(
+                { status: 201, body: { id: 77, upload: { url: 'https://bucket.example/put', method: 'PUT', headers: {} } } },
+                { status: 200 },
+                { status: 200, body: { id: 77, status: 'stored' } },
+                { status: 201, body: { status: 'delivered' } },
+            );
+
+            const result = await sendOrQueue({
+                url: '/api/projects/uh/uh/orders/9/doorstep',
+                body: { noSignatureReason: 'Nobody answered' },
+                label: 'Doorstep for order 9',
+                orderId: 9,
+                photo: { blob: new Blob(['jpeg'], { type: 'image/jpeg' }), contentType: 'image/jpeg', kind: 'doorstep', bodyKey: 'fileId' },
+            });
+
+            expect(result.sent).toBe(true);
+            /* Bucket first, then the event naming it -- the same order the
+               queue uses, because a record pointing at a photograph that is
+               not there is worse than no record. */
+            expect(calls.map((c) => c.url)).toEqual([
+                '/api/projects/uh/uh/files',
+                'https://bucket.example/put',
+                '/api/projects/uh/uh/files/77/stored',
+                '/api/projects/uh/uh/orders/9/doorstep',
+            ]);
+            expect(calls[3]!.body).toMatchObject({ fileId: 77 });
+        } finally {
+            put.mockRestore();
+        }
+    });
+
+    it('says so plainly when there is no signal to fall back on', async () => {
+        /* Offline AND unable to store it. There is genuinely nothing left to
+           try, and the courier needs to hear that rather than a generic
+           failure they will read as "tap it again". */
+        setOnline(false);
+        const put = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(() => {
+            throw new DOMException('quota', 'QuotaExceededError');
+        });
+        try {
+            await expect(sendOrQueue({
+                url: '/api/projects/uh/uh/orders/10/doorstep',
+                body: {}, label: 'Doorstep', orderId: 10,
+                photo: { blob: new Blob(['jpeg'], { type: 'image/jpeg' }), contentType: 'image/jpeg', kind: 'doorstep', bodyKey: 'fileId' },
+            })).rejects.toThrow(/no room to store the delivery/);
+        } finally {
+            put.mockRestore();
+        }
+    });
+});
+
 describe('what the courier is shown', () => {
     it('reports what is waiting as it changes', async () => {
         const seen: number[] = [];

@@ -508,6 +508,43 @@ export async function flush(): Promise<void> {
  * The screens call this rather than fetch. A courier does not get an error
  * because a lift shaft has no signal; they get "saved on this phone".
  */
+/**
+ * Send it now, photographs first, without the queue.
+ *
+ * THE QUEUE IS THE NORMAL PATH and this is what happens when it cannot be
+ * used: a phone with site data switched off, a private window, or -- the one
+ * that was losing deliveries -- an IndexedDB that opens but will not accept a
+ * three-megabyte photograph.
+ *
+ * The order is not negotiable. The bucket has to hold the picture before the
+ * event naming it is recorded, or the record points at nothing.
+ */
+async function sendDirect(input: EnqueueInput, id: string): Promise<
+    { sent: true; status: number; body: Record<string, unknown> | null }
+> {
+    const module = /^(\/api\/projects\/[^/]+\/[^/]+)\//.exec(input.url)?.[1];
+    const body: Record<string, unknown> = { ...input.body, clientEventId: id };
+
+    const pending = input.photos ?? (input.photo ? [input.photo] : []);
+    if (pending.length > 0 && !module) {
+        throw Object.assign(new Error('That upload has nowhere to go'), { status: 400 });
+    }
+    for (const [i, shot] of pending.entries()) {
+        body[shot.bodyKey] = await uploadPhotoNow({
+            module: module!,
+            orderId: input.orderId ?? null,
+            blob: shot.blob,
+            contentType: shot.contentType,
+            kind: shot.kind,
+            idemKey: `${id}${i === 0 ? '' : `-${shot.kind}`}`,
+        });
+    }
+
+    const res = await postJson(input.url, body);
+    if (res.status >= 400) throw asApiError(res);
+    return { sent: true, status: res.status, body: res.body };
+}
+
 export async function sendOrQueue(input: EnqueueInput): Promise<
     { sent: true; status: number; body: Record<string, unknown> | null } | { sent: false; entry: OutboxEntry }
 > {
@@ -518,10 +555,13 @@ export async function sendOrQueue(input: EnqueueInput): Promise<
         /* No IndexedDB: a private window, an ancient browser, a phone with
            site data switched off. Sending directly is worse than queueing but
            far better than pretending to queue and dropping the event. The
-           caller sees a real error when it fails. */
-        const res = await postJson(input.url, { ...input.body, clientEventId: id });
-        if (res.status >= 400) throw asApiError(res);
-        return { sent: true, status: res.status, body: res.body };
+           caller sees a real error when it fails.
+
+           IT USED TO POST THE EVENT WITHOUT THE PHOTOGRAPH, which the server
+           then refused for a missing fileId -- so the one path that exists
+           for a phone that cannot queue could never record a doorstep
+           delivery, the only kind that always carries a picture. */
+        return await sendDirect(input, id);
     }
 
     const waiting = (await queued()).length;
@@ -529,9 +569,34 @@ export async function sendOrQueue(input: EnqueueInput): Promise<
     /* Queue first when anything is already waiting, even with a signal:
        jumping the queue would record this event before older ones. */
     if (offline || waiting > 0 || input.photo || input.photos?.length) {
-        const entry = await enqueue({ ...input, id });
-        if (!offline) void flush();
-        return { sent: false, entry };
+        try {
+            const entry = await enqueue({ ...input, id });
+            if (!offline) void flush();
+            return { sent: false, entry };
+        } catch (err) {
+            /* ───────────── THE WRITE FAILED, AND THE DELIVERY MUST NOT.
+             *
+             * storageUsable() asks whether the database OPENS. It does not
+             * ask whether it will accept a three-megabyte photograph, and on
+             * a phone near its quota it will not -- the open succeeds, the
+             * put throws, and this used to come out of sendOrQueue as an
+             * exception the stop screen could only describe as "That did not
+             * save. Try again." Trying again did the same thing. A courier
+             * standing at a door had made the delivery and had nowhere to
+             * put it.
+             *
+             * So: send it live instead. Slower, needs signal, and far better
+             * than losing it. Offline there is genuinely nothing left to try,
+             * and the error says so rather than pretending. */
+            if (offline) {
+                throw Object.assign(
+                    new Error('This phone has no room to store the delivery and there is no signal to send it. '
+                        + 'Free some space, or tell dispatch.'),
+                    { cause: err },
+                );
+            }
+            return await sendDirect(input, id);
+        }
     }
 
     try {

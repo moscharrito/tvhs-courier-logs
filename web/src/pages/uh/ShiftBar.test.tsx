@@ -85,33 +85,27 @@ describe('the shift control', () => {
         await screen.findByRole('button', { name: 'Go off shift' });
     });
 
-    it('tells the courier about the packages when they try to finish', async () => {
-        /* SECTION 9 OF THE OFFER LETTER still holds: every undelivered
-           package goes back to the pharmacy it came from the same day, and a
-           courier needs telling before they drive home.
-
-           WHAT MOVED, on 2 November, IS WHEN. It used to be a paragraph
-           standing under the control all day, including the hours when it
-           was not true. Now the server refuses the request and explains why
-           -- it is the one that knows -- and the refusal appears at the
-           moment somebody tries to go off shift. Fewer words on screen, and
-           the warning lands when it can still change what happens. */
+    it('says once, dismissibly, when a shift ends over unfinished work', async () => {
+        /* IT USED TO BE A REFUSAL. The server declined to end a shift while
+           deliveries were still open and the bar printed the reason; before
+           that the reason was swallowed and the button looked dead. The
+           block went on 3 November -- the stops list already shows what is
+           unfinished, and keeping a shift open never got anything back to a
+           pharmacy -- so what is left is a notice. It appears once, after
+           the shift has already ended, and closes with one tap. */
         renderBar({
-            [`GET ${MINE}`]: on([{ id: 9, reference: 'RX-9', status: 'failed' }]),
-            [`POST /api/projects/uh/uh/shifts/end`]: {
-                status: 409,
-                body: {
-                    error: 'There is 1 package still with you. Deliver it, or hand it back to a pharmacy '
-                        + 'with Take back undelivered, before you go off shift.',
-                    code: 'shift.stillCarrying',
-                },
-            },
+            ['GET ' + MINE]: on([{ id: 9, reference: 'RX-9', status: 'failed' }]),
+            ['POST /api/projects/uh/uh/shifts/end']: { ok: true, carrying: 2 },
         });
         fireEvent.click(await screen.findByRole('button', { name: 'Go off shift' }));
 
-        expect(await screen.findByRole('alert')).toHaveTextContent(/1 package still with you/);
-        /* And they are still on shift, which is the truth: the server said no. */
-        expect(screen.getByRole('button', { name: 'Go off shift' })).toBeInTheDocument();
+        const notice = await screen.findByText(/2 deliveries are still open/);
+        expect(notice).toBeInTheDocument();
+        /* NOT an alert: nothing is wrong and nothing is waiting on it. */
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByText(/still open/)).not.toBeInTheDocument();
     });
 
     it('says nothing about carrying when nothing has been refused', async () => {

@@ -76,8 +76,19 @@ export const EVENT_RULES: Record<CustodyEventType, EventRule> = {
         describes: 'Taken back off a courier and returned to the pool.',
     },
     picked_up: {
-        // Scope 1.2.8: the sending personnel sign too.
-        from: ['assigned'], to: 'picked_up', roles: COURIER_AND_STAFF, requires: ['signedName'],
+        /* NO LONGER REQUIRES A NAME, and that is a contract change rather
+         * than a loosened validation. Scope 1.2.8 has the sending personnel
+         * sign at the counter, and this rule enforced it. From 3 November
+         * drivers do not record a collection at all -- the server writes
+         * this event when dispatch assigns the delivery, and there is
+         * nobody at a counter to sign it.
+         *
+         * THE PICKUP SCREEN STILL DEMANDS ONE. modules/uh/pickup.ts has its
+         * own `signedName: z.string().trim().min(1)`, so a human collection
+         * recorded through that route is unchanged and still carries the
+         * name of whoever handed the packages over. What this rule stops
+         * doing is forbidding the automatic one. */
+        from: ['assigned'], to: 'picked_up', roles: COURIER_AND_STAFF, requires: [],
         describes: 'The courier took custody at the pharmacy.',
     },
     arrived: {
@@ -234,7 +245,10 @@ export function applyEvent(order: OrderState, event: EventInput, settings: Proje
             break;
         case 'picked_up': {
             set['pickup_at'] = at;
-            set['picked_up_by'] = event.signedName!.trim();
+            /* Empty when the server recorded it on assignment: nobody
+               signed, and a name invented here would be the only untrue
+               line in a document UH reads as evidence. */
+            set['picked_up_by'] = (event.signedName ?? '').trim();
             // STAT's second clock starts here: one hour from pickup, on top of
             // the two hours from the request (Addendum 1). Only now is it
             // knowable, which is why it is stamped at pickup and not at import.

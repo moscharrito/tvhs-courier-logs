@@ -285,6 +285,28 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-shift-pill .izy-btn { white-space: nowrap; }
 /* Its own line, full width of the bar: a refusal runs to two lines and must
    not be squeezed between the name and the button. */
+/* Said once when a shift ends over unfinished work, and closed with one
+   tap. Not an alert: nothing is wrong and nothing is waiting on it. */
+.izy-shift-notice {
+    flex-basis: 100%;
+    max-width: 280px;
+    margin: 6px 0 0;
+    padding: 6px 26px 6px 10px;
+    position: relative;
+    border-radius: 8px;
+    background: var(--izy-glass-strong, rgba(255,255,255,0.7));
+    border: 1px solid var(--izy-line);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--izy-muted);
+    text-align: left;
+}
+.izy-shift-notice-close {
+    position: absolute; top: 2px; right: 4px;
+    width: 20px; height: 20px; padding: 0;
+    border: 0; background: none; cursor: pointer;
+    font-size: 15px; line-height: 20px; color: var(--izy-muted);
+}
 .izy-shift-error {
     /* Still its own line, but now the width of the pill rather than of the
        bar, so a refusal wraps under the button instead of stretching the

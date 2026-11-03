@@ -183,12 +183,21 @@ describe('the transition table', () => {
     });
 
     it('insists on the fields an event is meaningless without', () => {
-        // Scope 1.2.8 wants the printed name of the sending and receiving
-        // personnel, so neither pickup nor delivery may be recorded blank.
-        for (const [status, type] of [['assigned', 'picked_up'], ['picked_up', 'delivered']]) {
-            expect(() => applyEvent(state(status), { type, at: new Date() }, DEFAULT_PROJECT_SETTINGS))
-                .toThrow(/needs signedName/);
-        }
+        /* Scope 1.2.8 wants the printed name of the sending AND the
+           receiving personnel. The receiving half is still enforced here.
+
+           THE SENDING HALF IS NOT, SINCE 3 NOVEMBER, and that is a contract
+           change rather than a gap. Drivers stopped recording collections:
+           the server writes the pickup itself when a courier first acts on
+           a delivery, and there is nobody at a counter to sign it. A human
+           collection through modules/uh/pickup.ts still carries a name --
+           that route keeps its own signedName: z.string().trim().min(1) --
+           so what this table stopped doing is forbidding the automatic
+           one, not permitting a blank human one. */
+        expect(() => applyEvent(state('assigned'), { type: 'picked_up', at: new Date() }, DEFAULT_PROJECT_SETTINGS))
+            .not.toThrow();
+        expect(() => applyEvent(state('picked_up'), { type: 'delivered', at: new Date() }, DEFAULT_PROJECT_SETTINGS))
+            .toThrow(/needs signedName/);
         expect(() => applyEvent(state('picked_up'), { type: 'attempted', at: new Date() }, DEFAULT_PROJECT_SETTINGS))
             .toThrow(/needs reason/);
         expect(() => applyEvent(state('picked_up'), { type: 'delivered', at: new Date(), signedName: '   ' }, DEFAULT_PROJECT_SETTINGS))
