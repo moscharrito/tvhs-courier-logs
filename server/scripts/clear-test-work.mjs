@@ -180,6 +180,35 @@ const client = database.client;
 const run = (sql, args = []) => client.execute({ sql, args });
 const count = async (sql, args = []) => Number((await run(sql, args)).rows[0].n);
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * LEAVING, WITHOUT CLOSING THE CLIENT ON THE WAY OUT.
+ *
+ * Every early exit here used to be `client.close(); process.exit(n)`. On
+ * Windows, against a REMOTE libSQL client, that pair aborts the process:
+ *
+ *     Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+ *     file src\win\async.c, line 76
+ *
+ * close() starts an asynchronous teardown of the connection's handle, and
+ * process.exit() in the same tick tears the loop down while that close is
+ * still in flight. libuv asserts instead of exiting, so the script dies on
+ * a non-zero signal and the caller -- clear-uh-test.ps1 -- correctly
+ * refuses to go on.
+ *
+ * IT NEVER SHOWED UP LOCALLY because a file database has no socket: the
+ * handle closes synchronously and there is nothing in flight to trip over.
+ * It only appears against Turso, which is the only target that matters
+ * here. Reported from the live run on 4 November 2026, on --days, which
+ * reads and changes nothing; the dry run would have hit it one line later.
+ *
+ * SO DO NOT CLOSE. The process is ending and the socket is the operating
+ * system's to reclaim; close() buys nothing on the way out and costs the
+ * exit. The one close that stays is the LAST line of the successful path,
+ * where there is no process.exit after it and the loop drains normally --
+ * which is also the only place the close was ever doing real work.
+ * ───────────────────────────────────────────────────────────────────────── */
+const leave = (code) => process.exit(code);
+
 const project = (await run('SELECT id, code FROM projects WHERE code = ?', [projectCode])).rows[0];
 if (!project) {
     console.error(`No project called ${projectCode}.`);
@@ -194,8 +223,7 @@ if (listDays) {
           GROUP BY service_date ORDER BY service_date`,
         [pid, from, to],
     )).rows) console.log(`${r.d} ${r.n}`);
-    client.close();
-    process.exit(0);
+    leave(0);
 }
 
 console.log(`Database: ${config.db.url}   (${config.db.kind === 'file' ? 'THIS LAPTOP' : 'REMOTE'})`);
@@ -217,8 +245,7 @@ const ids = byId
 
 if (ids.length === 0) {
     console.log(byId ? `No such order in ${projectCode}. Nothing to do.` : 'No orders on those dates. Nothing to do.');
-    client.close();
-    process.exit(0);
+    leave(0);
 }
 /* ─────────────────────────────────────────────────────────────────────────
  * A RANGE TOO BIG TO DO IN ONE STATEMENT IS REFUSED, NOT ATTEMPTED.
@@ -262,8 +289,7 @@ Refusing: ${ids.length} orders is more than this can remove in one pass.`);
         for (const d of days) console.error(`    ${d.d}  ${d.n} order(s)`);
         console.error('');
     }
-    client.close();
-    process.exit(1);
+    leave(1);
 }
 if (byId && ids.length !== picked.length) {
     const missing = picked.filter((n) => !ids.includes(n));
@@ -382,8 +408,7 @@ console.log(`  ${'signatures'.padEnd(14)} ${sigKeys.length}`);
 
 if (!apply) {
     console.log('\nNothing was changed.');
-    client.close();
-    process.exit(0);
+    leave(0);
 }
 
 /* THE OBJECTS BEFORE THE ROWS THAT NAME THEM.
@@ -411,8 +436,7 @@ if (keys.length > 0) {
         console.error(`\n${keys.length} photograph(s) are stored in the bucket and file storage is not`);
         console.error('configured here, so they cannot be removed. Set the S3 values and run it again,');
         console.error('or the pictures outlive the record that explains them.');
-        client.close();
-        process.exit(1);
+        leave(1);
     }
     for (const key of keys) {
         const signed = storage.presignDelete(key);
@@ -423,8 +447,7 @@ if (keys.length > 0) {
         if (!res.ok && res.status !== 404) {
             console.error(`\nThe bucket refused to delete ${key}: HTTP ${res.status}`);
             console.error((await res.text()).slice(0, 300));
-            client.close();
-            process.exit(1);
+            leave(1);
         }
     }
     console.log(`  removed ${keys.length} object(s) from the bucket`);

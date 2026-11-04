@@ -49,6 +49,27 @@ const config = loadConfig();
 const database = createDatabase(config);
 const client = database.client;
 
+/* WHY THIS IS NOT `client.close(); process.exit(n)`.
+ *
+ * On Windows, against a REMOTE libSQL client, that pair aborts the process
+ * instead of ending it:
+ *
+ *     Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+ *     file src\win\async.c, line 76
+ *
+ * close() begins an asynchronous teardown of the connection handle and
+ * process.exit() in the same tick pulls the loop out from under it. It
+ * never appears locally, because a file database has no socket and closes
+ * synchronously -- so this is invisible until the one run that matters.
+ * Hit for real on 4 November 2026 in clear-test-work.mjs, which is the
+ * same shape as this; fixed here before it could be hit again.
+ *
+ * The process is ending and the socket is the operating system's to
+ * reclaim, so the close buys nothing on the way out. A close that is NOT
+ * followed by process.exit is doing real work and stays. */
+const leave = (code) => process.exit(code);
+
+
 console.log('Backing up:', JSON.stringify(describeConfig(config).database));
 
 /* A literal SQLite understands. Numbers go bare, null goes NULL, blobs go as
@@ -172,8 +193,7 @@ const live = (counts['logs'] ?? 0) + (counts['checkins'] ?? 0);
 if (live === 0) {
     console.log('\nNO TVHS LOGS OR CHECK-INS IN THIS BACKUP.');
     console.log('If this was meant to be production, it is pointed at the wrong database.');
-    client.close();
-    process.exit(1);
+    leave(1);
 }
 
 client.close();

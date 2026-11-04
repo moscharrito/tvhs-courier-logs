@@ -118,6 +118,27 @@ if (apply && config.db.kind !== 'file' && !meansProduction) {
 }
 const database = createDatabase(config);
 const client = database.client;
+
+/* WHY THIS IS NOT `client.close(); process.exit(n)`.
+ *
+ * On Windows, against a REMOTE libSQL client, that pair aborts the process
+ * instead of ending it:
+ *
+ *     Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+ *     file src\win\async.c, line 76
+ *
+ * close() begins an asynchronous teardown of the connection handle and
+ * process.exit() in the same tick pulls the loop out from under it. It
+ * never appears locally, because a file database has no socket and closes
+ * synchronously -- so this is invisible until the one run that matters.
+ * Hit for real on 4 November 2026 in clear-test-work.mjs, which is the
+ * same shape as this; fixed here before it could be hit again.
+ *
+ * The process is ending and the socket is the operating system's to
+ * reclaim, so the close buys nothing on the way out. A close that is NOT
+ * followed by process.exit is doing real work and stays. */
+const leave = (code) => process.exit(code);
+
 const run = (sql, a = []) => client.execute({ sql, args: a });
 const count = async (sql, a) => Number((await run(sql, a)).rows[0].n);
 
@@ -212,8 +233,7 @@ for (const username of usernames) {
 
 if (!apply) {
     console.log('Dry run. Nothing changed.');
-    client.close();
-    process.exit(0);
+    leave(0);
 }
 
 if (disable) {
@@ -233,8 +253,7 @@ if (disable) {
     console.log('');
     console.log(`Set ${changed} account${changed === 1 ? '' : 's'} to ${target}.`);
     console.log(`Active UH couriers remaining: ${roster}`);
-    client.close();
-    process.exit(0);
+    leave(0);
 }
 
 let deleted = 0;
