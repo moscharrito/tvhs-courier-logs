@@ -63,6 +63,18 @@ async function pickedUpOrder(over = {}) {
     return order;
 }
 
+/** A stored file of any kind, for the evidence route. */
+async function storedFileOf(kind) {
+    const at = new Date().toISOString();
+    const rs = await sql(
+        `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+         VALUES ((SELECT id FROM projects WHERE code = 'uh'), NULL, ?, ?, 'image/jpeg', 2048, 'stored', 'ada.courier', ?, ?)
+         RETURNING id`,
+        [kind, `uh/test/${kind}/${Math.random()}.jpg`, at, at],
+    );
+    return Number(rs.rows[0].id);
+}
+
 async function courierAgent(username) {
     const a = srv.agent();
     expect((await a.post('/api/login').send({ username, password: 'courier-pass-1' })).status).toBe(200);
@@ -478,6 +490,170 @@ describe('a dry run', () => {
 });
 
 /* ---------------------------------------------------------------- access */
+
+describe('a photograph that was no good', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * WHAT THIS IS FOR.
+     *
+     * The commonest thing a driver gets wrong is not the delivery, it is
+     * the picture of it: the form came out blurred, a thumb covered the
+     * signature, the identification was shot at an angle nobody can read.
+     * The handover happened and the record of it is right. Until
+     * 4 November a delivered stop was disabled on the phone, so the proof
+     * of delivery kept whatever had been photographed first.
+     *
+     * The property every one of these is testing: the picture can be
+     * replaced and the outcome cannot.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    /** A delivery already recorded, by the courier it belongs to. */
+    async function delivered() {
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm() });
+        expect(res.status, res.text).toBe(201);
+        return { order, ada };
+    }
+
+    it('takes a better photograph of a delivery already recorded', async () => {
+        const { order, ada } = await delivered();
+        const better = await storedFileOf('courier_form');
+
+        const res = await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: better, kind: 'courier_form', note: 'The first one was blurred' });
+        expect(res.status, res.text).toBe(201);
+        expect(res.body.fileId).toBe(better);
+    });
+
+    it('moves nothing: the status, the time and the signer are what they were', async () => {
+        const { order, ada } = await delivered();
+        const before = (await detail(order.id)).body;
+
+        await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: await storedFileOf('courier_form'), kind: 'courier_form' });
+
+        const after = (await detail(order.id)).body;
+        expect(after.status).toBe('delivered');
+        expect(after.deliveredAt).toBe(before.deliveredAt);
+        expect(after.receivedBy).toBe(before.receivedBy);
+    });
+
+    it('appends rather than edits, because custody_events cannot be edited', async () => {
+        const { order, ada } = await delivered();
+        const was = (await sql('SELECT COUNT(*) AS n FROM custody_events WHERE order_id = ?', [order.id])).rows[0].n;
+
+        await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: await storedFileOf('courier_form'), kind: 'courier_form' });
+
+        const now = (await sql('SELECT COUNT(*) AS n FROM custody_events WHERE order_id = ?', [order.id])).rows[0].n;
+        expect(Number(now)).toBe(Number(was) + 1);
+
+        /* And the delivered event itself still names its own file. */
+        const note = (await sql(
+            "SELECT type, reason, file_id FROM custody_events WHERE order_id = ? ORDER BY id DESC LIMIT 1",
+            [order.id],
+        )).rows[0];
+        expect(String(note.type)).toBe('note');
+        expect(Number(note.file_id)).toBeGreaterThan(0);
+        expect(String(note.reason)).toMatch(/after the delivery was recorded/);
+    });
+
+    it('leaves the old photograph where an investigation can still find it', async () => {
+        /* Replacement by appending, which is the only kind this system
+           does. pod-photos.ts takes the newest stored one of each kind, so
+           the document corrects itself without anything being destroyed. */
+        const { order, ada } = await delivered();
+        const first = (await sql(
+            "SELECT id FROM files WHERE order_id = ? AND kind = 'courier_form' ORDER BY id DESC LIMIT 1",
+            [order.id],
+        )).rows[0].id;
+
+        const better = await storedFileOf('courier_form');
+        await ada.post(`${ORDERS}/${order.id}/evidence`).send({ fileId: better, kind: 'courier_form' });
+
+        const bound = (await sql(
+            "SELECT id FROM files WHERE order_id = ? AND kind = 'courier_form' ORDER BY id",
+            [order.id],
+        )).rows.map((r) => Number(r.id));
+        expect(bound).toContain(Number(first));
+        expect(bound).toContain(better);
+        /* Newest last, which is the one the proof of delivery will print. */
+        expect(bound[bound.length - 1]).toBe(better);
+    });
+
+    it('takes the identification too, which is the one shot at a bad angle', async () => {
+        const { order, ada } = await delivered();
+        const res = await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: await storedFileOf('patient_id'), kind: 'patient_id' });
+        expect(res.status, res.text).toBe(201);
+    });
+
+    it('refuses an outcome that has not been recorded yet', async () => {
+        /* Before one, the delivery screen is open and takes the photograph
+           the ordinary way. Two routes into one moment is how the one with
+           fewer checks becomes the one that gets used. */
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        const res = await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: await storedFileOf('courier_form'), kind: 'courier_form' });
+        expect(res.status, res.text).toBe(409);
+        expect(res.body.code).toBe('evidence.notRecorded');
+    });
+
+    it('works on a dry run as well, because that picture gets disputed too', async () => {
+        const order = await pickedUpOrder();
+        const ada = await courierAgent('ada.courier');
+        const pkgs = (await detail(order.id)).body.packages;
+        expect((await ada.post(`${ORDERS}/${order.id}/attempt`).send({
+            packages: pkgs.map((pkg) => ({ packageId: pkg.id, reasonCode: 'no_access' })),
+        })).status).toBe(201);
+
+        const res = await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: await storedFileOf('doorstep'), kind: 'doorstep' });
+        expect(res.status, res.text).toBe(201);
+        expect((await detail(order.id)).body.status).toBe('failed');
+    });
+
+    it('refuses a file that never finished uploading', async () => {
+        const { order, ada } = await delivered();
+        const pending = (await sql(
+            `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), NULL, 'courier_form', ?, 'image/jpeg', 2048, 'pending', 'ada.courier', ?)
+             RETURNING id`,
+            [`uh/test/pending/${Math.random()}.jpg`, new Date().toISOString()],
+        )).rows[0].id;
+
+        const res = await ada.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: Number(pending), kind: 'courier_form' });
+        expect(res.status, res.text).toBe(400);
+        expect(res.body.code).toBe('evidence.fileNotStored');
+    });
+
+    it('refuses somebody else\'s delivery', async () => {
+        const { order } = await delivered();
+        const bo = await courierAgent('bo.courier');
+        const res = await bo.post(`${ORDERS}/${order.id}/evidence`)
+            .send({ fileId: await storedFileOf('courier_form'), kind: 'courier_form' });
+        expect(res.status, res.text).toBe(403);
+    });
+
+    it('keeps the note out of the audit trail but the kind in it', async () => {
+        /* The trail answers who changed what and when. A driver's sentence
+           about a delivery can name the patient, and this one is free
+           text. */
+        const { order, ada } = await delivered();
+        await ada.post(`${ORDERS}/${order.id}/evidence`).send({
+            fileId: await storedFileOf('courier_form'), kind: 'courier_form',
+            note: 'Ines Vargas signed it again',
+        });
+
+        const audit = await admin.get('/api/audit?action=stop&limit=10');
+        const blob = JSON.stringify(audit.body);
+        expect(audit.body.events.some((e) => e.action === 'stop.evidence')).toBe(true);
+        expect(blob).not.toContain('Ines Vargas');
+    });
+});
 
 describe('access control and the record', () => {
     it('will not let a courier work someone else\'s stop', async () => {

@@ -389,12 +389,24 @@ const MATRIX = [
        decide that a delivery is worth a second trip, and a pharmacy asking
        for one is a phone call that a dispatcher then acts on. */
     ['POST', `${UH}/orders/999999/reattempt`, UH_STAFF, ''],
+    /* The same thing from the other end, and the reason it is wider.
+       `reattempt` is a decision about a trip nobody has made; `redeliver`
+       is a report of one that just happened, by the person standing at the
+       door. Refusing that does not stop the delivery -- it already
+       happened -- it only stops it being recorded, which is the worst of
+       the available outcomes. The route checks the order is theirs. */
+    ['POST', `${UH}/orders/999999/redeliver`, UH_OPERATES, 'I got back and delivered it'],
 
     /* --- the door. */
     ['POST', `${UH}/orders/999999/arrive`, UH_OPERATES, ''],
     ['POST', `${UH}/orders/999999/deliver`, UH_OPERATES, ''],
     ['POST', `${UH}/orders/999999/doorstep`, UH_OPERATES, ''],
     ['POST', `${UH}/orders/999999/attempt`, UH_OPERATES, ''],
+    /* A better photograph of a delivery already recorded. Operates rather
+       than dispatch for the same reason every other line here does: the
+       person who took the bad photograph is the person standing where a
+       good one can be taken. It moves no status. */
+    ['POST', `${UH}/orders/999999/evidence`, UH_OPERATES, 'the form photo was no good'],
 
     /* --- runs and the pharmacy counter. */
     ['POST', `${UH}/runs`, UH_DISPATCH, 'the Site Manager IS dispatch since 7.20'],

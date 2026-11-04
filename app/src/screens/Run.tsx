@@ -109,6 +109,31 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
         setRefreshing(false);
     };
 
+    /* Open a delivery by id, after something has just created it.
+     *
+     * One caller: a driver who got back to a door, asked for a second
+     * attempt, and should land on it rather than on a list they have to
+     * hunt through for a row that was not there a moment ago.
+     *
+     * It fetches rather than reading `data`, because `data` is whatever
+     * was loaded before the second attempt existed. If the new stop cannot
+     * be found -- the run was closed under them, the server put it
+     * somewhere else -- it falls back to the list, which is refreshed by
+     * then and has it. Never leaves them on the old stop: that one is
+     * finished, and looking at it is how the same delivery gets recorded
+     * twice. */
+    const openOrder = async (orderId: number) => {
+        try {
+            const fresh = await get<MyRun>(`/api/projects/${project.code}/uh/runs/mine`, token);
+            setData(fresh);
+            const found = fresh.runs.flatMap((r) => r.stops).find((st) => st.orderId === orderId);
+            setWorking(found ?? null);
+        } catch {
+            setWorking(null);
+            void load();
+        }
+    };
+
     /* ─────────────────────────────────────────────────────────────────────
      * EVERY HOOK ABOVE EVERY EARLY RETURN, AND usePaged IS A HOOK.
      *
@@ -146,6 +171,7 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 stop={working}
                 onDone={() => { setWorking(null); void load(); }}
                 onBack={() => setWorking(null)}
+                onOpenOrder={(orderId) => { void openOrder(orderId); }}
             />
         );
     }
@@ -259,12 +285,27 @@ export function Run({ token, project, onSignedOut, onBack }: Props) {
                 {stops.length > 0 && (
                     <View style={styles.allStops}>
                         <Text style={styles.cardTitle}>All stops</Text>
+                        {/* A FINISHED STOP OPENS. It used to be greyed out
+                            and `disabled`, so a tap did nothing at all.
+                            Two things happen often enough that the gate
+                            cost more than it protected: a photograph of
+                            the signed form that came out blurred, and a
+                            dry run where the patient rang the pharmacy
+                            back and the driver got there again an hour
+                            later. Both were a telephone call to dispatch,
+                            or went unrecorded.
+
+                            It still LOOKS finished -- same grey -- because
+                            that is what it is. What it no longer does is
+                            refuse to say so. See Stop.tsx, which opens
+                            read-only for these and offers exactly two
+                            things: a better photograph, and a second
+                            attempt. */}
                         {paged.rows.map((s) => (
                             <Pressable
                                 key={s.orderId}
                                 style={[styles.stop, DONE.includes(s.status) ? styles.stopDone : null]}
-                                onPress={() => { if (!DONE.includes(s.status)) setWorking(s); }}
-                                disabled={DONE.includes(s.status)}
+                                onPress={() => setWorking(s)}
                                 accessibilityRole="button"
                             >
                                 <Text style={styles.stopName}>{s.sequence}. {s.recipientName}</Text>

@@ -4,6 +4,31 @@
  *   POST /api/projects/:pid/uh/orders/:id/deliver    handed over and signed
  *   POST /api/projects/:pid/uh/orders/:id/doorstep   left, with a photo
  *   POST /api/projects/:pid/uh/orders/:id/attempt    a dry run
+ *   POST /api/projects/:pid/uh/orders/:id/evidence   the photo was no good
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * A PHOTOGRAPH CAN BE REPLACED. AN OUTCOME CANNOT.
+ *
+ * The commonest thing a driver gets wrong is not the delivery, it is the
+ * picture of it: the form came out blurred, a thumb covered the signature,
+ * the identification was shot at an angle nobody can read. The handover
+ * happened and the record of it is correct. Before 4 November there was
+ * nothing to do about the picture -- a delivered stop was disabled in the
+ * app -- so the proof of delivery kept whatever had been taken first.
+ *
+ * `evidence` fixes that and touches nothing else. The status does not move,
+ * the signature is not re-taken, the delivery time is not rewritten. A new
+ * photograph is bound to the order and a `note` event records who added it
+ * and when, which is a thing the lifecycle already allows from any status
+ * and for a courier. Nothing in custody_events is edited, because nothing
+ * in custody_events can be edited.
+ *
+ * THE OLD PICTURE IS NOT DELETED. pod-photos.ts takes the newest stored
+ * photograph of each kind -- "a courier who photographed twice did so
+ * because the first one was no good" -- so the document corrects itself
+ * and the first attempt stays in the table where an investigation can
+ * still find it. Replacement by appending, which is the only kind of
+ * replacement this system does.
  *
  * ARRIVAL IS THE THING THAT IS MEASURED. Addendum 1 counts an on-time
  * arrival as a success even when the recipient is unavailable, so
@@ -53,6 +78,22 @@ const Where = {
 };
 
 const Arrive = z.object({ ...Where, note: z.string().trim().max(300).default('') });
+
+/* A better photograph of something already recorded.
+ *
+ * ONLY THE THREE KINDS THAT PROVE SOMETHING. 'signature', 'pod' and
+ * 'exception' are written by other parts of the system and are not a
+ * courier's to replace from a phone; 'patient_id' is, because the angle it
+ * was shot at is exactly the thing that goes wrong. */
+const EvidenceKinds = ['courier_form', 'patient_id', 'doorstep'] as const;
+const Evidence = z.object({
+    ...Where,
+    fileId: z.number().int().positive(),
+    kind: z.enum(EvidenceKinds),
+    /** Why it is being replaced, in the driver's words. Optional: see the
+     *  same argument on Redeliver in reattempt.ts. */
+    note: z.string().trim().max(300).default(''),
+});
 
 const Deliver = z.object({
     ...Where,
@@ -739,6 +780,108 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             inferredArrival,
             photoFileId: body.fileId,
             packages: await packagesOf(projectId, Number(order.id)),
+        });
+    }));
+
+    /* ----------------------------------------------------- a better photo */
+
+    router.post('/:id/evidence', operate, wrap(async (req, res) => {
+        const order = await orderOr404(req, res);
+        if (!order) return;
+        const body = parse(Evidence, req.body ?? {}, res);
+        if (!body) return;
+        const at = whenOr400(body, res);
+        if (!at) return;
+        const projectId = req.project!.id;
+
+        /* NO SEPARATE CHECK THAT STORAGE IS CONFIGURED, deliberately, and
+           unlike /doorstep. That route needs somewhere to PUT a picture;
+           this one is handed the id of one already stored, and the only
+           way a row reaches status 'stored' is through the file service,
+           which refuses when storage is off. A second guard here would
+           have refused in the test suite what /deliver accepts two
+           functions away, which is the kind of disagreement that teaches
+           people the error message is wrong. */
+
+        /* ONLY AGAINST AN OUTCOME THAT HAS BEEN RECORDED.
+         *
+         * Before one, the delivery screen is still open and takes the
+         * photograph the ordinary way; a second route into the same moment
+         * would be two ways to do one thing, and the one with fewer checks
+         * is the one that gets used. This exists for afterwards, which is
+         * when the ordinary way has gone.
+         *
+         * `failed` as well as `delivered`: a dry run carries a photograph
+         * too, and the reason a dry run is disputed is usually the picture
+         * of the door. */
+        if (order.status !== 'delivered' && order.status !== 'failed') {
+            res.status(409).json({
+                error: `This delivery is ${order.status}. Record the outcome first; the photograph goes with it.`,
+                code: 'evidence.notRecorded',
+                status: order.status,
+            });
+            return;
+        }
+
+        /* The same check the delivery makes, and for the same reason: a row
+           that claims a photograph which never finished uploading is worse
+           than one that claims none. */
+        const found = await client.execute({
+            sql: `SELECT id FROM files WHERE project_id = ? AND id = ? AND kind = ? AND status = 'stored'
+                    AND (order_id IS NULL OR order_id = ?)`,
+            args: [projectId, body.fileId, body.kind, Number(order.id)],
+        });
+        if (found.rows.length === 0) {
+            res.status(400).json({
+                error: 'That photograph has not finished uploading.',
+                code: 'evidence.fileNotStored',
+                details: [`fileId: ${body.fileId}`],
+            });
+            return;
+        }
+
+        /* A note, carrying the file. The lifecycle allows `note` from every
+           status and for a courier, and it moves nothing -- which is the
+           whole point: what happened at the door on Tuesday is not being
+           restated because a better picture of it turned up on Wednesday.
+           The event is what dates the new photograph, so the proof of
+           delivery can say the form was photographed again at 16:40 rather
+           than quietly showing a different picture than it did yesterday. */
+        const what = body.kind === 'courier_form' ? 'the signed form'
+            : body.kind === 'patient_id' ? 'the identification'
+                : 'the doorstep photograph';
+        await recordOrderEvent(client, {
+            projectId,
+            order,
+            actor: actorOf(req),
+            settings: resolveSettings(req.project!.settings),
+            timezone: req.project!.timezone,
+            event: {
+                type: 'note', at,
+                fileId: body.fileId,
+                ...(body.lat !== undefined ? { lat: body.lat } : {}),
+                ...(body.lng !== undefined ? { lng: body.lng } : {}),
+                reason: body.note === ''
+                    ? `A new photograph of ${what} was added after the delivery was recorded.`
+                    : `A new photograph of ${what} was added after the delivery was recorded: ${body.note}`,
+            },
+        });
+
+        /* Bound after the event, never before, exactly as the delivery does
+           it: a file pointing at a delivery whose event was refused is a
+           file nobody can explain. */
+        await client.execute({
+            sql: 'UPDATE files SET order_id = ? WHERE project_id = ? AND id = ?',
+            args: [Number(order.id), projectId, body.fileId],
+        });
+
+        await req.audit('stop.evidence', 'order', String(order.id), {
+            fileId: body.fileId, kind: body.kind, status: order.status,
+        });
+        res.status(201).json({
+            ...(await reload(projectId, Number(order.id))),
+            fileId: body.fileId,
+            kind: body.kind,
         });
     }));
 

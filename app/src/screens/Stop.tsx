@@ -29,8 +29,8 @@ import {
     ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { theme } from '../theme';
-import { get, type Stop as StopRow } from '../lib/api';
-import { isUnauthorized } from '../lib/http';
+import { get, post, type Stop as StopRow } from '../lib/api';
+import { ApiError, isUnauthorized } from '../lib/http';
 import { newId, type OutboxEntry } from '../lib/outbox';
 import { queueAndSend } from '../lib/queue';
 import { capturePhoto, podAvailable, uploadPhoto, type Captured } from '../lib/pod';
@@ -53,6 +53,15 @@ interface Props {
     stop: StopRow;
     onDone: () => void;
     onBack: () => void;
+    /** Open a different delivery, by id, without going back to the list.
+     *
+     *  Used by one thing: a driver who got back to a door and asked for a
+     *  second attempt. The second attempt is a new delivery and the stop
+     *  they are looking at is the first one, so without this they would be
+     *  dropped back on the run list to hunt for a row that was not there a
+     *  moment ago. Optional so the screen still works wherever it is
+     *  rendered without a list behind it. */
+    onOpenOrder?: ((orderId: number) => void) | undefined;
 }
 
 /* A failed delivery is recorded PER PACKAGE, because Addendum 1 bills a dry
@@ -66,7 +75,7 @@ interface OrderDetail {
 
 type Choice = null | 'deliver' | 'attempt';
 
-export function Stop({ token, code, stop, onDone, onBack }: Props) {
+export function Stop({ token, code, stop, onDone, onBack, onOpenOrder }: Props) {
     const [detail, setDetail] = useState<OrderDetail | null>(null);
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
@@ -121,6 +130,11 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
     const [idPhoto, setIdPhoto] = useState<Captured | null>(null);
     const [checked, setChecked] = useState<string[]>([]);
     const [said, setSaid] = useState<string | null>(null);
+    /* What went wrong while amending a stop that is already recorded. Its
+       own message rather than `photoNote`: that one is about a photograph
+       on a delivery being made now, and the two appear in different halves
+       of this screen. */
+    const [amendNote, setAmendNote] = useState<string | null>(null);
 
     const base = `/api/projects/${code}/uh/orders/${stop.orderId}`;
 
@@ -271,6 +285,78 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
         onDone();
     };
 
+    /* ─────────────────────────── A STOP THAT IS ALREADY RECORDED
+     *
+     * Until 4 November this screen could not be opened at all for one: the
+     * run list greyed a finished stop out and disabled the tap. Two things
+     * happen often enough that the gate cost more than it protected.
+     *
+     * THE PHOTOGRAPH WAS NO GOOD. The handover happened and the record of
+     * it is right; the form came out blurred or a thumb covered the
+     * signature. `replacePhoto` uploads a better one and the proof of
+     * delivery picks up the newest. Nothing about the outcome moves.
+     *
+     * THE DOOR OPENED AFTER ALL. A dry run at 15:40, the patient rings the
+     * pharmacy back, the driver is there again at 16:25. `redeliver` asks
+     * the server for a second attempt -- a new delivery, so the first one
+     * keeps its own outcome -- and then this screen opens that one, where
+     * the ordinary signature, form and identification rules apply exactly
+     * as they did the first time. Nothing about proving a delivery is
+     * softened here. What is softened is getting back to the point of
+     * proving one.
+     *
+     * NEITHER IS QUEUED. Both go straight out and say so if they cannot.
+     * An amendment that sat in the outbox would be a driver told their
+     * correction was saved while dispatch goes on reading the old record,
+     * and in the redeliver case a queue that fired twice would be two
+     * couriers sent to one door. The ordinary delivery still queues: that
+     * is a thing that definitely happened, and this is a request to be
+     * allowed to do something.
+     */
+    const replacePhoto = async (kind: 'courier_form' | 'patient_id') => {
+        const shot = await capturePhoto();
+        if (shot.kind === 'refused') { setAmendNote(shot.message); return; }
+        if (shot.kind !== 'captured') return;
+
+        setBusy(true);
+        setAmendNote(null);
+        try {
+            const up = await uploadPhoto(token, code, stop.orderId, shot.photo, kind);
+            if (up.kind === 'failed') {
+                setAmendNote(`The photo could not be sent: ${up.message} Nothing was changed.`);
+                return;
+            }
+            await post(`${base}/evidence`, token, { fileId: up.fileId, kind });
+            setSaid('The new photo is on the delivery. The old one is kept.');
+            await loadDetail();
+        } catch (err) {
+            setAmendNote(err instanceof ApiError
+                ? err.message
+                : 'Could not reach dispatch. The photo was not added. Try again when you have signal.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const redeliver = async () => {
+        setBusy(true);
+        setAmendNote(null);
+        try {
+            const again = await post<{ id: number }>(`${base}/redeliver`, token, { reason: note.trim() });
+            if (onOpenOrder) onOpenOrder(again.id);
+            else onDone();
+        } catch (err) {
+            setAmendNote(err instanceof ApiError
+                ? err.message
+                : 'Could not reach dispatch. Nothing was recorded. Try again when you have signal.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    /** Already has an outcome against it, delivered or not delivered. */
+    const recorded = stop.status === 'delivered' || stop.status === 'failed';
+
     const arrived = stop.status === 'picked_up' || stop.status === 'assigned';
     /* The name never stops being required: a delivery with nobody's name
        against it is an anonymous handover of a prescription. */
@@ -326,7 +412,7 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
         && signerExplained && controlledSatisfied && !blockedByStorage && !busy;
     /* Refused rather than sent empty: an attempt with no packages on it bills
        nothing and records nothing about what was in the van. */
-    const knowsPackages = (detail?.packages.length ?? 0) > 0;
+    const knowsPackages = (detail?.packages?.length ?? 0) > 0;
 
     return (
         <ScrollView style={styles.wrap} contentContainerStyle={styles.inner}>
@@ -364,7 +450,74 @@ export function Stop({ token, code, stop, onDone, onBack }: Props) {
                 </View>
             )}
 
-            {choice === null && (
+            {choice === null && recorded && (
+                <View style={styles.card}>
+                    {/* WHAT THE RECORD SAYS NOW, before anything that might
+                        change it. A driver who opened the wrong stop should
+                        find that out from the first line, not from the
+                        buttons. */}
+                    <Text style={styles.cardTitle}>
+                        {stop.status === 'delivered' ? 'Recorded as delivered' : 'Recorded as not delivered'}
+                    </Text>
+                    <Text style={styles.footnote}>
+                        {stop.status === 'delivered'
+                            ? 'This is on the record and stays there. You can still add a better photo of it.'
+                            : 'This attempt stays on the record. If you got back and handed it over, start the second attempt below.'}
+                    </Text>
+
+                    {amendNote !== null && <Text style={styles.photoNote}>{amendNote}</Text>}
+
+                    {canPhotograph && (
+                        <Pressable
+                            style={styles.secondary}
+                            onPress={() => { void replacePhoto('courier_form'); }}
+                            disabled={busy}
+                            accessibilityRole="button"
+                        >
+                            <Text style={styles.secondaryText}>
+                                {busy ? 'Working…' : 'Photograph the signed form again'}
+                            </Text>
+                        </Pressable>
+                    )}
+                    {canPhotograph && needsId && (
+                        <Pressable
+                            style={styles.secondary}
+                            onPress={() => { void replacePhoto('patient_id'); }}
+                            disabled={busy}
+                            accessibilityRole="button"
+                        >
+                            <Text style={styles.secondaryText}>Photograph the identification again</Text>
+                        </Pressable>
+                    )}
+                    {!canPhotograph && (
+                        <Text style={styles.footnote}>
+                            Photo storage is not switched on, so there is nowhere to put a new picture.
+                        </Text>
+                    )}
+
+                    {stop.status === 'failed' && (
+                        <>
+                            <Pressable
+                                style={styles.primary}
+                                onPress={() => { void redeliver(); }}
+                                disabled={busy}
+                                accessibilityRole="button"
+                            >
+                                {busy
+                                    ? <ActivityIndicator color="#fff" />
+                                    : <Text style={styles.primaryText}>I delivered it after all</Text>}
+                            </Pressable>
+                            <Text style={styles.footnote}>
+                                This opens a second attempt for the same patient and the same address. You
+                                still take the name, the signed form and anything else the pharmacy asked
+                                for. The first attempt stays on the record as it is.
+                            </Text>
+                        </>
+                    )}
+                </View>
+            )}
+
+            {choice === null && !recorded && (
                 <>
                     {/* First, and on its own. The deadline is measured
                         against this, and it counts even when nobody answers

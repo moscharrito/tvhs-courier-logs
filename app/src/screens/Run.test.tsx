@@ -38,7 +38,16 @@ import type { MyRun, Project, Stop } from '../lib/api';
    have their own tests, and a screen test that also exercised the queue
    would fail for two unrelated reasons. */
 const get = vi.hoisted(() => vi.fn());
-vi.mock('../lib/api', async (orig) => ({ ...(await orig<object>()), get }));
+const post = vi.hoisted(() => vi.fn());
+vi.mock('../lib/api', async (orig) => ({ ...(await orig<object>()), get, post }));
+/* The stop screen asks whether photo storage is on and would open a camera.
+   Neither belongs in a test about which stops can be opened. */
+vi.mock('../lib/pod', async (orig) => ({
+    ...(await orig<object>()),
+    podAvailable: async () => ({ available: false }),
+    capturePhoto: async () => ({ kind: 'cancelled' }),
+    uploadPhoto: async () => ({ kind: 'failed', message: 'no storage in a test' }),
+}));
 vi.mock('../lib/queue', () => ({
     readQueue: async () => ({ queue: [], rejected: [] }),
     flush: async () => ({ queue: [], rejected: [] }),
@@ -93,6 +102,13 @@ function textOf(node: unknown): string {
     return children === undefined ? '' : textOf(children);
 }
 
+/* The run endpoint and the order endpoint are different shapes, and the
+   stop screen asks for the second one as soon as it opens. One mock that
+   answered both with a run left `detail.packages` undefined. */
+function answering(run: MyRun, order: Record<string, unknown> = { status: 'delivered', packages: [] }) {
+    return (path: string) => Promise.resolve(/\/orders\//.test(path) ? order : run);
+}
+
 /** Mount, then flush the promises the screen kicked off in its effects. */
 async function mount(): Promise<ReactTestRenderer> {
     let tree!: ReactTestRenderer;
@@ -107,7 +123,7 @@ async function mount(): Promise<ReactTestRenderer> {
     return tree;
 }
 
-beforeEach(() => { get.mockReset(); });
+beforeEach(() => { get.mockReset(); post.mockReset(); });
 afterEach(() => { vi.clearAllMocks(); });
 
 describe('the run screen survives its own data arriving', () => {
@@ -162,6 +178,113 @@ describe('the run screen survives its own data arriving', () => {
         /* Paged, not all thirty at once: the last stop of a thirty-stop run
            cannot be on the first page. */
         expect(text).not.toContain('Test Patient 30');
+    });
+
+    /* ─────────────────────────────────────────────────────────────────
+     * A FINISHED STOP CAN BE OPENED (4 November 2026).
+     *
+     * It used to be greyed out and `disabled`, so the tap did nothing at
+     * all. Two things happen often enough that the gate cost more than it
+     * protected: a photograph of the signed form that came out blurred,
+     * and a dry run where the patient rang the pharmacy back and the
+     * driver got there again an hour later. Both were a telephone call to
+     * somebody holding the admin role, or went unrecorded.
+     * ───────────────────────────────────────────────────────────────── */
+
+    /* The text inside an UNRENDERED element tree, which is what a test
+       instance's props hold. textOf above walks toJSON output, where every
+       node carries `children` directly; a React element carries it under
+       `props`, so that one returns '' for all of these. */
+    function inside(node: unknown): string {
+        if (node === null || node === undefined || node === false) return '';
+        if (typeof node === 'string') return node;
+        if (typeof node === 'number') return String(node);
+        if (Array.isArray(node)) return node.map(inside).join(' ');
+        const props = (node as { props?: { children?: unknown } }).props;
+        return props === undefined ? '' : inside(props.children);
+    }
+
+    /** Press the control whose own text contains `label`. */
+    async function press(tree: ReactTestRenderer, label: string) {
+        const hit = tree.root.findAll(
+            (n) => typeof n.type !== 'string'
+                && typeof (n.props as { onPress?: unknown }).onPress === 'function'
+                && inside(n.props.children).includes(label),
+        ).pop();
+        expect(hit, `nothing pressable containing "${label}"`).toBeDefined();
+        await act(async () => { (hit!.props as { onPress: () => void }).onPress(); });
+        await act(async () => { await Promise.resolve(); });
+    }
+
+    /** Tap the row for a given patient in the "All stops" list. */
+    const tapStop = (tree: ReactTestRenderer, name: string) => press(tree, name);
+
+    it('opens a delivered stop instead of ignoring the tap', async () => {
+        get.mockImplementation(answering(runWith([stop(1, { status: 'delivered' } as Partial<Stop>)])));
+        const tree = await mount();
+
+        await tapStop(tree, 'Test Patient 1');
+
+        const text = textOf(tree.toJSON());
+        expect(text).toContain('Recorded as delivered');
+        /* And it does not offer the delivery form again: this stop is
+           finished and recording it twice is the thing to avoid. */
+        expect(text).not.toContain('I have arrived');
+        expect(text).not.toContain('Could not deliver');
+    });
+
+    it('offers a second attempt on a failed stop, and only there', async () => {
+        get.mockImplementation(answering(runWith([
+            stop(1, { status: 'failed' } as Partial<Stop>),
+            stop(2, { status: 'delivered' } as Partial<Stop>),
+        ]), { status: 'failed', packages: [{ id: 1, description: 'Cold pack', quantity: 1 }] }));
+        const tree = await mount();
+
+        await tapStop(tree, 'Test Patient 1');
+        expect(textOf(tree.toJSON())).toContain('I delivered it after all');
+    });
+
+    it('does not offer a second attempt on a delivered stop', async () => {
+        /* A delivered stop is finished. Offering to deliver it again is
+           how one delivery becomes two on an invoice. */
+        get.mockImplementation(answering(runWith([stop(1, { status: 'delivered' } as Partial<Stop>)])));
+        const tree = await mount();
+
+        await tapStop(tree, 'Test Patient 1');
+        expect(textOf(tree.toJSON())).not.toContain('I delivered it after all');
+    });
+
+    it('asks the server for the second attempt and opens the delivery it made', async () => {
+        /* The driver should land on the new delivery, not back on a list
+           to hunt through for a row that was not there a moment ago -- and
+           never on the old stop, which is finished. */
+        const failed = runWith([stop(1, { status: 'failed' } as Partial<Stop>)]);
+        const after = runWith([
+            stop(1, { status: 'failed' } as Partial<Stop>),
+            stop(2, { status: 'assigned', orderId: 2222, recipientName: 'Test Patient 1' } as Partial<Stop>),
+        ]);
+        let first = true;
+        get.mockImplementation((path: string) => {
+            if (/\/orders\//.test(path)) {
+                return Promise.resolve({ status: 'failed', packages: [{ id: 1, description: 'Cold pack', quantity: 1 }] });
+            }
+            if (first) { first = false; return Promise.resolve(failed); }
+            return Promise.resolve(after);
+        });
+        post.mockResolvedValue({ id: 2222, reattemptOf: 1001, runId: 535 });
+
+        const tree = await mount();
+        await tapStop(tree, 'Test Patient 1');
+
+        await press(tree, 'I delivered it after all');
+        await act(async () => { await Promise.resolve(); });
+
+        expect(post.mock.calls[0]?.[0]).toContain('/orders/1001/redeliver');
+        /* On the second attempt now, which is assigned rather than failed,
+           so the ordinary delivery form is what is on screen. */
+        const text = textOf(tree.toJSON());
+        expect(text).not.toContain('Recorded as not delivered');
+        expect(text).toContain('Handed over');
     });
 
     it('shows the round as soon as it is assigned', async () => {
