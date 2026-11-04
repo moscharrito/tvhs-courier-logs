@@ -101,6 +101,19 @@ roster-*.csv
 # -- produced roster.csv.bak-20261030, a file the rule above did not cover.
 # A rota is a rota whatever it is called afterwards.
 
+# Driver telephone numbers, for server/scripts/set-driver-phones.mjs.
+#
+# Worse than the roster files above rather than the same as them: a full
+# name beside a personal mobile is a staff directory anybody can dial, and
+# five of the numbers loaded on 3 November are out-of-state ones that belong
+# to the person and not to University Health. The file exists to be read
+# once by the script and deleted; the script itself names nobody and is
+# committed.
+phones.csv
+*.phones.csv
+# And the wrapper that loads it, which names the production host.
+set-phones.ps1
+
 # The never-delete list for courier-inventory.mjs. Same reason as the files
 # above: a driver's username is their personal email address.
 protected.txt
