@@ -295,6 +295,31 @@ describe('MyRun', () => {
         expect(within(screen.getByLabelText('Next stop')).getByText('Marcus Ibarra')).toBeInTheDocument();
     });
 
+    it('opens a finished stop too, and says it is the record rather than the form', async () => {
+        /* THE GATE THAT COST MORE THAN IT PROTECTED (4 November 2026).
+           A finished row had no link at all, so a blurred photograph of
+           the signed form, or a dry run where the patient rang the
+           pharmacy back and the driver got there again an hour later, was
+           a telephone call to dispatch or went unrecorded.
+
+           The label differs so nobody taps it on a delivered row
+           expecting to record a delivery. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{
+                    id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14',
+                    label: 'Noon wave', status: 'started', startedAt: null,
+                    stops: [stop({ status: 'failed' })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+
+        const open = await screen.findByRole('link', { name: 'Open the record' });
+        expect(open).toHaveAttribute('href', '/projects/uh/orders/21/stop');
+        expect(screen.queryByRole('link', { name: 'Open the stop' })).not.toBeInTheDocument();
+    });
+
     it('shows the round in both places, the panel and the list', async () => {
         renderRun(base());
         /* Twice over: the Next card and the full list. getAllBy, because

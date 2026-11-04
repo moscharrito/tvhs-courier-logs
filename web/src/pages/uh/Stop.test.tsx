@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, createEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { Stop } from './Stop';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
@@ -59,11 +59,19 @@ const routes = (over: Record<string, unknown> = {}) => ({
     ...over,
 });
 
+/* Where the router thinks we are. The screen navigates on its own now --
+   a second attempt lands on the delivery it created -- and "did it go
+   there" is the assertion, not "did it call something". */
+function LocationProbe() {
+    return <span data-testid="location">{useLocation().pathname}</span>;
+}
+
 function renderStop(r: Record<string, unknown> = routes()) {
     const mocked = mockFetch(r);
     render(
         <MemoryRouter initialEntries={['/projects/uh/orders/21/stop']}>
             <AuthProvider>
+                <LocationProbe />
                 <Routes><Route path="/projects/:code/orders/:orderId/stop" element={<Stop />} /></Routes>
             </AuthProvider>
         </MemoryRouter>,
@@ -518,12 +526,111 @@ describe('Stop', () => {
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
-    it('offers nothing to record on a stop that is already finished', async () => {
+    it('offers nothing to RECORD on a stop that is already finished', async () => {
         renderStop({ ...routes(), [`GET ${ORDER}`]: order({ status: 'delivered', arrivedAt: '2026-09-12T17:40:00.000Z' }) });
         await screen.findByRole('heading', { name: 'Stop' });
 
-        expect(screen.getByRole('heading', { name: 'Finished' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Recorded as delivered' })).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Could not deliver' })).not.toBeInTheDocument();
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * AMENDING A STOP THAT ALREADY HAS AN OUTCOME (4 November 2026).
+     *
+     * This screen said "Finished" and offered a link back to the round, and
+     * the run list did not link to a finished stop at all. Two things
+     * happen often enough that the gate cost more than it protected: a
+     * photograph of the signed form that came out blurred, and a dry run
+     * where the patient rang the pharmacy back and the driver got there
+     * again an hour later. Both were a telephone call to somebody holding
+     * the admin role, or went unrecorded.
+     *
+     * The server has had both routes since 4 November and so has the Expo
+     * app. Nobody was reaching them: the drivers are on the web.
+     *
+     * The property every one of these is testing: the picture can be
+     * replaced and the outcome cannot.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    const finished = (status: string, over: Record<string, unknown> = {}) => ({
+        ...routes(),
+        [`GET ${ORDER}`]: order({ status, arrivedAt: '2026-09-12T17:40:00.000Z', ...over }),
+    });
+
+    it('lets a driver add a better photograph of a delivery already recorded', async () => {
+        renderStop(finished('delivered'));
+        await screen.findByRole('heading', { name: 'Recorded as delivered' });
+        expect(screen.getByRole('button', { name: 'Photograph the signed form again' })).toBeInTheDocument();
+    });
+
+    it('asks for the identification separately, where the pharmacy stamped it', async () => {
+        renderStop(finished('delivered', { idRequired: true }));
+        await screen.findByRole('heading', { name: 'Recorded as delivered' });
+        expect(screen.getByRole('button', { name: 'Photograph the identification again' })).toBeInTheDocument();
+    });
+
+    it('does not ask for identification on a delivery that never needed it', async () => {
+        renderStop(finished('delivered'));
+        await screen.findByRole('heading', { name: 'Recorded as delivered' });
+        expect(screen.queryByRole('button', { name: 'Photograph the identification again' })).not.toBeInTheDocument();
+    });
+
+    it('offers the second attempt on a failed stop', async () => {
+        renderStop(finished('failed'));
+        await screen.findByRole('heading', { name: 'Recorded as not delivered' });
+        expect(screen.getByRole('button', { name: 'I delivered it after all' })).toBeInTheDocument();
+    });
+
+    it('does not offer a second attempt on one that was delivered', async () => {
+        /* A delivered stop is finished. Offering to deliver it again is how
+           one delivery becomes two on an invoice. */
+        renderStop(finished('delivered'));
+        await screen.findByRole('heading', { name: 'Recorded as delivered' });
+        expect(screen.queryByRole('button', { name: 'I delivered it after all' })).not.toBeInTheDocument();
+    });
+
+    it('offers neither on a cancelled stop', async () => {
+        /* Called off before anybody had the package: no handover to
+           photograph and no door to have gone back to. The server refuses
+           both routes for it, so the screen does not offer them. */
+        renderStop(finished('cancelled'));
+        await screen.findByRole('heading', { name: 'Finished' });
+        expect(screen.queryByRole('button', { name: 'Photograph the signed form again' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'I delivered it after all' })).not.toBeInTheDocument();
+    });
+
+    it('asks the server for the second attempt and lands on the delivery it made', async () => {
+        /* Not back to the round: the stop they are looking at is the first
+           attempt and is finished, and hunting a list for a row that was
+           not there a moment ago is how the wrong stop gets recorded. */
+        const { fn } = renderStop({
+            ...finished('failed'),
+            [`POST ${ORDER}/redeliver`]: { status: 201, body: { id: 99, reattemptOf: 21, runId: 7 } },
+        });
+        await screen.findByRole('heading', { name: 'Recorded as not delivered' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'I delivered it after all' }));
+        await waitFor(() => expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/redeliver'))).toBe(true));
+        await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/99/stop'));
+    });
+
+    it('says what went wrong rather than moving on, when the server refuses', async () => {
+        /* 409 is the one that matters: the delivery is already going out
+           again, because somebody tapped twice or dispatch got there
+           first. Sending them to a second attempt that is not theirs would
+           be worse than saying so. */
+        renderStop({
+            ...finished('failed'),
+            [`POST ${ORDER}/redeliver`]: {
+                status: 409,
+                body: { error: 'This delivery is already going out again. Open that stop instead of this one.' },
+            },
+        });
+        await screen.findByRole('heading', { name: 'Recorded as not delivered' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'I delivered it after all' }));
+        expect(await screen.findByText(/already going out again/)).toBeInTheDocument();
+        expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/21/stop');
     });
 });

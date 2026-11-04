@@ -330,9 +330,30 @@ export function MyRun() {
                                     </div>
                                     <div className="izy-run-stop-actions">
                                         <Directions code={code} orderId={s.orderId} embed={embed} className="izy-btn secondary" mapsUrl={mapsUrl(s)} />
-                                        {!DONE.includes(s.status) && (
-                                            <Link className="izy-btn secondary" to={`/projects/${code}/orders/${s.orderId}/stop`}>Open the stop</Link>
-                                        )}
+                                        {/* A FINISHED STOP OPENS TOO, since
+                                            4 November. It had no link at
+                                            all, which is the same gate the
+                                            app had and the same cost: a
+                                            blurred photograph of the signed
+                                            form, or a dry run where the
+                                            patient rang the pharmacy back
+                                            and the driver got there again
+                                            an hour later, were both a
+                                            telephone call to dispatch or
+                                            went unrecorded.
+
+                                            The row still reads as finished
+                                            -- greyed, with its status chip
+                                            -- and the stop screen opens on
+                                            what the record says rather than
+                                            on the delivery form. The label
+                                            says which of the two it is, so
+                                            nobody taps "Open the stop" on a
+                                            delivered row expecting to
+                                            record one. */}
+                                        <Link className="izy-btn secondary" to={`/projects/${code}/orders/${s.orderId}/stop`}>
+                                            {DONE.includes(s.status) ? 'Open the record' : 'Open the stop'}
+                                        </Link>
                                         <Link className="izy-btn secondary" to={`/projects/${code}/orders/${s.orderId}`}>Details</Link>
                                     </div>
                                 </li>

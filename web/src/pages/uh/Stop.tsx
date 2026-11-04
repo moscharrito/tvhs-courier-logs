@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
@@ -85,6 +85,7 @@ type Choice = null | 'deliver' | 'doorstep' | 'attempt';
 
 export function Stop() {
     const { code = '', orderId = '' } = useParams();
+    const navigate = useNavigate();
     const base = `/api/projects/${code}/uh/orders/${orderId}`;
     /* The deadline this stop is measured against is a wall-clock time in the
        project's zone, so it is shown in that zone and not the phone's. */
@@ -92,6 +93,11 @@ export function Stop() {
 
     const [order, setOrder] = useState<OrderDetail | null>(null);
     const [filesAvailable, setFilesAvailable] = useState<boolean | null>(null);
+    /* Amending a stop that already has an outcome: which photograph is
+       being replaced, and the file picked for it. Null when the driver has
+       not asked to replace anything, which is nearly always. */
+    const [amend, setAmend] = useState<'courier_form' | 'patient_id' | null>(null);
+    const [amendPhoto, setAmendPhoto] = useState<File | null>(null);
     /* ADDENDUM 2 CLAUSE 4. University Health forbid leaving a package
        anywhere unattended, and a delivery is not complete until a person has
        received it. The server refuses the doorstep endpoint outright; without
@@ -176,6 +182,10 @@ export function Stop() {
 
     const needsSignature = order.signatureRequired || order.packages.some((p) => p.signatureRequired);
     const closed = ['delivered', 'failed', 'cancelled'].includes(order.status);
+    /* Cancelled is not amendable: it was called off before anybody had the
+       package, so there is no photograph of a handover to improve and no
+       door to have gone back to. The server refuses both routes for it. */
+    const amendable = order.status === 'delivered' || order.status === 'failed';
 
     /**
      * Record what happened.
@@ -284,6 +294,72 @@ export function Stop() {
             .filter((p) => reasons[p.id]?.code)
             .map((p) => ({ packageId: p.id, reasonCode: reasons[p.id]!.code, note: reasons[p.id]!.note ?? '' }));
         void post('attempt', { packages }, 'Recorded as a dry run.');
+    };
+
+    /* ─────────────── A STOP THAT ALREADY HAS AN OUTCOME (4 November)
+     *
+     * Until now this screen said "Finished" and offered a link back to the
+     * round, and the run list did not even link to a finished stop. Two
+     * things happen on the road often enough that the gate cost more than
+     * it protected.
+     *
+     * THE PHOTOGRAPH WAS NO GOOD. The handover happened and the record of
+     * it is right; the form came out blurred or a thumb covered the
+     * signature. A better one is appended -- the proof of delivery takes
+     * the newest of each kind -- and nothing about the outcome moves.
+     *
+     * THE DOOR OPENED AFTER ALL. A dry run at 15:40, the patient rings the
+     * pharmacy back, the driver is there again at 16:25. The only way
+     * through that was a phone call to somebody holding the admin role, so
+     * the delivery that really happened went unrecorded or got recorded as
+     * a fiction on another stop.
+     *
+     * THE SERVER HAS HAD BOTH SINCE 4 NOVEMBER and the Expo app has had
+     * the buttons. Nobody was reaching them: the drivers are on the web.
+     */
+    const sendEvidence = (e: FormEvent) => {
+        e.preventDefault();
+        if (amend === null || amendPhoto === null) return;
+        void post(
+            'evidence',
+            { kind: amend },
+            'The new photo is on the delivery. The old one is kept.',
+            undefined,
+            [{
+                blob: amendPhoto,
+                contentType: photoType(amendPhoto) ?? 'image/jpeg',
+                kind: amend,
+                bodyKey: 'fileId',
+            }],
+        ).then(() => { setAmend(null); setAmendPhoto(null); });
+    };
+
+    /* NOT THROUGH post(), which queues. A queued second attempt that fired
+       twice would be two couriers sent to one door, and the server's own
+       guard against that answers 409 -- which a driver should see now,
+       standing there, rather than three streets later. The photograph
+       amendment above does queue, because appending a picture twice is
+       harmless and losing it to a basement is not. */
+    const redeliver = async () => {
+        setBusy(true);
+        setMsg(null);
+        try {
+            const made = await api<{ id: number }>(`${base}/redeliver`, { method: 'POST', json: {} });
+            /* Straight onto the second attempt rather than back to the
+               list: the stop they are looking at is the first one and is
+               finished, and hunting a round for a row that was not there a
+               moment ago is how the wrong stop gets recorded. */
+            navigate(`/projects/${code}/orders/${made.id}/stop`);
+        } catch (err) {
+            setMsg({
+                kind: 'error',
+                text: err instanceof ApiError
+                    ? err.message
+                    : 'Could not reach dispatch. Nothing was recorded. Try again when you have signal.',
+            });
+        } finally {
+            setBusy(false);
+        }
     };
 
     const attemptReady = order.packages.length > 0
@@ -399,8 +475,111 @@ export function Stop() {
 
             {closed ? (
                 <div className="izy-card">
-                    <h2>Finished</h2>
-                    <p>This stop is recorded as <b>{order.status}</b>.</p>
+                    {/* WHAT THE RECORD SAYS, FIRST. A driver who opened the
+                        wrong stop should find that out from the first line
+                        rather than from the buttons under it. */}
+                    <h2>
+                        {order.status === 'delivered' ? 'Recorded as delivered'
+                            : order.status === 'failed' ? 'Recorded as not delivered'
+                                : 'Finished'}
+                    </h2>
+                    <p>
+                        {order.status === 'cancelled'
+                            ? <>This stop is recorded as <b>cancelled</b>.</>
+                            : order.status === 'delivered'
+                                ? 'This is on the record and stays there. You can still add a better photo of it.'
+                                : 'This attempt stays on the record. If you got back and handed it over, start the second attempt below.'}
+                    </p>
+
+                    {amendable && amend === null && (
+                        <>
+                            {filesAvailable === false ? (
+                                <p className="izy-muted">
+                                    Photo storage is not switched on, so there is nowhere to put a new picture.
+                                </p>
+                            ) : (
+                                <>
+                                    <CardButton
+                                        title="Photograph the signed form again"
+                                        tone="secondary"
+                                        compact
+                                        disabled={busy}
+                                        onClick={() => { setAmend('courier_form'); setAmendPhoto(null); }}
+                                        detail="Appended to this delivery. The old photo is kept."
+                                    />
+                                    {order.idRequired === true && (
+                                        <CardButton
+                                            title="Photograph the identification again"
+                                            tone="secondary"
+                                            compact
+                                            disabled={busy}
+                                            onClick={() => { setAmend('patient_id'); setAmendPhoto(null); }}
+                                            detail="The one most often shot at an angle nobody can read"
+                                        />
+                                    )}
+                                </>
+                            )}
+                            {order.status === 'failed' && (
+                                <CardButton
+                                    title="I delivered it after all"
+                                    tone="primary"
+                                    compact
+                                    busy={busy}
+                                    onClick={() => { void redeliver(); }}
+                                    detail="Opens a second attempt for the same patient. This one stays as it is."
+                                />
+                            )}
+                        </>
+                    )}
+
+                    {amendable && amend !== null && (
+                        <form onSubmit={sendEvidence}>
+                            <label className="izy-field">
+                                {amend === 'courier_form' ? 'The signed form' : 'The identification'}
+                                <input
+                                    type="file"
+                                    accept={PHOTO_ACCEPT}
+                                    capture="environment"
+                                    disabled={busy}
+                                    onChange={(e) => {
+                                        /* The same check the delivery form makes, and for the
+                                           same reason: a camera often reports image/jpg or
+                                           nothing at all, so lib/photos.ts decides the type
+                                           rather than trusting the browser's guess. */
+                                        const picked = e.target.files?.[0] ?? null;
+                                        const problem = picked === null ? null : photoProblem(picked);
+                                        if (problem !== null) {
+                                            setMsg({ kind: 'error', text: problem });
+                                            setAmendPhoto(null);
+                                            return;
+                                        }
+                                        setMsg(null);
+                                        setAmendPhoto(picked);
+                                    }}
+                                />
+                            </label>
+                            {amendPhoto && <p className="izy-muted">Photo ready, {Math.round(amendPhoto.size / 1024)} KB.</p>}
+                            <CardButton
+                                submit
+                                title="Add this photo"
+                                tone="primary"
+                                compact
+                                busy={busy}
+                                disabled={amendPhoto === null}
+                                detail={amendPhoto === null
+                                    ? 'Take the photograph first.'
+                                    : 'The delivery is unchanged. Only the picture is added.'}
+                            />
+                            <CardButton
+                                title="Back"
+                                tone="quiet"
+                                compact
+                                disabled={busy}
+                                onClick={() => { setAmend(null); setAmendPhoto(null); }}
+                            />
+                        </form>
+                    )}
+
                     <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
                 </div>
             ) : (
