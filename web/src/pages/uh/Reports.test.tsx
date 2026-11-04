@@ -46,6 +46,10 @@ const routes = (over = {}) => ({
     'GET /api/session': session,
     'GET /api/me/projects': projects,
     'GET /api/projects/uh/uh/reports/sla*': report(),
+    'GET /api/projects/uh/uh/sites': [
+        { id: 6, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+        { id: 7, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
+    ],
     ...over,
 });
 
@@ -99,6 +103,59 @@ describe('Reports', () => {
         for (const title of ['By period', 'By service type', 'By pharmacy', 'By zone', 'By day type']) {
             expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
         }
+    });
+
+    /* ── NARROWING THE CONTRACT FIGURES TO ONE PHARMACY ──────────────────
+       Nine counters release work on nine rhythms, so a completion rate that
+       dips is a question about one of them. The tests below are about the
+       filter reaching the SERVER -- a page that sifted 500 rows in the
+       browser would quietly answer a different question -- and about the
+       workbook carrying the same filter as the screen above it. */
+
+    it('asks the server for one pharmacy rather than sifting the answer here', async () => {
+        const mocked = renderReports();
+        await screen.findByRole('heading', { name: 'Performance' });
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        await waitFor(() => {
+            expect(mocked.calls.some((c) => c.includes('/reports/sla?') && c.includes('siteId=7'))).toBe(true);
+        });
+    });
+
+    it('names the pharmacy beside the dates, because these numbers get screenshotted', async () => {
+        renderReports();
+        await screen.findByRole('heading', { name: 'Performance' });
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        expect(await screen.findByText(/Robert B\. Green Pharmacy only/)).toBeInTheDocument();
+    });
+
+    it('sends the workbook the same filter the screen is showing', async () => {
+        // A spreadsheet covering nine counters under a screen showing one is
+        // the mismatch that reaches a client meeting.
+        renderReports();
+        await screen.findByRole('heading', { name: 'Performance' });
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        await waitFor(() => {
+            const href = screen.getByRole('link', { name: 'Export to Excel' }).getAttribute('href');
+            expect(href).toContain('siteId=7');
+        });
+    });
+
+    it('opens on the whole contract, and goes back to it', async () => {
+        // The page is named after the contract. Opening on one counter would
+        // answer a different question under the same heading.
+        const mocked = renderReports();
+        await screen.findByRole('heading', { name: 'Performance' });
+        expect((screen.getByLabelText('Pharmacy') as HTMLSelectElement).value).toBe('');
+        expect(mocked.calls.some((c) => c.includes('/reports/sla?') && c.includes('siteId='))).toBe(false);
+
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        await screen.findByText(/Robert B\. Green Pharmacy only/);
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '' } });
+        await waitFor(() => {
+            expect(screen.queryByText(/Pharmacy only/)).not.toBeInTheDocument();
+        });
+        const last = [...mocked.calls].reverse().find((c) => c.includes('/reports/sla?'))!;
+        expect(last, 'an empty pharmacy leaves the parameter off entirely').not.toContain('siteId');
     });
 
     it('puts the definitions on the page, including the inverted formula', async () => {

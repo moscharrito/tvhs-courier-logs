@@ -15,6 +15,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { todayIn } from '../../lib/when';
+import type { Site } from './Sites';
 
 interface Totals {
     orders: number; delivered: number; notDelivered: number; cancelled: number;
@@ -88,7 +89,36 @@ export function Reports() {
     const from = params.get('from') ?? fallback.from;
     const to = params.get('to') ?? fallback.to;
     const groupBy = params.get('groupBy') ?? 'week';
-    const query = `from=${from}&to=${to}&groupBy=${groupBy}`;
+    /* ── WHICH PHARMACY THE CONTRACT FIGURES ARE ABOUT ───────────────────
+     *
+     * The page read as one number for the whole contract. That is the right
+     * headline and the wrong only answer: nine counters release work on
+     * nine different rhythms, and a completion rate that dips is a question
+     * about one of them, not about all nine. "By pharmacy" further down
+     * showed the split but could not be made the basis of the headline, the
+     * rates, or the export.
+     *
+     * THE SERVER ALREADY TOOK `siteId` -- `gather` has filtered on it since
+     * the reports router was written. Only the screen never offered it, so
+     * this is a control over an existing filter rather than a new one, and
+     * no query had to be touched to add it.
+     *
+     * EMPTY MEANS THE WHOLE CONTRACT, and stays the default. What we are
+     * measured on is the contract; a page that opened on one pharmacy would
+     * quietly answer a different question from the one it is named after. */
+    const siteId = params.get('siteId') ?? '';
+    const [sites, setSites] = useState<Site[]>([]);
+    /* ONE STRING, USED THREE TIMES: the report request, the reload, and the
+       workbook link. The export inheriting the filter is the point -- a
+       spreadsheet that silently covered nine counters when the screen above
+       it showed one is the kind of mismatch that reaches a client meeting. */
+    const query = `from=${from}&to=${to}&groupBy=${groupBy}${siteId === '' ? '' : `&siteId=${siteId}`}`;
+
+    useEffect(() => {
+        /* Silent on failure: without the list the filter offers nothing and
+           the report still builds, which is the behaviour it had before. */
+        void api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
+    }, [code]);
 
     const load = useCallback(async () => {
         setMsg(null);
@@ -113,6 +143,10 @@ export function Reports() {
         next.set('to', to);
         next.set('groupBy', groupBy);
         next.set(key, value);
+        /* An empty pharmacy is absent from the URL rather than `siteId=`,
+           so a shared link reads as the whole contract instead of looking
+           like a filter somebody forgot to fill in. */
+        if (next.get('siteId') === '') next.delete('siteId');
         setParams(next, { replace: true });
     };
 
@@ -134,6 +168,13 @@ export function Reports() {
             <h1>Performance</h1>
             <p className="izy-sub">
                 <Link to={`/projects/${code}`}>{project.name}</Link> · {report.from} to {report.to} · {report.timezone}
+                {/* NAMED IN THE SUBTITLE, not only in the select. These
+                    numbers get screenshotted into emails, and a 94%
+                    completion rate with no counter beside it is a figure
+                    about the contract to everybody who reads it later. */}
+                {siteId !== '' && (
+                    <> · {sites.find((st) => String(st.id) === siteId)?.name ?? `pharmacy ${siteId}`} only</>
+                )}
             </p>
 
             {msg && <div className="izy-alert error" role="alert">{msg}</div>}
@@ -149,6 +190,12 @@ export function Reports() {
                     <label className="izy-field">Group by
                         <select value={groupBy} onChange={(e) => set('groupBy', e.target.value)}>
                             {GROUPINGS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                        </select>
+                    </label>
+                    <label className="izy-field">Pharmacy
+                        <select value={siteId} onChange={(e) => set('siteId', e.target.value)}>
+                            <option value="">Every pharmacy</option>
+                            {sites.map((st) => <option key={st.id} value={String(st.id)}>{st.name}</option>)}
                         </select>
                     </label>
                     {/* A plain link: the browser downloads it and no copy of
