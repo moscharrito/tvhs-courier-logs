@@ -43,19 +43,31 @@ const preview = {
 };
 
 /** The screen sends the file with fetch directly, so stub that call too. */
-function stub(routes: Record<string, unknown>, postResult?: { status: number; body: unknown }) {
+function stub(
+    routes: Record<string, unknown>,
+    postResult?: { status: number; body: unknown },
+    /* THE COMMIT ANSWERS DIFFERENTLY FROM THE PREVIEW, and until the
+       assign-on-import work there was nothing that cared: every commit
+       test asserted on a message built from `summary`, which the preview
+       body also carries. A test that reads `orderIds` does care, and one
+       that silently got the preview back would pass without ever asking
+       the thing it claims to ask. */
+    commitResult?: { status: number; body: unknown },
+) {
     const { fn, calls } = mockFetch(routes);
     const wrapped = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         if ((init?.method ?? 'GET').toUpperCase() === 'POST' && url.includes('/uh/imports')) {
             calls.push(`POST ${url.split('?')[0]}`);
-            const r = postResult ?? { status: 200, body: preview };
+            const isPreview = url.includes('/preview');
+            const r = (isPreview ? postResult : (commitResult ?? postResult))
+                ?? { status: 200, body: preview };
             return new Response(JSON.stringify(r.body), { status: r.status, headers: { 'Content-Type': 'application/json' } });
         }
         return fn(input, init);
     });
     vi.stubGlobal('fetch', wrapped);
-    return { calls };
+    return { calls, fn: wrapped };
 }
 
 function pickFile(name = 'list.xlsx') {
@@ -381,6 +393,162 @@ describe('ListImport', () => {
         expect(screen.getByText('ZIP is empty.')).toBeInTheDocument();
         expect(screen.getByText('Same recipient and address as row 4 in this file.')).toBeInTheDocument();
         expect(screen.getByText(/1 blocked, 1 duplicate/)).toBeInTheDocument();
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * GIVING THE LIST TO A DRIVER AS IT LANDS (4 November 2026).
+     *
+     * A counter uploads its own round and hands it to the driver standing
+     * in front of them. Doing that as two jobs -- import here, find the
+     * list on the board, assign it there -- is two screens for one act,
+     * and the second one gets forgotten.
+     *
+     * OPTIONAL, NEVER A GATE. Every test below that does not choose a
+     * driver is also a test that the upload still works exactly as it did.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    const driver = (over = {}) => ({
+        username: 'ada.courier', name: 'Ada Fitzgerald',
+        homeSiteId: 7, alsoCovers: [], onShift: true, ...over,
+    });
+    const withRoster = (drivers: unknown[], extra: Record<string, unknown> = {}) => ({
+        ...baseRoutes,
+        'GET /api/projects/uh/uh/roster': { drivers },
+        ...extra,
+    });
+
+    /** Site chosen, file picked, preview on screen. */
+    async function reviewed(routes: Record<string, unknown>) {
+        stub(routes);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+        await screen.findByText('1 of 3 rows will be imported');
+    }
+
+    it('offers the drivers mapped to that pharmacy who are on shift', async () => {
+        await reviewed(withRoster([
+            driver(),
+            driver({ username: 'bo.courier', name: 'Bo Other', onShift: false }),
+            driver({ username: 'far.courier', name: 'Far Away', homeSiteId: 9 }),
+        ]));
+
+        const pick = await screen.findByLabelText('Give it to');
+        expect(within(pick).getByRole('option', { name: 'Ada Fitzgerald' })).toBeInTheDocument();
+        /* Off shift today, and based at another counter: neither can take
+           this list, so neither is offered. */
+        expect(within(pick).queryByRole('option', { name: 'Bo Other' })).not.toBeInTheDocument();
+        expect(within(pick).queryByRole('option', { name: 'Far Away' })).not.toBeInTheDocument();
+    });
+
+    it('offers a driver who covers that pharmacy without being based at it', async () => {
+        /* Wheatley is nobody's home counter -- it is run from Vida as one
+           round -- so without the cover list its lists would have an empty
+           dropdown. The board's own assignment control reads the same two
+           fields for the same reason. */
+        await reviewed(withRoster([driver({ username: 'cov.courier', name: 'Cov Er', homeSiteId: 9, alsoCovers: [7] })]));
+        const pick = await screen.findByLabelText('Give it to');
+        expect(within(pick).getByRole('option', { name: 'Cov Er' })).toBeInTheDocument();
+    });
+
+    it('defaults to nobody, so the upload is still one button', async () => {
+        await reviewed(withRoster([driver()]));
+        expect(await screen.findByLabelText('Give it to')).toHaveValue('');
+        expect(within(screen.getByLabelText('Give it to')).getByRole('option', { name: 'Nobody yet' })).toBeInTheDocument();
+    });
+
+    it('imports without a run when nobody is chosen', async () => {
+        /* THE NO-REGRESSION TEST. The path a counter has always used must
+           not acquire a second request. */
+        const { calls } = stub(withRoster([driver()]));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+        await screen.findByText('1 of 3 rows will be imported');
+
+        fireEvent.click(screen.getByRole('button', { name: /^Import 1 orders?$/ }));
+        await screen.findByText(/Imported/);
+        expect(calls.some((c) => c.includes('/uh/runs'))).toBe(false);
+    });
+
+    /** What the server answers a commit with: the list, and what it made. */
+    const committed = {
+        status: 201,
+        body: {
+            id: 77,
+            site: { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+            serviceDate: '2026-11-04',
+            summary: { total: 3, willImport: 1, blocked: 0, duplicates: 0, outOfArea: 0, warnings: 0, imported: 3 },
+            orderIds: [501, 502, 503],
+        },
+    };
+
+    async function importedWith(driverUsername: string | null, runRoute?: unknown) {
+        const { calls, fn } = stub(
+            withRoster([driver()], runRoute === undefined ? {} : { 'POST /api/projects/uh/uh/runs': runRoute }),
+            undefined,
+            committed,
+        );
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+        await screen.findByText('1 of 3 rows will be imported');
+        if (driverUsername !== null) {
+            fireEvent.change(await screen.findByLabelText('Give it to'), { target: { value: driverUsername } });
+        }
+        fireEvent.click(screen.getByRole('button', { name: /^Import 1 orders?$/ }));
+        return { calls, fn };
+    }
+
+    it('hands the deliveries it just made to the chosen driver', async () => {
+        /* THROUGH POST /runs, the call a dispatcher makes by hand. It
+           checks membership, refuses an order already on another run and
+           writes the custody events; none of that is re-implemented here. */
+        const { fn } = await importedWith('ada.courier', { ok: true, id: 9, rejected: [] });
+        await screen.findByText(/Given to Ada Fitzgerald/);
+
+        const run = fn.mock.calls.find(([u]) => String(u).includes('/uh/runs'));
+        expect(run, 'no run was created').toBeDefined();
+        const sent = JSON.parse(String((run as unknown[])[1] ? (run as [unknown, RequestInit])[1].body : '{}'));
+        expect(sent.courierUsername).toBe('ada.courier');
+        /* The ids the import just returned, not a second lookup. */
+        expect(sent.orderIds).toEqual([501, 502, 503]);
+        expect(sent.serviceDate).toBe('2026-11-04');
+    });
+
+    it('says the list is imported when the assignment is refused', async () => {
+        /* THE FAILURE THAT MATTERS. The import is already committed. A
+           message that reads as a failure sends somebody back to upload the
+           same file again, which is how one round becomes two. */
+        await importedWith('ada.courier', { status: 409, body: { error: 'That courier is not on this project.' } });
+
+        const said = await screen.findByText(/The list is imported/);
+        expect(said).toBeInTheDocument();
+        expect(screen.getByText(/not on this project/)).toBeInTheDocument();
+        expect(screen.getByText(/Assign it from the board/)).toBeInTheDocument();
+    });
+
+    it('says why there is no dropdown rather than leaving a gap', async () => {
+        /* An absent control with no explanation reads as a broken feature.
+           The import is unaffected either way. */
+        await reviewed(withRoster([driver({ onShift: false })]));
+        expect(await screen.findByText(/Nobody mapped to this pharmacy is on shift/)).toBeInTheDocument();
+        expect(screen.queryByLabelText('Give it to')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^Import 1 orders?$/ })).toBeEnabled();
+    });
+
+    it('still imports when the roster cannot be read at all', async () => {
+        /* The dropdown is a convenience hanging off a second endpoint. If
+           that endpoint is down, the thing this screen is actually for must
+           still work. */
+        await reviewed({ ...baseRoutes, 'GET /api/projects/uh/uh/roster': { status: 500, body: { error: 'nope' } } });
+        expect(screen.getByRole('button', { name: /^Import 1 orders?$/ })).toBeEnabled();
     });
 
     it('marks a blocked row as blocked and gives it no checkbox', async () => {

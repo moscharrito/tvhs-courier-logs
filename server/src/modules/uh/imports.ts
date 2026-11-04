@@ -731,6 +731,14 @@ export function createImportsRouter(
             serviceDate: a.serviceDate,
             receivedAt: receivedIso,
             summary: { ...summary, imported: created },
+            /* THE DELIVERIES IT MADE, in the order they were written.
+             *
+             * Added so the screen that imported them can hand them straight
+             * to a driver without a second round trip to find out what it
+             * just created. Additive: nothing that ignored this field
+             * behaves differently, and the ids are already in hand here --
+             * the RETURNING in the batch above produced them. */
+            orderIds,
             mappingSaved: options.saveMapping,
         });
     }));

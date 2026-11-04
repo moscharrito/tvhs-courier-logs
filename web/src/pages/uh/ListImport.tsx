@@ -190,6 +190,16 @@ export function importOutcome(done: { id: number; summary: Summary & { imported:
     };
 }
 
+/** A driver, as the roster endpoint describes one. The three fields the
+ *  dropdown needs and nothing else. */
+interface RosterDriver {
+    username: string;
+    name: string;
+    homeSiteId: number | null;
+    alsoCovers?: number[];
+    onShift: boolean;
+}
+
 export function ListImport({ projectCode, timezone, canImport, canWithdraw, sites: given, title, intro, refusal }: {
     projectCode: string; timezone: string; canImport: boolean;
     /* DISPATCH ONLY, and separate from canImport for that reason. A pharmacy
@@ -262,6 +272,26 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
         if (given !== undefined) return;
         try { setLoaded(await api<Site[]>(`/api/projects/${projectCode}/uh/sites`)); } catch { setLoaded([]); }
     }, [projectCode, given]);
+    const [withdrawing, setWithdrawing] = useState<number | null>(null);
+    /* ─────────────────── WHO TO GIVE THE LIST TO, OPTIONALLY
+     *
+     * A counter uploads its own round and hands it to the driver standing
+     * in front of them. Doing that as two jobs -- import here, then find
+     * the list on the board and assign it -- is two screens for one act,
+     * and the second one gets forgotten.
+     *
+     * OPTIONAL, AND NOT A GATE. Empty means import and nothing else, which
+     * is exactly what this screen did before. Nothing about the upload
+     * path depends on it.
+     *
+     * IT REUSES WHAT THE BOARD USES. The list comes from the roster
+     * endpoint -- the same homeSiteId, alsoCovers and onShift the
+     * assignment dropdown reads -- and the assignment itself is POST
+     * /runs, the call a dispatcher makes by hand. No second way to create
+     * a run, and nothing new to keep in step. */
+    const [roster, setRoster] = useState<RosterDriver[] | null>(null);
+    const [assignTo, setAssignTo] = useState('');
+
     const loadRecent = useCallback(async () => {
         const q = new URLSearchParams();
         if (findSite !== '') q.set('siteId', String(findSite));
@@ -278,10 +308,42 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
     useEffect(() => { void loadSites(); }, [loadSites]);
     useEffect(() => { void loadRecent(); }, [loadRecent]);
 
-    const reset = () => { setPreview(null); setSkipRows([]); setAcceptDup([]); setMapping({}); setMsg(null); };
+    /* THE ROSTER, ONCE. Who is on shift changes during a day, but this
+       screen is open for a minute at a time and a stale dropdown is
+       caught by the server: POST /runs checks membership itself, and a
+       driver who went off shift between the fetch and the import is a
+       refusal with a sentence rather than a silent wrong assignment.
+       Failure is silent on purpose -- the dropdown simply does not
+       appear, and importing without assigning is the normal case. */
+    useEffect(() => {
+        if (canImport !== true) return;
+        let alive = true;
+        void (async () => {
+            try {
+                const got = await api<{ drivers: RosterDriver[] }>(`/api/projects/${projectCode}/uh/roster`);
+                if (alive) setRoster(got.drivers ?? []);
+            } catch { if (alive) setRoster([]); }
+        })();
+        return () => { alive = false; };
+    }, [projectCode, canImport]);
+
+    /* ON SHIFT AND MAPPED TO THE PHARMACY THIS LIST IS FOR.
+     *
+     * The same two rules the board's assignment dropdown applies, and the
+     * same reason for the second one: a counter's own drivers, plus the
+     * ones who cover it. Wheatley is nobody's home pharmacy -- it is run
+     * from Vida as one round -- so without the cover list its lists would
+     * have an empty dropdown. */
+    const candidates = (roster ?? []).filter((d) => {
+        if (!d.onShift) return false;
+        if (siteId === '') return false;
+        const site = Number(siteId);
+        return d.homeSiteId === site || (d.alsoCovers ?? []).includes(site);
+    });
+
+    const reset = () => { setPreview(null); setSkipRows([]); setAcceptDup([]); setMapping({}); setMsg(null); setAssignTo(''); };
 
     /** The list currently being taken off, so only its own button goes quiet. */
-    const [withdrawing, setWithdrawing] = useState<number | null>(null);
 
     /* TAKING A LIST BACK OFF.
      *
@@ -371,8 +433,64 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                    note on `mappingMoved` below. */
                 setPreviewedWith(mappingKey(p.mapping));
             } else {
-                const done = json as { id: number; summary: Summary & { imported: number } };
-                setMsg(importOutcome(done));
+                const done = json as {
+                    id: number;
+                    summary: Summary & { imported: number };
+                    orderIds?: number[];
+                    site?: { id: number; code: string; name: string };
+                    serviceDate?: string;
+                };
+                const outcome = importOutcome(done);
+
+                /* ─── AND THEN HAND IT OVER, IF A DRIVER WAS CHOSEN.
+                 *
+                 * A SEPARATE CALL, AFTER THE IMPORT HAS LANDED, and that
+                 * ordering is the whole safety of this. The import is
+                 * already committed and reported before anything is
+                 * assigned, so the worst this can do is leave a list
+                 * imported and unassigned -- which is exactly what this
+                 * screen produced before the dropdown existed, and what
+                 * the board is for.
+                 *
+                 * POST /runs is the call a dispatcher makes by hand. It
+                 * checks membership, it refuses an order already on
+                 * another run, and it writes the custody events. Nothing
+                 * here re-implements any of that. */
+                const taker = assignTo;
+                const ids = done.orderIds ?? [];
+                if (taker !== '' && ids.length > 0) {
+                    try {
+                        const run = await api<{ rejected?: unknown[] }>(
+                            `/api/projects/${projectCode}/uh/runs`,
+                            {
+                                method: 'POST',
+                                json: {
+                                    courierUsername: taker,
+                                    label: `${done.site?.name ?? 'List'} ${done.serviceDate ?? ''}`.trim(),
+                                    serviceDate: done.serviceDate,
+                                    orderIds: ids,
+                                },
+                            },
+                        );
+                        const refused = (run.rejected ?? []).length;
+                        const who = candidates.find((d) => d.username === taker);
+                        outcome.text += refused === 0
+                            ? ` Given to ${who?.name ?? taker}.`
+                            : ` Given to ${who?.name ?? taker}, except ${refused} `
+                                + `${refused === 1 ? 'delivery' : 'deliveries'} it would not take.`;
+                    } catch (err) {
+                        /* The import stands. Said as a separate sentence so
+                           nobody reads "could not assign" as "did not
+                           import" and uploads the file again. */
+                        outcome.kind = 'warn';
+                        outcome.text += ' The list is imported. It could not be given to that driver: '
+                            + (err instanceof ApiError ? err.message : 'dispatch could not be reached.')
+                            + ' Assign it from the board.';
+                    }
+                }
+
+                setMsg(outcome);
+                setAssignTo('');
                 setPreview(null);
                 setFile(null);
                 setSkipRows([]);
@@ -594,6 +712,31 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                 <Pager of={pagedPreview} noun="rows" />
 
                             <div className="izy-row" style={{ marginTop: 14 }}>
+                                {/* ─── WHO TAKES IT, BEFORE THE BUTTON THAT
+                                    SENDS IT, because that is the order the
+                                    sentence runs in: give this list to
+                                    somebody, then import it.
+
+                                    OPTIONAL, AND LABELLED AS OPTIONAL.
+                                    "Nobody yet" is the first option and the
+                                    default, so the upload a counter has
+                                    always done is still one button. Nothing
+                                    about importing depends on this. */}
+                                {canImport === true && candidates.length > 0 && (
+                                    <label className="izy-field izy-assign-on-import">
+                                        Give it to
+                                        <select
+                                            value={assignTo}
+                                            disabled={busy !== null}
+                                            onChange={(e) => setAssignTo(e.target.value)}
+                                        >
+                                            <option value="">Nobody yet</option>
+                                            {candidates.map((d) => (
+                                                <option key={d.username} value={d.username}>{d.name}</option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                )}
                                 <button
                                     className="izy-btn"
                                     type="button"
@@ -604,6 +747,17 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                 </button>
                                 <button className="izy-btn secondary" type="button" disabled={busy !== null} onClick={reset}>Cancel</button>
                             </div>
+                            {/* WHY THERE IS NO DROPDOWN, when there is none.
+                                An absent control with no explanation reads as
+                                a feature that is broken; this says which of
+                                the two rules nobody passed, and the import is
+                                unaffected either way. */}
+                            {canImport === true && roster !== null && candidates.length === 0 && (
+                                <p className="izy-muted">
+                                    Nobody mapped to this pharmacy is on shift, so there is no one to give it to
+                                    here. Import it and assign it from the board.
+                                </p>
+                            )}
                         </>
                     )}
                 </>
