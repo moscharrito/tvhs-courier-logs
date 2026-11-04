@@ -19,7 +19,7 @@
    avoid matching twenty rows at once. */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { MyRun, mapsUrl } from './MyRun';
 import { AuthProvider } from '../../app/auth';
@@ -61,13 +61,17 @@ const mine = (over = {}) => ({
 function renderRun(routes: Record<string, unknown>) {
     const mock = mockFetch(routes);
     Object.assign(globalThis, { lastMock: mock });
-    return render(
+    render(
         <MemoryRouter initialEntries={['/projects/uh/my-run']}>
             <AuthProvider>
                 <Routes><Route path="/projects/:code/my-run" element={<MyRun />} /></Routes>
             </AuthProvider>
         </MemoryRouter>,
     );
+    /* The mock rather than the render result: the day filter is about
+       WHICH request went out, so its tests read `calls`. Nothing used the
+       render result. */
+    return mock;
 }
 
 /** The row of All stops for the stop a courier is driving to right now.
@@ -318,6 +322,111 @@ describe('MyRun', () => {
         const open = await screen.findByRole('link', { name: 'Open the record' });
         expect(open).toHaveAttribute('href', '/projects/uh/orders/21/stop');
         expect(screen.queryByRole('link', { name: 'Open the stop' })).not.toBeInTheDocument();
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * WHICH DAY'S ROUND (4 November 2026).
+     *
+     * A photograph of the signed form that came out blurred is found
+     * later, and the stop it belongs to is on the day it happened. The
+     * stop screen can amend one now; without a way back to that day there
+     * was nothing to open.
+     *
+     * The property these are really testing: the screen fixates on today
+     * and only moves when a driver moves it.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('asks for no day at all, so today is the SERVER\'s and not the phone\'s', async () => {
+        /* A handset an hour out, or one that has crossed into tomorrow UTC
+           while it is still Tuesday in San Antonio, must see the round it
+           is driving. Reading a date off the browser and sending it is the
+           bug this avoids, so the first request names no date. */
+        const { calls } = renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(calls).toContain('GET /api/projects/uh/uh/runs/mine');
+        expect(calls.some((c) => c.includes('serviceDate='))).toBe(false);
+    });
+
+    it('fetches the day a driver picks, and says which day it is', async () => {
+        const { calls } = renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine?serviceDate=2026-09-10': mine({
+                serviceDate: '2026-09-10',
+                runs: [{
+                    id: 11, courierUsername: 'ada.courier', serviceDate: '2026-09-10',
+                    label: 'Tuesday', status: 'completed', startedAt: null,
+                    stops: [stop({ status: 'delivered' })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+
+        fireEvent.change(screen.getByLabelText('Show the round for a day'), { target: { value: '2026-09-10' } });
+
+        await waitFor(() => expect(calls).toContain('GET /api/projects/uh/uh/runs/mine?serviceDate=2026-09-10'));
+        /* The title IS the day once it is not today: every count and every
+           row under it belongs to that day, and a heading reading "Today"
+           over last Tuesday is the most misleading word on the page. */
+        expect(await screen.findByRole('heading', { name: '2026-09-10' })).toBeInTheDocument();
+    });
+
+    it('offers a way back, and going back asks for no day again', async () => {
+        const { calls } = renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine?serviceDate=2026-09-10': mine({ serviceDate: '2026-09-10', runs: [] }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        fireEvent.change(screen.getByLabelText('Show the round for a day'), { target: { value: '2026-09-10' } });
+        await screen.findByRole('heading', { name: '2026-09-10' });
+
+        const before = calls.length;
+        fireEvent.click(screen.getByRole('button', { name: 'Back to today' }));
+
+        await screen.findByRole('heading', { name: 'Today' });
+        /* Unfiltered again, not ?serviceDate=<today>: the server decides
+           what today is, every time. */
+        expect(calls.slice(before)).toContain('GET /api/projects/uh/uh/runs/mine');
+    });
+
+    it('has no way back while it is already on today', async () => {
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.queryByRole('button', { name: 'Back to today' })).not.toBeInTheDocument();
+    });
+
+    it('will not offer a day that has not happened', async () => {
+        /* A round is assigned for a day that has arrived, and the reason
+           this control exists is a proof of delivery on a day that has
+           gone. Without the cap a mistyped year shows an empty round,
+           which reads as "no work that day" rather than as a typo. */
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.getByLabelText('Show the round for a day')).toHaveAttribute('max', '2026-09-14');
+    });
+
+    it('drops the Next card on a day that has gone', async () => {
+        /* There is no "next" on a finished day: anything still open on it
+           was missed, not queued, and a card saying Next over it would
+           send a driver to a door they are not due at. The list stays,
+           which is what the day is being opened for. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine?serviceDate=2026-09-10': mine({
+                serviceDate: '2026-09-10',
+                runs: [{
+                    id: 11, courierUsername: 'ada.courier', serviceDate: '2026-09-10',
+                    label: 'Tuesday', status: 'started', startedAt: null,
+                    /* Deliberately still open, which is the case that would
+                       otherwise render a Next card for a day gone by. */
+                    stops: [stop({ status: 'picked_up' })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        fireEvent.change(screen.getByLabelText('Show the round for a day'), { target: { value: '2026-09-10' } });
+        await screen.findByRole('heading', { name: '2026-09-10' });
+
+        expect(screen.queryByLabelText('Next stop')).not.toBeInTheDocument();
+        expect(screen.getByText(/An earlier day/)).toBeInTheDocument();
+        /* And the round itself is still there to be opened. */
+        expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(0);
     });
 
     it('shows the round in both places, the panel and the list', async () => {

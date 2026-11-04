@@ -58,6 +58,17 @@ export function RouteIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8
     );
 }
 
+/** Which day's round. A month, with its two hanging rings. */
+export function CalendarIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <svg {...frame(size)}>
+            <rect x={3.5} y={5.5} width={17} height={15} rx={2.5} stroke={color} strokeWidth={strokeWidth} />
+            <path d="M3.5 10h17" stroke={color} strokeWidth={strokeWidth} />
+            <path d="M8 3.5v4M16 3.5v4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        </svg>
+    );
+}
+
 /** Collecting a batch into the van. */
 export function BoxIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 }: IconProps) {
     return (

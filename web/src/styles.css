@@ -649,6 +649,35 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
     .izy-roster-row { grid-template-columns: 1fr; gap: 6px; align-items: start; }
 }
 
+/* ── Which day's round (pages/uh/MyRun.tsx) ────────────────────────────────
+ *
+ * A native date input, so the phone opens its own picker: a driver already
+ * knows that one, it needs no library, and it is keyboard reachable without
+ * anything here making it so. The calendar glyph is the affordance on a
+ * desktop, where the browser's own indicator is small and easy to miss.
+ *
+ * The label wraps the input, so the glyph is part of the control's hit area
+ * rather than decoration beside it. */
+.izy-dayline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.izy-daypick {
+    display: inline-flex; align-items: center; gap: 8px;
+    min-height: 40px; padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--izy-glass-hair);
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--izy-green);
+}
+.izy-daypick input {
+    border: 0; background: transparent; padding: 0;
+    font: inherit; font-size: 15px; font-weight: 600; color: var(--izy-ink);
+    /* Safari gives a date input a width of its own and will not shrink it
+       below that, which on a 375px screen pushed "Back to today" onto a
+       second row for no reason. */
+    min-width: 0; max-width: 150px;
+}
+.izy-daypick input:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 4px; }
+.izy-dayline-note { margin: 8px 0 0; font-size: 13px; line-height: 17px; }
+
 /* Narrows the lanes on the board. Sits above a grid that is already
    several cards wide, so it is capped rather than stretched: a search box
    the width of the screen reads as a page header, not as a filter. */

@@ -59,7 +59,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { ShiftBar } from './ShiftBar';
 import { Section } from '../../app/Section';
 import { CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
-import { HistoryIcon } from '../../app/Icons';
+import { CalendarIcon, HistoryIcon } from '../../app/Icons';
 
 interface Stop {
     sequence: number;
@@ -115,6 +115,31 @@ export function MyRun() {
     const clock = clockFor(useProjectTimezone(code));
     const [data, setData] = useState<MineResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
+    /* ─────────────────────── WHICH DAY'S ROUND IS ON SCREEN
+     *
+     * Null means today, and today is the SERVER'S, not this phone's. The
+     * endpoint already defaults to todayIn(project.timezone) and tells us
+     * in its answer which day that was, so asking for no day at all is the
+     * only way to be sure a handset whose clock is an hour out, or which
+     * has crossed into tomorrow UTC while it is still Tuesday in San
+     * Antonio, sees the round it is actually driving. Reading a date off
+     * the browser and sending that would introduce the bug this avoids.
+     *
+     * It stays null until the driver picks a day. That is the "fixates on
+     * today" part: a refresh, a shift toggle, coming back to the tab in
+     * the afternoon -- all of them land on today again, because nothing
+     * ever quietly wrote a date into this.
+     *
+     * WHY A DRIVER NEEDS LAST TUESDAY AT ALL: a photograph of the signed
+     * form that came out blurred is found later, and the stop it belongs
+     * to is on the day it happened. Amending it is what this screen now
+     * reaches (see Stop.tsx), and without a way back to that day there was
+     * nothing to open. */
+    const [day, setDay] = useState<string | null>(null);
+    /* What the server called today, learned from the first unfiltered
+       load. Null until then, which is why isToday below treats "not known
+       yet" as today rather than as a different day. */
+    const [today, setToday] = useState<string | null>(null);
 
     /* Declared before the early returns below, which is why it takes the
        stops off `data` defensively rather than off the list computed further
@@ -139,13 +164,18 @@ export function MyRun() {
     const load = useCallback(async () => {
         setError(null);
         try {
-            setData(await api<MineResponse>(`/api/projects/${code}/uh/runs/mine`));
+            const asked = day === null ? '' : `?serviceDate=${encodeURIComponent(day)}`;
+            const got = await api<MineResponse>(`/api/projects/${code}/uh/runs/mine${asked}`);
+            setData(got);
+            /* Only from an unfiltered load: the answer to "what day is it"
+               comes from the request that did not name one. */
+            if (day === null) setToday(got.serviceDate);
         } catch (err) {
             // A courier is often somewhere with no signal. Say that plainly
             // rather than showing an empty run, which would read as "no work".
             setError(err instanceof ApiError ? err.message : 'Cannot reach dispatch. Check your signal and try again.');
         }
-    }, [code]);
+    }, [code, day]);
     useEffect(() => { void load(); }, [load]);
     /* THE SHIFT CONTROL MOVED INTO THE TOP BAR, which the shell renders and
        which knows nothing about a run. What a courier may do changes the
@@ -182,8 +212,24 @@ export function MyRun() {
        which is every server until somebody sets UH_MAPS_EMBED, behaves the
        way it did before ticket 5.13. */
     const embed = data.directions?.embed === true;
-    const subtitle = [user?.name, data.serviceDate, `${done} of ${stops.length} done`]
-        .filter((part) => part !== undefined && part !== '')
+    /* The day actually on screen is whatever the server answered with,
+       never what was asked for: those agree, and if they ever stop
+       agreeing the screen should say what it is showing. */
+    const viewing = data.serviceDate;
+    /* Unknown counts as today. The first load has not come back yet in
+       that window, and the alternative -- treating it as "some other day"
+       -- would flash the back-to-today banner on every cold start. */
+    const isToday = today === null || viewing === today;
+    /* The date is in the subtitle only while the title says "Today". Once
+       the title IS the date, repeating it underneath is the same fact
+       twice on two lines of a 375px screen.
+
+       YYYY-MM-DD in the title rather than "Tue 27 October", because every
+       other date in this application is YYYY-MM-DD and lib/when.ts is
+       blunt about why: two date formats on one card is how somebody reads
+       the wrong one. */
+    const subtitle = [user?.name, isToday ? data.serviceDate : null, `${done} of ${stops.length} done`]
+        .filter((part) => part !== undefined && part !== null && part !== '')
         .join(' · ');
 
     return (
@@ -200,7 +246,58 @@ export function MyRun() {
                     a round. On the heading row it is next to the day it
                     belongs to, and the thing immediately under it is the
                     work the shift is for. */}
-                <ScreenHeader title="Today" subtitle={subtitle} right={<ShiftBar code={code} />} />
+                {/* THE TITLE IS THE DAY. "Today" while on today, and the
+                    date itself the moment it is not -- because every other
+                    thing on this screen (the counts, the next stop, the
+                    list) is about the day being looked at, and a heading
+                    that said "Today" over last Tuesday's round would be the
+                    single most misleading word on the page. */}
+                <ScreenHeader
+                    title={isToday ? 'Today' : viewing}
+                    subtitle={subtitle}
+                    right={<ShiftBar code={code} />}
+                />
+
+                {/* ─── WHICH DAY, as a date field rather than a list of
+                    recent ones. A native date input opens the phone's own
+                    picker, which a driver already knows how to use, needs
+                    no library, and is reachable from a keyboard without
+                    anything being written here to make it so.
+
+                    CAPPED AT TODAY. A round is assigned for a day that has
+                    arrived; the reason this control exists is a proof of
+                    delivery that needs replacing on a day that has gone.
+                    Without the cap a mistyped year silently shows an empty
+                    round, which reads as "no work that day" rather than as
+                    a typo. */}
+                <div className="izy-dayline">
+                    <label className="izy-daypick">
+                        <CalendarIcon size={18} />
+                        <span className="izy-visually-hidden">Show the round for a day</span>
+                        <input
+                            type="date"
+                            value={viewing}
+                            max={today ?? viewing}
+                            onChange={(e) => setDay(e.target.value === '' ? null : e.target.value)}
+                        />
+                    </label>
+                    {!isToday && (
+                        <button type="button" className="izy-btn secondary small" onClick={() => setDay(null)}>
+                            Back to today
+                        </button>
+                    )}
+                </div>
+
+                {!isToday && (
+                    /* Said once, plainly, above the round. A driver who
+                        has gone looking for Tuesday and then forgotten
+                        they did would otherwise read a finished day as a
+                        morning with nothing in it. */
+                    <p className="izy-muted izy-dayline-note">
+                        An earlier day. Nothing new is assigned here — open a stop to add a
+                        photograph to what was recorded.
+                    </p>
+                )}
 
                 {/* NO PIN PROMPT HERE. It lived above the run between tickets
                     5.4 and this one, offering enrolment to anybody whose phone
@@ -210,7 +307,13 @@ export function MyRun() {
                     account, which is where a setting belongs. University
                     Health drivers do not use a PIN at all. */}
 
-                {current !== null ? (
+                {/* THE NEXT STOP IS A TODAY IDEA. On a day that has gone
+                    there is no "next": anything still open on it was missed,
+                    not queued, and a card saying Next over it would send a
+                    driver to a door they are not due at. The list below
+                    still shows everything, which is what the day is being
+                    opened for. */}
+                {!isToday ? null : current !== null ? (
                     <Panel role="group" aria-label="Next stop" className="izy-next">
                         <h2 className="izy-lede-kicker">Next: stop {current.sequence}</h2>
                         <p className="izy-lede">{current.recipientName}</p>
