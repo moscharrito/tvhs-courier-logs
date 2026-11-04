@@ -636,15 +636,24 @@ describe('Stop', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         await waitFor(() => expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/redeliver'))).toBe(true));
-        await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/99/stop'));
 
         /* ON THE FORM, not on the menu above it. ?handover=1 carried them
            there and was then stripped, so the assertion is what is on
            screen rather than what is in the URL -- and stripping it is
            the point: Back out of the form must not read the flag again
-           and put them straight back in. */
-        expect(await screen.findByRole('heading', { name: 'Handed over' })).toBeInTheDocument();
-        expect(screen.getByTestId('search')).toHaveTextContent('');
+           and put them straight back in.
+
+           ONE waitFor FOR THE WHOLE LANDING, with room to breathe. The
+           click starts a POST, a navigation, a GET for the new order and
+           an effect that opens the form -- four turns of the loop. Three
+           separate one-second waits in a row flaked about once in forty
+           full-suite runs, which is often enough to teach somebody that a
+           red suite means nothing. */
+        await waitFor(() => {
+            expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/99/stop');
+            expect(screen.getByRole('heading', { name: 'Handed over' })).toBeInTheDocument();
+            expect(screen.getByTestId('search').textContent).not.toContain('handover');
+        }, { timeout: 5000 });
     });
 
     it('says what went wrong rather than moving on, when the server refuses', async () => {
