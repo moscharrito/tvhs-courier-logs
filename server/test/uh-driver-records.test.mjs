@@ -137,6 +137,84 @@ describe('what each driver delivered', () => {
     });
 });
 
+describe('narrowed to one pharmacy', () => {
+    /* Every other screen on the portal answers "that counter, that day".
+       This one is the payment run, so it answers it with a warning attached,
+       and these tests are about the warning being impossible to lose as much
+       as about the filter being right.
+
+       The fixture is already the right shape: Ada delivered twice to
+       Discharge, once to Green, and failed once at Discharge. Bo delivered
+       once, to Discharge only. */
+
+    it('counts only that pharmacy\'s deliveries', async () => {
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
+        expect(res.status, JSON.stringify(res.body).slice(0, 300)).toBe(200);
+        const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
+        expect(ada.delivered, 'Ada made one delivery to Green').toBe(1);
+    });
+
+    it('leaves out a failure that happened at another pharmacy', async () => {
+        /* Ada's failed attempt was at Discharge. Counting it under Green
+           would put a courier's bad day against a counter they did not
+           visit, which is the kind of number a site manager escalates. */
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
+        const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
+        expect(ada.failed).toBe(0);
+    });
+
+    it('still lists a driver who worked a different pharmacy, at nought', async () => {
+        /* THE FILTER NARROWS THE DELIVERIES, NEVER THE ROSTER. Bo worked
+           Discharge only. Dropping Bo from the Green list would make a total
+           that cannot be checked against the roster -- the same reason the
+           unfiltered list keeps the drivers who delivered nothing. */
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
+        const bo = res.body.drivers.find((d) => d.username === 'pay.bo');
+        expect(bo, 'Bo should still be on the list').toBeTruthy();
+        expect(bo.delivered).toBe(0);
+    });
+
+    it('tells the screen which pharmacy it answered, so a slice cannot read as a payment run', async () => {
+        /* The banner and the "to disburse" label are driven by this field
+           rather than by the URL. A response that came back unmarked would
+           let filtered pay render under a heading that says what somebody is
+           owed. */
+        const one = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
+        expect(one.body.siteId).toBe(green.id);
+        const all = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        expect(all.body.siteId, 'no filter is null, not absent').toBeNull();
+    });
+
+    it('counts every pharmacy when none is asked for', async () => {
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
+        expect(ada.delivered, 'two to Discharge and one to Green').toBe(3);
+        expect(ada.failed).toBe(1);
+    });
+
+    it('treats a pharmacy it cannot read as every pharmacy, rather than refusing', async () => {
+        /* This URL gets bookmarked and mailed around. A stray query string
+           should show the whole contract, which is the safe answer here, not
+           a 400 in front of somebody trying to run payroll. */
+        for (const bad of ['', 'all', '-3', '0', '2.5']) {
+            const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${bad}`);
+            expect(res.status, `siteId=${bad}`).toBe(200);
+            expect(res.body.siteId, `siteId=${bad}`).toBeNull();
+            const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
+            expect(ada.delivered, `siteId=${bad}`).toBe(3);
+        }
+    });
+
+    it('gives a pharmacy with no deliveries an empty record rather than an error', async () => {
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const quiet = sites.find((x) => x.id !== discharge.id && x.id !== green.id);
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${quiet.id}`);
+        expect(res.status).toBe(200);
+        expect(res.body.totals.delivered).toBe(0);
+        expect(res.body.drivers.length, 'the roster is still there').toBeGreaterThan(0);
+    });
+});
+
 describe('what it comes to', () => {
     it('gives no figure at all while the rates are unset', async () => {
         /* THE ONE THAT COSTS MONEY. Nought beside three deliveries reads as

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Drivers, money } from './Drivers';
 import { DriverRecord } from './DriverRecord';
@@ -34,6 +34,10 @@ const totals = (over = {}) => ({
 const everyone = (over = {}) => ({
     from: '2026-10-01', to: '2026-10-31', timezone: 'America/Chicago', currency: 'USD',
     rateSet: true,
+    /* Null is the whole contract, which is what the screen must open on.
+       A fixture that left this out would let the banner tests pass against
+       `undefined` and prove nothing. */
+    siteId: null,
     drivers: [
         { username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...totals() },
         { username: 'pay.bo', name: 'Bo Pay', daysWorked: 0, delivered: 0, failed: 0, payCents: 0, rateSet: true, basis: 'serviceType', lines: {} },
@@ -62,6 +66,10 @@ function renderDrivers(over = {}) {
         'GET /api/session': admin,
         'GET /api/me/projects': asAdmin,
         'GET /api/projects/uh/uh/drivers*': everyone(),
+        'GET /api/projects/uh/uh/sites': [
+            { id: 6, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+            { id: 7, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
+        ],
         ...over,
     });
     render(
@@ -163,6 +171,121 @@ describe('every driver', () => {
  * the role, because a component that re-decides who may see money is a
  * second copy of the rule and the copy that drifts is the one that shows it.
  */
+describe('narrowed to one pharmacy', () => {
+    /* The filter is useful -- a site manager wants to know who carried their
+       counter -- and it is the easiest way to make the one screen somebody is
+       paid from show a confident wrong number. Pay here is per delivery, so
+       one pharmacy's figure is REAL, CORRECT, and not what anybody is owed.
+
+       So every test below is about the number being impossible to mistake for
+       a payment run, and the filter being asked of the server rather than
+       applied to rows already fetched. */
+
+    it('opens on the whole contract', async () => {
+        const mocked = renderDrivers();
+        await screen.findByRole('heading', { name: 'Drivers' });
+        expect((screen.getByLabelText('Pharmacy') as HTMLSelectElement).value).toBe('');
+        expect(mocked.calls.some((c) => c.includes('/uh/drivers?') && c.includes('siteId='))).toBe(false);
+        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('asks the server for the one pharmacy', async () => {
+        const mocked = renderDrivers();
+        await screen.findByRole('heading', { name: 'Drivers' });
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        await waitFor(() => {
+            expect(mocked.calls.some((c) => c.includes('/uh/drivers?') && c.includes('siteId=7'))).toBe(true);
+        });
+    });
+
+    it('says in as many words that a filtered total is not a payment run', async () => {
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({ siteId: 7 }),
+        });
+        await screen.findByRole('heading', { name: 'Drivers' });
+        const banner = await screen.findByRole('status');
+        expect(banner).toHaveTextContent(/Robert B\. Green Pharmacy only/);
+        expect(banner).toHaveTextContent(/pay figures/);
+        expect(banner).toHaveTextContent(/across every pharmacy/);
+    });
+
+    it('stops calling the figure a disbursement while it is a slice', async () => {
+        /* The tile is what gets read when the banner above it does not.
+           "To disburse" under one counter is a sentence that is false. */
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({ siteId: 7 }),
+        });
+        await screen.findByRole('heading', { name: 'Drivers' });
+        expect(screen.getByText('for this pharmacy')).toBeInTheDocument();
+        expect(screen.queryByText('to disburse')).not.toBeInTheDocument();
+    });
+
+    it('calls it a disbursement again once the filter is off', async () => {
+        renderDrivers();
+        await screen.findByRole('heading', { name: 'Drivers' });
+        expect(screen.getByText('to disburse')).toBeInTheDocument();
+        expect(screen.queryByText('for this pharmacy')).not.toBeInTheDocument();
+    });
+
+    it('takes the warning from the server answer, not from the URL', async () => {
+        /* If the banner were driven by the select, a request that failed or
+           came back unfiltered would still be captioned as one pharmacy --
+           or worse, filtered numbers would render with no caption at all. */
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({ siteId: null }),
+        });
+        await screen.findByRole('heading', { name: 'Drivers' });
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        await waitFor(() => {
+            expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        });
+        expect(screen.getByText('to disburse')).toBeInTheDocument();
+    });
+
+    it('does not caption a full payment run as one pharmacy when the field is missing', async () => {
+        /* FOUND IN A BROWSER, NOT HERE, which is why it is here now.
+           The check was `siteId !== null`, and a server that predates this
+           filter sends no siteId at all -- so `undefined` passed it and the
+           page captioned a complete, correct payment run as a slice and
+           renamed the disbursement total. Every fixture above sets the
+           field, so every fixture agreed with itself and none of them could
+           see it. This one deletes it, the way a deploy mid-rollout does. */
+        const { siteId: _omitted, ...withoutTheField } = everyone();
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': withoutTheField,
+        });
+        await screen.findByRole('heading', { name: 'Drivers' });
+        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        expect(screen.getByText('to disburse')).toBeInTheDocument();
+        expect(screen.queryByText(/pharmacy undefined/)).not.toBeInTheDocument();
+    });
+
+    it('treats a nought or a junk pharmacy as the whole contract', async () => {
+        /* The safe direction to be wrong in: show the real payment run with
+           no caption, never hide a caption that was needed. */
+        for (const odd of [0, -2, 'green']) {
+            const { unmount } = render(<div />);
+            unmount();
+            renderDrivers({
+                'GET /api/projects/uh/uh/drivers*': everyone({ siteId: odd }),
+            });
+            expect(await screen.findByText('to disburse')).toBeInTheDocument();
+            screen.getAllByRole('heading', { name: 'Drivers' });
+            cleanup();
+        }
+    });
+
+    it('sends the workbook the same pharmacy the screen is showing', async () => {
+        renderDrivers();
+        await screen.findByRole('heading', { name: 'Drivers' });
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        await waitFor(() => {
+            const href = screen.getByRole('link', { name: 'Export to Excel' }).getAttribute('href');
+            expect(href).toContain('siteId=7');
+        });
+    });
+});
+
 describe('the drivers record without the money', () => {
     const noMoney = {
         from: '2026-11-02', to: '2026-11-02', timezone: 'America/Chicago',

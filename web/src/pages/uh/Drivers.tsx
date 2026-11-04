@@ -30,6 +30,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { handleUnder } from '../../lib/people';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { daysBeforeIn, todayIn } from '../../lib/when';
+import type { Site } from './Sites';
 
 interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
 
@@ -64,6 +65,15 @@ interface Everyone {
        fields, and its absence is what `hasMoney` reads. */
     currency?: string;
     rateSet: boolean;
+    /** The pharmacy the figures were narrowed to, echoed by the server, or
+     *  null for the whole contract. Read from the RESPONSE rather than from
+     *  the URL: the banner below must describe the numbers on screen, and
+     *  those are the ones the server built.
+     *
+     *  OPTIONAL, because a server that predates the filter does not send it
+     *  at all. See `narrowed` below for why that distinction is not
+     *  academic. */
+    siteId?: number | null;
     drivers: DriverRow[];
     totals: Totals;
 }
@@ -88,19 +98,31 @@ export function Drivers() {
     const timezone = useProjectTimezone(code);
     const from = params.get('from') ?? daysBeforeIn(timezone, 30);
     const to = params.get('to') ?? todayIn(timezone);
+    const siteId = params.get('siteId') ?? '';
 
     const [data, setData] = useState<Everyone | null>(null);
+    const [sites, setSites] = useState<Site[]>([]);
     const [msg, setMsg] = useState<string | null>(null);
+
+    /* One string for the request and the workbook link, so the file is what
+       is on screen -- including which pharmacy. */
+    const query = `from=${from}&to=${to}${siteId === '' ? '' : `&siteId=${siteId}`}`;
 
     const load = useCallback(async () => {
         setMsg(null);
         try {
-            setData(await api<Everyone>(`/api/projects/${code}/uh/drivers?from=${from}&to=${to}`));
+            setData(await api<Everyone>(`/api/projects/${code}/uh/drivers?${query}`));
         } catch (err) {
             setMsg(err instanceof ApiError ? err.message : 'Could not load the drivers.');
         }
-    }, [code, from, to]);
+    }, [code, query]);
     useEffect(() => { void load(); }, [load]);
+
+    useEffect(() => {
+        /* Silent on failure: without the list the filter offers nothing and
+           the payment run still loads, which is what matters on this page. */
+        void api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
+    }, [code]);
 
     const set = (key: string, value: string) => {
         const next = new URLSearchParams(params);
@@ -132,6 +154,25 @@ export function Drivers() {
             : <div className="izy-card"><Loading label="Loading the drivers" /></div>;
     }
 
+    /* ARE THESE NUMBERS A SLICE? Asked once, here, and never re-derived.
+     *
+     * It was `data.siteId !== null`, which is true for `undefined` -- and
+     * `undefined` is exactly what a server that predates this filter sends
+     * back. The page then captioned a full, correct payment run as "one
+     * pharmacy only" and renamed the disbursement total, which is the same
+     * class of wrong number this screen exists to avoid, pointed the other
+     * way. Found by opening the page against an older server, not by a test:
+     * every fixture set the field, so every fixture agreed with itself.
+     *
+     * A POSITIVE WHOLE NUMBER OR NOTHING. Absent, null, 0 and a string all
+     * mean the whole contract, which is the answer that is safe to be wrong
+     * about: it shows the real payment run without a caption, rather than
+     * hiding a caption that was needed. */
+    const narrowed = typeof data.siteId === 'number' && Number.isInteger(data.siteId) && data.siteId > 0;
+    const narrowedTo = narrowed
+        ? sites.find((st) => st.id === data.siteId)?.name ?? `pharmacy ${data.siteId}`
+        : null;
+
     return (
         <>
             <h1>Drivers</h1>
@@ -161,6 +202,22 @@ export function Drivers() {
                     <label className="izy-field">To
                         <input type="date" value={to} onChange={(e) => set('to', e.target.value)} />
                     </label>
+                    {/* WHICH PHARMACY THEY DELIVERED FOR.
+
+                        Added because every other screen on the portal now
+                        answers "that counter, that day" and this one could
+                        only answer "everybody, that month" -- the wrong
+                        shape for the question a site manager brings to it.
+
+                        EMPTY IS THE DEFAULT AND MUST STAY SO. Read the
+                        banner below for what choosing one does to the pay
+                        column. */}
+                    <label className="izy-field">Pharmacy
+                        <select value={siteId} onChange={(e) => set('siteId', e.target.value)}>
+                            <option value="">Every pharmacy</option>
+                            {sites.map((st) => <option key={st.id} value={String(st.id)}>{st.name}</option>)}
+                        </select>
+                    </label>
                     <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>
                         Refresh
                     </button>
@@ -169,14 +226,38 @@ export function Drivers() {
                         fetch and a blob: the browser knows how to save a
                         download, and a blob URL would keep a copy of the
                         payment run alive in the tab until it was closed. */}
-                    <a className="izy-btn secondary" href={`/api/projects/${code}/uh/drivers/export.xlsx?from=${from}&to=${to}`}>
+                    <a className="izy-btn secondary" href={`/api/projects/${code}/uh/drivers/export.xlsx?${query}`}>
                         Export to Excel
                     </a>
                 </div>
             </div>
 
+            {/* A SLICE IS NOT A PAYMENT RUN.
+
+                This file opens by saying the one thing this screen must
+                never do is show a confident wrong number, and a pharmacy
+                filter is the easiest way to make it do exactly that: pay is
+                per delivery, so one counter's figure is real, correct, and
+                not what anybody is owed. Somebody will screenshot it.
+
+                SAID ONCE AND LOUDLY, above the totals rather than as a
+                footnote under the table, and driven by what the SERVER
+                echoed back rather than by the URL, so it cannot appear over
+                unfiltered numbers or fail to appear over filtered ones. */}
+            {narrowed && (
+                <div className="izy-alert warn" role="status">
+                    <b>{narrowedTo} only.</b>{' '}
+                    These counts{hasMoney(data) ? ' and pay figures' : ''} cover that pharmacy&apos;s
+                    deliveries. What a driver is owed is their work across every pharmacy, so choose
+                    every pharmacy before disbursing from this screen.
+                </div>
+            )}
+
             <div className="izy-card">
-                <h2>{from} to {to}</h2>
+                <h2>
+                    {from} to {to}
+                    {narrowed && <> &middot; {narrowedTo}</>}
+                </h2>
                 <div className="izy-stats">
                     <div><b>{data.drivers.length}</b><span>drivers</span></div>
                     <div><b>{data.totals.delivered}</b><span>delivered</span></div>
@@ -184,7 +265,15 @@ export function Drivers() {
                         <b>{data.totals.failed}</b><span>not delivered</span>
                     </div>
                     {hasMoney(data) && (
-                        <div><b>{money(data.totals.payCents, data.currency!)}</b><span>to disburse</span></div>
+                        /* The LABEL changes with the filter, not just the
+                           figure. "To disburse" under one pharmacy is a
+                           sentence that is false, and the tile is the part
+                           that gets read when the banner above it does
+                           not. */
+                        <div>
+                            <b>{money(data.totals.payCents, data.currency!)}</b>
+                            <span>{narrowed ? 'for this pharmacy' : 'to disburse'}</span>
+                        </div>
                     )}
                 </div>
             </div>

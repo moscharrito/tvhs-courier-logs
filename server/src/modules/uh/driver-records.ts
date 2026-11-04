@@ -157,10 +157,19 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
      */
     async function stopsIn(
         projectId: number, from: string, to: string, username: string | null,
+        siteId: number | null = null,
     ): Promise<StopRow[]> {
         const args: InValue[] = [projectId, from, to];
         let who = '';
         if (username !== null) { who = 'AND o.assigned_to_username = ?'; args.push(username); }
+        /* ONE PHARMACY'S DELIVERIES, when asked for.
+         *
+         * The site is already on the order and already joined for its name,
+         * so this narrows what is counted rather than changing what is
+         * counted. Null is every pharmacy and stays the default: see the
+         * route below for why that default is not negotiable here. */
+        let where = '';
+        if (siteId !== null) { where = 'AND o.site_id = ?'; args.push(siteId); }
         const rs = await client.execute({
             sql: `SELECT o.assigned_to_username, o.service_date, o.service_type, o.zone, o.status,
                          o.delivered_at, s.name AS site_name
@@ -171,10 +180,22 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                      AND o.status IN ('delivered', 'failed')
                      AND o.assigned_to_username IS NOT NULL
                      ${who}
+                     ${where}
                    ORDER BY o.service_date DESC, o.delivered_at DESC, o.id DESC`,
             args,
         });
         return rs.rows as unknown as StopRow[];
+    }
+
+    /* The pharmacy asked for, or null for all of them. Anything that is not
+       a positive whole number is "all": a filter nobody can read is better
+       than a 400 on a stray query string, because this endpoint is also what
+       a bookmarked payment-run URL hits. */
+    function siteOf(req: Request): number | null {
+        const raw = (req.query as Record<string, string | undefined>)['siteId'];
+        if (raw === undefined || raw === '') return null;
+        const n = Number(raw);
+        return Number.isInteger(n) && n > 0 ? n : null;
     }
 
     /* The database column names and the pay module's field names are not the
@@ -188,6 +209,15 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                has no rate, and zone 0 would quietly borrow one. */
             zone: r.zone === null || r.zone === undefined ? null : Number(r.zone),
         }));
+
+    /** A pharmacy's name, for a workbook that has to say which one it is. */
+    async function nameOfSite(projectId: number, siteId: number): Promise<string | null> {
+        const rs = await client.execute({
+            sql: 'SELECT name FROM sites WHERE project_id = ? AND id = ?',
+            args: [projectId, siteId],
+        });
+        return rs.rows.length === 0 ? null : String(rs.rows[0]!['name']);
+    }
 
     /** Everybody who holds a courier or lead membership, named. */
     async function driversOf(projectId: number): Promise<Map<string, string>> {
@@ -251,8 +281,23 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         if (!window) return;
         const rates = resolveSettings(project.settings).driverPay;
 
+        /* THE FILTER NARROWS THE DELIVERIES, NEVER THE ROSTER.
+         *
+         * `driversOf` is deliberately not given the site. Everybody on the
+         * contract stays on the list with nought beside them when they did
+         * not work that counter, for the same reason the unfiltered list
+         * keeps the drivers who delivered nothing: a list that quietly
+         * dropped people is one nobody can check against the roster.
+         *
+         * AND THE MONEY BECOMES A SLICE. Pay here is per delivery, so pay
+         * for one pharmacy is a real figure about that pharmacy and NOT what
+         * anybody is owed. The screen says so in as many words whenever this
+         * is set; `siteId` goes back in the response so it cannot show the
+         * filtered total without knowing the total is filtered. */
+        const siteId = siteOf(req);
+
         const [stops, names] = await Promise.all([
-            stopsIn(project.id, window.from, window.to, null),
+            stopsIn(project.id, window.from, window.to, null, siteId),
             driversOf(project.id),
         ]);
 
@@ -294,6 +339,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
 
         await req.audit('drivers.records', 'report', `${window.from}..${window.to}`, {
             drivers: drivers.length, delivered: totals.delivered,
+            ...(siteId === null ? {} : { siteId }),
         });
 
         res.json(visibleTo(req, {
@@ -301,6 +347,10 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             timezone: project.timezone,
             currency: rates.currency,
             rateSet: totals.rateSet,
+            /* Echoed so the screen can label the figures it is showing. A
+               client that sent a filter and got back numbers with no mark
+               on them has no way to tell a slice from a payment run. */
+            siteId,
             drivers,
             totals,
         }));
@@ -331,8 +381,18 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         if (!window) return;
         const rates = resolveSettings(project.settings).driverPay;
 
+        /* THE WORKBOOK TAKES THE SAME FILTER AS THE SCREEN.
+         *
+         * Not for symmetry: an export that silently covered nine counters
+         * while the page above it showed one is a spreadsheet that reaches a
+         * client meeting disagreeing with the screen it was taken from. The
+         * About sheet names the pharmacy and says what the pay column is,
+         * because the file outlives the page it was downloaded from. */
+        const siteId = siteOf(req);
+        const siteName = siteId === null ? null : await nameOfSite(project.id, siteId);
+
         const [stops, names] = await Promise.all([
-            stopsIn(project.id, window.from, window.to, null),
+            stopsIn(project.id, window.from, window.to, null, siteId),
             driversOf(project.id),
         ]);
 
@@ -381,7 +441,16 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             about: [
                 ['What this is', 'What each driver delivered in the range, and what it comes to.'],
                 ['Service dates', `${window.from} to ${window.to}`],
+                ['Pharmacy', siteName === null ? 'Every pharmacy on the contract' : siteName],
                 ['Times', `${project.timezone}`],
+                /* The warning is on the row that says which pharmacy, so it
+                   cannot be read without it. A pay column filtered to one
+                   counter is a figure about that counter, and somebody will
+                   otherwise disburse from it. */
+                ...(siteName === null ? [] : [[
+                    'Not a payment run',
+                    'These figures cover one pharmacy only. What a driver is owed is their work across every pharmacy: export again with no pharmacy chosen.',
+                ] as [string, string]]),
                 ['Pay', 'Per completed delivery. An attempt that did not complete pays nothing and is counted separately.'],
                 ['Blank pay', 'A rate is not set for a service level that was worked, so no figure is given rather than a short one.'],
             ],
@@ -389,7 +458,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             auditAction: 'drivers.export',
             auditEntity: 'report',
             auditEntityId: `${window.from}..${window.to}`,
-            auditDetail: { drivers: rows.length },
+            auditDetail: { drivers: rows.length, ...(siteId === null ? {} : { siteId }) },
         });
     }));
 
