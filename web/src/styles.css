@@ -953,9 +953,18 @@ body {
 }
 .izy-card-btn.is-compact {
     min-height: var(--izy-tap-standard);
-    padding: var(--izy-s-sm) var(--izy-s-md);
+    padding: 8px 14px;
+    gap: 12px;
 }
 .izy-card-btn.is-compact .izy-card-btn-title { font-size: var(--izy-t-label); }
+/* THE DETAIL LINE IS WHAT ACTUALLY SETS THE HEIGHT, not the padding. At
+   375px "The time this delivery is measured against. It counts even if
+   nobody answers." wrapped to three lines and the button came to 106px,
+   so three of them ran the choice a driver came here to make off the
+   bottom of the screen. Smaller and tighter rather than shorter: the
+   sentence is the reason these are cards instead of pills, and cutting
+   the words to save pixels would be solving the wrong half. */
+.izy-card-btn.is-compact .izy-card-btn-detail { font-size: 13.5px; line-height: 17px; margin-top: 2px; }
 .izy-card-btn:active:not(:disabled) { transform: scale(0.985); opacity: 0.92; }
 .izy-card-btn:disabled { opacity: 0.45; cursor: default; }
 .izy-card-btn:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 2px; }
@@ -1002,12 +1011,57 @@ body {
 
    SCOPED to this one panel, deliberately. .izy-chip and .izy-lede are shared
    with the stop screen and the earnings panel, where the sizes are right. */
-.izy-next { padding: 12px 14px; }
+.izy-next { padding: 10px 12px; }
 .izy-next .izy-lede-kicker { font-size: 11px; letter-spacing: 0.5px; }
-.izy-next .izy-lede { font-size: 16px; line-height: 21px; margin-top: 1px; }
-.izy-next .izy-lede-note { font-size: 13px; line-height: 17px; }
-.izy-next .izy-chips { gap: 5px; margin-top: 7px; }
-.izy-next .izy-chip { min-height: 23px; padding: 0 9px; font-size: 12px; }
+.izy-next .izy-lede { font-size: 15px; line-height: 19px; margin-top: 1px; }
+.izy-next .izy-lede-note { font-size: 12.5px; line-height: 16px; }
+.izy-next .izy-chips { gap: 4px; margin-top: 6px; }
+.izy-next .izy-chip { min-height: 21px; padding: 0 8px; font-size: 11.5px; }
+
+/* ── The stop screen's head, and the same argument a third time ───────────
+ *
+ * This region does not scroll away while the form below is being filled
+ * in, which is the point of it -- a courier typing a printed name is
+ * reading it off the person in front of them and checking the address is
+ * the right door. It is also therefore a fixed tax on the half of the
+ * screen where the work happens, and on a 375px phone a 19px name over a
+ * two-line address over a row of 30px chips left the three endings needing
+ * a scroll to see all of.
+ *
+ * SCOPED, like .izy-next above and for the same reason: .izy-lede and
+ * .izy-chip are shared with the earnings panel and the board, where the
+ * sizes are right. Shrinking the shared class to fix one screen is how
+ * every other screen quietly gets worse. */
+.izy-stop-head { padding: 10px 12px; }
+.izy-stop-head .izy-lede { font-size: 16px; line-height: 20px; }
+.izy-stop-head .izy-lede-note { font-size: 13px; line-height: 17px; }
+.izy-stop-head .izy-chips { gap: 4px; margin-top: 6px; }
+.izy-stop-head .izy-chip { min-height: 22px; padding: 0 8px; font-size: 12px; }
+
+/* The name and the call share a line, with the call pinned right.
+   `align-items: flex-start` rather than centre: a long name wraps to two
+   lines and a centred button would then float in the middle of them,
+   which reads as belonging to neither. */
+.izy-stop-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.izy-stop-head-top .izy-lede { min-width: 0; }
+
+/* THE CALL. A pill rather than a bare icon: an unlabelled handset glyph is
+   a guess, and the one thing this must not be mistaken for is anything
+   that records an outcome. 40px tall and it keeps a 44px tap target
+   through the padding on its row -- small enough not to compete with the
+   name, big enough for a thumb in a van. */
+.izy-call {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    min-height: 34px; padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--izy-glass-hair);
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--izy-green);
+    font-size: 14px; font-weight: 700; text-decoration: none;
+    white-space: nowrap;
+}
+.izy-call:active { transform: scale(0.97); }
+.izy-call:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 2px; }
 .izy-chip.is-good { background: rgba(22, 163, 74, 0.14); border-color: rgba(22, 163, 74, 0.3); color: #166534; }
 .izy-chip.is-warn { background: rgba(217, 119, 6, 0.14); border-color: rgba(217, 119, 6, 0.3); color: #92400e; }
 .izy-chip.is-bad { background: rgba(185, 28, 28, 0.12); border-color: rgba(185, 28, 28, 0.3); color: var(--izy-danger); }

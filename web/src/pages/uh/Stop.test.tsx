@@ -8,7 +8,7 @@
    delivery is claimed. */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, createEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, createEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Stop } from './Stop';
 import { AuthProvider } from '../../app/auth';
@@ -150,6 +150,37 @@ describe('Stop', () => {
         await waitFor(() => expect(screen.getByText('Arrival recorded.')).toBeInTheDocument());
         // The position goes with it: Scope 1.2.8 wants where the courier was.
         expect(bodyOf(fn, `POST ${ORDER}/arrive`)).toMatchObject({ lat: 29.5, lng: -98.6 });
+    });
+
+    /* ───────────────────────────────── the call, 4 November 2026
+     *
+     * It was a card of its own in the sheet, under the panel. Two costs:
+     * it took a full row away from the three endings a driver came here
+     * to choose between, and it sat apart from the one thing that says
+     * who would answer it. Ringing somebody is a thing you do to a
+     * person, so it belongs beside their name. */
+
+    it('puts the call beside the name, as something a thumb can hit', async () => {
+        renderStop();
+        const panel = await screen.findByRole('group', { name: 'This delivery' });
+        const call = within(panel).getByRole('link', { name: /Call Ines Vargas/ });
+        expect(call).toHaveAttribute('href', 'tel:210-555-0134');
+    });
+
+    it('names who is being rung, because "Call" on its own names nobody', async () => {
+        /* The number is no longer printed on the panel -- it cost the
+           line the panel was shrunk to save -- so the label is where a
+           screen reader, and anybody checking what they are about to
+           dial, finds it. */
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        expect(screen.getByRole('link', { name: 'Call Ines Vargas on 210-555-0134' })).toBeInTheDocument();
+    });
+
+    it('offers nothing to dial when the pharmacy sent no number', async () => {
+        renderStop({ ...routes(), [`GET ${ORDER}`]: order({ recipientPhone: '' }) });
+        await screen.findByRole('heading', { name: 'Stop' });
+        expect(screen.queryByRole('link', { name: /^Call / })).not.toBeInTheDocument();
     });
 
     it('stops asking once the courier has arrived', async () => {

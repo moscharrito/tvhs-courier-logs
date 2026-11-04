@@ -214,7 +214,15 @@ export function MyRun() {
                     <Panel role="group" aria-label="Next stop" className="izy-next">
                         <h2 className="izy-lede-kicker">Next: stop {current.sequence}</h2>
                         <p className="izy-lede">{current.recipientName}</p>
-                        <p className="izy-lede-note">{current.address}<br />{current.city} {current.zip}</p>
+                        {/* ONE LINE, NOT TWO. The <br /> cost a whole line
+                            of the one region that has to hold the name, the
+                            address and the chips above the fold on a 375px
+                            phone -- and a driver reading "where next" reads
+                            the street; the city is San Antonio on every stop
+                            this contract has. It still wraps when it has to,
+                            which is the same two lines as before and only
+                            for the addresses that need them. */}
+                        <p className="izy-lede-note">{current.address}, {current.city} {current.zip}</p>
                         {/* FOUR, and the pharmacy's reference is deliberately
                             not one of them. Every chip costs a line of a
                             region that has to hold the name, the address and

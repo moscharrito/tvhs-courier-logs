@@ -20,7 +20,7 @@ import { useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
-import { CardAnchor, CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
+import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { NavigateIcon, PhoneIcon, PinIcon, RouteIcon } from '../../app/Icons';
 
 interface Package {
@@ -306,9 +306,42 @@ export function Stop() {
                     title="Stop"
                     subtitle={<><Link to={`/projects/${code}/my-run`}>Today</Link> · order {order.id} · {order.serviceType}</>}
                 />
-                <Panel role="group" aria-label="This delivery">
-                    <p className="izy-lede">{order.recipientName}</p>
-                    <p className="izy-lede-note">{order.address}<br />{order.city} {order.zip}</p>
+                {/* `izy-stop-head`, scoped the way the next-stop panel is.
+                    This region does not scroll away, so every pixel it takes
+                    is a pixel the form below never gets on a phone -- and
+                    what it has to do is confirm the driver is at the right
+                    door, which is a name, a street and the handling chips.
+                    .izy-lede itself is left alone: it is shared with the
+                    earnings panel, where the size is right. */}
+                <Panel role="group" aria-label="This delivery" className="izy-stop-head">
+                    {/* THE CALL SITS ON THE NAME'S LINE, far right.
+                        It was a card of its own below the fold-line of this
+                        region, which is two problems: it took a full row of
+                        the sheet away from the three endings a driver came
+                        here to choose between, and it was separated from
+                        the one thing that says who would answer. Ringing
+                        somebody is a thing you do to a person, so it reads
+                        better beside their name than under it.
+
+                        THE NUMBER IS NO LONGER PRINTED. It cost the second
+                        line this panel was being shrunk to save, and a
+                        driver on this screen taps the button rather than
+                        reading digits off it. It is still in the link, and
+                        in the label a screen reader announces. */}
+                    <div className="izy-stop-head-top">
+                        <p className="izy-lede">{order.recipientName}</p>
+                        {order.recipientPhone && (
+                            <a
+                                className="izy-call"
+                                href={`tel:${order.recipientPhone}`}
+                                aria-label={`Call ${order.recipientName} on ${order.recipientPhone}`}
+                            >
+                                <PhoneIcon />
+                                <span>Call</span>
+                            </a>
+                        )}
+                    </div>
+                    <p className="izy-lede-note">{order.address}, {order.city} {order.zip}</p>
                     <div className="izy-chips">
                         <Chip label={`due ${clock(order.dueAt)}`} />
                         {order.arrivedAt && <Chip label={`arrived ${clock(order.arrivedAt)}`} tone="good" />}
@@ -332,17 +365,6 @@ export function Stop() {
                     {msg.text}
                     {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
                 </div>
-            )}
-
-            {order.recipientPhone && (
-                <CardAnchor
-                    href={`tel:${order.recipientPhone}`}
-                    title="Call recipient"
-                    Icon={PhoneIcon}
-                    tone="quiet"
-                    compact
-                    detail={order.recipientPhone}
-                />
             )}
 
             {queuedHere && !closed && (
@@ -388,6 +410,13 @@ export function Stop() {
                             title="I have arrived"
                             Icon={PinIcon}
                             tone="primary"
+                            /* COMPACT, AND STILL 56px. See Glass.tsx: compact
+                               is about visual weight, never about being
+                               harder to hit with a thumb in a van. Four
+                               full-height slabs ran the sheet off the bottom
+                               of a phone, so the choice a driver came here
+                               to make needed a scroll to see all of. */
+                            compact
                             busy={busy}
                             onClick={() => { void post('arrive', {}, 'Arrival recorded.'); }}
                             detail="The time this delivery is measured against. It counts even if nobody answers."
@@ -412,6 +441,7 @@ export function Stop() {
                                 Arrival is the one with a deadline attached. */}
                             <CardButton
                                 title="Handed over"
+                                compact
                                 tone="secondary"
                                 disabled={busy}
                                 onClick={() => setChoice('deliver')}
@@ -423,6 +453,7 @@ export function Stop() {
                             {!needsSignature && handoverOnly === false && (
                                 <CardButton
                                     title="Left at the door"
+                                compact
                                     tone="quiet"
                                     disabled={busy}
                                     onClick={() => setChoice('doorstep')}
@@ -431,6 +462,7 @@ export function Stop() {
                             )}
                             <CardButton
                                 title="Could not deliver"
+                                compact
                                 tone="calmDanger"
                                 disabled={busy}
                                 onClick={() => setChoice('attempt')}
