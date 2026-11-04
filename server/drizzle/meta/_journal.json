@@ -414,6 +414,13 @@
       "when": 1793150026229,
       "tag": "0058_auto_assign_off",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1793150027229,
+      "tag": "0059_user_phone",
+      "breakpoints": true
     }
   ]
 }

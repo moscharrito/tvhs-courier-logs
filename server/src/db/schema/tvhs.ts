@@ -37,6 +37,11 @@ export const users = sqliteTable(
         pin: text('pin'),
         name: text('name').notNull(),
         email: text('email'),
+        /* A telephone number for the person, not for the contract: see
+           drizzle/0059_user_phone.sql. Free text on purpose -- the roster
+           holds people with no number recorded and the ones it does hold
+           are whatever a dispatcher typed. */
+        phone: text('phone'),
         role: text('role', { enum: USER_ROLES }).notNull(),
         status: text('status', { enum: USER_STATUSES }).notNull().default('active'),
         route: text('route'),

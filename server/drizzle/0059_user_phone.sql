@@ -1,0 +1,28 @@
+-- A telephone number for a person, because dispatch had nowhere to keep one.
+--
+-- THE SCREEN THAT NEEDED IT. The driver roster lists every courier on a
+-- contract beside the counter they drive from, and it is the page open when
+-- somebody has to be reached: a run is late, a pharmacy has shut early, a
+-- driver is holding packages and is not answering the app. Until now the
+-- answer was a number in somebody's own phone, which is to say the answer
+-- depended on which dispatcher was on.
+--
+-- ON `users`, NOT ON THE MEMBERSHIP. A mobile number belongs to the person
+-- and not to the contract they happen to be working: the same driver on a
+-- second project is the same telephone. memberships.settings is where the
+-- things that CHANGE per contract live -- which counter, which cover list --
+-- and a number copied into each of them is a number that goes stale in all
+-- but the one somebody remembered to edit.
+--
+-- NULLABLE, AND NO FORMAT IMPOSED. SQLite would take a CHECK here and it
+-- would be the wrong call twice over: the roster already holds people who
+-- have no number recorded, and a pattern tight enough to be worth having
+-- rejects an extension, a second number, or a note saying whose phone it is.
+-- The column stores what a dispatcher typed; the screen renders it as a
+-- `tel:` link and lets the handset decide what it can dial.
+--
+-- NOT BACKFILLED, because there is nothing to backfill from. No number for
+-- any driver exists anywhere in this system today -- not on the roster
+-- import, not in the onboarding rows -- so every user starts NULL and the
+-- roster screen says "no phone number" until somebody types one.
+ALTER TABLE `users` ADD COLUMN `phone` text;

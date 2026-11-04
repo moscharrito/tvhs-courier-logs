@@ -594,24 +594,60 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 
 /* ─────────────────────────────────────────────────── the driver roster
  *
- * Which pharmacy each driver works from (pages/uh/Roster.tsx). The same
- * auto-fill grid as .izy-lanes, because it answers the same shape of
- * question -- eight or nine short columns read side by side, where the
- * short one is the thing you are looking for. A single column would mean
- * holding eight running totals in your head while scrolling.
+ * Which pharmacy each driver works from (pages/uh/Roster.tsx).
+ *
+ * IT WAS A GRID OF NARROW COLUMNS AND IT IS NOW A LIST. The columns were
+ * right when the page answered one question -- is every counter covered --
+ * and nine short cards side by side answer that from across the room. They
+ * stopped being right when the row gained an address and a telephone
+ * number: three facts and a picker do not go across 300px, so each card
+ * became a stack of wrapped grey text, and the name you were looking for
+ * was four lines from the name above it.
+ *
+ * Full width instead, one counter under the next, and the row laid out
+ * across: who they are, how to reach them, where they are based. The
+ * counter headings stay, so the coverage question is still answered by the
+ * shape of the page -- just by scrolling it rather than scanning it.
  */
-.izy-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+.izy-roster { display: grid; gap: 16px; }
 .izy-roster-group { min-width: 0; }
 .izy-roster-group h2 { margin: 0; font-size: 16px; }
 
-/* The name on one line and the pharmacy picker under it, rather than side
-   by side: a driver's name plus an eight-option select does not fit across
-   300px, and a select that truncates its options is one somebody picks the
-   wrong row from. */
-.izy-roster-row { padding: 10px 0; border-top: 1px solid var(--izy-line); min-width: 0; }
+/* THE ROW. Name and contact take the space that is going; the picker is a
+   fixed column on the right so that every select on the page starts at the
+   same x, which is what makes a list of forty-three scannable rather than
+   ragged. `minmax(0, …)` on the flexible tracks and not `1fr` alone: a long
+   address in a grid track that cannot shrink pushes the select off the
+   card instead of wrapping. */
+.izy-roster-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(240px, 0.9fr);
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-top: 1px solid var(--izy-line);
+    min-width: 0;
+}
 .izy-roster-row:first-of-type { border-top: 0; }
-.izy-roster-row select { width: 100%; margin-top: 6px; }
 .izy-roster-row > div { min-width: 0; overflow-wrap: anywhere; }
+.izy-roster-row select { width: 100%; }
+
+/* The contact column. One fact per line, each one either a link that dials
+   or writes, or the warning that there is nothing to dial. */
+.izy-roster-contact { display: grid; gap: 2px; font-size: 13px; }
+.izy-roster-contact a { overflow-wrap: anywhere; }
+
+/* Editing a number in place. Sized to a telephone number rather than to
+   the column, so it does not read as a search box. */
+.izy-roster-phone-edit { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.izy-roster-phone-edit input { max-width: 190px; }
+
+/* ON A PHONE, which is where a site manager reads this. The three tracks
+   become one: a select beside a name at 380px is a select nobody can read
+   the options of, and that was true of the old layout too. */
+@media (max-width: 760px) {
+    .izy-roster-row { grid-template-columns: 1fr; gap: 6px; align-items: start; }
+}
 
 /* Narrows the lanes on the board. Sits above a grid that is already
    several cards wide, so it is capped rather than stretched: a search box

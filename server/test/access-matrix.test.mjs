@@ -428,6 +428,12 @@ const MATRIX = [
        staff list rather than anybody's own work. */
     ['GET', `${UH}/roster`, UH_DISPATCH, 'who drives from which pharmacy'],
     ['PUT', `${UH}/roster/nobody`, UH_DISPATCH, "set a driver's home pharmacy"],
+    /* And their telephone number (3 November 2026), on the same screen and
+       behind the same roles. It writes a column on `users`, which is a
+       platform field reached from a project route -- so the route itself
+       checks that the person is a courier or a lead ON THIS PROJECT before
+       it writes, and a lead cannot reach anybody else's row through it. */
+    ['PUT', `${UH}/roster/nobody/contact`, UH_DISPATCH, "set a driver's phone number"],
 
     /* --- asking for work (tickets 6.4 and 6.5). A courier browses and asks;
        only dispatch decides, and only dispatch runs the sweep. */

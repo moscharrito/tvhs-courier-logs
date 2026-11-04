@@ -15,16 +15,43 @@
  * twenty-three decisions.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * GROUPED BY PHARMACY, NOT LISTED BY DRIVER.
+ * GROUPED BY PHARMACY, LISTED IN ROWS.
  *
- * The question this page answers is "is every counter covered", and a flat
- * alphabetical list of twenty-three names cannot answer it: you would have
- * to hold eight running totals in your head while scrolling. Grouped, a
- * short column is visible from across the room, which is the whole point of
- * looking before 1 November rather than after.
+ * The question this page answers first is "is every counter covered", so
+ * the groups stay: a heading per pharmacy, and one that says nobody drives
+ * from here when that is the answer.
  *
- * UNASSIGNED COMES FIRST, for the same reason. It is the only group that
- * represents work to do; an empty one means the page is finished with.
+ * The groups were laid out as narrow cards side by side, which read well
+ * while a row was a name and a picker. It stopped reading at all on
+ * 3 November, when the row gained the two things somebody opens this page
+ * at four in the afternoon for -- an address and a telephone number. Three
+ * facts across 300px is a stack of wrapped grey text, and forty-three of
+ * those is a page you cannot find a name in. So the groups are full width
+ * now and each driver is one row across it.
+ *
+ * UNASSIGNED COMES FIRST. It is the only group that represents work to do;
+ * an empty one means the page is finished with.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE ADDRESS AND THE TELEPHONE NUMBER ARE ON THE ROW.
+ *
+ * This screen used to say only WHETHER somebody had an email address, and
+ * lib/people.ts explains why: printing a personal address under every name
+ * put twenty-three of them on a screen a room can see, and told a
+ * dispatcher nothing they did not know from the line above.
+ *
+ * That reasoning holds for the dispatch board and it does not hold here.
+ * This page is the staff list -- it is already gated to admins and site
+ * managers, it already names every driver on the contract and where each
+ * one is based, and the thing it is open for at four in the afternoon is
+ * reaching somebody. "Has an email address" cannot be acted on; the
+ * address can. Both are links, so the row is one tap from a call.
+ *
+ * A NUMBER HAD TO BE TYPED SOMEWHERE FIRST. There was no telephone number
+ * for any driver anywhere in the system, so displaying the field would
+ * have shown forty-three blanks for ever. It is editable in place, for the
+ * same reason the pharmacy is: the moment to record forty-three numbers is
+ * while looking at the list of forty-three drivers.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * IT SAVES ON CHANGE, WITH NO SAVE BUTTON.
@@ -48,6 +75,8 @@ interface RosterDriver {
     username: string;
     name: string;
     email: string;
+    /** Free text as a dispatcher typed it, or '' for nothing recorded. */
+    phone: string;
     status: string;
     role: string;
     homeSiteId: number | null;
@@ -114,11 +143,38 @@ export function Roster() {
         }
     };
 
+    /* Same shape as setHome, and deliberately a second function rather than
+       one with a flag: they are two routes, two audit entries and two
+       sentences on screen, and the only thing they share is the spinner. */
+    const setPhone = async (driver: RosterDriver, phone: string) => {
+        setSaving(driver.username);
+        setMsg(null);
+        try {
+            await api(`${base}/${encodeURIComponent(driver.username)}/contact`, { method: 'PUT', json: { phone } });
+            setMsg({
+                kind: 'ok',
+                text: phone === ''
+                    ? `${driver.name} has no phone number on file`
+                    : `${driver.name} → ${phone}`,
+            });
+            await load();
+        } catch (err) {
+            setMsg({
+                kind: 'error',
+                text: err instanceof ApiError ? err.message : `Could not change ${driver.name}`,
+            });
+            await load();
+        } finally {
+            setSaving(null);
+        }
+    };
+
     if (!project) return <div className="izy-card"><Loading label="Loading the project" /></div>;
     if (data === null) return <div className="izy-card"><Loading label="Loading the roster" /></div>;
 
     const at = (siteId: number | null) => data.drivers.filter((d) => d.homeSiteId === siteId);
     const unassigned = at(null);
+    const noPhone = data.drivers.filter((d) => d.phone === '').length;
 
     /* Unassigned first because it is the only column that is work to do.
        Then the counters in the order the server gave them, which is by
@@ -155,6 +211,17 @@ export function Roster() {
                     {data.unassigned === 0
                         ? 'every one has a home pharmacy'
                         : <span className="izy-stat-warn"><b>{data.unassigned}</b> with no home pharmacy</span>}
+                    {/* The same sentence for the other gap this page can now
+                        close. Counted here rather than on the server: it is
+                        a count of rows already on screen, and a second field
+                        in the response is a second thing that can disagree
+                        with the list under it. */}
+                    {data.drivers.length > 0 && <>
+                        {' · '}
+                        {noPhone === 0
+                            ? 'every one has a phone number'
+                            : <span className="izy-stat-warn"><b>{noPhone}</b> with no phone number</span>}
+                    </>}
                 </p>
             </div>
 
@@ -177,6 +244,7 @@ export function Roster() {
                         sites={data.sites}
                         saving={saving}
                         onSet={(d, v) => { void setHome(d, v); }}
+                        onPhone={(d, v) => { void setPhone(d, v); }}
                     />
                 ))}
             </div>
@@ -200,13 +268,14 @@ export function Roster() {
  * default because the thing this page is read to find -- a counter with
  * nobody on it -- has to be visible without opening anything.
  */
-function Group({ id, group, code, sites, saving, onSet }: {
+function Group({ id, group, code, sites, saving, onSet, onPhone }: {
     id: string;
     group: { key: string; title: string; drivers: RosterDriver[]; site: RosterSite | null };
     code: string;
     sites: RosterSite[];
     saving: string | null;
     onSet: (d: RosterDriver, value: string) => void;
+    onPhone: (d: RosterDriver, value: string) => void;
 }) {
     const paged = usePaged(group.drivers, 8);
 
@@ -231,22 +300,19 @@ function Group({ id, group, code, sites, saving, onSet }: {
                             padding and the name runs into the badge:
                             "Rosalind Achebeon shift". */}
                         {d.onShift && <> <span className="izy-pill">on shift</span></>}
-                        <br />
-                        <span className="izy-muted">
-                            {/* WHETHER there is an address, not what it is. A
-                                driver with none cannot reset their own
-                                password and this is a list of drivers in
-                                front of the person who can fix that -- but
-                                printing the address itself put a personal
-                                address under every row. See lib/people.ts. */}
-                            {d.email === ''
-                                ? <span className="izy-stat-warn">no email address</span>
-                                : 'can reset their password'}
-                            {handleUnder(d) !== null && ` · ${handleUnder(d)}`}
-                            {d.role === 'lead' && ' · site manager'}
-                            {d.status !== 'active' && ' · disabled'}
-                        </span>
+                        {notes(d).length > 0 && <>
+                            <br />
+                            {/* Whatever this row needs saying about the
+                                ACCOUNT -- a handle that is not a name, a
+                                site manager, somebody switched off. The
+                                address and the number moved out of here
+                                into their own column, so this line is
+                                usually absent now and the row is one line
+                                tall, which is the point of a list. */}
+                            <span className="izy-muted">{notes(d).join(' · ')}</span>
+                        </>}
                     </div>
+                    <Contact driver={d} saving={saving === d.username} onPhone={onPhone} />
                     <select
                         aria-label={`Home pharmacy for ${d.name}`}
                         value={d.homeSiteId === null ? UNASSIGNED : String(d.homeSiteId)}
@@ -262,5 +328,118 @@ function Group({ id, group, code, sites, saving, onSet }: {
             ))}
             <Pager of={paged} noun="drivers" />
         </Section>
+    );
+}
+
+/** The grey line under a name: what is true of the account, or nothing. */
+function notes(d: RosterDriver): string[] {
+    const handle = handleUnder(d);
+    return [
+        /* LABELLED, which it was not before the address moved out of this
+           line. UH drivers sign in with their first name, so the handle
+           reads as a shorter copy of the name above it -- a full name with
+           its own first name under it -- and on its own that looks like a
+           mistake rather than a fact. Saying what it
+           is makes it the one thing on the row an administrator quotes down
+           the phone. Shown only when it says something the name does not:
+           see lib/people.ts. */
+        handle === null ? null : `signs in as ${handle}`,
+        d.role === 'lead' ? 'site manager' : null,
+        d.status !== 'active' ? 'disabled' : null,
+    ].filter((x): x is string => x !== null);
+}
+
+
+/* HOW TO REACH ONE DRIVER.
+ *
+ * THE ADDRESS IS READ-ONLY HERE AND THE NUMBER IS NOT, which looks
+ * inconsistent and is not. An address is a credential: it is what a
+ * password reset is sent to, so changing it changes who can take the
+ * account over, and that stays on the account page behind the platform
+ * admin role. A telephone number is a note about a person -- nothing signs
+ * in with it and nothing is sent to it -- so the site manager who knows it
+ * can write it down where they are standing.
+ *
+ * A MISSING ADDRESS IS STILL CALLED OUT, because a driver with none cannot
+ * reset their own password, and this is the list in front of the person who
+ * can fix that.
+ *
+ * THE INPUT APPEARS ON ASK. Forty-three text boxes down a page is
+ * forty-three things to tab through and one stray keystroke away from
+ * changing the wrong driver's number. A link until somebody says otherwise.
+ */
+function Contact({ driver, saving, onPhone }: {
+    driver: RosterDriver;
+    saving: boolean;
+    onPhone: (d: RosterDriver, value: string) => void;
+}) {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(driver.phone);
+
+    const open = () => { setDraft(driver.phone); setEditing(true); };
+    const save = () => { setEditing(false); onPhone(driver, draft.trim()); };
+
+    return (
+        <div className="izy-roster-contact">
+            <span>
+                {driver.email === ''
+                    ? <span className="izy-stat-warn">no email address</span>
+                    : <a href={`mailto:${driver.email}`}>{driver.email}</a>}
+            </span>
+            {editing
+                ? (
+                    <span className="izy-roster-phone-edit">
+                        <input
+                            type="tel"
+                            aria-label={`Phone number for ${driver.name}`}
+                            value={draft}
+                            disabled={saving}
+                            onChange={(e) => setDraft(e.target.value)}
+                            /* Enter saves and Escape abandons. Reaching for
+                               a mouse to commit one field is what makes
+                               typing forty-three of them a chore. */
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); save(); }
+                                if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+                            }}
+                        />
+                        <button type="button" className="izy-btn small" disabled={saving} onClick={save}>Save</button>
+                        <button
+                            type="button"
+                            className="izy-btn secondary small"
+                            disabled={saving}
+                            onClick={() => setEditing(false)}
+                        >
+                            Cancel
+                        </button>
+                    </span>
+                )
+                : (
+                    <span className="izy-roster-phone-edit">
+                        {driver.phone === ''
+                            ? <span className="izy-stat-warn">no phone number</span>
+                            /* tel:, so a dispatcher holding a phone taps
+                               once. Punctuation stripped for the link and
+                               kept on screen: the handset wants digits and
+                               the reader wants it readable. */
+                            : <a href={`tel:${driver.phone.replace(/[^+\d]/g, '')}`}>{driver.phone}</a>}
+                        {/* The visible word is short because it sits in a
+                            column forty-three times; the label is the whole
+                            sentence, because out of its row "Change" names
+                            nothing. */}
+                        <button
+                            type="button"
+                            className="izy-btn secondary small"
+                            aria-label={driver.phone === ''
+                                ? `Add a phone number for ${driver.name}`
+                                : `Change the phone number for ${driver.name}`}
+                            disabled={saving}
+                            onClick={open}
+                        >
+                            {driver.phone === '' ? 'Add' : 'Change'}
+                        </button>
+                    </span>
+                )}
+        </div>
     );
 }

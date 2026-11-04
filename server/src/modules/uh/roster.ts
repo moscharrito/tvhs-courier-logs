@@ -1,7 +1,8 @@
 /* Which pharmacy a driver belongs to.
  *
- *   GET  /api/projects/:pid/uh/roster              dispatch, the whole roster
- *   PUT  /api/projects/:pid/uh/roster/:username    dispatch, set or clear one
+ *   GET  /api/projects/:pid/uh/roster                      dispatch, the whole roster
+ *   PUT  /api/projects/:pid/uh/roster/:username            dispatch, set or clear one
+ *   PUT  /api/projects/:pid/uh/roster/:username/contact    dispatch, their phone
  *
  * ─────────────────────────────────────────────────────────────────────────
  * WHY A STANDING ASSIGNMENT EXISTS AT ALL.
@@ -99,6 +100,21 @@ const SetHomeSite = z.object({
     alsoCovers: z.array(z.number().int().positive()).max(9).optional(),
 });
 
+const SetContact = z.object({
+    /**
+     * A telephone number for the driver, or '' to forget the one on file.
+     *
+     * NOT VALIDATED INTO A SHAPE. The temptation is /^\+?[\d ().-]{7,}$/.
+     * What this field actually holds is "how to reach this driver", which
+     * is sometimes a mobile and may be an extension, a second number, or a
+     * number with a note beside it saying whose it is. A pattern tight
+     * enough to catch a typo refuses all of those, and the cost of a wrong
+     * number is a call that does not connect -- which the dispatcher is
+     * about to discover regardless. Trimmed and bounded, nothing more.
+     */
+    phone: z.string().trim().max(40),
+});
+
 /**
  * The cover list as stored, which json_extract returns as JSON text.
  *
@@ -137,7 +153,7 @@ export function createRosterRouter({ client }: { client: Client }): Router {
            was later removed still lists the driver -- with homeSite null, so
            the screen shows them as unassigned rather than hiding them. */
         const rs = await run(
-            `SELECT u.username, u.name, u.email, u.status, m.role,
+            `SELECT u.username, u.name, u.email, u.phone, u.status, m.role,
                     json_extract(m.settings, '$.homeSiteId') AS home_site_id,
                     json_extract(m.settings, '$.alsoCovers') AS also_covers,
                     si.code AS home_site_code, si.name AS home_site_name,
@@ -157,6 +173,9 @@ export function createRosterRouter({ client }: { client: Client }): Router {
             username: String(r['username']),
             name: String(r['name']),
             email: String(r['email'] ?? ''),
+            /* Empty string rather than null, the same shape as email, so the
+               screen has one test for "nothing recorded" instead of two. */
+            phone: String(r['phone'] ?? ''),
             status: String(r['status']),
             role: String(r['role']),
             homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined ? null : Number(r['home_site_id']),
@@ -297,6 +316,69 @@ export function createRosterRouter({ client }: { client: Client }): Router {
             ok: true, username, homeSiteId: body.homeSiteId,
             alsoCovers: (settings['alsoCovers'] as number[] | undefined) ?? [],
         });
+    }));
+
+    /* A DRIVER'S TELEPHONE NUMBER.
+     *
+     * WHY IT IS HERE AND NOT ON /api/users. The number is a column on the
+     * user, so the platform route would be the tidy home for it -- and that
+     * route is admin-only and edits one account at a time on its own page.
+     * The people who know these numbers are the site managers, and the
+     * moment to record forty-three of them is while looking at the list of
+     * forty-three drivers. A field that can only be filled in somewhere
+     * nobody goes is a field that stays empty, which is the state this is
+     * trying to get out of.
+     *
+     * WHAT KEEPS THAT HONEST. The same membership check as the home site: it
+     * writes only for somebody who is a courier or a lead ON THIS PROJECT.
+     * A lead cannot reach an administrator's row, or a driver on a contract
+     * they have nothing to do with, through this.
+     *
+     * IT IS STILL A PLATFORM FIELD, and that is deliberate rather than
+     * overlooked: a driver who also runs TVHS is the same telephone, and the
+     * alternative -- a copy per contract -- is a number that goes stale
+     * everywhere except the one somebody remembered to edit.
+     */
+    router.put('/:username/contact', dispatch, wrap(async (req, res) => {
+        const project = req.project!;
+        const body = parse(SetContact, req.body ?? {}, res);
+        if (!body) return;
+        const username = String(req.params['username'] ?? '').trim().toLowerCase();
+
+        const found = await run(
+            `SELECT u.id, m.role
+               FROM users u JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
+              WHERE u.username = ?`,
+            [project.id, username],
+        );
+        const row = found.rows[0];
+        if (!row) {
+            res.status(404).json({ error: 'That person is not on this project.' });
+            return;
+        }
+        const role = String(row['role']);
+        if (role !== 'courier' && role !== 'lead') {
+            res.status(409).json({
+                error: `${username} is on this project as ${role}, not as a driver.`,
+                code: 'roster.notADriver',
+            });
+            return;
+        }
+
+        /* NULL for cleared, not ''. Two spellings of "no number" in one
+           column is how a report ends up reading "0 drivers without a
+           phone" while half the rows are blank. */
+        const phone = body.phone === '' ? null : body.phone;
+        await run('UPDATE users SET phone = ? WHERE id = ?', [phone, Number(row['id'])]);
+
+        /* WHETHER, NOT WHAT. The audit trail answers "who changed this and
+           when", and it is read far more widely than the roster screen is.
+           Writing the number into it would put a personal telephone in a
+           log that is exported, which is the thing the roster screen itself
+           is careful about. */
+        await req.audit('roster.phone', 'user', username, { username, hasPhone: phone !== null });
+
+        res.json({ ok: true, username, phone: phone ?? '' });
     }));
 
     return router;

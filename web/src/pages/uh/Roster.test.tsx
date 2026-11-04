@@ -30,6 +30,7 @@ const sites = [
 
 const driver = (over = {}) => ({
     username: 'dana.whitfield', name: 'Dana Whitfield', email: 'dana.whitfield@example.com',
+    phone: '(210) 555 0142',
     status: 'active', role: 'courier', homeSiteId: 1,
     homeSiteCode: 'green', homeSiteName: 'Robert B. Green', onShift: false, ...over,
 });
@@ -117,6 +118,89 @@ describe('the driver roster', () => {
             }),
         }));
         expect(await screen.findByText(/with no home pharmacy/)).toBeInTheDocument();
+    });
+
+    /* ─────────────────────────────────────────────────────────────────
+     * HOW TO REACH SOMEBODY (3 November 2026).
+     *
+     * The page said only WHETHER a driver had an address, which is the
+     * right call on the dispatch board and the wrong one on the staff
+     * list: the thing this page is open for at four in the afternoon is
+     * reaching a driver, and "has an email address" cannot be acted on.
+     * ───────────────────────────────────────────────────────────────── */
+
+    it('gives the address as something to write to, not a fact about it', async () => {
+        renderRoster();
+        const to = await screen.findByRole('link', { name: 'dana.whitfield@example.com' });
+        expect(to).toHaveAttribute('href', 'mailto:dana.whitfield@example.com');
+    });
+
+    it('gives the number as something to dial, with the punctuation left on', async () => {
+        /* The handset wants digits and the reader wants it readable, so
+           the href is stripped and the text is not. A dispatcher reading
+           back a number down a radio needs the spaces. */
+        renderRoster();
+        const call = await screen.findByRole('link', { name: '(210) 555 0142' });
+        expect(call).toHaveAttribute('href', 'tel:2105550142');
+    });
+
+    it('flags a driver with no phone number', async () => {
+        /* Blank was indistinguishable from "nobody has looked", and this
+           is the list in front of the person who can fill it in. */
+        renderRoster(routes({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ phone: '' })] }),
+        }));
+        expect(await screen.findByText('no phone number')).toBeInTheDocument();
+        expect(screen.getByText(/with no phone number/)).toBeInTheDocument();
+    });
+
+    it('records a number typed in place, without leaving the list', async () => {
+        /* The moment to record forty-three numbers is while looking at the
+           list of forty-three drivers. A field only reachable from an
+           account page one driver at a time is a field that stays empty. */
+        const { calls } = renderRoster(routes({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ phone: '' })] }),
+            'PUT /api/projects/uh/uh/roster/dana.whitfield/contact': { ok: true, username: 'dana.whitfield', phone: '210 555 0199' },
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Add a phone number for Dana Whitfield' }));
+        fireEvent.change(screen.getByLabelText('Phone number for Dana Whitfield'), { target: { value: ' 210 555 0199 ' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => expect(calls).toContain('PUT /api/projects/uh/uh/roster/dana.whitfield/contact'));
+        expect(await screen.findByRole('status')).toHaveTextContent('Dana Whitfield → 210 555 0199');
+    });
+
+    it('does not put forty-three text boxes on the page to tab through', async () => {
+        /* A row is a link until somebody says they are editing it. One
+           stray keystroke changing the wrong driver's number is the thing
+           this avoids. */
+        renderRoster();
+        await screen.findByRole('heading', { name: 'Driver roster' });
+        expect(screen.queryByLabelText('Phone number for Dana Whitfield')).not.toBeInTheDocument();
+    });
+
+    it('abandons an edit on Escape rather than saving what was half typed', async () => {
+        const { calls } = renderRoster();
+        fireEvent.click(await screen.findByRole('button', { name: 'Change the phone number for Dana Whitfield' }));
+        const box = screen.getByLabelText('Phone number for Dana Whitfield');
+        fireEvent.change(box, { target: { value: '210 555' } });
+        fireEvent.keyDown(box, { key: 'Escape' });
+
+        expect(screen.queryByLabelText('Phone number for Dana Whitfield')).not.toBeInTheDocument();
+        expect(calls).not.toContain('PUT /api/projects/uh/uh/roster/dana.whitfield/contact');
+        /* And the number that is really stored is back on screen. */
+        expect(screen.getByRole('link', { name: '(210) 555 0142' })).toBeInTheDocument();
+    });
+
+    it('says what went wrong when a number is refused, and shows what is stored', async () => {
+        const { calls } = renderRoster(routes({
+            'PUT /api/projects/uh/uh/roster/dana.whitfield/contact': { status: 409, body: { error: 'dana.whitfield is on this project as pharmacy, not as a driver.' } },
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Change the phone number for Dana Whitfield' }));
+        fireEvent.keyDown(screen.getByLabelText('Phone number for Dana Whitfield'), { key: 'Enter' });
+
+        expect(await screen.findByRole('status')).toHaveTextContent(/not as a driver/);
+        expect(calls.filter((c) => c === 'GET /api/projects/uh/uh/roster').length).toBeGreaterThan(1);
     });
 
     it('flags a driver with no email address', async () => {
