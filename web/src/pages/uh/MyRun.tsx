@@ -220,17 +220,40 @@ export function MyRun() {
        that window, and the alternative -- treating it as "some other day"
        -- would flash the back-to-today banner on every cold start. */
     const isToday = today === null || viewing === today;
-    /* The date is in the subtitle only while the title says "Today". Once
-       the title IS the date, repeating it underneath is the same fact
-       twice on two lines of a 375px screen.
-
-       YYYY-MM-DD in the title rather than "Tue 27 October", because every
-       other date in this application is YYYY-MM-DD and lib/when.ts is
-       blunt about why: two date formats on one card is how somebody reads
-       the wrong one. */
-    const subtitle = [user?.name, isToday ? data.serviceDate : null, `${done} of ${stops.length} done`]
-        .filter((part) => part !== undefined && part !== null && part !== '')
-        .join(' · ');
+    /* ─── THE PICKER STANDS WHERE THE DATE USED TO BE PRINTED.
+     *
+     * The heading line read "Mo · 2026-11-03 · 19 of 20 done" with a
+     * separate pill underneath holding the control. Two places saying
+     * which day, one of them inert. The raw date is gone and the picker
+     * is in its slot, so the line that tells a driver which day they are
+     * looking at is the thing that changes it.
+     *
+     * The title no longer repeats it either. "Today" while it is today,
+     * and "Earlier day" when it is not -- two words that say what kind of
+     * day this is, with the picker beside them saying which. The date
+     * itself is in one place on the screen now instead of three. */
+    const subtitle = (
+        <>
+            {user?.name !== undefined && user.name !== '' && <>{user.name} · </>}
+            <label className="izy-daypick">
+                <CalendarIcon size={14} />
+                <span className="izy-visually-hidden">Show the round for a day</span>
+                <input
+                    type="date"
+                    value={viewing}
+                    max={today ?? viewing}
+                    onChange={(e) => setDay(e.target.value === '' ? null : e.target.value)}
+                />
+            </label>
+            {' · '}{done} of {stops.length} done
+            {!isToday && (
+                <>
+                    {' · '}
+                    <button type="button" className="izy-linkish" onClick={() => setDay(null)}>Back to today</button>
+                </>
+            )}
+        </>
+    );
 
     return (
         <Screen>
@@ -253,40 +276,11 @@ export function MyRun() {
                     that said "Today" over last Tuesday's round would be the
                     single most misleading word on the page. */}
                 <ScreenHeader
-                    title={isToday ? 'Today' : viewing}
+                    title={isToday ? 'Today' : 'Earlier day'}
                     subtitle={subtitle}
                     right={<ShiftBar code={code} />}
                 />
 
-                {/* ─── WHICH DAY, as a date field rather than a list of
-                    recent ones. A native date input opens the phone's own
-                    picker, which a driver already knows how to use, needs
-                    no library, and is reachable from a keyboard without
-                    anything being written here to make it so.
-
-                    CAPPED AT TODAY. A round is assigned for a day that has
-                    arrived; the reason this control exists is a proof of
-                    delivery that needs replacing on a day that has gone.
-                    Without the cap a mistyped year silently shows an empty
-                    round, which reads as "no work that day" rather than as
-                    a typo. */}
-                <div className="izy-dayline">
-                    <label className="izy-daypick">
-                        <CalendarIcon size={18} />
-                        <span className="izy-visually-hidden">Show the round for a day</span>
-                        <input
-                            type="date"
-                            value={viewing}
-                            max={today ?? viewing}
-                            onChange={(e) => setDay(e.target.value === '' ? null : e.target.value)}
-                        />
-                    </label>
-                    {!isToday && (
-                        <button type="button" className="izy-btn secondary small" onClick={() => setDay(null)}>
-                            Back to today
-                        </button>
-                    )}
-                </div>
 
 
                 {/* NO PIN PROMPT HERE. It lived above the run between tickets

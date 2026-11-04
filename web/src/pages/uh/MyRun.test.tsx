@@ -363,10 +363,13 @@ describe('MyRun', () => {
         fireEvent.change(screen.getByLabelText('Show the round for a day'), { target: { value: '2026-09-10' } });
 
         await waitFor(() => expect(calls).toContain('GET /api/projects/uh/uh/runs/mine?serviceDate=2026-09-10'));
-        /* The title IS the day once it is not today: every count and every
-           row under it belongs to that day, and a heading reading "Today"
-           over last Tuesday is the most misleading word on the page. */
-        expect(await screen.findByRole('heading', { name: '2026-09-10' })).toBeInTheDocument();
+        /* THE PICKER IS THE ONLY PLACE THE DATE IS WRITTEN. The heading
+           line used to print it as text with the control underneath --
+           two places saying which day, one of them inert. The title now
+           says what KIND of day it is and the picker says which. */
+        expect(await screen.findByRole('heading', { name: 'Earlier day' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Show the round for a day')).toHaveValue('2026-09-10');
+        expect(screen.queryByRole('heading', { name: 'Today' })).not.toBeInTheDocument();
     });
 
     it('offers a way back, and going back asks for no day again', async () => {
@@ -375,7 +378,7 @@ describe('MyRun', () => {
         }));
         await screen.findByRole('heading', { name: 'Today' });
         fireEvent.change(screen.getByLabelText('Show the round for a day'), { target: { value: '2026-09-10' } });
-        await screen.findByRole('heading', { name: '2026-09-10' });
+        await screen.findByRole('heading', { name: 'Earlier day' });
 
         const before = calls.length;
         fireEvent.click(screen.getByRole('button', { name: 'Back to today' }));
@@ -421,7 +424,7 @@ describe('MyRun', () => {
         }));
         await screen.findByRole('heading', { name: 'Today' });
         fireEvent.change(screen.getByLabelText('Show the round for a day'), { target: { value: '2026-09-10' } });
-        await screen.findByRole('heading', { name: '2026-09-10' });
+        await screen.findByRole('heading', { name: 'Earlier day' });
 
         expect(screen.queryByLabelText('Next stop')).not.toBeInTheDocument();
         /* And no paragraph explaining that it is an earlier day: the

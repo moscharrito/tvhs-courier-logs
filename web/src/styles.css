@@ -658,10 +658,16 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
  *
  * The label wraps the input, so the glyph is part of the control's hit area
  * rather than decoration beside it. */
-.izy-dayline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .izy-daypick {
-    display: inline-flex; align-items: center; gap: 8px;
-    min-height: 40px; padding: 0 12px;
+    /* INLINE IN THE HEADING LINE, not a row of its own. It stands where
+       the date used to be printed, between the driver's name and the
+       counts, so `vertical-align: middle` and a height that does not
+       shove the line apart. */
+    display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
+    /* Sized to fit "Name · [date] · 0 of 1 done" on one line at 375px,
+       which is the whole point of putting it here: a heading that wraps
+       to two lines has not saved the row it replaced. */
+    min-height: 28px; padding: 0 8px;
     border-radius: 999px;
     border: 1px solid var(--izy-glass-hair);
     background: rgba(255, 255, 255, 0.6);
@@ -669,14 +675,24 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 }
 .izy-daypick input {
     border: 0; background: transparent; padding: 0;
-    font: inherit; font-size: 15px; font-weight: 600; color: var(--izy-ink);
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--izy-ink);
     /* Safari gives a date input a width of its own and will not shrink it
        below that, which on a 375px screen pushed "Back to today" onto a
        second row for no reason. */
     min-width: 0; max-width: 150px;
 }
 .izy-daypick input:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 4px; }
-.izy-dayline-note { margin: 8px 0 0; font-size: 13px; line-height: 17px; }
+
+/* A real button that reads as part of the line it sits in. Not an
+   `izy-btn`: beside a name and a count, a pill would look like the control
+   the line is about rather than the way out of it. 44px of tap target
+   comes from the padding, which is why it is not simply an anchor. */
+.izy-linkish {
+    border: 0; background: none; padding: 6px 2px; margin: -6px 0;
+    font: inherit; font-weight: 600; color: var(--izy-green);
+    text-decoration: underline; cursor: pointer;
+}
+.izy-linkish:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 2px; border-radius: 4px; }
 
 /* Narrows the lanes on the board. Sits above a grid that is already
    several cards wide, so it is capped rather than stretched: a search box
