@@ -202,7 +202,6 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
  * close what they are not using instead of scrolling past it. */
 .izy-board { display: flex; flex-direction: column; gap: 16px; }
 .izy-lanes-col { min-width: 0; }
-.izy-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 
 /* ── The board's drivers, as a list (pages/uh/Board.tsx) ──────────────────
  *
@@ -1651,3 +1650,50 @@ body {
     padding-right: var(--izy-s-lg);
     font-size: var(--izy-t-label);
 }
+
+/* ── A SECTION INSIDE A SECTION IS NOT A SECOND CARD ──────────────────────
+ *
+ * Section is one primitive used 44 times, and it draws a card: border,
+ * background, shadow, 20px of padding. That is right at the top level and
+ * wrong one level down, where it produces the thing the board was rebuilt
+ * to get rid of -- a bordered box inside a bordered box around a list of
+ * addresses. The unassigned pool was still doing it: "Unassigned" was a
+ * card, and each pharmacy inside it was another card within it.
+ *
+ * DONE HERE RATHER THAN WITH A `nested` PROP, because nesting is a fact
+ * about where the element sits, not a decision each caller should be
+ * trusted to remember. A descendant selector knows it without being told,
+ * so every nested Section on the portal -- the pool's nine pharmacies
+ * today, whatever gets nested tomorrow -- reads as a sub-heading over its
+ * rows instead of a box, and no call site has to opt in.
+ *
+ * The heading keeps its chevron, its summary and its fold. Only the card
+ * chrome goes: what is left is a label with a list under it, flush with
+ * the parent's own content edge so the rows line up down one column
+ * instead of stepping in by 20px per level.
+ *
+ * Last in the file on purpose. `.izy-section.is-folded` appears twice
+ * further up at the same specificity, and the later of two ties wins. */
+.izy-section .izy-section,
+.izy-section .izy-section.is-folded,
+.izy-section .izy-section.is-folded:hover {
+    background: transparent;
+    border: 0;
+    border-left: 0;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
+    margin-bottom: 4px;
+}
+/* Flush with the parent's content, and tighter: a sub-heading over rows,
+   not a panel header. */
+.izy-section .izy-section > .izy-section-head { padding-left: 0; }
+.izy-section .izy-section .izy-section-toggle { padding: 8px 0; }
+.izy-section .izy-section .izy-section-title { font-size: 13px; font-weight: 700; color: var(--izy-muted); letter-spacing: 0.02em; }
+.izy-section .izy-section > .izy-section-body { padding: 0 0 6px; }
+/* It still has to be findable as a boundary between two pharmacies, so a
+   hairline above it does the work the border was doing -- one line rather
+   than four sides. */
+.izy-section .izy-section + .izy-section { border-top: 1px solid var(--izy-line); padding-top: 2px; }
