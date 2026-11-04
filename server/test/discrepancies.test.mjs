@@ -162,6 +162,65 @@ describe('the list', () => {
         expect(res.body.every((d) => d.serviceDate === '2026-11-25')).toBe(true);
     });
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * AND BY PHARMACY (4 November 2026).
+     *
+     * The log showed every open dispute on the contract. Across nine
+     * counters that is a list nobody can act on: the question somebody
+     * actually has is "what is outstanding at Wheatley for Tuesday".
+     *
+     * A discrepancy has no site of its own and should not grow one -- it is
+     * a dispute about an order, and the order already knows which counter
+     * released it. Read through the join, so there is one answer to "which
+     * pharmacy is this" rather than a copy that drifts.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('filters by pharmacy, through the delivery it is about', async () => {
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const discharge = sites.find((s) => s.code === 'discharge').id;
+        const green = sites.find((s) => s.code === 'green').id;
+
+        const elsewhere = await admin.post(`${UH}/orders`).send({
+            siteId: green, serviceType: 'stat', recipientName: 'Green Recipient',
+            addressLine: '2 Shadow Street', zip: '78215', description: 'Oral solids',
+            quantity: 1, externalRef: 'RX-SHADOW-GREEN', signatureRequired: false,
+        });
+        expect(elsewhere.status, elsewhere.text).toBe(201);
+
+        const mine = await dispatcher.post(BASE).send(aReport({ orderId, serviceDate: '2026-11-26' }));
+        const theirs = await dispatcher.post(BASE).send(aReport({ orderId: elsewhere.body.id, serviceDate: '2026-11-26' }));
+
+        const atDischarge = await dispatcher.get(`${BASE}?siteId=${discharge}&serviceDate=2026-11-26`);
+        expect(atDischarge.status, atDischarge.text).toBe(200);
+        const ids = atDischarge.body.map((d) => d.id);
+        expect(ids).toContain(mine.body.id);
+        expect(ids).not.toContain(theirs.body.id);
+    });
+
+    it('leaves out a dispute about no delivery when a pharmacy is named', async () => {
+        /* A short trolley raised against the day rather than against an
+           order belongs to no pharmacy, so asking for one pharmacy's
+           disputes is asking not to see it. Unfiltered it is still there,
+           which is the half that matters: it must not become invisible. */
+        const sites = (await admin.get(`${UH}/sites`)).body;
+        const discharge = sites.find((s) => s.code === 'discharge').id;
+        const orphan = await dispatcher.post(BASE).send(aReport({ serviceDate: '2026-11-27' }));
+
+        const unfiltered = await dispatcher.get(`${BASE}?serviceDate=2026-11-27`);
+        expect(unfiltered.body.map((d) => d.id)).toContain(orphan.body.id);
+
+        const filtered = await dispatcher.get(`${BASE}?siteId=${discharge}&serviceDate=2026-11-27`);
+        expect(filtered.body.map((d) => d.id)).not.toContain(orphan.body.id);
+    });
+
+    it('ignores a pharmacy that is not a number rather than refusing the list', async () => {
+        /* The log is read during a go-live review. A junk query string
+           should narrow nothing, not take the page away. */
+        const res = await dispatcher.get(`${BASE}?siteId=not-a-number`);
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.length).toBeGreaterThan(0);
+    });
+
     it('is not readable by a courier, who can report but not review', async () => {
         expect((await courier.get(BASE)).status).toBe(403);
     });

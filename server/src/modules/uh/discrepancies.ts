@@ -151,14 +151,31 @@ export function createDiscrepancyRouter({ client }: { client: Client }): Router 
     router.get('/export.xlsx', review, wrap(async (req, res) => {
         const where: string[] = ['d.project_id = ?'];
         const args: InValue[] = [req.project!.id];
-        const { serviceDate, status, severity } = req.query as Record<string, string | undefined>;
+        const { serviceDate, status, severity, siteId } = req.query as Record<string, string | undefined>;
         if (serviceDate) { where.push('d.service_date = ?'); args.push(serviceDate); }
         if (status) { where.push('d.status = ?'); args.push(status); }
         if (severity) { where.push('d.severity = ?'); args.push(severity); }
+        /* BY PHARMACY, THROUGH THE DELIVERY IT IS ABOUT.
+         *
+         * A discrepancy has no site of its own and should not grow one: it
+         * is a dispute about an order, and the order already knows which
+         * counter released it. Reading it through the join keeps one answer
+         * to "which pharmacy is this" instead of a copy that can drift when
+         * an order moves.
+         *
+         * THE JOIN BECOMES INNER WHEN THE FILTER IS ON, and that is the
+         * meaning rather than an optimisation: a discrepancy with no order
+         * -- a short trolley at a counter, raised against the day rather
+         * than against a delivery -- belongs to no pharmacy, so asking for
+         * one pharmacy's disputes is asking not to see it. Unfiltered it
+         * stays a LEFT JOIN and those rows are listed as they always were. */
+        const siteFilter = Number(siteId);
+        const bySite = Number.isInteger(siteFilter) && siteFilter > 0;
+        if (bySite) { where.push('o.site_id = ?'); args.push(siteFilter); }
 
         const rs = await client.execute({
             sql: `SELECT d.*, o.external_ref
-                  FROM discrepancies d LEFT JOIN orders o ON o.id = d.order_id
+                  FROM discrepancies d ${bySite ? 'JOIN' : 'LEFT JOIN'} orders o ON o.id = d.order_id
                   WHERE ${where.join(' AND ')}
                   ORDER BY d.service_date DESC, d.id DESC
                   LIMIT ${EXPORT_MAX_ROWS + 1}`,
@@ -216,14 +233,21 @@ export function createDiscrepancyRouter({ client }: { client: Client }): Router 
     router.get('/', review, wrap(async (req, res) => {
         const where: string[] = ['d.project_id = ?'];
         const args: InValue[] = [req.project!.id];
-        const { serviceDate, status, severity } = req.query as Record<string, string | undefined>;
+        const { serviceDate, status, severity, siteId } = req.query as Record<string, string | undefined>;
         if (serviceDate) { where.push('d.service_date = ?'); args.push(serviceDate); }
         if (status) { where.push('d.status = ?'); args.push(status); }
         if (severity) { where.push('d.severity = ?'); args.push(severity); }
+        /* The same rule as the export above, which is why both carry it:
+           the screen and the spreadsheet of that screen must answer the
+           same question, and a filter on one of them only is how somebody
+           exports more rows than they were looking at. */
+        const siteFilter = Number(siteId);
+        const bySite = Number.isInteger(siteFilter) && siteFilter > 0;
+        if (bySite) { where.push('o.site_id = ?'); args.push(siteFilter); }
 
         const rs = await client.execute({
             sql: `SELECT d.*, o.external_ref
-                  FROM discrepancies d LEFT JOIN orders o ON o.id = d.order_id
+                  FROM discrepancies d ${bySite ? 'JOIN' : 'LEFT JOIN'} orders o ON o.id = d.order_id
                   WHERE ${where.join(' AND ')}
                   ORDER BY d.status = 'open' DESC,
                            CASE d.severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 ELSE 2 END,

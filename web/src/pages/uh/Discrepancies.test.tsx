@@ -156,6 +156,86 @@ describe('a dispatcher', () => {
     });
 });
 
+describe('narrowing the log', () => {
+    /* It asked for `?status=open` and showed every open dispute on the
+       contract. Across nine counters that is a list nobody can act on: the
+       question somebody has is "what is outstanding at Wheatley for
+       Tuesday". */
+
+    const sites = [
+        { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+        { id: 9, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
+    ];
+    const withSites = (over = {}) => ({
+        'GET /api/projects/uh/uh/sites': sites,
+        ...over,
+    });
+
+    it('asks for everything until somebody narrows it', async () => {
+        /* A log that defaulted to today would hide an open dispute from
+           last week, which is the one most worth chasing. */
+        const { calls } = renderAs('admin', withSites());
+        await screen.findByRole('heading', { name: 'Still open' });
+        expect(calls).toContain('GET /api/projects/uh/uh/discrepancies?status=open');
+    });
+
+    it('asks the server for one pharmacy rather than sifting here', async () => {
+        /* THE WHOLE POINT. The endpoint caps at 500 rows, so a filter
+           applied in the browser could never reach a dispute past that
+           edge -- which is exactly the old one being hunted for. */
+        const { calls } = renderAs('admin', withSites({
+            'GET /api/projects/uh/uh/discrepancies?status=open&siteId=9': [],
+        }));
+        await screen.findByRole('heading', { name: 'Still open' });
+
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '9' } });
+        await waitFor(() => {
+            expect(calls).toContain('GET /api/projects/uh/uh/discrepancies?status=open&siteId=9');
+        });
+    });
+
+    it('asks for one day the same way', async () => {
+        const { calls } = renderAs('admin', withSites({
+            'GET /api/projects/uh/uh/discrepancies?status=open&serviceDate=2026-11-24': [open1],
+        }));
+        await screen.findByRole('heading', { name: 'Still open' });
+
+        fireEvent.change(screen.getByLabelText('Day'), { target: { value: '2026-11-24' } });
+        await waitFor(() => {
+            expect(calls).toContain('GET /api/projects/uh/uh/discrepancies?status=open&serviceDate=2026-11-24');
+        });
+    });
+
+    it('says which empty it is, because the two mean opposite things', async () => {
+        /* "Nothing open" under a filter hiding four disputes is the wrong
+           thing to tell somebody deciding whether to go live. */
+        renderAs('admin', withSites({
+            'GET /api/projects/uh/uh/discrepancies?status=open&siteId=9': [],
+        }));
+        await screen.findByRole('heading', { name: 'Still open' });
+
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '9' } });
+        expect(await screen.findByText('Nothing open for that day and pharmacy.')).toBeInTheDocument();
+    });
+
+    it('offers a way back to everything once something is narrowed', async () => {
+        const { calls } = renderAs('admin', withSites({
+            'GET /api/projects/uh/uh/discrepancies?status=open&siteId=9': [],
+        }));
+        await screen.findByRole('heading', { name: 'Still open' });
+        expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '9' } });
+        const clear = await screen.findByRole('button', { name: 'Clear' });
+        const before = calls.length;
+        fireEvent.click(clear);
+
+        await waitFor(() => {
+            expect(calls.slice(before)).toContain('GET /api/projects/uh/uh/discrepancies?status=open');
+        });
+    });
+});
+
 describe('the go-live panel', () => {
     it('says what is in the way while anything is open', async () => {
         renderAs('admin');

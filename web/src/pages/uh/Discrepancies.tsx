@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import type { Site } from './Sites';
 import { Link, useParams } from 'react-router-dom';
 import { api, why, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
 import { momentFor, todayIn } from '../../lib/when';
@@ -56,6 +57,24 @@ export function Discrepancies() {
        in. This is evidence for a go-live decision and it is read later. */
     const when = momentFor(timezone);
 
+    /* ─────────────── WHICH DAY AND WHICH COUNTER THE LOG IS SHOWING
+     *
+     * The log had neither. It asked for `?status=open` and showed every
+     * open dispute on the contract, which on nine pharmacies is a list
+     * nobody can act on: the question somebody actually has is "what is
+     * outstanding at Wheatley for Tuesday".
+     *
+     * The date box further up this page is NOT this. That one belongs to
+     * the report form -- which day the dispute is about -- and reusing it
+     * would mean filing a report changed what the list showed.
+     *
+     * EMPTY MEANS EVERY, for both. A log that defaulted to today would
+     * hide an open dispute from last week, which is the one most worth
+     * chasing. */
+    const [filterDate, setFilterDate] = useState('');
+    const [filterSite, setFilterSite] = useState<number | ''>('');
+    const [sites, setSites] = useState<Site[]>([]);
+
     const [list, setList] = useState<Discrepancy[] | null>(null);
     const [summary, setSummary] = useState<DiscrepancySummary | null>(null);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -78,9 +97,16 @@ export function Discrepancies() {
 
     const load = useCallback(async () => {
         if (!canReview) return;
+        /* ASKED OF THE SERVER, not sifted here. The endpoint caps at 500
+           rows, so a filter applied in the browser could never reach a
+           dispute past that edge -- which is exactly the old one somebody
+           is hunting for. */
+        const q = new URLSearchParams({ status: 'open' });
+        if (filterDate !== '') q.set('serviceDate', filterDate);
+        if (filterSite !== '') q.set('siteId', String(filterSite));
         try {
             const [l, s] = await Promise.all([
-                api<Discrepancy[]>(`${base}?status=open`),
+                api<Discrepancy[]>(`${base}?${q.toString()}`),
                 api<DiscrepancySummary>(`${base}/summary`),
             ]);
             setList(l);
@@ -88,8 +114,15 @@ export function Discrepancies() {
         } catch (err) {
             setMsg({ kind: 'error', text: why(err, 'Could not load the log') });
         }
-    }, [base, canReview]);
+    }, [base, canReview, filterDate, filterSite]);
     useEffect(() => { void load(); }, [load]);
+
+    useEffect(() => {
+        if (!canReview) return;
+        /* Silent on failure: without the sites the pharmacy filter simply
+           offers nothing, and the log still works. */
+        void api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
+    }, [code, canReview]);
 
     const report = (e: FormEvent) => {
         e.preventDefault();
@@ -256,8 +289,46 @@ export function Discrepancies() {
             {canReview && (
                 <div className="izy-card">
                     <h2>Still open</h2>
+                    {/* THE FILTER SITS ON THE LIST IT NARROWS. A control a
+                        scroll away from what it changes gets used by
+                        nobody, and this page already has a date box
+                        elsewhere that means something else entirely. */}
+                    <div className="izy-row">
+                        <label className="izy-field">Day
+                            <input
+                                type="date"
+                                value={filterDate}
+                                onChange={(e) => setFilterDate(e.target.value)}
+                            />
+                        </label>
+                        <label className="izy-field">Pharmacy
+                            <select
+                                value={filterSite}
+                                onChange={(e) => setFilterSite(e.target.value === '' ? '' : Number(e.target.value))}
+                            >
+                                <option value="">Every pharmacy</option>
+                                {sites.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                            </select>
+                        </label>
+                        {(filterDate !== '' || filterSite !== '') && (
+                            <button
+                                type="button"
+                                className="izy-btn secondary"
+                                onClick={() => { setFilterDate(''); setFilterSite(''); }}
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
                     {list === null ? <Loading label="Loading the log" /> : list.length === 0 ? (
-                        <div className="izy-muted">Nothing open.</div>
+                        /* WHICH EMPTY IT IS. "Nothing open" under a filter
+                           that is hiding four disputes is the wrong thing
+                           to tell somebody deciding whether to go live. */
+                        <div className="izy-muted">
+                            {filterDate === '' && filterSite === ''
+                                ? 'Nothing open.'
+                                : 'Nothing open for that day and pharmacy.'}
+                        </div>
                     ) : (<>{pagedOpen.rows.map((d) => (
                         <div key={d.id} className="izy-pool-group">
                             <div>
