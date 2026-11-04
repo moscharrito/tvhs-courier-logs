@@ -154,6 +154,66 @@ describe('column auto-mapping', () => {
         expect(m.recipientName).not.toBe('Drug Name');
     });
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE COLUMN THAT WENT MISSING, AND WHERE IT WENT.
+     *
+     * A pharmacy asked where the patient's telephone number had gone. Two
+     * faults, and the second is worse than the one they noticed.
+     *
+     * The substring pass walked the FIELDS in order and gave each the
+     * first header it could find a synonym inside. IMPORT_FIELDS puts
+     * recipientName before recipientPhone, and "patientphone" contains
+     * "patient" -- so the NAME field claimed the phone column. The phone
+     * was lost, and the patient-name column was filled with telephone
+     * numbers, which is what reaches a courier as the person they are
+     * delivering to.
+     *
+     * The rule now is the head noun: English column headings are
+     * head-final, so a synonym matching at the END of a header beats one
+     * buried in the middle.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('gives "Patient Phone" to the phone, not to the name', () => {
+        /* The exact case from the field. "Pt Name" is not an exact
+           synonym, so before this both columns went through the substring
+           pass and the name field got there first. */
+        const m = autoMap(['Rx #', 'Patient Phone', 'Pt Name', 'Address 1', 'City', 'State', 'Zip Code']);
+        expect(m.recipientPhone).toBe('Patient Phone');
+        expect(m.recipientName).toBe('Pt Name');
+    });
+
+    it('does not put a telephone number in the recipient name', () => {
+        /* Stated on its own because it is the half nobody reported: a
+           courier reading "(210) 555-0142" as the person at the door. */
+        const m = autoMap(['Rx #', 'Recipient Phone', 'Pt Full Name', 'Address 1', 'Zip Code']);
+        expect(m.recipientName).not.toBe('Recipient Phone');
+        expect(m.recipientPhone).toBe('Recipient Phone');
+    });
+
+    it('knows the short spellings a pharmacy export actually uses', () => {
+        for (const header of ['Tel', 'Ph', 'Contact #', 'Home Phone', 'Cell', 'Mobile No']) {
+            const m = autoMap(['Rx #', 'Patient Name', header, 'Address 1', 'Zip Code']);
+            expect(m.recipientPhone, `${header} should map to the phone`).toBe(header);
+        }
+    });
+
+    it('still reads a head noun that is not a phone', () => {
+        /* The loose synonyms are only safe because of the head-noun rule:
+           "contact" can mean a telephone without "Contact Name" becoming
+           one, because that header ends in "name". */
+        const m = autoMap(['Rx #', 'Contact Name', 'Contact Number', 'Address 1', 'Zip Code']);
+        expect(m.recipientName).toBe('Contact Name');
+        expect(m.recipientPhone).toBe('Contact Number');
+    });
+
+    it('leaves the phone unmapped rather than guessing at a column that is not one', () => {
+        /* The failure that matters is a WRONG mapping, not a missing one:
+           an operator sees an unmapped column in the preview and can fix
+           it, and nothing silently files a drug name as a phone number. */
+        const m = autoMap(['Rx #', 'Patient Name', 'Hotel', 'Address 1', 'Zip Code']);
+        expect(m.recipientPhone).toBeUndefined();
+    });
+
     it('does not let one column serve two fields', () => {
         const m = autoMap(['Address', 'City', 'Zip']);
         const used = Object.values(m);

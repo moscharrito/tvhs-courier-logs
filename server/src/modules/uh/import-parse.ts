@@ -254,7 +254,22 @@ export const normalizeHeader = (h: string) => h.toLowerCase().replace(/[^a-z0-9]
 const SYNONYMS: Record<ImportField, string[]> = {
     externalRef: ['rx', 'rxnumber', 'rxno', 'rx#', 'prescription', 'prescriptionnumber', 'orderid', 'ordernumber', 'order#', 'reference', 'ref', 'confirmation'],
     recipientName: ['patientname', 'patient', 'recipientname', 'recipient', 'deliverto', 'customername', 'customer', 'name'],
-    recipientPhone: ['phone', 'phonenumber', 'telephone', 'mobile', 'cell', 'cellphone', 'contactnumber', 'contactphone'],
+    /* Everything a pharmacy's export has actually called this column.
+     *
+     * The short ones -- tel, ph, contact -- are reachable only through the
+     * exact pass below, which is deliberate: the substring pass ignores
+     * anything under four characters, so "Hotel" cannot become a phone
+     * number. A header that is exactly "Tel" or "Ph" is a phone number and
+     * nothing else.
+     *
+     * patientphone and recipientphone are listed even though the head-noun
+     * rule below would reach them anyway. They are the two that were being
+     * lost in the field, and a header this common should be an exact hit
+     * rather than something that depends on a scoring rule being right. */
+    recipientPhone: ['phone', 'phonenumber', 'phoneno', 'telephone', 'tel', 'ph',
+        'mobile', 'mobilephone', 'mobileno', 'cell', 'cellphone', 'cellular',
+        'contact', 'contactnumber', 'contactno', 'contactphone',
+        'patientphone', 'recipientphone', 'homephone', 'primaryphone', 'daytimephone'],
     addressLine: ['address', 'address1', 'addressline1', 'streetaddress', 'street', 'deliveryaddress', 'addr', 'addr1'],
     addressLine2: ['address2', 'addressline2', 'apt', 'apartment', 'unit', 'suite', 'aptunit', 'addr2'],
     city: ['city', 'town', 'municipality'],
@@ -305,11 +320,58 @@ export function autoMap(headers: string[]): Mapping {
         const idx = norm.findIndex((h, i) => !taken.has(i) && h !== '' && syns.includes(h));
         if (idx !== -1) { mapping[field] = headers[idx]!; taken.add(idx); }
     }
+    /* ─────────────── THE SUBSTRING PASS, AND WHY IT IS SCORED
+     *
+     * It used to walk the fields in order and give each the first header
+     * it could find a synonym inside. That is first-come-first-served by
+     * FIELD, and the order of IMPORT_FIELDS put recipientName before
+     * recipientPhone -- so a column headed "Patient Phone" was claimed by
+     * the NAME field, because "patientphone" contains "patient".
+     *
+     * Two things went wrong at once, and the second is worse. The phone
+     * was dropped, which is what a pharmacy noticed and asked about. And
+     * the patient-name column was then filled with telephone numbers,
+     * which reaches a courier's screen as the person they are delivering
+     * to. "Recipient Phone" did the same thing through "recipient", and
+     * that one happens even when the sheet also has a perfectly good name
+     * column.
+     *
+     * THE RULE IS THE HEAD NOUN. English column headings are head-final:
+     * "Patient Phone" is a phone, "Patient Name" is a name, "Delivery
+     * Address" is an address. So a synonym matching at the END of the
+     * header beats one matching anywhere else, and a longer match beats a
+     * shorter one. Every pair is scored and the best ones are taken
+     * first, rather than whichever field happened to be declared earlier.
+     *
+     * It also makes the loose synonyms safe to add: "contact" can be a
+     * phone without "Contact Name" becoming one, because that header ends
+     * in "name". */
+    interface Candidate { field: ImportField; header: number; score: number }
+    const candidates: Candidate[] = [];
     for (const field of IMPORT_FIELDS) {
         if (mapping[field]) continue;
-        const syns = SYNONYMS[field];
-        const idx = norm.findIndex((h, i) => !taken.has(i) && h !== '' && syns.some((s) => s.length >= 4 && h.includes(s)));
-        if (idx !== -1) { mapping[field] = headers[idx]!; taken.add(idx); }
+        for (const [i, h] of norm.entries()) {
+            if (taken.has(i) || h === '') continue;
+            let best = -1;
+            for (const syn of SYNONYMS[field]) {
+                if (syn.length < 4 || !h.includes(syn)) continue;
+                /* 1000 is a band, not a weight: a head-noun match always
+                   beats a longer match buried in the middle. */
+                const score = (h.endsWith(syn) ? 1000 : 0) + syn.length;
+                if (score > best) best = score;
+            }
+            if (best >= 0) candidates.push({ field, header: i, score: best });
+        }
+    }
+    /* Ties fall back to the old behaviour -- field order, then column
+       order -- so a sheet this change does not have an opinion about maps
+       exactly as it did before. */
+    const order = (f: ImportField) => IMPORT_FIELDS.indexOf(f);
+    candidates.sort((a, b) => b.score - a.score || order(a.field) - order(b.field) || a.header - b.header);
+    for (const c of candidates) {
+        if (mapping[c.field] || taken.has(c.header)) continue;
+        mapping[c.field] = headers[c.header]!;
+        taken.add(c.header);
     }
     return mapping;
 }
