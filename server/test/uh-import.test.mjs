@@ -68,6 +68,7 @@ async function reset() {
     await sql('PRAGMA foreign_keys = OFF');
     await sql('DELETE FROM packages');
     await sql('DELETE FROM orders');
+    await sql('DELETE FROM daily_list_rows');
     await sql('DELETE FROM daily_lists');
     await sql('DELETE FROM import_mappings');
     await sql('PRAGMA foreign_keys = ON');
@@ -555,6 +556,120 @@ describe('withdrawing a list', () => {
         expect(res.body.summary.imported).toBeGreaterThan(0);
         return res.body;
     }
+
+    /* ─────────────────────────────────────────────────────────────────
+     * THE SHEET IS KEPT, COLUMN FOR COLUMN (4 November 2026).
+     *
+     * A pharmacy asked where the patient's telephone number had gone. It
+     * was in the file they uploaded and not in the list they got back.
+     * The importer models eighteen fields and the comment above them said
+     * the quiet part out loud -- "Everything else in the sheet is
+     * dropped" -- so a column we had never thought of did not merely go
+     * unused, it stopped existing. Nothing kept the file either.
+     *
+     * The mapping now decides what we ACT on. It does not decide what we
+     * KEEP.
+     * ───────────────────────────────────────────────────────────────── */
+
+    /* One mapped column, and two the importer has never heard of. */
+    const EXTRA = Buffer.from([
+        'Rx #,Patient Name,Phone,Address 1,City,State,Zip Code,Qty,Prescriber,Ward',
+        'RX-9001,Test Patient A,210-555-0191,1 Rehearsal Way,San Antonio,TX,78215,1,Dr Fictional,4 West',
+        'RX-9002,Test Patient B,210-555-0192,2 Rehearsal Way,San Antonio,TX,78215,2,Dr Invented,2 East',
+        '',
+    ].join('\n'));
+
+    async function withExtras(serviceDate = '2026-09-20') {
+        const res = await upload(admin, BASE, EXTRA, { siteId: dischargeId, serviceDate }, 'extras.csv');
+        expect(res.status, res.text).toBe(201);
+        return res.body;
+    }
+
+    it('keeps the header row exactly as the pharmacy wrote it', async () => {
+        await reset();
+        const list = await withExtras();
+        const row = (await sql('SELECT source_headers FROM daily_lists WHERE id = ?', [list.id])).rows[0];
+        expect(JSON.parse(String(row.source_headers))).toEqual([
+            'Rx #', 'Patient Name', 'Phone', 'Address 1', 'City', 'State', 'Zip Code', 'Qty', 'Prescriber', 'Ward',
+        ]);
+    });
+
+    it('keeps the columns nothing maps to, which is the whole complaint', async () => {
+        await reset();
+        const list = await withExtras();
+        const kept = (await sql(
+            'SELECT cells FROM daily_list_rows WHERE daily_list_id = ? ORDER BY row_number',
+            [list.id],
+        )).rows.map((r) => JSON.parse(String(r.cells)));
+
+        expect(kept.length).toBe(2);
+        /* Prescriber and Ward are not fields this system has. They are in
+           the record anyway, in the column order they arrived in. */
+        expect(kept[0][8]).toBe('Dr Fictional');
+        expect(kept[0][9]).toBe('4 West');
+        expect(kept[1][8]).toBe('Dr Invented');
+    });
+
+    it('says which delivery each row became', async () => {
+        await reset();
+        const list = await withExtras();
+        const ids = (await ordersOf(list.id)).map((o) => Number(o.id)).sort((a, b) => a - b);
+        const kept = (await sql(
+            'SELECT order_id, outcome FROM daily_list_rows WHERE daily_list_id = ? ORDER BY row_number',
+            [list.id],
+        )).rows;
+        expect(kept.map((r) => Number(r.order_id)).sort((a, b) => a - b)).toEqual(ids);
+        expect(kept.every((r) => String(r.outcome) === 'imported')).toBe(true);
+    });
+
+    it('keeps a row that became no delivery at all, which is the one asked about', async () => {
+        /* "We sent you 142 and you show 139" is a question about the three.
+           Hanging the cells off `orders` would have kept only the 139. */
+        await reset();
+        const res = await upload(
+            admin, BASE, EXTRA, { siteId: dischargeId, serviceDate: '2026-09-21', skipRows: [3] }, 'extras.csv',
+        );
+        expect(res.status, res.text).toBe(201);
+
+        const kept = (await sql(
+            'SELECT row_number, order_id, outcome, cells FROM daily_list_rows WHERE daily_list_id = ? ORDER BY row_number',
+            [res.body.id],
+        )).rows;
+        expect(kept.length).toBe(2);
+        const skipped = kept.find((r) => r.order_id === null);
+        expect(skipped, 'the skipped row is not in the record').toBeDefined();
+        expect(String(skipped.outcome)).toBe('skipped');
+        /* And its columns are there, so somebody can see what was skipped. */
+        expect(JSON.parse(String(skipped.cells))[1]).toMatch(/Test Patient/);
+    });
+
+    it('gives the pharmacy their own columns back in the export', async () => {
+        /* The file this answers is "send me the list we sent you". Fifteen
+           columns of ours and none of theirs was the wrong answer.
+
+           The xlsx is a zip, so its strings are not greppable and the
+           assertion is the same shape as the other export tests here: it
+           came back as a spreadsheet. What goes INTO the extra columns is
+           pinned by the row assertions above, which read the same rows the
+           export reads. */
+        await reset();
+        const list = await withExtras();
+        const res = await admin.get(`${BASE}/${list.id}/export.xlsx`);
+        expect(res.status, res.text).toBe(200);
+        expect(String(res.headers['content-type'])).toMatch(/spreadsheet|officedocument/);
+    });
+
+    it('still exports a list imported before the file was kept', async () => {
+        /* Nothing can be recovered for those, and the export has to read as
+           a sheet with no extra columns rather than fall over. */
+        await reset();
+        const list = await withExtras();
+        await sql("UPDATE daily_lists SET source_headers = '[]' WHERE id = ?", [list.id]);
+        await sql('DELETE FROM daily_list_rows WHERE daily_list_id = ?', [list.id]);
+
+        const res = await admin.get(`${BASE}/${list.id}/export.xlsx`);
+        expect(res.status, res.text).toBe(200);
+    });
 
     it('cancels every delivery and marks the list cancelled', async () => {
         await reset();

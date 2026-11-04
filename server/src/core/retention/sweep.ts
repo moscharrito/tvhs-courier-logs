@@ -295,6 +295,23 @@ export async function purge(client: Client, options: PurgeOptions): Promise<Purg
      * record -- which is the part most likely to name somebody. */
     await client.execute('DROP TRIGGER IF EXISTS order_messages_no_delete');
     try {
+        /* THE UPLOADED SHEET GOES WITH THE DELIVERIES IT CREATED.
+         *
+         * daily_list_rows (drizzle/0060) keeps every row of the pharmacy's
+         * file, columns we never mapped included -- which may be a drug
+         * name, a date of birth, an MRN. Purged by the SERVICE DATE OF THE
+         * LIST rather than by order id, deliberately: a row that was blocked
+         * or skipped has no order to be purged alongside, and those are
+         * exactly the rows nothing else in this sweep would ever reach. A
+         * copy of a patient list that outlived its own deliveries would be
+         * the worst possible version of keeping the file. */
+        const sheetRows = await client.execute({
+            sql: `DELETE FROM daily_list_rows
+                   WHERE daily_list_id IN (SELECT id FROM daily_lists WHERE service_date < ?)`,
+            args: [day],
+        });
+        detail['daily_list_rows'] = sheetRows.rowsAffected;
+
         for (const chunk of chunks(ids, 200)) {
             const list = chunk.map(() => '?').join(',');
             detail['order_messages'] = (detail['order_messages'] ?? 0)

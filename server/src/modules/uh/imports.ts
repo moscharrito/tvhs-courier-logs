@@ -74,6 +74,21 @@ import {
     type Mapping, type Issue, type RowResult,
 } from './import-parse';
 
+/* The kept sheet, read back.
+ *
+ * Tolerant on purpose. These columns are written by one statement in this
+ * file and nothing else touches them, so a row that does not parse means
+ * something has gone wrong that this reader cannot fix -- and the right
+ * answer then is a spreadsheet without the pharmacy's columns rather than
+ * a 500 in place of a list somebody is reconciling an invoice against. */
+const parseHeaders = (raw: unknown): string[] => {
+    try {
+        const parsed: unknown = JSON.parse(String(raw ?? '[]'));
+        return Array.isArray(parsed) ? parsed.map((h) => String(h ?? '')) : [];
+    } catch { return []; }
+};
+const parseCells = (raw: unknown): string[] => parseHeaders(raw);
+
 /** Uploads are capped well above a day's list (273 stops) and well below
  *  anything that would be a memory problem to parse. */
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -525,10 +540,14 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         const listRs = await client.execute({
             sql: `INSERT INTO daily_lists
                     (project_id, site_id, service_date, status, received_at, source_filename, source_sha256,
-                     row_count, order_count, skipped_count, imported_by)
-                  VALUES (?, ?, ?, 'released', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                     source_headers, row_count, order_count, skipped_count, imported_by)
+                  VALUES (?, ?, ?, 'released', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
             args: [
                 project.id, a.site.id, a.serviceDate, receivedIso, uploadFilename(req), a.digest,
+                /* The header row verbatim, in its own order. Everything in
+                   daily_list_rows is aligned to this, so the two are written
+                   by the same statement batch and cannot drift. */
+                JSON.stringify(a.sheet.headers),
                 a.rows.length, toImport.length, a.rows.length - toImport.length, username,
             ],
         });
@@ -593,6 +612,54 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         const orderIds = orderResults.map((rs) => Number(rs.rows[0]!['id']));
 
         const childStatements: Array<{ sql: string; args: InValue[] }> = [];
+
+        /* ─────────────────────── THE SHEET, KEPT AS IT ARRIVED
+         *
+         * A pharmacy asked where the patient's telephone number had gone. It
+         * was in the file they uploaded and not in the list they got back,
+         * because the importer models eighteen fields and everything else in
+         * the sheet was read, ignored and forgotten -- and nothing keeps the
+         * file, so there was nowhere to go and look.
+         *
+         * The mapping decides what we ACT on. It should never have decided
+         * what we KEEP: nine pharmacies export from systems we do not
+         * control, and the set of columns we thought of was always going to
+         * be short of the set they send.
+         *
+         * EVERY ROW OF THE SHEET, not every row that became a delivery. A
+         * blocked row, a duplicate the operator held back and a box folded
+         * into its series are exactly the rows somebody asks about a week
+         * later -- "we sent 142 and you show 139" is a question about the
+         * three. `outcome` answers it in one word and order_id says which
+         * delivery a row became, if it became one.
+         *
+         * Written into the same batch as the orders, so a list either has
+         * its source rows or does not exist. Half of this would be worse
+         * than none of it: a file we claim to have kept and have not.
+         */
+        const orderIdByRow = new Map<number, number>();
+        toImport.forEach((r, i) => { orderIdByRow.set(r.row, orderIds[i]!); });
+        /* A collapsed box series is several sheet rows and one delivery, so
+           the absorbed rows point at the delivery their series became. */
+        const mergedIntoRow = new Map<number, number>();
+        for (const r of toImport) {
+            for (const merged of r.mergedRows) mergedIntoRow.set(merged, r.row);
+        }
+
+        a.sheet.rows.forEach((cells, i) => {
+            const rowNumber = a.sheet.rowNumbers[i] ?? i + 1;
+            const direct = orderIdByRow.get(rowNumber);
+            const keeper = mergedIntoRow.get(rowNumber);
+            const orderId = direct ?? (keeper === undefined ? null : orderIdByRow.get(keeper) ?? null);
+            const outcome = direct !== undefined ? 'imported' : (orderId === null ? 'skipped' : 'merged');
+            childStatements.push({
+                sql: `INSERT INTO daily_list_rows
+                        (project_id, daily_list_id, row_number, cells, order_id, outcome)
+                      VALUES (?, ?, ?, ?, ?, ?)`,
+                args: [project.id, listId, rowNumber, JSON.stringify(cells), orderId, outcome],
+            });
+        });
+
         toImport.forEach((r, i) => {
             const source = byRow.get(r.row)!;
             const orderId = orderIds[i]!;
@@ -850,7 +917,37 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         });
         if (tooManyRows(res, rs.rows.length, 'orders')) return;
 
+        /* ─────────────── THE PHARMACY'S OWN COLUMNS, GIVEN BACK
+         *
+         * This export answers "send me the list we sent you", and until
+         * 4 November it answered with fifteen columns of ours and none of
+         * theirs. A pharmacy asked where the patient's telephone number
+         * had gone: it was in the file they uploaded, it is in `orders`,
+         * and it was in neither this sheet nor anything else they could
+         * reach. Every column the importer does not model was worse off
+         * still -- it had stopped existing.
+         *
+         * So every column of the upload comes back, after ours, in the
+         * order the pharmacy wrote them. Ours first because this sheet is
+         * read for what happened to the delivery; theirs after because
+         * that is what makes the two files line up row by row.
+         *
+         * EMPTY FOR A LIST IMPORTED BEFORE 0060, which kept nothing and
+         * cannot be reconstructed. That reads as a sheet with no extra
+         * columns rather than as a file that had none. */
+        const headers = parseHeaders(l['source_headers']);
+        const sheetRows = headers.length === 0 ? new Map<number, string[]>() : new Map(
+            (await client.execute({
+                sql: 'SELECT order_id, cells FROM daily_list_rows WHERE daily_list_id = ? AND order_id IS NOT NULL',
+                args: [id],
+            })).rows.map((r) => [Number(r['order_id']), parseCells(r['cells'])]),
+        );
+        /* Prefixed, because a pharmacy heading its column "Status" would
+           otherwise land on ours and one of the two would be dropped. */
+        const key = (i: number) => `src${i}`;
+
         const rows = rs.rows.map((o) => ({
+            ...Object.fromEntries(headers.map((_, i) => [key(i), sheetRows.get(Number(o['id']))?.[i] ?? ''])),
             reference: String(o['external_ref'] ?? ''),
             serviceType: String(o['service_type'] ?? ''),
             status: String(o['status'] ?? ''),
@@ -892,6 +989,8 @@ export function createImportsRouter({ client }: { client: Client }): Router {
                 { header: 'Due', key: 'dueAt', width: 22 },
                 { header: 'Delivered', key: 'deliveredAt', width: 22 },
                 { header: 'Not delivered because', key: 'failureReason', width: 22 },
+                /* Theirs, exactly as they headed them. */
+                ...headers.map((h, i) => ({ header: h === '' ? `Column ${i + 1}` : h, key: key(i), width: 18 })),
             ],
             rows,
             /* Named after the list rather than after today: this file is
@@ -899,7 +998,9 @@ export function createImportsRouter({ client }: { client: Client }): Router {
                of it, possibly weeks later. */
             filename: `list-${id}-${String(l['site_code'])}-${String(l['service_date'])}.xlsx`,
             about: [
-                ['What this is', 'The deliveries this upload created. NOT the uploaded file, which is not kept.'],
+                ['What this is', headers.length === 0
+                    ? 'The deliveries this upload created. The uploaded file was not kept for this list.'
+                    : 'The deliveries this upload created, and every column of the file you sent, as you sent it.'],
                 ['Pharmacy', String(l['site_name'])],
                 ['Service date', String(l['service_date'])],
                 ['Uploaded file', String(l['source_filename'] ?? '')],

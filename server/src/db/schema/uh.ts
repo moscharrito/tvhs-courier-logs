@@ -211,6 +211,12 @@ export const dailyLists = sqliteTable(
         sourceFilename: text('source_filename').notNull().default(''),
         /** SHA-256 of the uploaded bytes: catches the same file imported twice. */
         sourceSha256: text('source_sha256').notNull().default(''),
+        /** The header row of the uploaded sheet, JSON, in its own order.
+         *
+         *  Lives on the list and not on each row because three hundred rows
+         *  share one header, and the array's ORDER is what lets a stored row
+         *  be lined up against the pharmacy's own copy of the file. */
+        sourceHeaders: text('source_headers').notNull().default('[]'),
         rowCount: integer('row_count').notNull().default(0),
         orderCount: integer('order_count').notNull().default(0),
         skippedCount: integer('skipped_count').notNull().default(0),
@@ -221,6 +227,55 @@ export const dailyLists = sqliteTable(
         index('daily_lists_project_date_idx').on(t.projectId, t.serviceDate),
         index('daily_lists_site_date_idx').on(t.siteId, t.serviceDate),
         check('daily_lists_status_check', sql`${t.status} IN ('draft','released','cancelled')`),
+    ],
+);
+
+/* The uploaded sheet, kept.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY A WHOLE TABLE FOR SOMETHING THE IMPORTER ALREADY READ.
+ *
+ * It read eighteen fields of it. A pharmacy asked where the patient's
+ * telephone number had gone -- it was in the file they sent and not in the
+ * list they got back -- and the honest answer was that any column the
+ * importer does not model stops existing when the upload finishes. Nothing
+ * kept the file either: daily_lists holds its name and a digest, by design.
+ *
+ * So the mapping now decides what we ACT on rather than what we KEEP.
+ *
+ * ONE ROW PER SHEET ROW, INCLUDING THE ONES THAT BECAME NOTHING. Blocked
+ * rows, duplicates the operator held back, and the boxes of a collapsed
+ * series are all here. Those are precisely the rows somebody asks about
+ * afterwards -- "we sent 142 and you show 139" is a question about the
+ * three, and hanging the cells off `orders` would have kept only the 139.
+ *
+ * See drizzle/0060_source_rows.sql for the PHI consequences and where each
+ * one is handled: the retention sweep, the portal's scoping, and the rule
+ * that none of this reaches a courier's phone.
+ */
+export const LIST_ROW_OUTCOMES = ['imported', 'merged', 'skipped'] as const;
+export type ListRowOutcome = (typeof LIST_ROW_OUTCOMES)[number];
+
+export const dailyListRows = sqliteTable(
+    'daily_list_rows',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        dailyListId: integer('daily_list_id').notNull().references(() => dailyLists.id),
+        /** 1-based row number in the source sheet, as the operator sees it. */
+        rowNumber: integer('row_number').notNull(),
+        /** The cells as text, JSON, aligned to dailyLists.sourceHeaders. */
+        cells: text('cells').notNull().default('[]'),
+        /** The delivery this row became, or null when it became none. */
+        orderId: integer('order_id').references(() => orders.id),
+        /** 'imported' one row one delivery, 'merged' folded into another
+         *  row's delivery as a further box, 'skipped' became nothing. */
+        outcome: text('outcome', { enum: LIST_ROW_OUTCOMES }).notNull().default('imported'),
+    },
+    (t) => [
+        unique('daily_list_rows_list_row_unique').on(t.dailyListId, t.rowNumber),
+        index('daily_list_rows_order_idx').on(t.orderId),
+        check('daily_list_rows_outcome_check', sql`${t.outcome} IN ('imported','merged','skipped')`),
     ],
 );
 
