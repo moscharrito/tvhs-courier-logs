@@ -288,16 +288,6 @@ export function MyRun() {
                     )}
                 </div>
 
-                {!isToday && (
-                    /* Said once, plainly, above the round. A driver who
-                        has gone looking for Tuesday and then forgotten
-                        they did would otherwise read a finished day as a
-                        morning with nothing in it. */
-                    <p className="izy-muted izy-dayline-note">
-                        An earlier day. Nothing new is assigned here — open a stop to add a
-                        photograph to what was recorded.
-                    </p>
-                )}
 
                 {/* NO PIN PROMPT HERE. It lived above the run between tickets
                     5.4 and this one, offering enrolment to anybody whose phone

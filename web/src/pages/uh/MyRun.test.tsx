@@ -424,7 +424,10 @@ describe('MyRun', () => {
         await screen.findByRole('heading', { name: '2026-09-10' });
 
         expect(screen.queryByLabelText('Next stop')).not.toBeInTheDocument();
-        expect(screen.getByText(/An earlier day/)).toBeInTheDocument();
+        /* And no paragraph explaining that it is an earlier day: the
+           title is the date and there is a Back to today button beside
+           it, which says the same thing in the space it already takes. */
+        expect(screen.queryByText(/An earlier day/)).not.toBeInTheDocument();
         /* And the round itself is still there to be opened. */
         expect(screen.getAllByText('Ines Vargas').length).toBeGreaterThan(0);
     });

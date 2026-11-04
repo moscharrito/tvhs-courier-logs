@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { clockFor } from '../../lib/when';
 import { useProjectTimezone } from '../../app/auth';
@@ -106,6 +106,7 @@ export function Stop() {
        it loads, and the button stays hidden until the answer arrives: better
        a control that appears a moment late than one that cannot work. */
     const [handoverOnly, setHandoverOnly] = useState<boolean | null>(null);
+    const [params, setParams] = useSearchParams();
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
     /* The courier's own mark, on a controlled drug (7.13). This form is the
@@ -137,6 +138,28 @@ export function Stop() {
         }
     }, [base]);
     useEffect(() => { void load(); }, [load]);
+
+    /* ?handover=1 OPENS STRAIGHT ON THE HANDOVER FORM.
+     *
+     * One caller: a driver who got back to a door and tapped Handed over
+     * on the stop they came from. Making them tap it again on the
+     * delivery that tap created is a step that asks nothing.
+     *
+     * AN EFFECT, NOT A useState INITIALISER, which is where this was
+     * first written and did nothing. Both stops are the same route, so
+     * React Router keeps the component mounted across the navigation and
+     * an initialiser never runs a second time: the URL said handover=1
+     * and the screen showed the menu anyway.
+     *
+     * THE PARAMETER IS DROPPED ONCE IT HAS BEEN USED, with replace so it
+     * leaves no history entry. Otherwise Back out of the form reads the
+     * flag again and puts them right back in it, which is a screen with
+     * no way out of itself. */
+    useEffect(() => {
+        if (params.get('handover') !== '1') return;
+        setChoice('deliver');
+        setParams(new URLSearchParams(), { replace: true });
+    }, [params, setParams]);
     /* EACH OF THESE THREE GUARDS AGAINST RESOLVING AFTER UNMOUNT, and that
        is a fix rather than a precaution: the first one was setting state into
        a torn-down React and taking the whole web suite's exit code with it.
@@ -275,7 +298,10 @@ export function Stop() {
         if (idPhoto !== null) {
             photos.push({ blob: idPhoto, contentType: photoType(idPhoto) ?? "image/jpeg", kind: 'patient_id', bodyKey: 'patientIdFileId' });
         }
-        void post('deliver', { signedName: signedName.trim() }, 'Delivered and recorded.', undefined, photos);
+        /* WHAT TO DO NEXT, not what just happened. "Delivered and
+           recorded" describes our filing; the driver is standing at a
+           door wanting to know whether they can walk away. */
+        void post('deliver', { signedName: signedName.trim() }, 'Successful. Proceed to your next stop.', undefined, photos);
     };
 
     const doorstep = (e: FormEvent) => {
@@ -285,7 +311,7 @@ export function Stop() {
            The queue puts it in the bucket and only then sends the delivery, so
            a doorstep drop is never claimed without the photo behind it, on a
            signal or off one. */
-        void post('doorstep', { noSignatureReason: noSignatureReason.trim() }, 'Left at the door and photographed.', photo);
+        void post('doorstep', { noSignatureReason: noSignatureReason.trim() }, 'Successful. Proceed to your next stop.', photo);
     };
 
     const attempt = (e: FormEvent) => {
@@ -293,7 +319,7 @@ export function Stop() {
         const packages = order.packages
             .filter((p) => reasons[p.id]?.code)
             .map((p) => ({ packageId: p.id, reasonCode: reasons[p.id]!.code, note: reasons[p.id]!.note ?? '' }));
-        void post('attempt', { packages }, 'Recorded as a dry run.');
+        void post('attempt', { packages }, 'Successful. Proceed to your next stop.');
     };
 
     /* ─────────────── A STOP THAT ALREADY HAS AN OUTCOME (4 November)
@@ -323,7 +349,10 @@ export function Stop() {
         void post(
             'evidence',
             { kind: amend },
-            'The new photo is on the delivery. The old one is kept.',
+            /* NOT "proceed to your next stop": this one is an old
+               delivery being tidied up, and there is no next stop on a
+               day that finished last week. */
+            'Successful. The photo is on the delivery.',
             undefined,
             [{
                 blob: amendPhoto,
@@ -349,7 +378,7 @@ export function Stop() {
                list: the stop they are looking at is the first one and is
                finished, and hunting a round for a row that was not there a
                moment ago is how the wrong stop gets recorded. */
-            navigate(`/projects/${code}/orders/${made.id}/stop`);
+            navigate(`/projects/${code}/orders/${made.id}/stop?handover=1`);
         } catch (err) {
             setMsg({
                 kind: 'error',
@@ -469,65 +498,70 @@ export function Stop() {
                         they sent it. */}
                     <h2>Recorded</h2>
                     <p>What you saved is recorded and sent to dispatch.</p>
-                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
+                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" compact />
                 </div>
             )}
 
             {closed ? (
+                /* ─── A STOP THAT IS ALREADY RECORDED, PLAINLY.
+                 *
+                 * It opened as a wall of prose: a sentence under the
+                 * heading explaining the record, a sentence under every
+                 * button explaining the button, and the words "second
+                 * attempt" twice. A driver at a door reads none of it,
+                 * and a screen that has to be read before it can be used
+                 * is slower than one that cannot. What it is, and what
+                 * can be done about it. The explanations are gone, not
+                 * the controls.
+                 *
+                 * "HANDED OVER" RATHER THAN "I DELIVERED IT AFTER ALL",
+                 * and nothing on screen says reattempt. Underneath it is
+                 * still a second delivery -- the first attempt keeps its
+                 * outcome, its place in the completion rate and its
+                 * invoice line, which is the whole argument of
+                 * reattempt.ts -- but that is a fact about our records,
+                 * not about the driver's afternoon. They handed it over;
+                 * the button says so, and ?handover=1 lands them on the
+                 * form rather than on a menu asking what they just said
+                 * they were doing. */
                 <div className="izy-card">
-                    {/* WHAT THE RECORD SAYS, FIRST. A driver who opened the
-                        wrong stop should find that out from the first line
-                        rather than from the buttons under it. */}
                     <h2>
-                        {order.status === 'delivered' ? 'Recorded as delivered'
-                            : order.status === 'failed' ? 'Recorded as not delivered'
-                                : 'Finished'}
+                        {order.status === 'delivered' ? 'Delivered'
+                            : order.status === 'failed' ? 'Not delivered' : 'Cancelled'}
                     </h2>
-                    <p>
-                        {order.status === 'cancelled'
-                            ? <>This stop is recorded as <b>cancelled</b>.</>
-                            : order.status === 'delivered'
-                                ? 'This is on the record and stays there. You can still add a better photo of it.'
-                                : 'This attempt stays on the record. If you got back and handed it over, start the second attempt below.'}
-                    </p>
 
                     {amendable && amend === null && (
                         <>
-                            {filesAvailable === false ? (
-                                <p className="izy-muted">
-                                    Photo storage is not switched on, so there is nowhere to put a new picture.
-                                </p>
-                            ) : (
-                                <>
-                                    <CardButton
-                                        title="Photograph the signed form again"
-                                        tone="secondary"
-                                        compact
-                                        disabled={busy}
-                                        onClick={() => { setAmend('courier_form'); setAmendPhoto(null); }}
-                                        detail="Appended to this delivery. The old photo is kept."
-                                    />
-                                    {order.idRequired === true && (
-                                        <CardButton
-                                            title="Photograph the identification again"
-                                            tone="secondary"
-                                            compact
-                                            disabled={busy}
-                                            onClick={() => { setAmend('patient_id'); setAmendPhoto(null); }}
-                                            detail="The one most often shot at an angle nobody can read"
-                                        />
-                                    )}
-                                </>
-                            )}
                             {order.status === 'failed' && (
                                 <CardButton
-                                    title="I delivered it after all"
+                                    title="Handed over"
                                     tone="primary"
                                     compact
                                     busy={busy}
                                     onClick={() => { void redeliver(); }}
-                                    detail="Opens a second attempt for the same patient. This one stays as it is."
                                 />
+                            )}
+                            {filesAvailable === false ? (
+                                <p className="izy-muted">Photo storage is off, so there is nowhere to put a new picture.</p>
+                            ) : (
+                                <>
+                                    <CardButton
+                                        title="Replace the signed form"
+                                        tone="secondary"
+                                        compact
+                                        disabled={busy}
+                                        onClick={() => { setAmend('courier_form'); setAmendPhoto(null); }}
+                                    />
+                                    {order.idRequired === true && (
+                                        <CardButton
+                                            title="Replace the ID photo"
+                                            tone="secondary"
+                                            compact
+                                            disabled={busy}
+                                            onClick={() => { setAmend('patient_id'); setAmendPhoto(null); }}
+                                        />
+                                    )}
+                                </>
                             )}
                         </>
                     )}
@@ -558,7 +592,6 @@ export function Stop() {
                                     }}
                                 />
                             </label>
-                            {amendPhoto && <p className="izy-muted">Photo ready, {Math.round(amendPhoto.size / 1024)} KB.</p>}
                             <CardButton
                                 submit
                                 title="Add this photo"
@@ -566,9 +599,6 @@ export function Stop() {
                                 compact
                                 busy={busy}
                                 disabled={amendPhoto === null}
-                                detail={amendPhoto === null
-                                    ? 'Take the photograph first.'
-                                    : 'The delivery is unchanged. Only the picture is added.'}
                             />
                             <CardButton
                                 title="Back"
@@ -580,7 +610,7 @@ export function Stop() {
                         </form>
                     )}
 
-                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
+                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="quiet" compact />
                 </div>
             ) : (
                 <>
@@ -608,7 +638,6 @@ export function Stop() {
                             compact
                             busy={busy}
                             onClick={() => { void post('arrive', {}, 'Arrival recorded.'); }}
-                            detail="The time this delivery is measured against. It counts even if nobody answers."
                         />
                     )}
 
@@ -634,7 +663,6 @@ export function Stop() {
                                 tone="secondary"
                                 disabled={busy}
                                 onClick={() => setChoice('deliver')}
-                                detail="Somebody took it, and signed the pharmacy's form"
                             />
                             {/* Only when the medication allows it (Scope 1.2.3) AND the
                                 contract does (Addendum 2 clause 4, which supersedes it
@@ -642,11 +670,10 @@ export function Stop() {
                             {!needsSignature && handoverOnly === false && (
                                 <CardButton
                                     title="Left at the door"
-                                compact
+                                    compact
                                     tone="quiet"
                                     disabled={busy}
                                     onClick={() => setChoice('doorstep')}
-                                    detail="Needs a photograph of where you left it"
                                 />
                             )}
                             <CardButton
@@ -655,13 +682,15 @@ export function Stop() {
                                 tone="calmDanger"
                                 disabled={busy}
                                 onClick={() => setChoice('attempt')}
-                                detail="Nobody there, refused, no access — a reason per item"
                             />
+                            {/* ONE LINE, NOT TWO SENTENCES. It explains an
+                                absent button, which is worth saying -- a
+                                courier looking for "Left at the door" should
+                                learn why it is not there rather than hunt --
+                                but the second sentence told them to use a
+                                button they are already looking at. */}
                             {needsSignature && (
-                                <p className="izy-muted">
-                                    This one needs a signature, so it cannot be left at the door.
-                                    If nobody can sign, record it as could not deliver.
-                                </p>
+                                <p className="izy-muted">Needs a signature, so it cannot be left at the door.</p>
                             )}
                         </div>
                     )}

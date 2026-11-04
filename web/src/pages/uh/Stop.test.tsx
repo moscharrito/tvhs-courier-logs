@@ -63,7 +63,13 @@ const routes = (over: Record<string, unknown> = {}) => ({
    a second attempt lands on the delivery it created -- and "did it go
    there" is the assertion, not "did it call something". */
 function LocationProbe() {
-    return <span data-testid="location">{useLocation().pathname}</span>;
+    const at = useLocation();
+    return (
+        <>
+            <span data-testid="location">{at.pathname}</span>
+            <span data-testid="search">{at.search}</span>
+        </>
+    );
 }
 
 function renderStop(r: Record<string, unknown> = routes()) {
@@ -409,7 +415,7 @@ describe('Stop', () => {
         fireEvent.change(screen.getByLabelText('Note for package 51'), { target: { value: 'Building was locked and the gate code failed' } });
         fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
 
-        await waitFor(() => expect(screen.getByText('Recorded as a dry run.')).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByText('Successful. Proceed to your next stop.')).toBeInTheDocument());
         expect(bodyOf(fn, `POST ${ORDER}/attempt`).packages).toEqual([
             { packageId: 51, reasonCode: 'other', note: 'Building was locked and the gate code failed' },
         ]);
@@ -526,11 +532,23 @@ describe('Stop', () => {
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
+    it('says what the record is in one word, with no paragraph under it', async () => {
+        /* It opened as a wall of prose: a sentence under the heading, a
+           sentence under every button, and "second attempt" twice. A
+           driver at a door reads none of it. */
+        renderStop({ ...routes(), [`GET ${ORDER}`]: order({ status: 'failed', arrivedAt: '2026-09-12T17:40:00.000Z' }) });
+        await screen.findByRole('heading', { name: 'Not delivered' });
+
+        expect(screen.queryByText(/second attempt/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/reattempt/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/stays on the record/i)).not.toBeInTheDocument();
+    });
+
     it('offers nothing to RECORD on a stop that is already finished', async () => {
         renderStop({ ...routes(), [`GET ${ORDER}`]: order({ status: 'delivered', arrivedAt: '2026-09-12T17:40:00.000Z' }) });
         await screen.findByRole('heading', { name: 'Stop' });
 
-        expect(screen.getByRole('heading', { name: 'Recorded as delivered' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Delivered' })).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Could not deliver' })).not.toBeInTheDocument();
     });
@@ -560,34 +578,34 @@ describe('Stop', () => {
 
     it('lets a driver add a better photograph of a delivery already recorded', async () => {
         renderStop(finished('delivered'));
-        await screen.findByRole('heading', { name: 'Recorded as delivered' });
-        expect(screen.getByRole('button', { name: 'Photograph the signed form again' })).toBeInTheDocument();
+        await screen.findByRole('heading', { name: 'Delivered' });
+        expect(screen.getByRole('button', { name: 'Replace the signed form' })).toBeInTheDocument();
     });
 
     it('asks for the identification separately, where the pharmacy stamped it', async () => {
         renderStop(finished('delivered', { idRequired: true }));
-        await screen.findByRole('heading', { name: 'Recorded as delivered' });
-        expect(screen.getByRole('button', { name: 'Photograph the identification again' })).toBeInTheDocument();
+        await screen.findByRole('heading', { name: 'Delivered' });
+        expect(screen.getByRole('button', { name: 'Replace the ID photo' })).toBeInTheDocument();
     });
 
     it('does not ask for identification on a delivery that never needed it', async () => {
         renderStop(finished('delivered'));
-        await screen.findByRole('heading', { name: 'Recorded as delivered' });
-        expect(screen.queryByRole('button', { name: 'Photograph the identification again' })).not.toBeInTheDocument();
+        await screen.findByRole('heading', { name: 'Delivered' });
+        expect(screen.queryByRole('button', { name: 'Replace the ID photo' })).not.toBeInTheDocument();
     });
 
     it('offers the second attempt on a failed stop', async () => {
         renderStop(finished('failed'));
-        await screen.findByRole('heading', { name: 'Recorded as not delivered' });
-        expect(screen.getByRole('button', { name: 'I delivered it after all' })).toBeInTheDocument();
+        await screen.findByRole('heading', { name: 'Not delivered' });
+        expect(screen.getByRole('button', { name: 'Handed over' })).toBeInTheDocument();
     });
 
     it('does not offer a second attempt on one that was delivered', async () => {
         /* A delivered stop is finished. Offering to deliver it again is how
            one delivery becomes two on an invoice. */
         renderStop(finished('delivered'));
-        await screen.findByRole('heading', { name: 'Recorded as delivered' });
-        expect(screen.queryByRole('button', { name: 'I delivered it after all' })).not.toBeInTheDocument();
+        await screen.findByRole('heading', { name: 'Delivered' });
+        expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
     it('offers neither on a cancelled stop', async () => {
@@ -595,24 +613,38 @@ describe('Stop', () => {
            photograph and no door to have gone back to. The server refuses
            both routes for it, so the screen does not offer them. */
         renderStop(finished('cancelled'));
-        await screen.findByRole('heading', { name: 'Finished' });
-        expect(screen.queryByRole('button', { name: 'Photograph the signed form again' })).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'I delivered it after all' })).not.toBeInTheDocument();
+        await screen.findByRole('heading', { name: 'Cancelled' });
+        expect(screen.queryByRole('button', { name: 'Replace the signed form' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
-    it('asks the server for the second attempt and lands on the delivery it made', async () => {
-        /* Not back to the round: the stop they are looking at is the first
-           attempt and is finished, and hunting a list for a row that was
-           not there a moment ago is how the wrong stop gets recorded. */
+    it('asks the server for the second attempt and lands on the handover form', async () => {
+        /* Not back to the round: the stop they are looking at is the
+           first attempt and is finished, and hunting a list for a row
+           that was not there a moment ago is how the wrong stop gets
+           recorded. It lands on ?handover=1, which opens the form
+           directly -- they have already said what they are doing. */
         const { fn } = renderStop({
             ...finished('failed'),
             [`POST ${ORDER}/redeliver`]: { status: 201, body: { id: 99, reattemptOf: 21, runId: 7 } },
+            /* The delivery it made. Without this the screen it lands on
+               has nothing to render and the assertion below would be
+               about an error page. */
+            'GET /api/projects/uh/uh/orders/99': order({ id: 99, status: 'picked_up' }),
         });
-        await screen.findByRole('heading', { name: 'Recorded as not delivered' });
+        await screen.findByRole('heading', { name: 'Not delivered' });
 
-        fireEvent.click(screen.getByRole('button', { name: 'I delivered it after all' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         await waitFor(() => expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/redeliver'))).toBe(true));
         await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/99/stop'));
+
+        /* ON THE FORM, not on the menu above it. ?handover=1 carried them
+           there and was then stripped, so the assertion is what is on
+           screen rather than what is in the URL -- and stripping it is
+           the point: Back out of the form must not read the flag again
+           and put them straight back in. */
+        expect(await screen.findByRole('heading', { name: 'Handed over' })).toBeInTheDocument();
+        expect(screen.getByTestId('search')).toHaveTextContent('');
     });
 
     it('says what went wrong rather than moving on, when the server refuses', async () => {
@@ -627,9 +659,9 @@ describe('Stop', () => {
                 body: { error: 'This delivery is already going out again. Open that stop instead of this one.' },
             },
         });
-        await screen.findByRole('heading', { name: 'Recorded as not delivered' });
+        await screen.findByRole('heading', { name: 'Not delivered' });
 
-        fireEvent.click(screen.getByRole('button', { name: 'I delivered it after all' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         expect(await screen.findByText(/already going out again/)).toBeInTheDocument();
         expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/21/stop');
     });
