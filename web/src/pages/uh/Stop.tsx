@@ -323,22 +323,21 @@ export function Stop() {
                         somebody is a thing you do to a person, so it reads
                         better beside their name than under it.
 
-                        THE NUMBER IS PRINTED UNDER THE NAME as well as
-                        being in the button. It was dropped when the button
-                        moved up here, to save the line this panel was being
-                        shrunk for, and that was the wrong trade: a courier
-                        at a door is verifying the number out loud against
-                        the person in front of them -- it is the third of
-                        the three identifiers University Health asks for --
-                        and a number you can only reach by tapping something
-                        that starts a call is not a number you can read.
-                        Put back on instruction, 4 November.
+                        THE NUMBER IS NOT PRINTED. The button is the whole
+                        of it: this panel does not scroll away, so a line
+                        that only repeats what the control beside it already
+                        carries is a line the form below never gets.
 
-                        AS TEXT, NOT A SECOND LINK. The button beside the
-                        name already dials it; a second tappable copy of one
-                        action is the clutter this panel is being cleared
-                        of, and a driver who means to read the number aloud
-                        should not be one mis-tap from ringing it. */}
+                        It is still reachable without dialling. The button's
+                        accessible name is "Call <who> on <number>", so a
+                        screen reader announces it and it is on the control
+                        for anybody who wants to check what they are about
+                        to ring. If drivers turn out to need it in print --
+                        reading it back to dispatch, or checking it against
+                        the person at the door, which is the third of the
+                        three identifiers University Health asks for -- it
+                        goes under the address as plain text, never as a
+                        second link: one action, one control. */}
                     <div className="izy-stop-head-top">
                         <p className="izy-lede">{order.recipientName}</p>
                         {order.recipientPhone && (
@@ -353,13 +352,6 @@ export function Stop() {
                         )}
                     </div>
                     <p className="izy-lede-note">{order.address}, {order.city} {order.zip}</p>
-                    {order.recipientPhone && (
-                        /* As the pharmacy sent it, which is how every other
-                           screen on the web shows a number. Reformatting it
-                           here alone would make the stop screen and the
-                           order screen disagree about the same digits. */
-                        <p className="izy-lede-note izy-stop-phone">{order.recipientPhone}</p>
-                    )}
                     <div className="izy-chips">
                         <Chip label={`due ${clock(order.dueAt)}`} />
                         {order.arrivedAt && <Chip label={`arrived ${clock(order.arrivedAt)}`} tone="good" />}
