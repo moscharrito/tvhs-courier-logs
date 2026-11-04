@@ -1035,6 +1035,9 @@ body {
 .izy-stop-head { padding: 10px 12px; }
 .izy-stop-head .izy-lede { font-size: 16px; line-height: 20px; }
 .izy-stop-head .izy-lede-note { font-size: 13px; line-height: 17px; }
+/* A shade quieter than the address above it: the address is what a driver
+   checks they are at, the number is what they read out once they are. */
+.izy-stop-head .izy-stop-phone { margin-top: 1px; color: var(--izy-muted); }
 .izy-stop-head .izy-chips { gap: 4px; margin-top: 6px; }
 .izy-stop-head .izy-chip { min-height: 22px; padding: 0 8px; font-size: 12px; }
 

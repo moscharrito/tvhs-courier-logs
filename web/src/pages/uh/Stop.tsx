@@ -323,11 +323,22 @@ export function Stop() {
                         somebody is a thing you do to a person, so it reads
                         better beside their name than under it.
 
-                        THE NUMBER IS NO LONGER PRINTED. It cost the second
-                        line this panel was being shrunk to save, and a
-                        driver on this screen taps the button rather than
-                        reading digits off it. It is still in the link, and
-                        in the label a screen reader announces. */}
+                        THE NUMBER IS PRINTED UNDER THE NAME as well as
+                        being in the button. It was dropped when the button
+                        moved up here, to save the line this panel was being
+                        shrunk for, and that was the wrong trade: a courier
+                        at a door is verifying the number out loud against
+                        the person in front of them -- it is the third of
+                        the three identifiers University Health asks for --
+                        and a number you can only reach by tapping something
+                        that starts a call is not a number you can read.
+                        Put back on instruction, 4 November.
+
+                        AS TEXT, NOT A SECOND LINK. The button beside the
+                        name already dials it; a second tappable copy of one
+                        action is the clutter this panel is being cleared
+                        of, and a driver who means to read the number aloud
+                        should not be one mis-tap from ringing it. */}
                     <div className="izy-stop-head-top">
                         <p className="izy-lede">{order.recipientName}</p>
                         {order.recipientPhone && (
@@ -342,6 +353,13 @@ export function Stop() {
                         )}
                     </div>
                     <p className="izy-lede-note">{order.address}, {order.city} {order.zip}</p>
+                    {order.recipientPhone && (
+                        /* As the pharmacy sent it, which is how every other
+                           screen on the web shows a number. Reformatting it
+                           here alone would make the stop screen and the
+                           order screen disagree about the same digits. */
+                        <p className="izy-lede-note izy-stop-phone">{order.recipientPhone}</p>
+                    )}
                     <div className="izy-chips">
                         <Chip label={`due ${clock(order.dueAt)}`} />
                         {order.arrivedAt && <Chip label={`arrived ${clock(order.arrivedAt)}`} tone="good" />}

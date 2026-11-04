@@ -168,13 +168,27 @@ describe('Stop', () => {
     });
 
     it('names who is being rung, because "Call" on its own names nobody', async () => {
-        /* The number is no longer printed on the panel -- it cost the
-           line the panel was shrunk to save -- so the label is where a
-           screen reader, and anybody checking what they are about to
-           dial, finds it. */
         renderStop();
         await screen.findByRole('heading', { name: 'Stop' });
         expect(screen.getByRole('link', { name: 'Call Ines Vargas on 210-555-0134' })).toBeInTheDocument();
+    });
+
+    it('prints the number as well, because a courier reads it out at the door', async () => {
+        /* It is the third of the three identifiers University Health asks
+           for, verified out loud against the person in front of them. A
+           number you can only reach by tapping something that starts a
+           call is not a number you can read. */
+        renderStop();
+        const panel = await screen.findByRole('group', { name: 'This delivery' });
+        expect(within(panel).getByText('210-555-0134')).toBeInTheDocument();
+    });
+
+    it('does not print it as a second link beside the button that dials it', async () => {
+        /* One action, one control. A driver meaning to read the number
+           aloud should not be one mis-tap from ringing it. */
+        renderStop();
+        const panel = await screen.findByRole('group', { name: 'This delivery' });
+        expect(within(panel).getAllByRole('link')).toHaveLength(1);
     });
 
     it('offers nothing to dial when the pharmacy sent no number', async () => {
