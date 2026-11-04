@@ -731,180 +731,153 @@ describe('withdrawing a list', () => {
         expect(res.status, res.text).toBe(200);
     });
 
-    it('cancels every delivery and marks the list cancelled', async () => {
-        await reset();
-        const list = await uploaded();
+    /* ─────────────────────────────────────────────────────────────────
+     * DELETE MEANS DELETE (4 November 2026).
+     *
+     * This used to cancel: the orders stayed as rows with status
+     * 'cancelled', excluded from the board, the sweeps and the next
+     * upload's duplicate check. Changed on instruction. A deleted list is
+     * gone from everywhere, including deliveries a courier collected,
+     * delivered, photographed and got signed for.
+     *
+     * What survives is the audit row, and these tests say so in as many
+     * words, because it is the only thing left that a list ever existed.
+     * ───────────────────────────────────────────────────────────────── */
 
-        const res = await admin.delete(`${BASE}/${list.id}`);
-        expect(res.status, res.text).toBe(200);
-        expect(res.body.cancelled).toBe(list.summary.imported);
-
-        const after = await ordersOf(list.id);
-        expect(after).toHaveLength(list.summary.imported);
-        expect(after.every((o) => o.status === 'cancelled')).toBe(true);
-
-        const row = (await sql('SELECT status FROM daily_lists WHERE id = ?', [list.id])).rows[0];
-        expect(String(row.status)).toBe('cancelled');
-    });
-
-    it('leaves the orders in place rather than deleting them, with their custody intact', async () => {
-        /* THE WHOLE DESIGN IN ONE ASSERTION. custody_events is append-only by
-           database trigger, so a hard delete here would mean dropping that
-           trigger inside a web request. The rows stay and the chain stays;
-           what changes is that nothing working looks at them any more. */
-        await reset();
-        const list = await uploaded();
-        const before = await ordersOf(list.id);
-
-        await admin.delete(`${BASE}/${list.id}`);
-
-        const events = await sql(
-            `SELECT COUNT(*) AS n FROM custody_events WHERE order_id IN (${before.map(() => '?').join(',')})`,
-            before.map((o) => Number(o.id)),
-        );
-        /* One 'created' from the import plus one 'cancelled' from this, per
-           order: nothing was removed to make room for the new event. */
-        expect(Number(events.rows[0].n)).toBe(before.length * 2);
-    });
-
-    it('lets the corrected file be uploaded again without every row being skipped as a duplicate', async () => {
-        /* THE REASON THIS FEATURE EXISTS. A pharmacy sends the wrong file,
-           sends the right one, and the second upload is skipped row for row
-           against the first. Withdrawing has to clear that, or the operator
-           is no better off than before -- and it does, because the duplicate
-           query already excludes cancelled orders. */
-        await reset();
-        const wrong = await uploaded();
-
-        const blocked = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
-        expect(blocked.status).toBe(400);
-        expect(blocked.body.error).toMatch(/duplicate/i);
-
-        expect((await admin.delete(`${BASE}/${wrong.id}`)).status).toBe(200);
-
-        const again = await upload(admin, BASE, CSV, { siteId: dischargeId, serviceDate: '2026-09-14' }, 'daily-list.csv');
-        expect(again.status, again.text).toBe(201);
-        expect(again.body.summary.imported).toBe(wrong.summary.imported);
-        /* Exactly as duplicated as the first upload was, and no more. The
-           fixture carries one deliberate in-file duplicate, so the number is
-           not zero -- what matters is that nothing was flagged against the
-           list this one replaces. */
-        expect(again.body.summary.duplicates).toBe(wrong.summary.duplicates);
-    });
-
-    it('takes the courier off the ones already assigned, and their stop off the run', async () => {
-        await reset();
-        const list = await uploaded();
-        const [first] = await ordersOf(list.id);
-
-        await sql(
-            "UPDATE orders SET status = 'assigned', assigned_to_username = 'sim.courier01' WHERE id = ?",
-            [Number(first.id)],
-        );
-        await sql(
-            `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_by)
-             VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'sim.courier01', '2026-09-14', 'Test run', 'planned', 'admin')`,
-        );
-        const runId = Number((await sql("SELECT id FROM runs WHERE label = 'Test run'")).rows[0].id);
-        await sql(
-            `INSERT INTO run_stops (project_id, run_id, order_id, sequence)
-             VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, ?, 1)`,
-            [runId, Number(first.id)],
-        );
-
-        const res = await admin.delete(`${BASE}/${list.id}`);
-        expect(res.status, res.text).toBe(200);
-        expect(res.body.unassigned).toBe(1);
-        expect(res.body.stopsRemoved).toBe(1);
-
-        const after = (await sql('SELECT status, assigned_to_username FROM orders WHERE id = ?', [Number(first.id)])).rows[0];
-        expect(String(after.status)).toBe('cancelled');
-        /* The name is off the delivery, which is what "take off anyone
-           assigned to it" means on the screen that asked for this. */
-        expect(after.assigned_to_username == null || after.assigned_to_username === '').toBe(true);
-
-        expect(Number((await sql('SELECT COUNT(*) AS n FROM run_stops WHERE order_id = ?', [Number(first.id)])).rows[0].n)).toBe(0);
-        /* And the round that held only that stop is gone, rather than sitting
-           on the board as a courier with a shift and nothing on it. */
-        expect(Number((await sql('SELECT COUNT(*) AS n FROM runs WHERE id = ?', [runId])).rows[0].n)).toBe(0);
-    });
-
-    it('keeps a run the courier had already started, even once it is empty', async () => {
-        /* Planning a round and setting off on it are different facts, and the
-           second is a thing that happened. Tidying the empty run off the
-           board would delete the record that a courier went out. */
-        await reset();
-        const list = await uploaded();
-        const [first] = await ordersOf(list.id);
-        await sql(
-            `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_by)
-             VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'sim.courier01', '2026-09-14', 'Out already', 'started', 'admin')`,
-        );
-        const runId = Number((await sql("SELECT id FROM runs WHERE label = 'Out already'")).rows[0].id);
-        await sql(
-            `INSERT INTO run_stops (project_id, run_id, order_id, sequence)
-             VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, ?, 1)`,
-            [runId, Number(first.id)],
-        );
-
-        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
-
-        expect(Number((await sql('SELECT COUNT(*) AS n FROM run_stops WHERE run_id = ?', [runId])).rows[0].n)).toBe(0);
-        expect(Number((await sql('SELECT COUNT(*) AS n FROM runs WHERE id = ?', [runId])).rows[0].n)).toBe(1);
-    });
-
-    it('leaves alone an empty planned run this list never filled', async () => {
-        /* A dispatcher presses Start a run for a driver who has turned up,
-           and it sits there with no stops until work is put on it. If the
-           wrong file is withdrawn in the meantime, that run has nothing to
-           do with the list and must survive it -- otherwise the driver
-           quietly loses their round and nobody can say why. */
-        await reset();
-        const list = await uploaded();
-        await sql(
-            `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_by)
-             VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'sim.courier01', '2026-09-14', 'Just started', 'planned', 'admin')`,
-        );
-        const runId = Number((await sql("SELECT id FROM runs WHERE label = 'Just started'")).rows[0].id);
-
-        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
-
-        expect(Number((await sql('SELECT COUNT(*) AS n FROM runs WHERE id = ?', [runId])).rows[0].n)).toBe(1);
-    });
-
-    it('takes the list off the dispatch board, pool and counts', async () => {
-        /* The operator's actual question: "does the button take it off our
-           dispatch". Cancelling is only an answer to that if the board then
-           stops showing the work, so this asserts the board rather than the
-           orders table. */
+    it('removes the deliveries and the list itself, not their status', async () => {
         await reset();
         const list = await uploaded();
         const ids = (await ordersOf(list.id)).map((o) => Number(o.id));
         expect(ids.length).toBeGreaterThan(0);
 
-        const before = await admin.get(`/api/projects/uh/uh/board?serviceDate=2026-09-14`);
-        expect(before.status, before.text).toBe(200);
-        const poolBefore = before.body.pool.flatMap((g) => g.orderIds ?? []);
-        expect(poolBefore).toEqual(expect.arrayContaining(ids));
+        const res = await admin.delete(`${BASE}/${list.id}`);
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.deleted).toBe(ids.length);
+        expect(res.body.permanent).toBe(true);
+
+        expect(await ordersOf(list.id)).toHaveLength(0);
+        expect((await sql('SELECT id FROM daily_lists WHERE id = ?', [list.id])).rows).toHaveLength(0);
+        /* Not cancelled somewhere else either: the rows are not there. */
+        const marks = ids.map(() => '?').join(',');
+        expect((await sql(`SELECT id FROM orders WHERE id IN (${marks})`, ids)).rows).toHaveLength(0);
+    });
+
+    it('deletes work a courier has already finished, which is the whole instruction', async () => {
+        /* The old behaviour refused this outright: "a courier has already
+           started on this list, so it cannot be taken off". That refusal
+           is gone, deliberately and with the trade accepted. */
+        await reset();
+        const list = await uploaded();
+        const [first] = await ordersOf(list.id);
+        const orderId = Number(first.id);
+
+        await sql(
+            `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_by)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'sim.courier01', '2026-09-14', 'Done', 'started', 'admin')`,
+        );
+        const runId = Number((await sql("SELECT id FROM runs WHERE label = 'Done'")).rows[0].id);
+        await sql('INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES ((SELECT id FROM projects WHERE code = \'uh\'), ?, ?, 1)', [runId, orderId]);
+        await sql("UPDATE orders SET status = 'delivered', delivered_at = '2026-09-14T18:00:00.000Z' WHERE id = ?", [orderId]);
+
+        const res = await admin.delete(`${BASE}/${list.id}`);
+        expect(res.status, res.text).toBe(200);
+        expect((await sql('SELECT id FROM orders WHERE id = ?', [orderId])).rows).toHaveLength(0);
+        /* A STARTED run is a thing that happened and is not deleted, even
+           though it is empty now: removing it would remove the record that
+           a courier went out. */
+        expect((await sql('SELECT id FROM runs WHERE id = ?', [runId])).rows).toHaveLength(1);
+    });
+
+    it('takes the chain of custody with it, past the append-only trigger', async () => {
+        await reset();
+        const list = await uploaded();
+        const ids = (await ordersOf(list.id)).map((o) => Number(o.id));
+        const marks = ids.map(() => '?').join(',');
+        expect((await sql(`SELECT id FROM custody_events WHERE order_id IN (${marks})`, ids)).rows.length).toBeGreaterThan(0);
+
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+        expect((await sql(`SELECT id FROM custody_events WHERE order_id IN (${marks})`, ids)).rows).toHaveLength(0);
+    });
+
+    it('puts the append-only trigger back afterwards', async () => {
+        /* THE ONE THAT MATTERS MOST HERE. The delete drops the guard to get
+           past it. If it did not come back, every later delete of a custody
+           row would silently succeed and the evidence table would stop being
+           evidence -- and nothing else in the system would notice. */
+        await reset();
+        const list = await uploaded();
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+
+        const other = await uploaded('2026-09-15');
+        const survivor = Number((await ordersOf(other.id))[0].id);
+        await expect(sql('DELETE FROM custody_events WHERE order_id = ?', [survivor]))
+            .rejects.toThrow(/append-only/);
+    });
+
+    it('keeps the audit row, which is all that is left to say it existed', async () => {
+        await reset();
+        const list = await uploaded();
+        const count = (await ordersOf(list.id)).length;
+        expect((await admin.delete(`${BASE}/${list.id}`).send({ reason: 'wrong file' })).status).toBe(200);
+
+        const audit = await admin.get('/api/audit?action=list.delete&limit=5');
+        expect(audit.status, audit.text).toBe(200);
+        const event = audit.body.events.find((e) => e.entity_id === String(list.id));
+        expect(event, 'the deletion is not in the audit trail').toBeDefined();
+        expect(event.detail.ordersDeleted).toBe(count);
+        expect(event.detail.permanent).toBe(true);
+        expect(event.detail.reason).toBe('wrong file');
+        /* What state they were in when they went, which is the part
+           somebody will want from this row a year from now. */
+        expect(Array.isArray(event.detail.byStatus)).toBe(true);
+    });
+
+    it('takes the kept sheet with it, including rows that became no delivery', async () => {
+        await reset();
+        const res = await upload(
+            admin, BASE, EXTRA, { siteId: dischargeId, serviceDate: '2026-09-22', skipRows: [3] }, 'extras.csv',
+        );
+        expect(res.status, res.text).toBe(201);
+        expect((await sql('SELECT id FROM daily_list_rows WHERE daily_list_id = ?', [res.body.id])).rows.length).toBe(2);
+
+        expect((await admin.delete(`${BASE}/${res.body.id}`)).status).toBe(200);
+        expect((await sql('SELECT id FROM daily_list_rows WHERE daily_list_id = ?', [res.body.id])).rows).toHaveLength(0);
+    });
+
+    it('leaves a reattempt standing, with its pointer back cleared', async () => {
+        /* A second go at one of these is a different delivery on a
+           different list, possibly already done. Deleting it would be
+           deleting work nobody asked to delete. */
+        await reset();
+        const list = await uploaded();
+        const orderId = Number((await ordersOf(list.id))[0].id);
+        await sql(
+            `INSERT INTO orders (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
+                                 recipient_name, address_line, zip, received_at, dedupe_key, reattempt_of_order_id, status)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, NULL, 'RX-R', 'adhoc', '2026-09-15',
+                     'Second Go', '9 Rehearsal Way', '78215', '2026-09-15T12:00:00.000Z', 'k-second-go', ?, 'ready')`,
+            [dischargeId, orderId],
+        );
+        const again = Number((await sql("SELECT id FROM orders WHERE dedupe_key = 'k-second-go'")).rows[0].id);
 
         expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
 
-        const after = await admin.get(`/api/projects/uh/uh/board?serviceDate=2026-09-14`);
-        expect(after.status, after.text).toBe(200);
-        const poolAfter = after.body.pool.flatMap((g) => g.orderIds ?? []);
-        for (const id of ids) expect(poolAfter).not.toContain(id);
-        /* And not hiding on a lane instead. */
-        const onLanes = (after.body.lanes ?? []).flatMap((l) => (l.stops ?? []).map((st) => st.orderId));
-        for (const id of ids) expect(onLanes).not.toContain(id);
-        /* The day's unassigned count agrees with the screen. */
-        expect(after.body.summary.unassigned).toBe(0);
+        const kept = (await sql('SELECT id, reattempt_of_order_id FROM orders WHERE id = ?', [again])).rows;
+        expect(kept).toHaveLength(1);
+        expect(kept[0].reattempt_of_order_id).toBeNull();
     });
 
-    it('does not double up when the corrected file repeats rows of the withdrawn one', async () => {
-        /* "Whenever we upload new sets, it does not overlap or create
-           duplicates." The withdrawn rows must not block the new file, and
-           the new file must not land beside them: after re-uploading, the
-           live work for that site and day is exactly one list's worth. */
+    it('answers 404 to a second delete, because there is nothing there now', async () => {
+        /* Different from the old behaviour, which treated a repeat as a
+           success because the list still existed in a cancelled state.
+           There is no row to be idempotent about any more. */
+        await reset();
+        const list = await uploaded();
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(404);
+    });
+
+    it('clears the way for the corrected file, which is what it is for', async () => {
         await reset();
         const first = await uploaded();
         const firstIds = (await ordersOf(first.id)).map((o) => Number(o.id));
@@ -912,20 +885,23 @@ describe('withdrawing a list', () => {
         expect((await admin.delete(`${BASE}/${first.id}`)).status).toBe(200);
 
         const second = await uploaded();
-        expect(second.id).not.toBe(first.id);
         const secondIds = (await ordersOf(second.id)).map((o) => Number(o.id));
-        /* Every row came in: none skipped as a duplicate of the list that
-           was taken off. */
         expect(secondIds.length).toBe(firstIds.length);
+        for (const id of firstIds) expect(secondIds).not.toContain(id);
+    });
 
-        /* And the live work for that site and date is the new list alone. */
-        const liveRows = (await sql(
-            `SELECT id FROM orders
-              WHERE service_date = '2026-09-14' AND site_id = ? AND status != 'cancelled' ORDER BY id`,
-            [dischargeId],
-        )).rows.map((r) => Number(r.id));
-        expect(liveRows).toEqual(secondIds);
-        for (const id of firstIds) expect(liveRows).not.toContain(id);
+    it('takes it off the dispatch board, which is the operator\'s own question', async () => {
+        await reset();
+        const list = await uploaded();
+        const ids = (await ordersOf(list.id)).map((o) => Number(o.id));
+
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+
+        const after = await admin.get('/api/projects/uh/uh/board?serviceDate=2026-09-14');
+        expect(after.status, after.text).toBe(200);
+        const pool = after.body.pool.flatMap((g) => g.orderIds ?? []);
+        for (const id of ids) expect(pool).not.toContain(id);
+        expect(after.body.summary.unassigned).toBe(0);
     });
 
     it('still catches a genuine duplicate against a list that is live', async () => {
@@ -940,68 +916,6 @@ describe('withdrawing a list', () => {
         expect(String(again.body.error)).toMatch(/No rows would be imported/);
     });
 
-    it('refuses once a courier has collected anything, and changes nothing', async () => {
-        /* CHECKED BEFORE THE FIRST WRITE. The lifecycle table allows
-           cancelled only from pending, ready and assigned, so without this
-           the loop would cancel the deliveries in front of the picked-up one
-           and then throw -- leaving a half-withdrawn list and no undo. */
-        await reset();
-        const list = await uploaded();
-        const all = await ordersOf(list.id);
-        await sql("UPDATE orders SET status = 'picked_up' WHERE id = ?", [Number(all[1].id)]);
-
-        const res = await admin.delete(`${BASE}/${list.id}`);
-        expect(res.status).toBe(409);
-        expect(res.body.code).toBe('list.workStarted');
-        expect(res.body.error).toMatch(/picked up/i);
-
-        const after = await ordersOf(list.id);
-        expect(after.filter((o) => o.status === 'cancelled')).toHaveLength(0);
-        const row = (await sql('SELECT status FROM daily_lists WHERE id = ?', [list.id])).rows[0];
-        expect(String(row.status)).not.toBe('cancelled');
-    });
-
-    it('treats a second withdrawal as done rather than as an error', async () => {
-        await reset();
-        const list = await uploaded();
-        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
-
-        const again = await admin.delete(`${BASE}/${list.id}`);
-        expect(again.status, again.text).toBe(200);
-        expect(again.body.alreadyWithdrawn).toBe(true);
-        expect(again.body.cancelled).toBe(0);
-    });
-
-    it('answers 404 for a list that does not exist', async () => {
-        expect((await admin.delete(`${BASE}/999999`)).status).toBe(404);
-    });
-
-    it('writes down who took it off and what went with it', async () => {
-        await reset();
-        const list = await uploaded();
-        await admin.delete(`${BASE}/${list.id}`).send({ reason: 'wrong file' });
-
-        const rows = await sql(
-            "SELECT detail FROM audit_events WHERE action = 'list.withdraw' AND entity_id = ?",
-            [String(list.id)],
-        );
-        expect(rows.rows).toHaveLength(1);
-        const detail = JSON.parse(String(rows.rows[0].detail));
-        expect(detail.cancelled).toBe(list.summary.imported);
-        expect(detail.reason).toMatch(/wrong file/);
-    });
-
-    it('puts the operator’s reason on the deliveries, not just in the audit trail', async () => {
-        /* Read months later from one order's own history, where "withdrawn"
-           on its own explains nothing. */
-        await reset();
-        const list = await uploaded();
-        await admin.delete(`${BASE}/${list.id}`).send({ reason: 'duplicate of the 2pm list' });
-
-        const [one] = await ordersOf(list.id);
-        const row = (await sql('SELECT failure_reason FROM orders WHERE id = ?', [Number(one.id)])).rows[0];
-        expect(String(row.failure_reason)).toMatch(/duplicate of the 2pm list/);
-    });
 });
 
 /* ---------------------------------------------- taking a list away (2 Nov) */

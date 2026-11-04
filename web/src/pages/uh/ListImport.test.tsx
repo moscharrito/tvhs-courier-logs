@@ -284,16 +284,22 @@ describe('taking a list back off', () => {
         fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
         await waitFor(() => { expect(asked).toHaveBeenCalled(); });
         const text = String(asked.mock.calls[0]?.[0] ?? '');
-        expect(text).toMatch(/79 deliveries are cancelled/);
-        /* And it does not promise a deletion the server will not perform:
-           the rows stay, cancelled, because custody is append-only. */
-        expect(text).toMatch(/stay on the record as cancelled/);
+        expect(text).toMatch(/79 deliveries? (is|are) deleted outright/);
+        /* THE DIALOG HAS TO DESCRIBE WHAT THE BUTTON NOW DOES. It promised
+           the opposite until 4 November -- "the deliveries stay on the
+           record as cancelled" -- and a confirmation describing behaviour
+           the code used to have is worse than none. */
+        expect(text).toMatch(/cannot be undone/);
+        expect(text).toMatch(/already collected, delivered or photographed/);
+        /* And the old promise is gone, not merely unmentioned. */
+        expect(text).not.toMatch(/stay on the record/);
+        expect(text).not.toMatch(/cancelled/);
     });
 
     it('sends the delete and reports what went with it', async () => {
         const { calls } = stub({
             ...withRecent([aList()]),
-            'DELETE /api/projects/uh/uh/imports/41': { cancelled: 79, unassigned: 4 },
+            'DELETE /api/projects/uh/uh/imports/41': { deleted: 79, filesDeleted: 4, filesLeftInStorage: 0, permanent: true },
         });
         vi.stubGlobal('confirm', vi.fn(() => true));
         render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
@@ -301,7 +307,7 @@ describe('taking a list back off', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
 
-        await screen.findByText(/79 deliveries cancelled, 4 taken off a courier/);
+        await screen.findByText(/79 deliveries removed, 4 photographs/);
         expect(calls).toContain('DELETE /api/projects/uh/uh/imports/41');
         /* Reloaded, so the table is not left claiming the list is still on. */
         expect(calls.filter((c) => c === 'GET /api/projects/uh/uh/imports').length).toBeGreaterThan(1);

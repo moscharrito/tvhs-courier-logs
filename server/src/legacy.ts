@@ -422,7 +422,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
             limit: MAX_UPLOAD_BYTES,
         }),
         requireProject,
-        createImportsRouter({ client: database.client }),
+        createImportsRouter({ client: database.client, storage: fileStorage }),
     );
     // Stop flow first: its /:id/arrive and friends must be matched before
     // the orders router's /:id, which would otherwise swallow them.

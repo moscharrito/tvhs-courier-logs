@@ -287,41 +287,47 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
      *
      * The commonest thing that goes wrong with an upload is the wrong file,
      * and the only answer used to be cancelling seventy deliveries one at a
-     * time. The server cancels them instead of deleting the rows -- custody
-     * is append-only -- which is what the confirmation says in as many words,
-     * because "Delete" on a button and "kept on the record" in the database
-     * must not be a surprise to the person clicking it. */
+     * time.
+     *
+     * IT DELETES, AND THE CONFIRMATION SAYS SO. From 4 November the server
+     * removes the rows rather than cancelling them, including deliveries
+     * that were collected, delivered and signed for. The old wording
+     * promised the opposite -- "the deliveries stay on the record as
+     * cancelled" -- and a button whose dialog describes the behaviour it
+     * used to have is worse than one with no dialog at all. */
     async function withdraw(l: ImportSummary) {
         const ok = confirm(
-            `Take the ${l.serviceDate} ${l.site.name} list off?\n\n`
-            + `Its ${l.orderCount} ${l.orderCount === 1 ? 'delivery is' : 'deliveries are'} cancelled and `
-            + 'anyone assigned to them is taken off. They come off the board and off the drivers’ phones, '
-            + 'and the pharmacy can send a corrected file for the same day without it being skipped as a duplicate.\n\n'
-            + 'The deliveries stay on the record as cancelled. This cannot be undone.',
+            `Delete the ${l.serviceDate} ${l.site.name} list?\n\n`
+            + `Its ${l.orderCount} ${l.orderCount === 1 ? 'delivery is' : 'deliveries are'} deleted outright, `
+            + 'including any a driver has already collected, delivered or photographed. '
+            + 'Their proof of delivery, photographs and chain of custody go with them.\n\n'
+            + 'This cannot be undone and there is nothing to restore from. Only the audit trail '
+            + 'will show the list ever existed.',
         );
         if (!ok) return;
         setWithdrawing(l.id);
         setMsg(null);
         try {
-            const res = await api<{ cancelled: number; unassigned: number; alreadyWithdrawn?: boolean }>(
+            const res = await api<{ deleted: number; filesDeleted: number; filesLeftInStorage: number }>(
                 `${base}/${l.id}`, { method: 'DELETE' },
             );
             setMsg({
                 kind: 'ok',
-                text: res.alreadyWithdrawn
-                    ? 'That list was already off.'
-                    : `Took the ${l.serviceDate} ${l.site.name} list off: ${res.cancelled} `
-                        + `${res.cancelled === 1 ? 'delivery' : 'deliveries'} cancelled`
-                        + (res.unassigned > 0 ? `, ${res.unassigned} taken off a courier` : '') + '.',
+                text: `Deleted the ${l.serviceDate} ${l.site.name} list: ${res.deleted} `
+                    + `${res.deleted === 1 ? 'delivery' : 'deliveries'} removed`
+                    + (res.filesDeleted > 0 ? `, ${res.filesDeleted} photographs` : '')
+                    /* Said out loud rather than buried: an object left in the
+                       bucket is the one part of this that somebody may have
+                       to go and finish by hand. */
+                    + (res.filesLeftInStorage > 0
+                        ? `. ${res.filesLeftInStorage} photographs could not be removed from storage`
+                        : '') + '.',
             });
             await loadRecent();
         } catch (err) {
-            /* The 409 carries the reason a courier has already started, which
-               is the whole value of the refusal. Swallowing it would leave a
-               button that does nothing. */
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'Could not take that list off.' });
+                : { kind: 'error', text: 'Could not delete that list.' });
         } finally {
             setWithdrawing(null);
         }

@@ -62,6 +62,10 @@ import { requireProjectRole } from '../../core/projects/middleware';
    "which pharmacies may this account see" is how one of them ends up wrong. */
 import { scopeFor } from './client-portal';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
+import type { FileStorage } from '../../core/files/storage';
+/* The one signing path for a delete, shared with the retention purge
+   rather than written a second time here. */
+import { deleteFromBucket } from '../../core/retention/routes';
 import { todayIn } from '../../core/dates';
 import { custodyEventStatement, recordOrderEvent, type OrderStateRow } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
@@ -154,7 +158,9 @@ export interface PreviewRow {
     willImport: boolean;
 }
 
-export function createImportsRouter({ client }: { client: Client }): Router {
+export function createImportsRouter(
+    { client, storage }: { client: Client; storage: FileStorage },
+): Router {
     const router = Router({ mergeParams: true });
     const operate = requireProjectRole('admin', 'pharmacy');
     /* An import holds the pharmacy's whole list, patients included. Reading one
@@ -1027,43 +1033,79 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         });
     }));
 
-    /* ─────────────────────────────────────── taking a list back off
+    /* ─────────────────────────────────── deleting a list, completely
      *
-     * "We sent the wrong file" is the commonest thing that goes wrong with an
-     * upload, and the only answer used to be cancelling seventy deliveries
-     * one at a time.
+     * "We sent the wrong file" is the commonest thing that goes wrong with
+     * an upload, and this is the answer to it.
      *
-     * IT CANCELS; IT DOES NOT DELETE THE ROWS, and that is not a half
-     * measure. `custody_events` is append-only by database trigger, so
-     * removing the orders would mean dropping that trigger inside a web
-     * request -- with other requests in flight, and a window in which a crash
-     * leaves the evidence table unprotected for good.
-     * `scripts/clear-test-work.mjs` is allowed to do that because it is one
-     * process, doing one thing, watched. A server carrying traffic is not.
+     * IT DELETES. Until 4 November it cancelled: the orders stayed as rows
+     * with status 'cancelled', excluded from the board, the sweeps, the
+     * texts and the next upload's duplicate check. That is what this system
+     * had always meant by gone, and it was chosen because custody_events is
+     * append-only by database trigger and removing the rows means dropping
+     * that trigger inside a web request.
      *
-     * AND CANCELLED IS WHAT THIS SYSTEM ALREADY MEANS BY GONE. The board
-     * excludes it, so do the ETA sweep, the patient texts and the overdue
-     * list -- and, the part that actually fixes the operator's problem, so
-     * does the duplicate check on the next upload (the `status != 'cancelled'`
-     * in the preview query above). The corrected file imports clean instead
-     * of being skipped row for row against the list it is replacing. A hard
-     * delete would buy nothing here that this does not already give.
+     * Changed on instruction, with the trade stated and accepted: a deleted
+     * list is gone from everywhere, including deliveries a courier
+     * collected, delivered, photographed and got signed for, and including
+     * ones already on an invoice that has been issued. There is no undo and
+     * nothing to restore from.
      *
-     * IT REFUSES ONCE A COURIER HAS TOUCHED ANYTHING, and it checks before it
-     * writes. The lifecycle table allows `cancelled` only from pending, ready
-     * and assigned, so a list carrying one picked-up delivery would otherwise
-     * cancel the sixty-nine in front of it and then throw. Half a withdrawn
-     * list is worse than a refused one: nobody can explain the screen that
-     * results, and there is no undo.
+     * WHAT SURVIVES IS THE AUDIT ROW. audit_events is never touched here, so
+     * the record that a list was deleted -- by whom, when, from which
+     * pharmacy, for which day, and how much went with it -- outlives the
+     * data. That is the difference between a deletion and a disappearance.
+     *
+     * THE TRIGGERS COME BACK IN A `finally`. The retention purge does the
+     * same dance and says why: the protection is never relaxed for the
+     * application, only for an operation somebody asked for. The residual
+     * risk the old comment named is real and unchanged -- a process killed
+     * between the DROP and the CREATE leaves the evidence tables
+     * unprotected until the next deploy runs migrations again. It is a
+     * narrow window, it is the price of the instruction, and it is written
+     * down here rather than discovered.
+     *
+     * ORDER MATTERS, and it is children first for a reason: SQLite enforces
+     * the foreign keys, so a parent deleted before its children fails the
+     * whole statement and leaves half a list. Everything that points at an
+     * order goes before the order does.
+     *
+     * A REATTEMPT OF A DELETED DELIVERY IS NOT ITSELF DELETED. It is a
+     * different delivery, on a different list, possibly already done. Its
+     * pointer back is cleared instead, so what remains is a real order that
+     * has forgotten what it was a second go at -- which is true, and better
+     * than deleting work nobody asked to delete.
      *
      * DISPATCH ONLY, unlike upload and download. A pharmacy may send a list
-     * and read its own back, but withdrawing one takes work off a board that
-     * dispatch is now assigning by hand -- see the 2 November change that
-     * turned auto-assignment off. The counter that uploaded the wrong file
-     * rings dispatch, which is a phone call; the alternative is a list
-     * vanishing from under whoever is mid-way through planning it.
+     * and read its own back; destroying one is not theirs to do.
      */
     const Withdraw = z.object({ reason: z.string().trim().max(200).optional() });
+
+    /* Everything that points at an order, children first.
+     *
+     * Listed rather than discovered, so adding a table that references
+     * orders and forgetting this list is a failed DELETE in a test rather
+     * than a row left pointing at nothing in production. The two guarded
+     * tables are first because they are the ones the triggers protect and
+     * the window they are unprotected for should be as short as the work
+     * allows. */
+    const CHILDREN_BY_ORDER = [
+        'order_messages',
+        'custody_events',
+        'patient_messages',
+        'delivery_requests',
+        'discrepancies',
+        'invoice_lines',
+        'notifications',
+        'run_stops',
+        'packages',
+        'daily_list_rows',
+    ] as const;
+
+    const APPEND_ONLY = [
+        { table: 'custody_events', trigger: 'custody_events_no_delete' },
+        { table: 'order_messages', trigger: 'order_messages_no_delete' },
+    ] as const;
 
     router.delete('/:id', dispatchOnly, wrap(async (req, res) => {
         const id = Number(req.params['id']);
@@ -1075,18 +1117,18 @@ export function createImportsRouter({ client }: { client: Client }): Router {
             return;
         }
 
+        const projectId = req.project!.id;
         const listRs = await client.execute({
             sql: `SELECT l.*, s.code AS site_code, s.name AS site_name
                   FROM daily_lists l JOIN sites s ON s.id = l.site_id
                   WHERE l.project_id = ? AND l.id = ?`,
-            args: [req.project!.id, id],
+            args: [projectId, id],
         });
         const l = listRs.rows[0];
         if (!l) { res.status(404).json({ error: 'Import not found' }); return; }
-        /* The same 404-not-403 as the two routes above it. Dispatch sees every
-           list today, so this cannot currently fire -- it is here because the
-           day somebody scopes an admin, the three routes keyed on this id must
-           not start disagreeing about what a stranger's id looks like. */
+        /* The same 404-not-403 as the routes above it: this is keyed by an
+           id, and "not yours" to a number lets somebody count another
+           pharmacy's lists by walking them. */
         const allowed = allowedSiteIds(req);
         if (allowed !== null && !allowed.includes(Number(l['site_id']))) {
             res.status(404).json({ error: 'Import not found' });
@@ -1094,149 +1136,163 @@ export function createImportsRouter({ client }: { client: Client }): Router {
         }
 
         const ordersRs = await client.execute({
-            sql: 'SELECT * FROM orders WHERE project_id = ? AND daily_list_id = ? ORDER BY id',
-            args: [req.project!.id, id],
+            sql: 'SELECT id, status FROM orders WHERE project_id = ? AND daily_list_id = ?',
+            args: [projectId, id],
         });
-        const rows = ordersRs.rows;
+        const ids = ordersRs.rows.map((o) => Number(o['id']));
+        const marks = ids.map(() => '?').join(',');
 
-        /* ALREADY WITHDRAWN IS A SUCCESS, NOT A CONFLICT. Two operators on the
-           same screen, or one impatient double-click, must not produce an
-           error beside a list that is in exactly the state they asked for. */
-        const live = rows.filter((o) => String(o['status']) !== 'cancelled');
-        if (String(l['status']) === 'cancelled' && live.length === 0) {
-            res.json({ ok: true, id, cancelled: 0, alreadyWithdrawn: true, orders: rows.length });
-            return;
+        /* Counted before anything goes, because afterwards there is nothing
+           left to count and the audit row is the only account of what this
+           removed. */
+        const byStatus: Record<string, number> = {};
+        for (const o of ordersRs.rows) {
+            const k = String(o['status']);
+            byStatus[k] = (byStatus[k] ?? 0) + 1;
         }
 
-        /* THE REFUSAL, BEFORE A SINGLE WRITE. */
-        const started = live.filter((o) => ['picked_up', 'delivered', 'failed'].includes(String(o['status'])));
-        if (started.length > 0) {
-            const byStatus: Record<string, number> = {};
-            for (const o of started) {
-                const k = String(o['status']);
-                byStatus[k] = (byStatus[k] ?? 0) + 1;
-            }
-            const words = Object.entries(byStatus)
-                .map(([k, n]) => `${n} ${k === 'failed' ? 'attempted' : k.replace('_', ' ')}`)
-                .join(', ');
-            res.status(409).json({
-                error: `A courier has already started on this list (${words}), so it cannot be taken off. `
-                    + 'Cancel the deliveries that have not been collected one at a time instead.',
-                code: 'list.workStarted',
-                started: started.length,
-                of: live.length,
-                byStatus,
-            });
-            return;
-        }
-
-        const settings = resolveSettings(req.project!.settings);
-        const actor = req.session.user?.username ?? '';
-        const at = new Date();
-        const given = parsedBody.data.reason ?? '';
-        /* The reason says WHY the delivery died rather than naming the button
-           that killed it: it is read months later from the order's own
-           history, where "withdrawn" on its own explains nothing. */
-        const reason = (`The ${String(l['service_date'])} ${String(l['site_name'])} list was taken off`
-            + (given === '' ? '' : `: ${given}`)).slice(0, 300);
-
-        let unassigned = 0;
-        for (const order of live) {
-            /* Off the courier first. `cancelled` is reachable from `assigned`,
-               so this is not needed to make the transition legal -- it is
-               needed because `cancelled` leaves assigned_to_username where it
-               found it, and a cancelled delivery still showing a courier's
-               name is the thing the operator asked us to clear. Going through
-               the event rather than an UPDATE keeps the chain readable:
-               assigned, unassigned, cancelled. */
-            let current = Object.fromEntries(Object.entries(order)) as unknown as OrderStateRow & { status: string };
-            if (current.status === 'assigned') {
-                await recordOrderEvent(client, {
-                    projectId: req.project!.id, order: current, actor, settings,
-                    event: { type: 'unassigned', at },
-                });
-                current = { ...current, status: 'ready' };
-                unassigned += 1;
-            }
-            await recordOrderEvent(client, {
-                projectId: req.project!.id, order: current, actor, settings,
-                event: { type: 'cancelled', at, reason },
-            });
-        }
-
-        /* The planned stops go with them. A cancelled order is off the board
-           either way, but a run that still lists it reads as work to do on the
-           courier's own screen. */
-        let stops = 0;
-        /* WHICH RUNS THIS TOUCHED, READ BEFORE THE STOPS GO. The tidy-up
-           below needs to know them, and once the stops are deleted there is
-           nothing left to say which runs held them. */
+        /* WHICH RUNS HELD THIS WORK, read before the stops go: afterwards
+           nothing says which runs they were on. */
         let touched: number[] = [];
-        if (live.length > 0) {
-            const ids = live.map((o) => Number(o['id']));
-            const marks = ids.map(() => '?').join(',');
+        if (ids.length > 0) {
             const held = await client.execute({
-                sql: `SELECT run_id FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
-                args: [req.project!.id, ...ids],
+                sql: `SELECT DISTINCT run_id FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
+                args: [projectId, ...ids],
             });
-            stops = held.rows.length;
-            touched = [...new Set(held.rows.map((r) => Number(r['run_id'])))];
-            await client.execute({
-                sql: `DELETE FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
-                args: [req.project!.id, ...ids],
-            });
+            touched = held.rows.map((r) => Number(r['run_id']));
         }
 
-        /* A PLANNED run emptied by that is a round nobody is doing, and left
-           behind it sits on the board as a courier with a shift and no work.
+        /* THE PHOTOGRAPHS. The rows go with everything else below; the
+           objects in the bucket would not, and a deleted delivery whose
+           identity photograph is still sitting in S3 is the opposite of
+           what was asked for. Keys are read now and the objects removed
+           after the rows, so a failure to reach S3 cannot leave a row
+           pointing at an object that is already gone. */
+        const fileRs = ids.length === 0 ? { rows: [] } : await client.execute({
+            sql: `SELECT id, s3_key FROM files WHERE project_id = ? AND order_id IN (${marks})`,
+            args: [projectId, ...ids],
+        });
+        const fileKeys = fileRs.rows.map((f) => String(f['s3_key']));
 
-           ONLY THE ONES THIS EMPTIED, AND THAT NOW MEANS IT. This used to
-           match every empty planned run on the service date, which is not
-           the same set: a dispatcher who presses Start a run has an empty
-           planned run sitting there waiting for work, and withdrawing an
-           unrelated list on the same day deleted it. The driver lost their
-           round and nothing on the screen said why. Narrowed to the runs
-           that actually held these orders, read above before the stops went.
+        let removed = 0;
+        for (const { trigger } of APPEND_ONLY) {
+            await client.execute(`DROP TRIGGER IF EXISTS ${trigger}`);
+        }
+        try {
+            if (ids.length > 0) {
+                for (const table of CHILDREN_BY_ORDER) {
+                    await client.execute({
+                        sql: `DELETE FROM ${table} WHERE order_id IN (${marks})`,
+                        args: ids,
+                    });
+                }
+                await client.execute({
+                    sql: `DELETE FROM files WHERE project_id = ? AND order_id IN (${marks})`,
+                    args: [projectId, ...ids],
+                });
+                /* A second go at one of these deliveries is its own order on
+                   its own list. It keeps existing; it just stops claiming to
+                   be a reattempt of a row that is not there. */
+                await client.execute({
+                    sql: `UPDATE orders SET reattempt_of_order_id = NULL WHERE reattempt_of_order_id IN (${marks})`,
+                    args: ids,
+                });
+                const gone = await client.execute({
+                    sql: `DELETE FROM orders WHERE project_id = ? AND id IN (${marks})`,
+                    args: [projectId, ...ids],
+                });
+                removed = Number(gone.rowsAffected ?? 0);
+            }
+            /* Rows of the sheet that never became an order -- blocked,
+               skipped, or folded into a box series -- are keyed to the list
+               rather than to an order, so they need their own sweep. */
+            await client.execute({ sql: 'DELETE FROM daily_list_rows WHERE daily_list_id = ?', args: [id] });
+        } finally {
+            /* ALWAYS, and the same DDL the migrations and the retention
+               purge use. A delete that threw halfway must not also leave the
+               evidence tables writable. */
+            await client.execute(`CREATE TRIGGER IF NOT EXISTS custody_events_no_delete BEFORE DELETE ON custody_events
+BEGIN
+\tSELECT RAISE(ABORT, 'custody_events is append-only');
+END`);
+            await client.execute(`CREATE TRIGGER IF NOT EXISTS order_messages_no_delete BEFORE DELETE ON order_messages
+BEGIN
+\tSELECT RAISE(ABORT, 'order_messages is append-only');
+END`);
+        }
 
-           NOT a started one, even when it is now empty. Planning a round and
-           setting off on it are different facts, and the second is a thing
-           that happened: deleting it to tidy the board would remove the
-           record that a courier went out. It reads oddly for the rest of the
-           day and it is true, which is the right way round. */
+        /* A PLANNED run this emptied is a round nobody is doing. Only the
+           ones it emptied, and only planned ones: a started run is a thing
+           that happened, and deleting it would remove the record that a
+           courier went out. */
         let emptiedRuns = 0;
         if (touched.length > 0) {
-            const marks = touched.map(() => '?').join(',');
+            const runMarks = touched.map(() => '?').join(',');
             const emptied = await client.execute({
                 sql: `DELETE FROM runs
-                       WHERE project_id = ? AND status = 'planned' AND id IN (${marks})
+                       WHERE project_id = ? AND status = 'planned' AND id IN (${runMarks})
                          AND id NOT IN (SELECT run_id FROM run_stops)`,
-                args: [req.project!.id, ...touched],
+                args: [projectId, ...touched],
             });
             emptiedRuns = Number(emptied.rowsAffected ?? 0);
         }
 
-        await req.audit('list.withdraw', 'daily_list', String(id), {
+        await client.execute({
+            sql: 'DELETE FROM daily_lists WHERE project_id = ? AND id = ?',
+            args: [projectId, id],
+        });
+
+        /* WRITTEN AFTER THE DELETE AND BEFORE THE RESPONSE. audit_events is
+           not touched by any of the above, so this outlives everything it
+           describes -- which is the whole of what is left to say a list ever
+           existed. */
+        await req.audit('list.delete', 'daily_list', String(id), {
             siteId: Number(l['site_id']),
             serviceDate: String(l['service_date']),
             sourceFilename: String(l['source_filename'] ?? ''),
-            cancelled: live.length,
-            unassigned,
-            stopsRemoved: stops,
-            reason,
+            ordersDeleted: removed,
+            /* Flattened: the audit detail takes scalars and arrays, and
+               "what state were they in" is the part somebody will want
+               from this row a year from now. */
+            byStatus: Object.entries(byStatus).map(([k, n]) => `${k}:${n}`),
+            filesDeleted: fileKeys.length,
+            runsRemoved: emptiedRuns,
+            reason: (parsedBody.data.reason ?? '').slice(0, 200),
+            /* Said plainly in the trail, because somebody reading it a year
+               from now needs to know this was not a cancellation. */
+            permanent: true,
         });
 
-        await client.execute({
-            sql: `UPDATE daily_lists SET status = 'cancelled' WHERE project_id = ? AND id = ?`,
-            args: [req.project!.id, id],
-        });
+        /* The bucket last, and never fatal. The record is already gone; a
+           network blip reaching S3 must not turn a completed delete into a
+           500 that invites somebody to press it again. Orphans are findable
+           by key prefix and the lifecycle rule collects them. */
+        let filesRemoved = 0;
+        let filesLeftBehind = 0;
+        if (storage.available) {
+            for (const key of fileKeys) {
+                try {
+                    await deleteFromBucket(storage, key);
+                    filesRemoved += 1;
+                } catch {
+                    /* Counted, not thrown. The caller is told how many the
+                       bucket kept, which is the number somebody would need
+                       to go and look for. */
+                    filesLeftBehind += 1;
+                }
+            }
+        }
 
         res.json({
-            ok: true, id,
-            cancelled: live.length,
-            unassigned,
-            stopsRemoved: stops,
+            ok: true,
+            id,
+            deleted: removed,
+            byStatus,
+            filesDeleted: fileKeys.length,
+            filesRemovedFromStorage: filesRemoved,
+            filesLeftInStorage: filesLeftBehind,
             runsRemoved: emptiedRuns,
-            orders: rows.length,
+            permanent: true,
         });
     }));
 
