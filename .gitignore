@@ -114,6 +114,7 @@ phones.csv
 # And the wrappers that name the production host.
 set-phones.ps1
 set-email.ps1
+reset-password.ps1
 
 # The never-delete list for courier-inventory.mjs. Same reason as the files
 # above: a driver's username is their personal email address.
