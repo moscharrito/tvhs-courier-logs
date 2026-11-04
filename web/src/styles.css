@@ -203,6 +203,48 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-board { display: flex; flex-direction: column; gap: 16px; }
 .izy-lanes-col { min-width: 0; }
 .izy-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
+
+/* ── The board's drivers, as a list (pages/uh/Board.tsx) ──────────────────
+ *
+ * It was .izy-lanes above: an auto-fill grid of 280px cards, one per run,
+ * each holding its stops as further bordered cards. Cards inside cards,
+ * three borders deep around one address, and twelve little boxes to read
+ * across before finding the driver you wanted. On a narrow screen it was a
+ * single column anyway, just with more lines drawn on it.
+ *
+ * One foldable section per driver, straight down the page. Folded, the
+ * header still carries the name, the count and the shift pill, which is
+ * what the grid was really being read for. */
+.izy-board-lanes { display: grid; gap: 12px; }
+
+/* ── One delivery, as a row ───────────────────────────────────────────────
+ *
+ * What it is, who and where, and the one control. `minmax(0, …)` on the
+ * flexible tracks and not `1fr` alone: a long address in a track that
+ * cannot shrink pushes the button off the card instead of wrapping. */
+.izy-stop-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+    gap: 12px;
+    align-items: start;
+    padding: 8px 0;
+    border-top: 1px solid var(--izy-line);
+    font-size: 13px;
+    min-width: 0;
+}
+.izy-stop-row:first-of-type { border-top: 0; }
+.izy-stop-row > div { min-width: 0; overflow-wrap: anywhere; }
+.izy-stop-row[draggable="true"] { cursor: grab; }
+/* The stop the courier is actually working. A left edge rather than a box,
+   because a box inside a list of rows is the card this stopped being. */
+.izy-stop-row.is-current { box-shadow: inset 3px 0 0 var(--izy-green); padding-left: 10px; }
+.izy-stop-row-do .izy-btn, .izy-stop-row-do select { font-size: 12px; }
+
+/* ON A PHONE the three tracks become one. A dispatcher is usually at a
+   desk, but the board is opened from a car park often enough. */
+@media (max-width: 760px) {
+    .izy-stop-row { grid-template-columns: 1fr; gap: 4px; }
+}
 .izy-pool-group { margin-bottom: 14px; }
 /* The run name beside a courier who is carrying two of them. */
 .izy-lane-run { font-weight: 400; color: var(--izy-muted); font-size: 13px; }

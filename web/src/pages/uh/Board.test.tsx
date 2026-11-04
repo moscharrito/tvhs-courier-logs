@@ -200,7 +200,7 @@ describe('Board', () => {
         expect(within(pool).getByText('Discharge Pharmacy')).toBeInTheDocument();
         expect(within(pool).getByText('Ines Vargas')).toBeInTheDocument();
 
-        const lane = screen.getByRole('region', { name: 'Noon wave for Ada Courier' });
+        const lane = screen.getByRole('region', { name: 'Ada Courier' });
         expect(within(lane).getByText('Marcus Ibarra')).toBeInTheDocument();
         expect(within(lane).getByText('Priya Raman')).toBeInTheDocument();
     });
@@ -242,6 +242,47 @@ describe('Board', () => {
         expect(within(pool).getByText('out of area')).toBeInTheDocument();
     });
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * A LIST OF DRIVERS, NOT A WALL OF CARDS (4 November 2026).
+     *
+     * It was an auto-fill grid of 280px cards, one per run, each holding
+     * its stops as further bordered cards: cards inside cards, three
+     * borders deep around one address, and twelve little boxes to read
+     * across before finding the driver you wanted.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('folds a driver away and still says who they are and how far through', async () => {
+        /* The whole value of folding on this screen. A dispatcher watching
+           three counters folds the rest once; a folded lane that said only
+           a name would make them open it again to learn anything. */
+        renderBoard(routes());
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const lane = screen.getByRole('region', { name: 'Ada Courier' });
+        expect(within(lane).getByText('Marcus Ibarra')).toBeInTheDocument();
+
+        fireEvent.click(within(lane).getByRole('button', { name: /Ada Courier/ }));
+
+        /* The stops are gone and the header still carries the count. */
+        expect(within(lane).queryByText('Marcus Ibarra')).not.toBeInTheDocument();
+        expect(within(lane).getByText(/of \d+ done/)).toBeInTheDocument();
+        /* And whether they are working, which is the other thing read at a
+           glance. It rides the header, so folding does not hide it. */
+        expect(within(lane).getByText(/on shift/)).toBeInTheDocument();
+    });
+
+    it('keeps a stop draggable now that it is a row rather than a card', async () => {
+        /* Dragging between lanes is how the board is actually worked. The
+           card shape was carrying it, and the row has to keep it. */
+        renderBoard(routes());
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const lane = screen.getByRole('region', { name: 'Ada Courier' });
+        const row = within(lane).getByText('Marcus Ibarra').closest('[draggable]');
+        expect(row, 'the stop is no longer draggable').not.toBeNull();
+        expect(row).toHaveAttribute('draggable', 'true');
+    });
+
     it('tells two lanes apart when one courier is carrying both', async () => {
         /* A second wave is one person with two runs in a day. Both lanes were
            headed "Ada Courier" and both were labelled "Run for Ada Courier",
@@ -259,8 +300,13 @@ describe('Board', () => {
         }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
 
-        expect(screen.getByRole('region', { name: 'Noon wave for Ada Courier' })).toBeInTheDocument();
-        expect(screen.getByRole('region', { name: 'Afternoon wave for Ada Courier' })).toBeInTheDocument();
+        /* THE NAME A SCREEN READER HEARS IS THE HEADING IT CAN SEE, now
+           that a lane is a Section: one element, named by its own title,
+           rather than a div carrying a second invisible label that could
+           drift from the words on screen. The disambiguation the old
+           aria-label existed for is still here -- it is in the title. */
+        expect(screen.getByRole('region', { name: 'Ada Courier · Noon wave' })).toBeInTheDocument();
+        expect(screen.getByRole('region', { name: 'Ada Courier · Afternoon wave' })).toBeInTheDocument();
         // And on screen, not only in the accessibility tree.
         expect(screen.getByRole('heading', { name: /Ada Courier · Noon wave/ })).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: /Ada Courier · Afternoon wave/ })).toBeInTheDocument();
@@ -341,7 +387,7 @@ describe('Board', () => {
         renderBoard();
         await screen.findByRole('heading', { name: 'Dispatch board' });
         const pool = screen.getByRole('region', { name: 'Unassigned pool' });
-        const lane = screen.getByRole('region', { name: 'Noon wave for Ada Courier' });
+        const lane = screen.getByRole('region', { name: 'Ada Courier' });
         // Ines is waiting; Marcus and Priya are carried.
         expect(within(pool).queryByText('Marcus Ibarra')).not.toBeInTheDocument();
         expect(within(lane).queryByText('Ines Vargas')).not.toBeInTheDocument();
@@ -424,7 +470,7 @@ describe('Board', () => {
         }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
 
-        const lane = screen.getByLabelText('Noon wave for Ada Courier');
+        const lane = screen.getByRole('region', { name: 'Ada Courier' });
         expect(within(lane).getByText('Showing 1 to 8 of 14 stops')).toBeInTheDocument();
         expect(within(lane).getByText(/3 overdue/)).toBeInTheDocument();
         expect(within(lane).getByText(/0 of 14 done/)).toBeInTheDocument();
@@ -782,7 +828,7 @@ describe('Board', () => {
     it('returns a stop to the pool', async () => {
         const { calls } = renderBoard(routes({ 'DELETE /api/projects/uh/uh/runs/10/stops/2': { ok: true } }));
         await screen.findByRole('heading', { name: 'Dispatch board' });
-        const lane = screen.getByRole('region', { name: 'Noon wave for Ada Courier' });
+        const lane = screen.getByRole('region', { name: 'Ada Courier' });
         fireEvent.click(within(lane).getAllByRole('button', { name: 'Return to pool' })[0]!);
         await waitFor(() => expect(calls).toContain('DELETE /api/projects/uh/uh/runs/10/stops/2'));
     });

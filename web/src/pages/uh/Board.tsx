@@ -686,33 +686,51 @@ export function Board() {
                             No driver on the board matches “{laneFilter}”. {data.lanes.length} {data.lanes.length === 1 ? 'lane' : 'lanes'} in all.
                         </p>
                     )}
-                    <div className="izy-lanes">
+                    {/* ─── A COLUMN OF DRIVERS, NOT A WALL OF CARDS.
+                        It was an auto-fill grid of 280px cards, one per
+                        run, each holding its stops as further bordered
+                        cards -- cards inside cards, three deep with the
+                        stop's own actions. On a dispatcher's screen that
+                        is twelve little boxes to read across before you
+                        find the driver you are looking for, and on a
+                        narrow one it is a single column anyway, just with
+                        more borders.
+
+                        Now each driver is a foldable section down the
+                        page and each stop is a ROW inside it, the way the
+                        driver roster does it. Folded, the header still
+                        says who it is and how far through they are, which
+                        is what the grid was really being read for.
+
+                        THE DROP TARGET IS THE WRAPPER, not the section.
+                        Section renders its own element and knows nothing
+                        about dragging; wrapping it keeps the drag and
+                        drop working without teaching a shared primitive
+                        about this one screen. */}
+                    <div className="izy-board-lanes">
                     {pagedLanes.rows.map((lane) => (
-                        <section
+                        <div
                             key={lane.run.id}
-                            className="izy-card izy-lane"
-                            /* Always the run, never just the courier. One
-                               person can hold two runs in a day, which is what
-                               a second wave is, and two sections labelled
-                               "Run for Ana Ruiz" are two sections a screen
-                               reader cannot tell apart. */
-                            aria-label={`${runName(lane)} for ${lane.courier.name}`}
                             onDragOver={(e) => { e.preventDefault(); }}
                             onDrop={(e) => { e.preventDefault(); if (dragging !== null) void assign(dragging, `run:${lane.run.id}`); setDragging(null); }}
                         >
-                            <div className="izy-row-between">
-                                {/* The name alone is the heading until the
-                                    same courier has a second run on the day,
-                                    and then two lanes read identically and
-                                    you have to drop to the grey line beneath
-                                    to tell a finished morning wave from the
-                                    afternoon's work. */}
-                                <h2>
-                                    {lane.courier.name}
-                                    {twiceOver.has(lane.courier.username) && (
-                                        <span className="izy-lane-run"> · {runName(lane)}</span>
-                                    )}
-                                </h2>
+                        <Section
+                            /* Keyed by run, so folding one wave does not
+                               fold the same driver's other one -- and so a
+                               dispatcher who only watches three counters
+                               can fold the rest once and have it stay. */
+                            id={`uh.board.lane.${lane.run.id}`}
+                            className="izy-lane"
+                            title={twiceOver.has(lane.courier.username)
+                                ? `${lane.courier.name} · ${runName(lane)}`
+                                : lane.courier.name}
+                            summary={(
+                                <>
+                                    {lane.counts.done} of {lane.counts.total} done
+                                    {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
+                                </>
+                            )}
+                            actions={(
                                 <span className={`izy-pill ${lane.courier.onShift ? '' : 'muted'}`} title={lane.courier.lastSeenAt ?? 'never signed in'}>
                                     {/* The pill answers "is this person working", and the
                                         time answers "are they in touch". Separate, because
@@ -721,7 +739,8 @@ export function Board() {
                                         ? (lane.courier.present ? 'on shift' : `on shift · ${seenLabel(lane.courier)}`)
                                         : `off shift · ${seenLabel(lane.courier)}`}
                                 </span>
-                            </div>
+                            )}
+                        >
                             <p className="izy-muted">
                                 {lane.run.label || 'Run'} {lane.run.id} · {lane.counts.done} of {lane.counts.total} done
                                 {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
@@ -745,11 +764,11 @@ export function Board() {
                             </p>
 
                             <div className="izy-row">
-                                <button className="izy-btn secondary" type="button" disabled={busy || lane.counts.total === 0}
+                                <button className="izy-btn secondary small" type="button" disabled={busy || lane.counts.total === 0}
                                     onClick={() => { void autoSequence(lane.run.id, 'nearest'); }}>
                                     Sequence by distance
                                 </button>
-                                <button className="izy-btn secondary" type="button" disabled={busy || lane.counts.total === 0}
+                                <button className="izy-btn secondary small" type="button" disabled={busy || lane.counts.total === 0}
                                     onClick={() => { void autoSequence(lane.run.id, 'due'); }}>
                                     Sequence by deadline
                                 </button>
@@ -762,10 +781,9 @@ export function Board() {
                                 onDragStart={setDragging}
                                 unassign={unassign}
                             />
-                        </section>
+                        </Section>
+                        </div>
                     ))}
-
-
                     </div>
                     <Pager
                         of={pagedLanes}
@@ -931,6 +949,23 @@ function LaneStops({ lane, projectCode, busy, onDragStart, unassign }: {
     );
 }
 
+/* ONE DELIVERY, AS A ROW.
+ *
+ * It was a bordered card four lines tall inside a lane that was itself a
+ * card inside a grid -- three depths of border around one address. A
+ * dispatcher reads this list to find a stop and move it, which is a
+ * scanning job, and scanning down aligned columns beats reading a stack
+ * of boxes.
+ *
+ * THE COLUMNS, and why these: what it is, who and where, and the one
+ * control. The deadline and the status ride with the address rather than
+ * taking a column of their own, because they are read when the eye has
+ * already stopped on the row, not while running down it.
+ *
+ * STILL DRAGGABLE, and still marked when it is the stop the courier is
+ * working. Those are the two things the card shape was carrying that the
+ * row has to keep.
+ */
 function OrderCard({ order, sequence, current, action, draggable, onDragStart, onDragEnd, projectCode }: {
     order: BoardOrder;
     sequence?: number;
@@ -945,33 +980,31 @@ function OrderCard({ order, sequence, current, action, draggable, onDragStart, o
     const clock = clockFor(useProjectTimezone(projectCode));
     return (
         <div
-            className={`izy-stop${current ? ' izy-stop-current' : ''}`}
+            className={`izy-stop-row${current ? ' is-current' : ''}`}
             draggable={draggable}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
         >
-            <div className="izy-row-between">
-                <span>
-                    {sequence !== undefined && <b>{sequence}. </b>}
-                    <Link to={`/projects/${projectCode}/orders/${order.id}`}>#{order.id}</Link>
-                    {' '}<span className="izy-muted">{order.serviceType}</span>
-                    {/* The zone was on the card only when there was not one:
-                        "out of area" showed, zone 1 to 5 showed nothing. So
-                        the board offered a zone filter while the cards a
-                        dispatcher drags between vans never said which zone
-                        they were in, which is the one thing you are splitting
-                        the work by. Found by running a day with two couriers
-                        and eleven stops across all five zones. */}
-                    {order.zone === null
-                        ? <> <span className="izy-pill warn">out of area</span></>
-                        : <> <span className="izy-pill muted">zone {order.zone}</span></>}
-                </span>
-                {label.text && <span className={`izy-pill ${label.tone === 'muted' ? 'muted' : label.tone}`}>{label.text}</span>}
+            <div className="izy-stop-row-what">
+                {sequence !== undefined && <b>{sequence}. </b>}
+                <Link to={`/projects/${projectCode}/orders/${order.id}`}>#{order.id}</Link>
+                {' '}<span className="izy-muted">{order.serviceType}</span>
+                {/* The zone was on the card only when there was not one:
+                    "out of area" showed, zone 1 to 5 showed nothing. So the
+                    board offered a zone filter while the cards a dispatcher
+                    drags between vans never said which zone they were in,
+                    which is the one thing you are splitting the work by. */}
+                {order.zone === null
+                    ? <> <span className="izy-pill warn">out of area</span></>
+                    : <> <span className="izy-pill muted">zone {order.zone}</span></>}
+                {label.text && <> <span className={`izy-pill ${label.tone === 'muted' ? 'muted' : label.tone}`}>{label.text}</span></>}
             </div>
-            <div>{order.recipientName}</div>
-            <div className="izy-muted">{order.address}, {order.city} {order.zip}</div>
-            <div className="izy-muted">due {clock(order.dueAt)} · {order.status}</div>
-            {action}
+            <div className="izy-stop-row-who">
+                <div>{order.recipientName}</div>
+                <div className="izy-muted">{order.address}, {order.city} {order.zip}</div>
+                <div className="izy-muted">due {clock(order.dueAt)} · {order.status}</div>
+            </div>
+            <div className="izy-stop-row-do">{action}</div>
         </div>
     );
 }
