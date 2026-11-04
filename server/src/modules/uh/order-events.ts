@@ -118,7 +118,19 @@ export async function insertCustodyEvent(client: Client, e: CustodyEventInput): 
  * Read back out of custody_events months later, "picked_up" with no name
  * against it is a question. This is the answer, in the row itself.
  */
-export const CUSTODY_ON_ASSIGNMENT = 'Recorded automatically: this contract does not collect a signature at the counter.';
+/* "this contract does not collect a signature at the counter" said the
+ * right thing in the wrong voice: it described a clause rather than the
+ * handover, and read as though something had been skipped. The fact it
+ * carries is unchanged -- the package was received, and no signature was
+ * taken for it -- said plainly.
+ *
+ * ONLY NEW EVENTS GET THIS. The string is written into custody_events.reason
+ * at pickup time, and that table is append-only by trigger, so every pickup
+ * recorded before this change keeps the old sentence. That is correct: the
+ * record says what was written when it happened. Anybody reading a custody
+ * chain across the change will see both, which is why both say the same
+ * thing in the same order. */
+export const CUSTODY_ON_ASSIGNMENT = 'Recorded automatically: package received at the pharmacy, no signature taken at the counter.';
 
 /**
  * Who handed the packages over, on an automatic pickup.

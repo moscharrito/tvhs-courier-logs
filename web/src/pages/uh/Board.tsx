@@ -111,8 +111,19 @@ const REASON_LABEL: Record<string, string> = {
     other: 'other',
 };
 
+/* Each label is the MIDDLE of a sentence: courier, label, then the
+ * recipient as a link. So every one of these has to read straight into a
+ * person's name.
+ *
+ * `picked_up` was 'collected', so the feed read "<courier> collected
+ * <patient>" -- a sentence about collecting the patient. What actually
+ * happened is that the courier took that patient's package from the
+ * pharmacy counter, and the line now says so. It is longer than the
+ * others and that is the right trade: this is the one event in the chain
+ * where the thing handed over and the person named are different. */
 const EVENT_LABEL: Record<string, string> = {
-    picked_up: 'collected', arrived: 'arrived at', delivered: 'delivered to',
+    picked_up: 'received the package at the pharmacy for',
+    arrived: 'arrived at', delivered: 'delivered to',
     attempted: 'could not deliver to', returned: 'returned', note: 'noted',
 };
 

@@ -141,7 +141,7 @@ describe('delivering something that was never collected', () => {
            the chain asserts; which member of staff is what this contract
            stopped capturing, and naming one would be invented. */
         expect(pickup.signedName).toBe('Site staff');
-        expect(pickup.reason).toMatch(/does not collect a signature at the counter/);
+        expect(pickup.reason).toMatch(/package received at the pharmacy, no signature taken/);
     });
 
     it('does the same for a delivery that failed at the door', async () => {
@@ -164,7 +164,11 @@ describe('delivering something that was never collected', () => {
         const order = await pickedUpOrder();
         const pickup = (await detail(order.id)).body.custody.find((e) => e.type === 'picked_up');
         expect(pickup.signedName).toBe('Pharmacy Tech');
-        expect(pickup.reason ?? '').not.toMatch(/does not collect a signature/);
+        /* Matched on "Recorded automatically", which is what marks a pickup
+           the system wrote rather than a person. The old pattern keyed off
+           the signature wording and would have passed for the wrong reason
+           the moment that sentence was reworded -- which it then was. */
+        expect(pickup.reason ?? '').not.toMatch(/Recorded automatically/);
     });
 });
 
