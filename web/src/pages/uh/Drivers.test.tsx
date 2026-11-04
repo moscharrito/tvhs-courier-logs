@@ -171,6 +171,18 @@ describe('every driver', () => {
  * the role, because a component that re-decides who may see money is a
  * second copy of the rule and the copy that drifts is the one that shows it.
  */
+/* THE PHARMACY WARNING, ASKED FOR BY ITS WORDS.
+ *
+ * `getByRole('status')` is not specific enough here: this screen has a
+ * SECOND status banner, the one that appears when a per-delivery rate is
+ * unset. Every fixture below sets `rateSet: true`, so a role query happens
+ * to find the right element today -- and would quietly start asserting
+ * about the rate notice the moment somebody wrote a `rateSet: false`
+ * fixture. Confirmed on the live site, where both can be on screen at
+ * once. Asking for the sentence that only this banner contains cannot
+ * drift that way. */
+const pharmacyWarning = () => screen.queryByText(/across every pharmacy/);
+
 describe('narrowed to one pharmacy', () => {
     /* The filter is useful -- a site manager wants to know who carried their
        counter -- and it is the easiest way to make the one screen somebody is
@@ -186,7 +198,7 @@ describe('narrowed to one pharmacy', () => {
         await screen.findByRole('heading', { name: 'Drivers' });
         expect((screen.getByLabelText('Pharmacy') as HTMLSelectElement).value).toBe('');
         expect(mocked.calls.some((c) => c.includes('/uh/drivers?') && c.includes('siteId='))).toBe(false);
-        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        expect(pharmacyWarning()).not.toBeInTheDocument();
     });
 
     it('asks the server for the one pharmacy', async () => {
@@ -203,10 +215,9 @@ describe('narrowed to one pharmacy', () => {
             'GET /api/projects/uh/uh/drivers*': everyone({ siteId: 7 }),
         });
         await screen.findByRole('heading', { name: 'Drivers' });
-        const banner = await screen.findByRole('status');
+        const banner = (await screen.findByText(/across every pharmacy/)).closest('.izy-alert') as HTMLElement;
         expect(banner).toHaveTextContent(/Robert B\. Green Pharmacy only/);
         expect(banner).toHaveTextContent(/pay figures/);
-        expect(banner).toHaveTextContent(/across every pharmacy/);
     });
 
     it('stops calling the figure a disbursement while it is a slice', async () => {
@@ -237,7 +248,7 @@ describe('narrowed to one pharmacy', () => {
         await screen.findByRole('heading', { name: 'Drivers' });
         fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
         await waitFor(() => {
-            expect(screen.queryByRole('status')).not.toBeInTheDocument();
+            expect(pharmacyWarning()).not.toBeInTheDocument();
         });
         expect(screen.getByText('to disburse')).toBeInTheDocument();
     });
@@ -255,7 +266,7 @@ describe('narrowed to one pharmacy', () => {
             'GET /api/projects/uh/uh/drivers*': withoutTheField,
         });
         await screen.findByRole('heading', { name: 'Drivers' });
-        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        expect(pharmacyWarning()).not.toBeInTheDocument();
         expect(screen.getByText('to disburse')).toBeInTheDocument();
         expect(screen.queryByText(/pharmacy undefined/)).not.toBeInTheDocument();
     });
@@ -273,6 +284,26 @@ describe('narrowed to one pharmacy', () => {
             screen.getAllByRole('heading', { name: 'Drivers' });
             cleanup();
         }
+    });
+
+    it('is not confused with the unset-rate notice when both are on screen', async () => {
+        /* Both banners together is a real state -- it was on the live site
+           while this was being checked: a pharmacy filter on, and a driver
+           whose service level has no rate. The pharmacy warning has to be
+           the one that follows the filter, and the rate notice has to stay
+           put regardless. */
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({
+                siteId: 7,
+                rateSet: false,
+                totals: totals({ payCents: null, rateSet: false }),
+            }),
+        });
+        await screen.findByRole('heading', { name: 'Drivers' });
+        expect(screen.getByText(/No pay is shown because the per-delivery rates/)).toBeInTheDocument();
+        expect(pharmacyWarning()).toBeInTheDocument();
+        expect(screen.getByText('for this pharmacy')).toBeInTheDocument();
+        expect(screen.getByText('rate not set')).toBeInTheDocument();
     });
 
     it('sends the workbook the same pharmacy the screen is showing', async () => {
