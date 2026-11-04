@@ -53,7 +53,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Client } from '@libsql/client';
-import { EMAILED_KINDS, BATCH } from './dispatch';
+import { EMAILED_KINDS, BATCH, MAX_ATTEMPTS } from './dispatch';
 import type { Mailer } from './ses';
 import { normalizeAddress, suppressedAddresses } from './suppressions';
 
@@ -104,6 +104,15 @@ export interface QueuedMail {
     createdAt: string;
     body: string;
     outcome: Outcome;
+    /** How many times a send of THIS row has failed. The question /health
+     *  cannot answer: "25 in a row" is either twenty-five messages failing
+     *  once or one failing twenty-five times, and those want different
+     *  things done about them. */
+    attempts: number;
+    /** When it becomes eligible again, or null for now. A time means it
+     *  failed and is waiting out its backoff -- which is what lets the
+     *  sweep reach the rows behind it instead of stalling on this one. */
+    nextAttemptAt: string | null;
     /** Whether the next sweep would touch it at all. See the header. */
     inNextBatch: boolean;
 }
@@ -117,8 +126,19 @@ export interface MailQueue {
     wouldSend: number;
     noAddress: number;
     suppressed: number;
+    /** How many of `total` have failed at least once and are waiting out a
+     *  backoff. Still in `total`, still to be sent. A queue where this is
+     *  most of the total is a queue in trouble, which a total alone hides. */
+    tried: number;
+    /** Rows we have STOPPED trying, so they are no longer in `total` at all.
+     *  Counted because "the queue is empty" and "the queue is empty because
+     *  we gave up" are different states, and the first is the one assumed. */
+    undeliverable: number;
     /** What dispatch takes per tick, so `total` can be read against it. */
     batch: number;
+    /** Failures before a row is abandoned, so `attempts` on a row below can
+     *  be read as a fraction of the way to being given up on. */
+    maxAttempts: number;
     /** When the oldest waiting row was written, or null for an empty queue. */
     oldest: string | null;
     /** The rows themselves, oldest first, capped by `limit`. */
@@ -235,6 +255,11 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
         sql: `SELECT COUNT(*) AS total,
                      SUM(${suppressedCase}) AS suppressed,
                      SUM(CASE WHEN ${suppressedCase} = 0 AND trim(COALESCE(u.email, '')) = '' THEN 1 ELSE 0 END) AS no_address,
+                     -- Failed at least once and waiting out a backoff. Not a
+                     -- separate fate: still counted in total and still to be
+                     -- sent. But a queue where this IS most of the total is a
+                     -- queue in trouble, which a total alone does not show.
+                     SUM(CASE WHEN n.attempts > 0 THEN 1 ELSE 0 END) AS tried,
                      MIN(n.created_at) AS oldest
                 FROM notifications n
                 LEFT JOIN users u ON u.username = n.username
@@ -245,6 +270,7 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
     const total = Number(summary?.['total'] ?? 0);
     const suppressedCount = Number(summary?.['suppressed'] ?? 0);
     const noAddress = Number(summary?.['no_address'] ?? 0);
+    const tried = Number(summary?.['tried'] ?? 0);
     /* Derived rather than summed a third time. The three cases above are
        exhaustive by construction, so a would-send figure that disagreed with
        total minus the other two could only mean the CASEs had drifted. */
@@ -283,7 +309,8 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
         .reduce((sum, r) => sum + r.count, 0);
 
     const rs = await client.execute({
-        sql: `SELECT n.id, n.kind, n.body, n.order_id, n.username, n.created_at, u.email
+        sql: `SELECT n.id, n.kind, n.body, n.order_id, n.username, n.created_at,
+                     n.attempts, n.next_attempt_at, u.email
                FROM notifications n
                LEFT JOIN users u ON u.username = n.username
               WHERE n.sent_at IS NULL AND n.kind IN (${marks})
@@ -291,6 +318,17 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
               LIMIT ?`,
         args: [...EMAILED_KINDS, limit],
     });
+
+    /* GIVEN UP ON, and therefore NOT in `total`: they are closed rows now.
+       Counted separately because "the queue is empty" and "the queue is
+       empty because we stopped trying" are different states and the first
+       one is the one somebody assumes. */
+    const dead = await client.execute({
+        sql: `SELECT COUNT(*) AS n FROM notifications
+               WHERE dispatch_result = 'undeliverable' AND kind IN (${marks})`,
+        args: [...EMAILED_KINDS],
+    });
+    const undeliverable = Number(dead.rows[0]?.['n'] ?? 0);
 
     const rows: QueuedMail[] = rs.rows.map((r, i) => {
         const email = addressOf(r['email']);
@@ -303,6 +341,15 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
             createdAt: String(r['created_at']),
             body: String(r['body']),
             outcome: classify(email),
+            /* HOW MANY TIMES THIS ONE HAS FAILED. The question /health
+               cannot answer: "25 in a row" is either twenty-five messages
+               failing once or one message failing twenty-five times, and
+               those want different things done about them. */
+            attempts: Number(r['attempts'] ?? 0),
+            /* Null means eligible on the next tick. A time means it failed
+               and is waiting out its backoff, which is what lets the sweep
+               reach the rows behind it. */
+            nextAttemptAt: r['next_attempt_at'] == null ? null : String(r['next_attempt_at']),
             /* The page is in the same id order as dispatch's own LIMIT, so
                the first BATCH of it are the rows the next tick will touch.
                True only on the first page, which is where it is read. */
@@ -315,7 +362,10 @@ export async function mailQueue(client: Client, limit = 100): Promise<MailQueue>
         wouldSend,
         noAddress,
         suppressed: suppressedCount,
+        tried,
+        undeliverable,
         batch: BATCH,
+        maxAttempts: MAX_ATTEMPTS,
         oldest,
         rows,
         partial: rows.length < total,

@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 import { assertNoPatientData, signRequest, amzDates, createMailer } from '../src/core/notify/ses.ts';
-import { dispatchPending, EMAILED_KINDS, BATCH } from '../src/core/notify/dispatch.ts';
+import { dispatchPending, EMAILED_KINDS, BATCH, MAX_ATTEMPTS } from '../src/core/notify/dispatch.ts';
 import { noticeBody } from '../src/modules/uh/delivery-notices.ts';
 
 const ORDERS = '/api/projects/uh/uh/orders';
@@ -266,27 +266,116 @@ describe('turning notifications into email', () => {
         expect(last.subject).toBe('Delivery completed');
     });
 
-    it('leaves a row unsent when SES refuses, so the next tick retries it', async () => {
+    it('leaves a row unsent when SES refuses, and tries it again after a wait', async () => {
         await closeOne('delivered');
         const angry = fakeMailer(() => { throw new Error('SES refused the message: 454'); });
         const failed = await dispatch(angry);
         expect(failed.failed).toBeGreaterThan(0);
         expect(failed.sent).toBe(0);
 
-        const stillWaiting = await rows('SELECT id FROM notifications WHERE sent_at IS NULL AND kind LIKE \'delivery.%\'');
+        const stillWaiting = await rows("SELECT id, attempts, next_attempt_at FROM notifications WHERE sent_at IS NULL AND kind LIKE 'delivery.%'");
         expect(stillWaiting.length).toBeGreaterThan(0);
+        /* Counted and put to sleep. Before 4 November it was neither, and
+           the same row came back every two minutes for ever. */
+        expect(Number(stillWaiting[0].attempts)).toBe(1);
+        expect(stillWaiting[0].next_attempt_at).toBeTruthy();
 
-        // And the retry goes through.
-        const calm = fakeMailer();
-        const retried = await dispatch(calm);
-        expect(retried.sent).toBe(stillWaiting.length);
+        /* NOT IMMEDIATELY. A tick inside the backoff reaches past it, which
+           is the whole mechanism: the batch is the oldest 25, so a row that
+           stayed eligible would be the batch for ever. */
+        expect((await dispatch(fakeMailer())).sent).toBe(0);
+
+        /* And once the wait has passed, it goes. */
+        await srv.core.client.execute("UPDATE notifications SET next_attempt_at = '2000-01-01T00:00:00.000Z' WHERE sent_at IS NULL");
+        expect((await dispatch(fakeMailer())).sent).toBe(stillWaiting.length);
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * THE QUEUE USED TO BLOCK BEHIND ITS OLDEST FAILURE.
+     *
+     * Watched on production on 4 November: a restart, the counter at zero,
+     * and one tick later /health read "REFUSING EVERY SEND: 400
+     * MessageRejected (25 in a row)" -- the whole batch in one sweep. Nine
+     * ticks later, 225. The same twenty-five rows, not 225 messages, with
+     * everything written afterwards waiting behind them.
+     * ───────────────────────────────────────────────────────────────────── */
+
+    it('reaches past a failing row to the ones behind it', async () => {
+        await closeOne('delivered');
+        const poison = await rows("SELECT id FROM notifications WHERE sent_at IS NULL AND kind LIKE 'delivery.%'");
+        expect(poison.length).toBeGreaterThan(0);
+
+        /* It fails once and goes to sleep. */
+        await dispatch(fakeMailer(() => { throw new Error('SES refused the message: 400 MessageRejected'); }));
+
+        /* A newer notification, written while the old one is backed off. */
+        await closeOne('delivered');
+
+        const second = await dispatch(fakeMailer());
+        /* The new one goes out on this tick. Before the backoff it could
+           not: the older row was still eligible, still first in
+           `ORDER BY n.id`, and still failing. */
+        expect(second.sent).toBeGreaterThan(0);
+        const asleep = await rows('SELECT id FROM notifications WHERE sent_at IS NULL');
+        expect(asleep.map((r) => Number(r.id))).toContain(Number(poison[0].id));
+    });
+
+    it('stops after enough failures and says the email was not sent', async () => {
+        await closeOne('delivered');
+        /* THIS test's row. The database is shared down the file and the
+           earlier cases have left sent ones behind, so picking the first
+           `delivery.%` row asserted about somebody else's. */
+        const mine = Number((await rows("SELECT id FROM notifications WHERE sent_at IS NULL AND kind LIKE 'delivery.%' ORDER BY id DESC LIMIT 1"))[0].id);
+        const angry = fakeMailer(() => { throw new Error('SES refused the message: 400 MessageRejected'); });
+
+        /* Each tick needs the previous backoff to have passed; the clock is
+           not what is under test, so it is wound forward directly. */
+        let guard = 0;
+        for (;;) {
+            guard += 1;
+            expect(guard, 'it should give up well inside this').toBeLessThan(20);
+            const r = await dispatch(angry);
+            if (r.undeliverable > 0) break;
+            await srv.core.client.execute("UPDATE notifications SET next_attempt_at = '2000-01-01T00:00:00.000Z' WHERE sent_at IS NULL");
+        }
+        expect(guard).toBe(MAX_ATTEMPTS);
+
+        /* Closed, with the reason on the row. Not left unsent, because
+           unsent means "try again" and we are not going to. */
+        const done = await rows('SELECT sent_at, dispatch_result, attempts FROM notifications WHERE id = ?', [mine]);
+        expect(done[0].sent_at).toBeTruthy();
+        expect(String(done[0].dispatch_result)).toBe('undeliverable');
+        expect(Number(done[0].attempts)).toBe(MAX_ATTEMPTS - 1);
+
+        /* And it is never offered to SES again, however long the server
+           runs. That is the leak against a sending reputation this closes. */
+        let called = 0;
+        await srv.core.client.execute("UPDATE notifications SET next_attempt_at = NULL");
+        await dispatch(fakeMailer(() => { called += 1; }));
+        expect(called).toBe(0);
+    });
+
+    it('keeps the in-app notification when it gives up on the email', async () => {
+        /* What is abandoned is the email, not the telling. The pharmacy
+           still sees it in the portal, the same way a suppressed address
+           or an account with no address does. */
+        await closeOne('delivered');
+        const angry = fakeMailer(() => { throw new Error('SES refused the message: 400 MessageRejected'); });
+        for (let i = 0; i < MAX_ATTEMPTS; i += 1) {
+            await dispatch(angry);
+            await srv.core.client.execute("UPDATE notifications SET next_attempt_at = '2000-01-01T00:00:00.000Z' WHERE sent_at IS NULL");
+        }
+        const kept = await rows("SELECT body, read_at, dispatch_result FROM notifications WHERE kind LIKE 'delivery.%' AND dispatch_result = 'undeliverable' ORDER BY id DESC LIMIT 1");
+        expect(kept.length).toBe(1);
+        expect(String(kept[0].body)).toMatch(/was completed/);
+        expect(kept[0].read_at).toBeNull();
     });
 
     it('does nothing at all when no mailer is configured', async () => {
         await closeOne('delivered');
         const off = { available: false, reason: 'not configured', async send() { throw new Error('should not be called'); } };
         const result = await dispatch(off);
-        expect(result).toEqual({ considered: 0, sent: 0, failed: 0, skipped: 0, suppressed: 0 });
+        expect(result).toEqual({ considered: 0, sent: 0, failed: 0, skipped: 0, suppressed: 0, undeliverable: 0 });
     });
 
     it('does not retry an account with no email address forever', async () => {

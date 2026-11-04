@@ -671,9 +671,24 @@ export const notifications = sqliteTable(
          *  line, core/notify/outbox.ts and core/notify/queue.ts are all
          *  built on this column. */
         dispatchResult: text('dispatch_result').notNull().default(''),
+        /** How many times a send has been tried and failed (drizzle/0061).
+         *
+         *  The only thing that distinguishes "twenty-five messages are
+         *  failing" from "one message has failed twenty-five times", which
+         *  /health's in-memory counter cannot tell apart and which changes
+         *  what somebody should do about it. */
+        attempts: integer('attempts').notNull().default(0),
+        /** Not eligible for the sweep until this time. Null means now.
+         *
+         *  This is what keeps a failing row from blocking the queue: the
+         *  batch is the oldest 25 unsent, so without a backoff the same
+         *  doomed rows are the batch for ever and nothing behind them is
+         *  ever reached. */
+        nextAttemptAt: text('next_attempt_at'),
     },
     (t) => [
         index('notifications_user_idx').on(t.projectId, t.username, t.createdAt),
+        index('notifications_retry_idx').on(t.sentAt, t.nextAttemptAt),
         index('notifications_unsent_idx').on(t.sentAt),
     ],
 );

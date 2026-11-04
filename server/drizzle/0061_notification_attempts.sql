@@ -1,0 +1,48 @@
+-- Stop one undeliverable notification holding up every one behind it.
+--
+-- WHAT HAPPENS TODAY. The sweep takes `ORDER BY n.id LIMIT 25` every two
+-- minutes, and a send that fails leaves sent_at null so the next tick tries
+-- again. There is no attempt cap and no backoff, so a row SES will never
+-- accept is retried for ever -- and because the batch is the OLDEST 25,
+-- everything behind those rows waits for ever too.
+--
+-- Watched on production on 4 November: the process restarted, the counter
+-- read zero, and one tick later /health said "REFUSING EVERY SEND: 400
+-- MessageRejected (25 in a row)". Twenty-five in a single sweep, which is
+-- the whole batch. Nine ticks later it read 225. That is not 225 messages
+-- failing; it is the same 25 failing nine times, with the rest of the queue
+-- behind them.
+--
+-- TWO COLUMNS, AND THEY DO DIFFERENT JOBS.
+--
+-- `attempts` counts failures and is what the give-up rule reads. It is also
+-- the only way to tell "twenty-five messages are failing" from "one message
+-- has failed twenty-five times", which is a question /health's in-memory
+-- counter cannot answer and which changes what somebody should do about it.
+--
+-- `next_attempt_at` is what actually unblocks the queue, and it does so
+-- without giving up on anything: a row that has just failed is not eligible
+-- again until its backoff has passed, so the next tick reaches PAST it to
+-- rows that have never been tried. The head of the queue stops being a wall.
+--
+-- WHY BOTH, WHEN EITHER LOOKS SUFFICIENT. Backoff alone leaves a permanently
+-- undeliverable row rejoining the batch for ever, which is a slow leak of
+-- attempts against a sending reputation. A cap alone, with no backoff, still
+-- blocks the queue for the eight ticks it takes to reach the cap, and during
+-- a real SES outage burns the whole allowance in sixteen minutes on messages
+-- that would have sent fine an hour later.
+--
+-- NULL MEANS NOW, for every row that exists today. An unsent notification
+-- written before this migration has never been held back and should not
+-- start being held back; the sweep treats a null as eligible.
+--
+-- NOTHING IS DELETED AND NOTHING IS BACKFILLED AS FAILED. A row that has
+-- already failed two hundred times starts from zero here, which is the
+-- generous direction: the rule is new, and the first thing it should do is
+-- not throw away a queue nobody has looked at yet.
+ALTER TABLE `notifications` ADD COLUMN `attempts` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `notifications` ADD COLUMN `next_attempt_at` text;--> statement-breakpoint
+-- The sweep's own WHERE clause, so a queue with a long tail of backed-off
+-- rows does not scan them on every tick. notifications_unsent_idx already
+-- covers (sent_at, kind); this adds the column the backoff filters on.
+CREATE INDEX `notifications_retry_idx` ON `notifications` (`sent_at`,`next_attempt_at`);
