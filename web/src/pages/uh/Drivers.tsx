@@ -47,6 +47,12 @@ interface Totals {
     delivered: number;
     failed: number;
     payCents: number | null;
+    /** Days on which every assigned stop was finished, and what they came
+     *  to. Reported apart from payCents so a reader can always see which
+     *  part of a total is deliveries and which is the completion bonus --
+     *  the person checking a disbursement needs the split, not the sum. */
+    bonusDays?: number;
+    bonusCents?: number;
     rateSet: boolean;
     /** What the lines are keyed on, so the column can be headed honestly. */
     basis: 'serviceType' | 'zone';
@@ -264,6 +270,15 @@ export function Drivers() {
                     <div className={data.totals.failed > 0 ? 'izy-stat-bad' : undefined}>
                         <b>{data.totals.failed}</b><span>not delivered</span>
                     </div>
+                    {/* Shown only once it is switched on, so a contract that
+                        does not pay a bonus is not given a column of noughts
+                        to explain. */}
+                    {hasMoney(data) && (data.totals.bonusDays ?? 0) > 0 && (
+                        <div>
+                            <b>{money(data.totals.bonusCents ?? 0, data.currency!)}</b>
+                            <span>completion bonus · {data.totals.bonusDays} {data.totals.bonusDays === 1 ? 'day' : 'days'}</span>
+                        </div>
+                    )}
                     {hasMoney(data) && (
                         /* The LABEL changes with the filter, not just the
                            figure. "To disburse" under one pharmacy is a

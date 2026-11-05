@@ -108,6 +108,12 @@ export interface PayTotals {
     failed: number;
     /** Null when ANY rate that would have applied is unset. */
     payCents: number | null;
+    /** Days on which every assigned stop was finished. */
+    bonusDays: number;
+    /** What those days are worth. Separate from payCents so a reader can
+     *  always see which part of the money is deliveries and which is the
+     *  completion bonus. */
+    bonusCents: number;
     /** Whether every rate needed to answer was actually set. */
     rateSet: boolean;
     /** What the lines below are keyed on, so a screen can head the column. */
@@ -194,8 +200,69 @@ export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings):
            nought whatever the rate card says. */
         payCents: delivered === 0 ? 0 : (everyRateSet ? total : null),
         rateSet: delivered === 0 ? true : everyRateSet,
+        /* payFor has no idea what a day is, so it never awards a bonus.
+           withBonus() puts it on afterwards, from dates the caller worked
+           out by counting assigned against finished. */
+        bonusDays: 0,
+        bonusCents: 0,
         basis: rates.basis,
         lines,
+    };
+}
+
+/* ── THE COMPLETION BONUS ──────────────────────────────────────────────
+ *
+ * A flat amount for finishing a day's assigned work, asked for on
+ * 4 November: "should only activate after the days Order/Stops assigned to
+ * each driver once they complete everything assigned to them daily".
+ *
+ * IT IS A SEPARATE FUNCTION AND A SEPARATE FIGURE, not a term folded into
+ * payFor. payFor is pure over a bag of stops and has no idea what a day is;
+ * teaching it would mean every caller that rolls stops into weeks or
+ * service levels suddenly had to care. More importantly the bonus is not
+ * earned per delivery, so a reader has to be able to see which part of a
+ * total is which -- especially the reader checking a disbursement.
+ *
+ * WHICH DAYS COUNT IS NOT DECIDED HERE. "Finished everything assigned"
+ * needs to know about stops that were NOT finished, and payFor only ever
+ * sees delivered and failed ones -- a driver with ten assigned and eight
+ * done looks identical to one with eight and eight. The caller counts
+ * assigned-versus-finished in SQL and hands the qualifying dates in.
+ *
+ * A FAILED ATTEMPT COUNTS AS FINISHED, deliberately. A courier who drove to
+ * ten doors and found nobody at any of them did a full day's work; the
+ * bonus is for completing the round, and the per-delivery rate already pays
+ * nothing for a dry run. The consequence worth stating out loud: a driver
+ * whose every stop failed still earns the bonus.
+ */
+export function bonusFor(
+    qualifyingDays: readonly string[],
+    rates: DriverPaySettings,
+): { bonusDays: number; bonusCents: number } {
+    if (rates.completionBonusCents <= 0) return { bonusDays: 0, bonusCents: 0 };
+    const from = rates.completionBonusFrom;
+    /* String comparison, which is correct for YYYY-MM-DD and avoids
+       inventing a timezone to parse a service date into. */
+    const days = from === null ? qualifyingDays : qualifyingDays.filter((d) => d >= from);
+    return { bonusDays: days.length, bonusCents: days.length * rates.completionBonusCents };
+}
+
+/**
+ * Put a bonus onto a set of totals.
+ *
+ * THE NULL SURVIVES. If a worked service level has no rate, payCents is
+ * null and stays null: adding a known bonus to an unknown delivery total
+ * would turn "we cannot tell you what this is worth" into a confident
+ * figure smaller than the truth, which is the exact mistake payFor exists
+ * to avoid. The bonus is still reported in its own field, so the screen can
+ * show it was earned without implying the total is complete.
+ */
+export function withBonus(totals: PayTotals, earned: { bonusDays: number; bonusCents: number }): PayTotals {
+    return {
+        ...totals,
+        bonusDays: earned.bonusDays,
+        bonusCents: earned.bonusCents,
+        payCents: totals.payCents === null ? null : totals.payCents + earned.bonusCents,
     };
 }
 
@@ -220,6 +287,10 @@ export function addTotals(a: PayTotals, b: PayTotals): PayTotals {
         failed: a.failed + b.failed,
         payCents: a.payCents === null || b.payCents === null ? null : a.payCents + b.payCents,
         rateSet: a.rateSet && b.rateSet,
+        /* Days roll up the same way deliveries do: a month is the sum of
+           its days, and a day qualifies at most once. */
+        bonusDays: a.bonusDays + b.bonusDays,
+        bonusCents: a.bonusCents + b.bonusCents,
         /* Two sides can only disagree about the basis if the setting moved
            mid-add, and then the lines being summed are not comparable. The
            left side wins and is the one the caller asked about; the keys
@@ -231,7 +302,7 @@ export function addTotals(a: PayTotals, b: PayTotals): PayTotals {
 
 /** An empty set of totals, which is what a driver with no work has. */
 export const noPay = (basis: DriverPaySettings['basis'] = 'serviceType'): PayTotals => ({
-    delivered: 0, failed: 0, payCents: 0, rateSet: true, basis, lines: {},
+    delivered: 0, failed: 0, payCents: 0, bonusDays: 0, bonusCents: 0, rateSet: true, basis, lines: {},
 });
 
 /**

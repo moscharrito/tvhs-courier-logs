@@ -184,6 +184,31 @@ export interface DriverPaySettings {
      * offer letter prints them as a range, and a range is not a rate.
      */
     perZoneCents: { 1: number; 2: number; 3: number; 4: number; 5: number };
+    /**
+     * A flat amount a driver earns for FINISHING a day's assigned work,
+     * on top of the per-delivery rate. Cents. Zero is off.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * WHY IT DEFAULTS TO OFF, AND WHY THAT IS NOT TIMIDITY.
+     *
+     * Turning this on changes what the drivers record says is owed. If it
+     * applied the moment the code shipped it would rewrite the figures for
+     * days already worked and, in some cases, already paid -- on the one
+     * screen in this system somebody disburses from. So the amount is a
+     * number an administrator sets, and until they do, every total is
+     * exactly what it was.
+     */
+    completionBonusCents: number;
+    /**
+     * The first service date the bonus applies to, or null for every day in
+     * whatever range is being read.
+     *
+     * SEPARATE FROM THE AMOUNT because they answer different questions.
+     * "How much" is a rate; "from when" is a decision about the past. A
+     * single field would make setting the rate retroactive by default,
+     * which is the expensive way round to be wrong.
+     */
+    completionBonusFrom: string | null;
     /** Shown beside the figures so a reader knows what the number is. */
     currency: string;
 }
@@ -415,6 +440,10 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         basis: 'serviceType',
         perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 },
         perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        /* Off. See the interface: switching it on is a decision about money
+           already owed, so it is never made by a deploy. */
+        completionBonusCents: 0,
+        completionBonusFrom: null,
         currency: 'USD',
     },
     pricing: {
@@ -531,6 +560,12 @@ export const SettingsPatch = z.object({
             4: z.number().int().min(0).max(100_000).optional(),
             5: z.number().int().min(0).max(100_000).optional(),
         }).strict().optional(),
+        /* Capped at $1,000 for the same reason as the rates: a slipped
+           decimal is refused rather than disbursed. */
+        completionBonusCents: z.number().int().min(0).max(100_000).optional(),
+        /* A service date, or null to mean every day. Validated as a shape
+           here; whether it is in the past is the administrator's call. */
+        completionBonusFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
         currency: z.string().trim().length(3).toUpperCase().optional(),
     }).strict().optional(),
     pricing: z.object({
@@ -713,6 +748,20 @@ function driverPaySection(raw: unknown): DriverPaySettings {
             : defaults.perZoneCents[zone];
     };
 
+    /* Same discipline as the rates: a stored value that is not a whole
+       number of cents is not money, so it falls back to off rather than
+       being coerced into something plausible. */
+    const bonusCents = typeof source['completionBonusCents'] === 'number'
+        && Number.isInteger(source['completionBonusCents'])
+        && (source['completionBonusCents'] as number) >= 0
+        ? source['completionBonusCents'] as number
+        : defaults.completionBonusCents;
+
+    const bonusFrom = typeof source['completionBonusFrom'] === 'string'
+        && /^\d{4}-\d{2}-\d{2}$/.test(source['completionBonusFrom'])
+        ? source['completionBonusFrom']
+        : defaults.completionBonusFrom;
+
     /* Anything that is not one of the two known bases falls back to the
        default rather than being carried forward. A stored value nobody
        recognises must not decide how somebody is paid. */
@@ -726,6 +775,8 @@ function driverPaySection(raw: unknown): DriverPaySettings {
         perZoneCents: {
             1: zoneCents(1), 2: zoneCents(2), 3: zoneCents(3), 4: zoneCents(4), 5: zoneCents(5),
         },
+        completionBonusCents: bonusCents,
+        completionBonusFrom: bonusFrom,
         currency,
     };
 }

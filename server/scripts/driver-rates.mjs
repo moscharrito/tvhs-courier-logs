@@ -15,6 +15,8 @@
  *   node server/scripts/driver-rates.mjs --basis zone --zone1 5.00 --zone2 7.25 \
  *       --zone3 12.00 --zone4 22.00 --zone5 28.00
  *   node server/scripts/driver-rates.mjs --show --base https://logs.izyglobalservices.com
+ *   node server/scripts/driver-rates.mjs --bonus 150.00 --bonus-from 2026-11-05
+ *   node server/scripts/driver-rates.mjs --bonus 0          (switch it off)
  *
  * Add --i-mean-production for a remote server. The admin password is asked
  * for with the echo off; SEED_ADMIN_PASS still wins when it is already set.
@@ -79,6 +81,32 @@ if (basis !== undefined && basis !== 'zone' && basis !== 'serviceType') {
     process.exit(1);
 }
 
+/* ── THE COMPLETION BONUS ──────────────────────────────────────────────
+ *
+ * A flat amount for finishing a day's assigned work, on top of the
+ * per-delivery rate. Typed in dollars like every other rate here.
+ *
+ * --bonus-from IS SEPARATE FROM --bonus, and the separation is the whole
+ * safety of it. Setting a rate is a decision about future work; setting it
+ * WITHOUT a date is a decision to rewrite what was owed for every day
+ * already in the window, on the screen people are disbursed from. Two
+ * flags make the second one deliberate.
+ *
+ * Passing --bonus with no --bonus-from leaves whatever date is already
+ * stored, so raising the amount later does not silently make it
+ * retroactive.
+ */
+const bonusCents = cents(value('bonus'));
+if (bonusCents === null) {
+    console.error('--bonus must be a money amount like 150.00, or 0 to switch it off.');
+    process.exit(1);
+}
+const bonusFrom = value('bonus-from');
+if (bonusFrom !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(bonusFrom)) {
+    console.error(`--bonus-from must be a service date like 2026-11-05, not ${bonusFrom}.`);
+    process.exit(1);
+}
+
 const perZoneCents = {};
 const perDeliveryCents = {};
 let bad = false;
@@ -98,6 +126,8 @@ const patch = {
     ...(basis === undefined ? {} : { basis }),
     ...(Object.keys(perZoneCents).length > 0 ? { perZoneCents } : {}),
     ...(Object.keys(perDeliveryCents).length > 0 ? { perDeliveryCents } : {}),
+    ...(bonusCents === undefined ? {} : { completionBonusCents: bonusCents }),
+    ...(bonusFrom === undefined ? {} : { completionBonusFrom: bonusFrom }),
 };
 if (!show && Object.keys(patch).length === 0) {
     console.error('Nothing to change. Pass --show to read the rates, or a rate to set one.');

@@ -137,6 +137,152 @@ describe('what each driver delivered', () => {
     });
 });
 
+describe('the completion bonus', () => {
+    /* A flat amount for finishing a day's assigned work, on top of the
+       per-delivery rate. Asked for on 4 November.
+
+       EVERY TEST HERE IS ABOUT A NUMBER SOMEBODY IS PAID, so the ones that
+       matter most are the refusals: a bonus awarded to a driver who left
+       stops standing, or applied to a day that was already disbursed, is
+       money out of the door. */
+
+    const setBonus = async (cents, from = null) => {
+        const res = await admin.patch('/api/projects/uh/settings')
+            .send({ driverPay: { completionBonusCents: cents, completionBonusFrom: from } });
+        expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(200);
+    };
+
+    /** A driver with their own stops, so one test cannot disturb another. */
+    let n = 0;
+    async function freshDriver() {
+        n += 1;
+        const username = `bonus.${n}`;
+        await admin.post('/api/users').send({
+            username, name: `Bonus Driver ${n}`, password: 'pay-pass-11', role: 'driver',
+        });
+        await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'courier', settings: {} });
+        return username;
+    }
+
+    const payOf = async (username) => {
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        expect(res.status).toBe(200);
+        return res.body.drivers.find((d) => d.username === username);
+    };
+
+    afterAll(async () => { await setBonus(0, null); });
+
+    it('is off until somebody sets it, so shipping it changed nobody\'s pay', async () => {
+        await setBonus(0);
+        const who = await freshDriver();
+        await deliveredBy(who);
+        const d = await payOf(who);
+        expect(d.bonusDays).toBe(0);
+        expect(d.bonusCents).toBe(0);
+    });
+
+    it('pays once for a day where every assigned stop was finished', async () => {
+        await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+        await setBonus(15000);
+        const who = await freshDriver();
+        await deliveredBy(who);
+        await deliveredBy(who);
+        const d = await payOf(who);
+        expect(d.bonusDays, 'one day, not one per delivery').toBe(1);
+        expect(d.bonusCents).toBe(15000);
+        /* Two stat deliveries at $7 plus the $150 bonus. */
+        expect(d.payCents).toBe(1400 + 15000);
+    });
+
+    it('withholds it while a stop is still open', async () => {
+        /* THE CASE THE OLD QUERY COULD NOT SEE. stopsIn selects delivered
+           and failed only, so a driver with work still out looked exactly
+           like one who had finished. */
+        await setBonus(15000);
+        const who = await freshDriver();
+        await deliveredBy(who);
+        const open = await admin.post(ORDERS).send({
+            siteId: discharge.id, serviceType: 'stat', recipientName: 'Still Out',
+            addressLine: '9 Invented Way', zip: '78215', serviceDate: day,
+            externalRef: `OPEN-${Date.now()}`,
+        });
+        expect(open.status).toBe(201);
+        await admin.post(RUNS).send({ courierUsername: who, label: 'Run', orderIds: [open.body.id] });
+
+        const d = await payOf(who);
+        expect(d.bonusDays, 'one stop is still out').toBe(0);
+        expect(d.bonusCents).toBe(0);
+    });
+
+    it('counts a failed attempt as finished', async () => {
+        /* A courier who drove to the door and found nobody did the work.
+           Stated out loud because the consequence is that a driver whose
+           every stop failed still earns the bonus. */
+        await setBonus(15000);
+        const who = await freshDriver();
+        await deliveredBy(who, { fail: true });
+        const d = await payOf(who);
+        expect(d.bonusDays).toBe(1);
+        expect(d.delivered).toBe(0);
+        expect(d.bonusCents).toBe(15000);
+    });
+
+    it('gives nothing to a driver who was assigned nothing', async () => {
+        /* Vacuously finishing an empty list is not a day's work. */
+        await setBonus(15000);
+        const who = await freshDriver();
+        const d = await payOf(who);
+        expect(d.bonusDays).toBe(0);
+        expect(d.bonusCents).toBe(0);
+    });
+
+    it('does not reach back before the date it was switched on from', async () => {
+        /* The expensive way to be wrong: turning on a rate and silently
+           rewriting what was owed for days already paid. */
+        await setBonus(15000, '2099-01-01');
+        const who = await freshDriver();
+        await deliveredBy(who);
+        const d = await payOf(who);
+        expect(d.bonusDays, 'today is before the start date').toBe(0);
+        expect(d.bonusCents).toBe(0);
+
+        await setBonus(15000, '2000-01-01');
+        const after = await payOf(who);
+        expect(after.bonusDays).toBe(1);
+    });
+
+    it('keeps the total null when a worked rate is missing, bonus or not', async () => {
+        /* payCents null means "we cannot tell you what this is worth".
+           Adding a known bonus to an unknown delivery total would turn that
+           into a confident figure smaller than the truth. The bonus is
+           still reported in its own field. */
+        await setRates({ scheduled: 0, stat: 0, adhoc: 0 });
+        await setBonus(15000, '2000-01-01');
+        const who = await freshDriver();
+        await deliveredBy(who);
+        const d = await payOf(who);
+        expect(d.payCents, 'still unknown').toBeNull();
+        expect(d.bonusCents, 'but the bonus was earned and is visible').toBe(15000);
+        await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+    });
+
+    it('is not withheld by a pharmacy filter', async () => {
+        /* "Finished everything" is a fact about the whole day. Asking it of
+           one counter would award a bonus to somebody who cleared Wheatley
+           and left four stops at Vida -- or withhold one from somebody who
+           finished everywhere. */
+        await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+        await setBonus(15000, '2000-01-01');
+        const who = await freshDriver();
+        await deliveredBy(who);
+        await deliveredBy(who, { siteId: green.id, serviceType: 'adhoc' });
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
+        const d = res.body.drivers.find((x) => x.username === who);
+        expect(d.delivered, 'only the Green delivery is counted').toBe(1);
+        expect(d.bonusDays, 'but the day was still completed').toBe(1);
+    });
+});
+
 describe('narrowed to one pharmacy', () => {
     /* Every other screen on the portal answers "that counter, that day".
        This one is the payment run, so it answers it with a warning attached,

@@ -44,7 +44,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import {
-    payFor, addTotals, noPay, payBucket, PAY_GROUPINGS,
+    payFor, addTotals, noPay, payBucket, PAY_GROUPINGS, bonusFor, withBonus,
     type PayGrouping, type PayTotals,
 } from './driver-pay';
 import { sendSpreadsheet, tooManyRows } from '../../core/http/spreadsheet';
@@ -198,6 +198,53 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         return Number.isInteger(n) && n > 0 ? n : null;
     }
 
+    /* ── WHICH DAYS A DRIVER FINISHED EVERYTHING THEY WERE GIVEN ─────────
+     *
+     * THE QUESTION stopsIn CANNOT ANSWER. It selects delivered and failed
+     * only, so a driver with ten assigned and eight done looks exactly like
+     * one with eight assigned and eight done -- and the completion bonus is
+     * precisely the difference between those two drivers. So this counts
+     * every assigned stop against the finished ones, per driver per day.
+     *
+     * CANCELLED IS NOT WORK AND MUST NOT BLOCK THE BONUS. A pharmacy
+     * pulling an order at four o'clock would otherwise cost a courier their
+     * day's bonus for something they could not have delivered. It is
+     * excluded from both sides of the comparison rather than counted as
+     * finished, which would be the other way to get it wrong: a day of
+     * nothing but cancellations would then "complete".
+     *
+     * A DAY WITH NO ASSIGNED STOPS DOES NOT QUALIFY. Vacuously finishing an
+     * empty list is not a day's work, and HAVING(COUNT(*) > 0) is implicit
+     * in the GROUP BY -- a driver with nothing assigned produces no row.
+     */
+    async function completedDays(
+        projectId: number, from: string, to: string, username: string | null,
+    ): Promise<Map<string, string[]>> {
+        const args: InValue[] = [projectId, from, to];
+        let who = '';
+        if (username !== null) { who = 'AND o.assigned_to_username = ?'; args.push(username); }
+        const rs = await client.execute({
+            sql: `SELECT o.assigned_to_username AS who, o.service_date AS day,
+                         COUNT(*) AS assigned,
+                         SUM(CASE WHEN o.status IN ('delivered','failed') THEN 1 ELSE 0 END) AS finished
+                    FROM orders o
+                   WHERE o.project_id = ?
+                     AND o.service_date BETWEEN ? AND ?
+                     AND o.assigned_to_username IS NOT NULL
+                     AND o.status <> 'cancelled'
+                     ${who}
+                   GROUP BY o.assigned_to_username, o.service_date`,
+            args,
+        });
+        const out = new Map<string, string[]>();
+        for (const r of rs.rows) {
+            if (Number(r['assigned']) !== Number(r['finished'])) continue;
+            const key = String(r['who']);
+            out.set(key, [...(out.get(key) ?? []), String(r['day'])]);
+        }
+        return out;
+    }
+
     /* The database column names and the pay module's field names are not the
        same, and the adapter is here rather than in driver-pay.ts so that the
        arithmetic stays testable without a database. */
@@ -296,9 +343,16 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
          * filtered total without knowing the total is filtered. */
         const siteId = siteOf(req);
 
-        const [stops, names] = await Promise.all([
+        /* NOT NARROWED BY PHARMACY, deliberately. "Finished everything
+           assigned" is a fact about a driver's whole day; asking it of one
+           counter would award the bonus to somebody who cleared Wheatley
+           and left four stops standing at Vida. The pharmacy filter
+           narrows which deliveries are COUNTED, never whether the day was
+           completed. */
+        const [stops, names, finished] = await Promise.all([
             stopsIn(project.id, window.from, window.to, null, siteId),
             driversOf(project.id),
+            completedDays(project.id, window.from, window.to, null),
         ]);
 
         const byDriver = new Map<string, StopRow[]>();
@@ -312,9 +366,11 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
            nothing in this window. A payment run that silently omitted
            somebody who did no work is a payment run nobody can check against
            the roster. */
+        const earned = (username: string) => bonusFor(finished.get(username) ?? [], rates);
+
         const drivers = [...names.entries()].map(([username, name]) => {
             const theirs = byDriver.get(username) ?? [];
-            const totals = payFor(payable(theirs), rates);
+            const totals = withBonus(payFor(payable(theirs), rates), earned(username));
             byDriver.delete(username);
             return { username, name, ...totals, daysWorked: new Set(theirs.map((s) => s.service_date)).size };
         });
@@ -325,7 +381,7 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
            a total that does not add up to the stops is a total nobody
            trusts. */
         for (const [username, theirs] of byDriver.entries()) {
-            const totals = payFor(payable(theirs), rates);
+            const totals = withBonus(payFor(payable(theirs), rates), earned(username));
             drivers.push({
                 username,
                 name: `${username} (no longer a courier on this contract)`,
