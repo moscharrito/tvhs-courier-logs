@@ -85,7 +85,7 @@ const Arrive = z.object({ ...Where, note: z.string().trim().max(300).default('')
  * 'exception' are written by other parts of the system and are not a
  * courier's to replace from a phone; 'patient_id' is, because the angle it
  * was shot at is exactly the thing that goes wrong. */
-const EvidenceKinds = ['courier_form', 'patient_id', 'doorstep'] as const;
+const EvidenceKinds = ['courier_form', 'patient_id', 'stamped_receipt', 'doorstep'] as const;
 const Evidence = z.object({
     ...Where,
     fileId: z.number().int().positive(),
@@ -158,6 +158,20 @@ const Deliver = z.object({
     /** Photograph of identification. Required only where the order is
      *  stamped ID Required; the handler, not this schema, knows which. */
     patientIdFileId: z.number().int().positive().optional(),
+    /* THE STAMPED RECEIPT, AND IT IS OPTIONAL ON PURPOSE.
+     *
+     * Offered on a controlled delivery because that is where the paperwork
+     * travels, and never required, which is the instruction: a delivery is
+     * recorded on the signed form alone. A courier who cannot photograph a
+     * third document -- a dark porch, a dying battery, a receipt the
+     * pharmacy did not stamp -- must still be able to record what they did,
+     * because the alternative is an unrecorded handover, which is worse
+     * evidence than a missing photograph of a receipt.
+     *
+     * Note what this does NOT loosen: where the form is stamped ID Required
+     * the identification photograph stays compulsory below. That one is the
+     * contract's, not ours to make optional. */
+    stampedReceiptFileId: z.number().int().positive().optional(),
 
     /* The three identifiers, confirmed at the door: patient name, address,
      * phone. Sent as the subset the courier could actually confirm, because
@@ -533,6 +547,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         for (const [field, fileId, kind] of [
             ['courierFormFileId', body.courierFormFileId, 'courier_form'],
             ['patientIdFileId', body.patientIdFileId, 'patient_id'],
+            ['stampedReceiptFileId', body.stampedReceiptFileId, 'stamped_receipt'],
         ] as const) {
             if (fileId === undefined) continue;
             const found = await client.execute({
@@ -606,7 +621,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
            sweep can find them. Done after the custody event, never before: a
            file pointing at a delivery that was then refused is a file nobody
            can explain. */
-        for (const fileId of [body.courierFormFileId, body.patientIdFileId]) {
+        for (const fileId of [body.courierFormFileId, body.patientIdFileId, body.stampedReceiptFileId]) {
             if (fileId === undefined) continue;
             await client.execute({
                 sql: 'UPDATE files SET order_id = ? WHERE project_id = ? AND id = ?',

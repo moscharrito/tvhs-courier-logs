@@ -96,7 +96,7 @@ export function Stop() {
     /* Amending a stop that already has an outcome: which photograph is
        being replaced, and the file picked for it. Null when the driver has
        not asked to replace anything, which is nearly always. */
-    const [amend, setAmend] = useState<'courier_form' | 'patient_id' | null>(null);
+    const [amend, setAmend] = useState<'courier_form' | 'patient_id' | 'stamped_receipt' | null>(null);
     const [amendPhoto, setAmendPhoto] = useState<File | null>(null);
     /* ADDENDUM 2 CLAUSE 4. University Health forbid leaving a package
        anywhere unattended, and a delivery is not complete until a person has
@@ -125,6 +125,9 @@ export function Stop() {
        no signal records the handover and the evidence together. */
     const [formPhoto, setFormPhoto] = useState<File | null>(null);
     const [idPhoto, setIdPhoto] = useState<File | null>(null);
+    /* The stamped receipt that travels with a controlled item. Its own
+       photograph, not a second use of the form slot: see FILE_KINDS. */
+    const [receiptPhoto, setReceiptPhoto] = useState<File | null>(null);
     /* Its own, not the doorstep branch's: two forms sharing one box means
        typing in one silently fills the other. */
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
@@ -297,6 +300,9 @@ export function Stop() {
         }
         if (idPhoto !== null) {
             photos.push({ blob: idPhoto, contentType: photoType(idPhoto) ?? "image/jpeg", kind: 'patient_id', bodyKey: 'patientIdFileId' });
+        }
+        if (receiptPhoto !== null) {
+            photos.push({ blob: receiptPhoto, contentType: photoType(receiptPhoto) ?? "image/jpeg", kind: 'stamped_receipt', bodyKey: 'stampedReceiptFileId' });
         }
         /* WHAT TO DO NEXT, not what just happened. "Delivered and
            recorded" describes our filing; the driver is standing at a
@@ -552,13 +558,31 @@ export function Stop() {
                                         disabled={busy}
                                         onClick={() => { setAmend('courier_form'); setAmendPhoto(null); }}
                                     />
-                                    {order.idRequired === true && (
+                                    {(order.idRequired === true || order.controlled === true) && (
                                         <CardButton
                                             title="Replace the ID photo"
                                             tone="secondary"
                                             compact
                                             disabled={busy}
                                             onClick={() => { setAmend('patient_id'); setAmendPhoto(null); }}
+                                        />
+                                    )}
+                                    {/* ADDING ONE IS THE POINT, not only
+                                        replacing one. A courier who was
+                                        handed a stamped receipt at the door
+                                        and could not photograph it there --
+                                        or who recorded the delivery before
+                                        the pharmacy stamped anything -- has
+                                        no other way to attach it, and the
+                                        evidence route appends rather than
+                                        overwrites. */}
+                                    {order.controlled === true && (
+                                        <CardButton
+                                            title="Add or replace the stamped receipt"
+                                            tone="secondary"
+                                            compact
+                                            disabled={busy}
+                                            onClick={() => { setAmend('stamped_receipt'); setAmendPhoto(null); }}
                                         />
                                     )}
                                 </>
@@ -569,7 +593,9 @@ export function Stop() {
                     {amendable && amend !== null && (
                         <form onSubmit={sendEvidence}>
                             <label className="izy-field">
-                                {amend === 'courier_form' ? 'The signed form' : 'The identification'}
+                                {amend === 'courier_form'
+                                    ? 'The signed form'
+                                    : amend === 'stamped_receipt' ? 'The stamped receipt' : 'The identification'}
                                 <input
                                     type="file"
                                     accept={PHOTO_ACCEPT}
@@ -736,6 +762,82 @@ export function Stop() {
                                 </span>
                             </label>
 
+                            {/* ── THE CONTROLLED PAPERWORK ─────────────────────
+                                Asked for by the drivers on 4 November: a
+                                controlled item travels with an ID check and
+                                a stamped receipt, and the screen gave them
+                                one slot for the signed form and nowhere to
+                                put either.
+
+                                SHOWN ON `controlled`, NOT ON `idRequired`.
+                                idRequired comes from a column in the
+                                pharmacy's spreadsheet and is almost never
+                                set, because the real signal is a stamp on
+                                the paper in the courier's hand. `controlled`
+                                IS on the record, so it is the flag that can
+                                actually open the slots.
+
+                                BOTH OPTIONAL. A delivery records on the
+                                signed form alone. A courier who cannot get a
+                                third photograph -- dark porch, dying phone,
+                                a receipt nobody stamped -- must still be
+                                able to say what they did, because an
+                                unrecorded handover is worse evidence than a
+                                missing picture of a receipt.
+
+                                The ID slot below stays COMPULSORY where the
+                                form is stamped ID Required. That rule is the
+                                contract's and is not ours to relax; the two
+                                blocks are separate so neither can quietly
+                                turn into the other. */}
+                            {order.controlled === true && order.idRequired !== true && (
+                                <div className="izy-card izy-controlled-papers">
+                                    <p className="izy-muted izy-field-note">
+                                        This is a controlled drug. If you were handed identification or a
+                                        stamped receipt, photograph them here. Both are optional &mdash; the
+                                        delivery records without them.
+                                    </p>
+                                    <label className="izy-field">Photo of the identification (optional)
+                                        <input
+                                            type="file"
+                                            accept={PHOTO_ACCEPT}
+                                            disabled={busy}
+                                            onChange={(e) => {
+                                                const picked = e.target.files?.[0] ?? null;
+                                                const problem = picked === null ? null : photoProblem(picked);
+                                                if (problem !== null) { setMsg({ kind: 'error', text: problem }); setIdPhoto(null); return; }
+                                                setMsg(null);
+                                                setIdPhoto(picked);
+                                            }}
+                                        />
+                                        <span className="izy-muted izy-field-note">
+                                            {idPhoto === null
+                                                ? 'Only if you were shown one.'
+                                                : `Ready to send: ${idPhoto.name}`}
+                                        </span>
+                                    </label>
+                                    <label className="izy-field">Photo of the stamped receipt (optional)
+                                        <input
+                                            type="file"
+                                            accept={PHOTO_ACCEPT}
+                                            disabled={busy}
+                                            onChange={(e) => {
+                                                const picked = e.target.files?.[0] ?? null;
+                                                const problem = picked === null ? null : photoProblem(picked);
+                                                if (problem !== null) { setMsg({ kind: 'error', text: problem }); setReceiptPhoto(null); return; }
+                                                setMsg(null);
+                                                setReceiptPhoto(picked);
+                                            }}
+                                        />
+                                        <span className="izy-muted izy-field-note">
+                                            {receiptPhoto === null
+                                                ? 'Only if the receipt was stamped.'
+                                                : `Ready to send: ${receiptPhoto.name}`}
+                                        </span>
+                                    </label>
+                                </div>
+                            )}
+
                             {order.idRequired === true && (
                                 <div className="izy-card izy-id-required">
                                     <div className="izy-alert warn" role="status">
@@ -762,6 +864,33 @@ export function Stop() {
                                                 : `Ready to send: ${idPhoto.name}`}
                                         </span>
                                     </label>
+                                    {/* A delivery can be both. The receipt
+                                        belongs with the rest of the
+                                        paperwork rather than in a second
+                                        panel further down, and it stays
+                                        optional even here: only the ID is
+                                        compulsory on an ID Required stop. */}
+                                    {order.controlled === true && (
+                                        <label className="izy-field">Photo of the stamped receipt (optional)
+                                            <input
+                                                type="file"
+                                                accept={PHOTO_ACCEPT}
+                                                disabled={busy}
+                                                onChange={(e) => {
+                                                    const picked = e.target.files?.[0] ?? null;
+                                                    const problem = picked === null ? null : photoProblem(picked);
+                                                    if (problem !== null) { setMsg({ kind: 'error', text: problem }); setReceiptPhoto(null); return; }
+                                                    setMsg(null);
+                                                    setReceiptPhoto(picked);
+                                                }}
+                                            />
+                                            <span className="izy-muted izy-field-note">
+                                                {receiptPhoto === null
+                                                    ? 'Only if the receipt was stamped.'
+                                                    : `Ready to send: ${receiptPhoto.name}`}
+                                            </span>
+                                        </label>
+                                    )}
                                 </div>
                             )}
 

@@ -435,6 +435,13 @@
       "when": 1793150029229,
       "tag": "0061_notification_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1793844916553,
+      "tag": "0062_stamped_receipt",
+      "breakpoints": true
     }
   ]
 }

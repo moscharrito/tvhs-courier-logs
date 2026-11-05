@@ -172,6 +172,87 @@ describe('delivering something that was never collected', () => {
     });
 });
 
+describe('the paperwork on a controlled delivery', () => {
+    /* Drivers, 4 November: "There's only 1 spot to upload a picture. Please
+       add a 2nd spot to add ID & receipt." The receipt is a SEPARATE
+       document from the signed pharmacy form -- confirmed with them -- so
+       it is its own file kind rather than a second courier_form.
+
+       THE RULE THESE PIN IS THAT IT IS OPTIONAL. A delivery records on the
+       signed form alone. Somebody will eventually try to make the receipt
+       compulsory "because it is a controlled drug", and an unrecorded
+       handover is worse evidence than a missing photograph of a receipt. */
+
+    it('accepts a stamped receipt alongside the signed form', async () => {
+        const ada = await courierAgent('ada.courier');
+        const order = await pickedUpOrder({ controlled: true });
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
+            signedName: 'Ines Vargas',
+            courierFormFileId: await storedForm(),
+            stampedReceiptFileId: await storedFileOf('stamped_receipt'),
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+    });
+
+    it('records a controlled delivery with no receipt at all', async () => {
+        const ada = await courierAgent('ada.courier');
+        const order = await pickedUpOrder({ controlled: true });
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
+            signedName: 'Ines Vargas', courierFormFileId: await storedForm(),
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect((await detail(order.id)).body.status).toBe('delivered');
+    });
+
+    it('still refuses a controlled delivery with no signed form', async () => {
+        /* Optional means the RECEIPT is optional. The form is what proves a
+           delivery happened and nothing here loosens that. */
+        const ada = await courierAgent('ada.courier');
+        const order = await pickedUpOrder({ controlled: true });
+        const res = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
+            signedName: 'Ines Vargas',
+            stampedReceiptFileId: await storedFileOf('stamped_receipt'),
+        });
+        expect(res.status).toBe(400);
+        expect(res.body.need).toContain('courierFormFileId');
+    });
+
+    it('keeps ID compulsory where the form is stamped ID Required', async () => {
+        /* A controlled order whose list ALSO said ID Required. The new
+           optional slots must not have relaxed the contract's own rule. */
+        const ada = await courierAgent('ada.courier');
+        const order = await pickedUpOrder({ controlled: true, idRequired: true });
+        const without = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
+            signedName: 'Ines Vargas', courierFormFileId: await storedForm(),
+        });
+        expect(without.status, 'ID Required still blocks').toBe(400);
+
+        const withId = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
+            signedName: 'Ines Vargas',
+            courierFormFileId: await storedForm(),
+            patientIdFileId: await storedFileOf('patient_id'),
+        });
+        expect(withId.status, JSON.stringify(withId.body)).toBe(201);
+    });
+
+    it('lets a courier attach the receipt after the delivery was recorded', async () => {
+        /* Adding, not only replacing: a courier handed a stamped receipt at
+           a door where they could not photograph it has no other route, and
+           the evidence endpoint appends rather than overwrites. */
+        const ada = await courierAgent('ada.courier');
+        const order = await pickedUpOrder({ controlled: true });
+        await ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm() });
+
+        const res = await ada.post(`${ORDERS}/${order.id}/evidence`).send({
+            fileId: await storedFileOf('stamped_receipt'),
+            kind: 'stamped_receipt',
+            note: 'Stamped at the counter after I left',
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+    });
+});
+
 /* -------------------------------------------------------------- arriving */
 
 describe('arriving', () => {

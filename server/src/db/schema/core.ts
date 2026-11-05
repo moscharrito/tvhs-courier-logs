@@ -204,6 +204,14 @@ export const FILE_KINDS = [
      * government ID tied by name to a patient receiving a prescription. It
      * never leaves the bucket except through the audited portal. */
     'patient_id',
+    /* A stamped document that travels with a controlled item, photographed
+     * at the door (drizzle/0062). SEPARATE FROM courier_form on purpose:
+     * the drivers were asked whether this was the signed pharmacy form and
+     * said it is a different piece of paper. One kind holding sometimes one
+     * document and sometimes two could not answer "show me what came with
+     * this controlled delivery", which is the only question anybody asks of
+     * it later. */
+    'stamped_receipt',
 ] as const;
 export const FILE_STATUSES = ['pending', 'stored'] as const;
 
@@ -228,12 +236,12 @@ export const files = sqliteTable(
         unique('files_key_unique').on(t.s3Key),
         index('files_order_idx').on(t.orderId),
         index('files_project_status_idx').on(t.projectId, t.status),
-        /* Kept in step with FILE_KINDS above and with drizzle/0038, which
-           rebuilt the table to widen this. The migration is what the database
+        /* Kept in step with FILE_KINDS above and with drizzle/0038 and
+           drizzle/0062, which rebuilt the table to widen this. The migration is what the database
            actually has; this is what a future generated migration would
            compare against, and the two drifting apart is how somebody later
            gets a diff that silently narrows a live constraint. */
-        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature','courier_form','patient_id')`),
+        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature','courier_form','patient_id','stamped_receipt')`),
         check('files_status_check', sql`${t.status} IN ('pending','stored')`),
     ],
 );
