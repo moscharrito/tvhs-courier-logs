@@ -266,6 +266,41 @@ describe('the completion bonus', () => {
         await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
     });
 
+    it('shows the courier their own bonus, not just the office', async () => {
+        /* THE GAP THIS CLOSES. The bonus went on the admin summary list
+           first and nowhere else, so a driver reading their own record saw
+           a figure $150 a day short of what the office was about to pay
+           them -- and the smaller number is the one somebody believes.
+           Found by asking where a driver would actually see it. */
+        await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+        await setBonus(15000, '2000-01-01');
+        const who = await freshDriver();
+        await deliveredBy(who);
+
+        const theirs = await agentFor(who, 'pay-pass-11');
+        const mine = await theirs.get(`${DRIVERS}/me?from=${day}&to=${day}`);
+        expect(mine.status, JSON.stringify(mine.body).slice(0, 200)).toBe(200);
+        expect(mine.body.totals.bonusDays).toBe(1);
+        expect(mine.body.totals.bonusCents).toBe(15000);
+        expect(mine.body.totals.payCents).toBe(700 + 15000);
+    });
+
+    it('agrees with itself across the summary, the one-driver view and the file', async () => {
+        /* Two screens in one portal disagreeing about what somebody is
+           owed is worse than neither showing it. */
+        await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+        await setBonus(15000, '2000-01-01');
+        const who = await freshDriver();
+        await deliveredBy(who);
+
+        const list = (await admin.get(`${DRIVERS}?from=${day}&to=${day}`))
+            .body.drivers.find((d) => d.username === who);
+        const one = await admin.get(`${DRIVERS}/${who}?from=${day}&to=${day}`);
+        expect(one.status).toBe(200);
+        expect(one.body.totals.bonusCents, 'the one-driver view').toBe(list.bonusCents);
+        expect(one.body.totals.payCents, 'and the total with it').toBe(list.payCents);
+    });
+
     it('is not withheld by a pharmacy filter', async () => {
         /* "Finished everything" is a fact about the whole day. Asking it of
            one counter would award a bonus to somebody who cleared Wheatley

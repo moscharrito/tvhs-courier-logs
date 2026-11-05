@@ -278,8 +278,24 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         return new Map(rs.rows.map((r) => [String(r['username']), String(r['name'])]));
     }
 
-    /** Roll one courier's stops into buckets and a total. */
-    function recordOf(stops: StopRow[], grouping: PayGrouping, rates: ReturnType<typeof resolveSettings>['driverPay']) {
+    /** Roll one courier's stops into buckets and a total.
+     *
+     *  `qualifyingDays` are the service dates on which this courier
+     *  finished everything assigned to them. THE BONUS IS EARNED BY A DAY
+     *  AND REPORTED BY A BUCKET, so each day is mapped through the same
+     *  payBucket() the stops are: grouped by month, a month shows the sum
+     *  of its qualifying days, and the totals roll up through addTotals
+     *  like every other figure.
+     *
+     *  It is a parameter rather than something recomputed in here, because
+     *  answering "did they finish everything" needs the stops they did NOT
+     *  finish, and recordOf only ever sees the ones they did. */
+    function recordOf(
+        stops: StopRow[],
+        grouping: PayGrouping,
+        rates: ReturnType<typeof resolveSettings>['driverPay'],
+        qualifyingDays: readonly string[] = [],
+    ) {
         const buckets = new Map<string, StopRow[]>();
         for (const stop of stops) {
             const key = payBucket(stop.service_date, grouping);
@@ -290,7 +306,10 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         const periods = [...buckets.entries()]
             .sort((a, b) => (a[0] < b[0] ? 1 : -1))
             .map(([key, rows]) => {
-                const totals = payFor(payable(rows), rates);
+                const totals = withBonus(
+                    payFor(payable(rows), rates),
+                    bonusFor(qualifyingDays.filter((d) => payBucket(d, grouping) === key), rates),
+                );
                 /* Which pharmacies the work was for, with counts. This is the
                    "delivered for" the question asked about, and it is the
                    only place a name appears: a pharmacy, never a patient. */
@@ -447,9 +466,15 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         const siteId = siteOf(req);
         const siteName = siteId === null ? null : await nameOfSite(project.id, siteId);
 
-        const [stops, names] = await Promise.all([
+        /* THE WORKBOOK IS THE THING SOMEBODY IS ACTUALLY PAID FROM. It is
+           mailed to a bookkeeper and summed in a spreadsheet, so a bonus
+           on the screen and not in the file is the worst of the three
+           places to leave it out: the discrepancy is found after the
+           payment run, by somebody who was not in the room. */
+        const [stops, names, finished] = await Promise.all([
             stopsIn(project.id, window.from, window.to, null, siteId),
             driversOf(project.id),
+            completedDays(project.id, window.from, window.to, null),
         ]);
 
         const byDriver = new Map<string, StopRow[]>();
@@ -469,13 +494,22 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
            answer somebody would pay. */
         const rows = [...everyone].map((username) => {
             const theirs = byDriver.get(username) ?? [];
-            const totals = payFor(payable(theirs), rates);
+            const totals = withBonus(
+                payFor(payable(theirs), rates),
+                bonusFor(finished.get(username) ?? [], rates),
+            );
             return {
                 driver: names.get(username) ?? `${username} (no longer a courier on this contract)`,
                 username,
                 daysWorked: new Set(theirs.map((s) => s.service_date)).size,
                 delivered: totals.delivered,
                 failed: totals.failed,
+                /* Its own columns, not folded into Pay. Somebody checking a
+                   payment run has to be able to see which part is
+                   deliveries and which is the bonus without recomputing
+                   it, and `pay` below already includes both. */
+                bonusDays: totals.bonusDays,
+                bonus: totals.bonusCents / 100,
                 pay: totals.payCents === null ? '' : totals.payCents / 100,
                 rateSet: totals.rateSet ? 'yes' : 'no, a rate is missing',
             };
@@ -489,6 +523,8 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                 { header: 'Days worked', key: 'daysWorked', width: 12 },
                 { header: 'Delivered', key: 'delivered', width: 11 },
                 { header: 'Not delivered', key: 'failed', width: 14 },
+                { header: 'Days completed', key: 'bonusDays', width: 15 },
+                { header: `Bonus (${rates.currency})`, key: 'bonus', width: 14 },
                 { header: `Pay (${rates.currency})`, key: 'pay', width: 14 },
                 { header: 'Every rate set', key: 'rateSet', width: 22 },
             ],
@@ -507,7 +543,13 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                     'Not a payment run',
                     'These figures cover one pharmacy only. What a driver is owed is their work across every pharmacy: export again with no pharmacy chosen.',
                 ] as [string, string]]),
-                ['Pay', 'Per completed delivery. An attempt that did not complete pays nothing and is counted separately.'],
+                ['Pay', 'Per completed delivery, PLUS the completion bonus where it was earned. The two are also in their own columns.'],
+                ...(rates.completionBonusCents > 0 ? [[
+                    'Completion bonus',
+                    `${(rates.completionBonusCents / 100).toFixed(2)} ${rates.currency} for each day on which the driver finished every stop assigned to them`
+                    + `${rates.completionBonusFrom === null ? '' : `, from ${rates.completionBonusFrom}`}`
+                    + '. A delivery that was attempted and failed counts as finished; a stop still open does not.',
+                ] as [string, string]] : []),
                 ['Blank pay', 'A rate is not set for a service level that was worked, so no figure is given rather than a short one.'],
             ],
             containsPatientData: false,
@@ -529,7 +571,10 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
            point: see the header. */
         const username = req.session.user!.username;
         const rates = resolveSettings(project.settings).driverPay;
-        const stops = await stopsIn(project.id, window.from, window.to, username);
+        const [stops, finished] = await Promise.all([
+            stopsIn(project.id, window.from, window.to, username),
+            completedDays(project.id, window.from, window.to, username),
+        ]);
 
         res.json({
             ...window,
@@ -538,7 +583,11 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             username,
             name: req.session.user!.name,
             grouping: groupingOf(req),
-            ...recordOf(stops, groupingOf(req), rates),
+            /* A COURIER SEES THEIR OWN BONUS. Without this they read a
+               figure $150 a day short of what the office is about to pay
+               them, which is the kind of discrepancy that gets found in a
+               car park and believed to be the smaller number. */
+            ...recordOf(stops, groupingOf(req), rates, finished.get(username) ?? []),
         });
     }));
 
@@ -552,7 +601,10 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         const rates = resolveSettings(project.settings).driverPay;
 
         const names = await driversOf(project.id);
-        const stops = await stopsIn(project.id, window.from, window.to, username);
+        const [stops, finished] = await Promise.all([
+            stopsIn(project.id, window.from, window.to, username),
+            completedDays(project.id, window.from, window.to, username),
+        ]);
         if (!names.has(username) && stops.length === 0) {
             res.status(404).json({ error: 'No record for that driver in this project' });
             return;
@@ -569,7 +621,10 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             username,
             name: names.get(username) ?? username,
             grouping: groupingOf(req),
-            ...recordOf(stops, groupingOf(req), rates),
+            /* The same bonus the summary list shows for this driver. Two
+               screens in one portal disagreeing about what somebody is
+               owed is worse than neither showing it. */
+            ...recordOf(stops, groupingOf(req), rates, finished.get(username) ?? []),
         }));
     }));
 
