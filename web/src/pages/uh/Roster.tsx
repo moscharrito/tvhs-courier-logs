@@ -70,6 +70,7 @@ import { useAuth } from '../../app/auth';
 import { handleUnder } from '../../lib/people';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
+import { generatePassword } from '../../lib/password';
 
 interface RosterDriver {
     username: string;
@@ -80,6 +81,20 @@ interface RosterDriver {
     status: string;
     role: string;
     homeSiteId: number | null;
+    /* THE COUNTERS THIS DRIVER MAY ALSO BE GIVEN WORK AT.
+     *
+     * The server has returned this since the field was added and the board
+     * has always honoured it -- targetsFor() offers a stop to anybody whose
+     * homeSiteId OR alsoCovers matches the site. This screen simply never
+     * read it, so the only way to set it was by hand against the API, and
+     * in practice nobody did. Hence "a driver can only work one pharmacy",
+     * which was never true of the system, only of its roster page. */
+    /* OPTIONAL, defensively. The server always sends it, but a row that
+       arrives without it would otherwise throw on .includes() and take the
+       whole roster down -- the same shape of bug as reading `siteId !==
+       null` off a response that had no siteId. An absent list means
+       "covers nowhere else", which is the safe reading. */
+    alsoCovers?: number[];
     homeSiteCode: string | null;
     homeSiteName: string | null;
     onShift: boolean;
@@ -99,9 +114,21 @@ const UNASSIGNED = 'none';
 
 export function Roster() {
     const { code = '' } = useParams();
-    const { projects } = useAuth();
+    const { user, projects } = useAuth();
     const project = projects.find((p) => p.code === code);
     const base = `/api/projects/${code}/uh/roster`;
+
+    /* PLATFORM ADMIN, NOT PROJECT ADMIN, and the distinction is the whole
+       reason this is a separate check. The roster endpoints take any
+       dispatcher, but creating an account, resetting a password and
+       removing a membership all go to /api/users, which is guarded by
+       requireAdmin on the SESSION role. Gating these controls on the
+       project role would show a site manager buttons that 403. */
+    const isAdmin = user?.role === 'admin';
+
+    /* Shown once, never stored, never logged. The server has only the hash
+       and this component is the one place the plaintext ever exists. */
+    const [issued, setIssued] = useState<{ name: string; username: string; password: string } | null>(null);
 
     const [data, setData] = useState<Roster | null>(null);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -118,6 +145,108 @@ export function Roster() {
         }
     }, [base]);
     useEffect(() => { void load(); }, [load]);
+
+    /* ONE PLACE THAT TALKS TO /api/users, so the three admin actions share
+       their error handling and their reload. Each returns true when it
+       worked, because the callers differ in what they do next. */
+    const asAdmin = async (what: string, run: () => Promise<unknown>): Promise<boolean> => {
+        setMsg(null);
+        try {
+            await run();
+            await load();
+            return true;
+        } catch (err) {
+            setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : `Could not ${what}` });
+            return false;
+        }
+    };
+
+    /* WHICH OTHER COUNTERS THIS DRIVER COVERS.
+     *
+     * homeSiteId goes with it because the endpoint takes both together and
+     * validates alsoCovers against it -- it drops the home site from the
+     * list rather than letting a driver "also cover" where they already
+     * are. Sending covers alone would read homeSiteId as absent. */
+    const setCovers = async (driver: RosterDriver, siteId: number, on: boolean) => {
+        const next = on
+            ? [...new Set([...(driver.alsoCovers ?? []), siteId])]
+            : (driver.alsoCovers ?? []).filter((id) => id !== siteId);
+        setSaving(driver.username);
+        const ok = await asAdmin(`change what ${driver.name} covers`, () => api(
+            `${base}/${encodeURIComponent(driver.username)}`,
+            { method: 'PUT', json: { homeSiteId: driver.homeSiteId, alsoCovers: next } },
+        ));
+        if (ok) {
+            const site = data?.sites.find((x) => x.id === siteId)?.name ?? 'that pharmacy';
+            setMsg({ kind: 'ok', text: on ? `${driver.name} also covers ${site}` : `${driver.name} no longer covers ${site}` });
+        }
+        setSaving(null);
+    };
+
+    /* A NEW DRIVER IS TWO WRITES AND BOTH ARE REQUIRED.
+     *
+     * The account makes them somebody who can sign in; the courier
+     * membership is what gives them work. An account without the
+     * membership signs in successfully to an empty run, which looks
+     * exactly like a quiet day -- the failure create-drivers.mjs exists to
+     * stop somebody debugging for an afternoon. If the membership write
+     * fails the account is left behind deliberately and named, because
+     * deleting a half-made account is how you delete the wrong one. */
+    const addDriver = async (form: { username: string; name: string; email: string; homeSiteId: string }) => {
+        const username = form.username.trim().toLowerCase();
+        const password = generatePassword();
+        setSaving(username);
+        const ok = await asAdmin(`create ${username}`, async () => {
+            await api('/api/users', {
+                method: 'POST',
+                json: { username, name: form.name.trim(), email: form.email.trim(), password, role: 'driver' },
+            });
+            await api(`/api/users/${encodeURIComponent(username)}/memberships/${code}`, {
+                method: 'PUT',
+                json: {
+                    role: 'courier',
+                    settings: form.homeSiteId === UNASSIGNED ? {} : { homeSiteId: Number(form.homeSiteId) },
+                },
+            });
+        });
+        if (ok) setIssued({ name: form.name.trim(), username, password });
+        setSaving(null);
+        return ok;
+    };
+
+    /* EVERY SESSION OF THEIRS ENDS -- the endpoint revokes them, and it is
+       right to: the usual reason to reset is that nobody is sure who knows
+       the old one. The practical cost is that a driver mid-round is signed
+       out of their phone, so the confirmation says so. */
+    const resetPassword = async (driver: RosterDriver) => {
+        const password = generatePassword();
+        setSaving(driver.username);
+        const ok = await asAdmin(`reset the password for ${driver.name}`, () => api(
+            `/api/users/${encodeURIComponent(driver.username)}/password`,
+            { method: 'POST', json: { password } },
+        ));
+        if (ok) setIssued({ name: driver.name, username: driver.username, password });
+        setSaving(null);
+    };
+
+    /* REMOVE FROM THE CONTRACT, NOT FROM THE SYSTEM.
+     *
+     * This deletes the MEMBERSHIP. The account survives, and so does every
+     * custody event naming them: deleting a signatory is the one outcome
+     * the append-only trigger on custody_events exists to prevent, and a
+     * chain of custody that names somebody no longer in the system is
+     * worse than one naming a driver who left. They stop being offered
+     * work here and keep their history, which is what "off the roster"
+     * means. Reversible by putting the membership back. */
+    const removeFromRoster = async (driver: RosterDriver) => {
+        setSaving(driver.username);
+        const ok = await asAdmin(`take ${driver.name} off the roster`, () => api(
+            `/api/users/${encodeURIComponent(driver.username)}/memberships/${code}`,
+            { method: 'DELETE' },
+        ));
+        if (ok) setMsg({ kind: 'ok', text: `${driver.name} is off the roster. Their account and their history remain.` });
+        setSaving(null);
+    };
 
     const setHome = async (driver: RosterDriver, value: string) => {
         const homeSiteId = value === UNASSIGNED ? null : Number(value);
@@ -197,6 +326,40 @@ export function Roster() {
                 <div className={`izy-alert ${msg.kind === 'ok' ? 'ok' : 'error'}`} role="status">{msg.text}</div>
             )}
 
+            {/* ── THE CREDENTIAL, ONCE ──────────────────────────────────────
+                The server stores only a hash, so this is the single moment
+                the plaintext exists anywhere. It is deliberately loud, it
+                does not disappear on the next render, and it has to be
+                dismissed by hand: a panel that vanished while somebody was
+                reaching for a pen would send them straight back here to
+                reset a password they had just set. */}
+            {issued !== null && (
+                <div className="izy-alert warn izy-issued" role="alert">
+                    <p>
+                        <b>{issued.name}</b> signs in as <code>{issued.username}</code> with{' '}
+                        <code className="izy-secret">{issued.password}</code>
+                    </p>
+                    <p className="izy-muted">
+                        Shown once and stored nowhere. Read it to them, ask them to change it, and
+                        close this. If it is lost, use <b>New password</b> on their row.
+                    </p>
+                    <button type="button" className="izy-btn secondary small" onClick={() => setIssued(null)}>
+                        I have passed it on
+                    </button>
+                </div>
+            )}
+
+            {isAdmin && (
+                <Section
+                    id="uh.roster.add"
+                    title="Add a driver"
+                    summary="account, courier membership and a password"
+                    defaultOpen={false}
+                >
+                    <AddDriver sites={data.sites} busy={saving !== null} onAdd={addDriver} />
+                </Section>
+            )}
+
             <div className="izy-card">
                 <p className="izy-muted">
                     {/* What this changes, in one sentence, because a page that
@@ -243,8 +406,29 @@ export function Roster() {
                         code={code}
                         sites={data.sites}
                         saving={saving}
+                        isAdmin={isAdmin}
                         onSet={(d, v) => { void setHome(d, v); }}
                         onPhone={(d, v) => { void setPhone(d, v); }}
+                        onCover={(d, siteId, on) => { void setCovers(d, siteId, on); }}
+                        onReset={(d) => {
+                            /* Confirmed because it signs them out. A driver
+                               mid-round loses the app until somebody reads
+                               them the new password. */
+                            if (window.confirm(
+                                `Give ${d.name} a new password?\n\n`
+                                + 'They are signed out of the app everywhere immediately, '
+                                + 'including mid-round, and cannot work again until you have '
+                                + 'read them the new one.',
+                            )) void resetPassword(d);
+                        }}
+                        onRemove={(d) => {
+                            if (window.confirm(
+                                `Take ${d.name} off the ${project.name} roster?\n\n`
+                                + 'They stop being offered work here. Their account, their past '
+                                + 'deliveries and their signatures all stay exactly as they are, '
+                                + 'and you can put them back by giving them a home pharmacy again.',
+                            )) void removeFromRoster(d);
+                        }}
                     />
                 ))}
             </div>
@@ -268,14 +452,18 @@ export function Roster() {
  * default because the thing this page is read to find -- a counter with
  * nobody on it -- has to be visible without opening anything.
  */
-function Group({ id, group, code, sites, saving, onSet, onPhone }: {
+function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCover, onReset, onRemove }: {
     id: string;
     group: { key: string; title: string; drivers: RosterDriver[]; site: RosterSite | null };
     code: string;
     sites: RosterSite[];
     saving: string | null;
+    isAdmin: boolean;
     onSet: (d: RosterDriver, value: string) => void;
     onPhone: (d: RosterDriver, value: string) => void;
+    onCover: (d: RosterDriver, siteId: number, on: boolean) => void;
+    onReset: (d: RosterDriver) => void;
+    onRemove: (d: RosterDriver) => void;
 }) {
     const paged = usePaged(group.drivers, 8);
 
@@ -324,10 +512,135 @@ function Group({ id, group, code, sites, saving, onSet, onPhone }: {
                             <option key={s.id} value={s.id}>{s.name}</option>
                         ))}
                     </select>
+                    {/* ── ALSO COVERS, ACROSS THE FULL ROW ────────────────
+                        One driver, several counters. The board has always
+                        supported it; this is the first screen that says so.
+
+                        A CHECKBOX EACH rather than a multi-select: a
+                        <select multiple> needs ctrl-click to add a second
+                        value and silently drops the rest when somebody
+                        clicks without it, which on this page would quietly
+                        un-cover four pharmacies. The home one is left out
+                        because the server drops it from the list anyway --
+                        covering where you already are is not a thing.
+
+                        Saved on each tick rather than behind a button: a
+                        change nobody confirmed is a change nobody can
+                        forget to confirm. */}
+                    <div className="izy-roster-covers">
+                        <span className="izy-muted">Also covers</span>
+                        {sites.filter((s) => s.id !== d.homeSiteId).map((s) => (
+                            <label key={s.id} className="izy-cover-pick">
+                                <input
+                                    type="checkbox"
+                                    checked={(d.alsoCovers ?? []).includes(s.id)}
+                                    disabled={saving === d.username}
+                                    onChange={(e) => onCover(d, s.id, e.target.checked)}
+                                />
+                                {s.name}
+                            </label>
+                        ))}
+                        {sites.length <= 1 && <span className="izy-muted">nowhere else to cover</span>}
+                    </div>
+                    {isAdmin && (
+                        <div className="izy-roster-admin">
+                            <button
+                                type="button"
+                                className="izy-btn secondary small"
+                                disabled={saving === d.username}
+                                onClick={() => onReset(d)}
+                            >
+                                New password
+                            </button>
+                            <button
+                                type="button"
+                                className="izy-btn secondary small izy-danger"
+                                disabled={saving === d.username}
+                                onClick={() => onRemove(d)}
+                            >
+                                Off the roster
+                            </button>
+                        </div>
+                    )}
                 </div>
             ))}
             <Pager of={paged} noun="drivers" />
         </Section>
+    );
+}
+
+/* ── MAKING A DRIVER ───────────────────────────────────────────────────
+ *
+ * The same two writes create-drivers.mjs does, from a screen: the account,
+ * then the courier membership that actually gives them work.
+ *
+ * THE EMAIL IS REQUIRED HERE AS WELL, and for the reason the script spells
+ * out at length. Password reset finds an account by address, and answers
+ * "if that address belongs to an account, a code is on its way" either
+ * way -- so a driver onboarded without one is handed an instruction that
+ * cannot work, tries it, and waits for ever. Nothing reports it. The eight
+ * pharmacy portal logins were created without addresses and nobody found
+ * out until somebody tried.
+ *
+ * THE USERNAME IS NOT GUESSED FROM THE NAME. Two drivers called Xavier is
+ * not a hypothetical here; it happened, and the first one took `xavier`
+ * while the second could not be created at all. A field with a sentence
+ * under it is better than a rule that silently collides, especially as
+ * there is no renaming afterwards: six tables carry the username as text.
+ */
+function AddDriver({ sites, busy, onAdd }: {
+    sites: RosterSite[];
+    busy: boolean;
+    onAdd: (form: { username: string; name: string; email: string; homeSiteId: string }) => Promise<boolean>;
+}) {
+    const [form, setForm] = useState({ username: '', name: '', email: '', homeSiteId: UNASSIGNED });
+    const set = (k: keyof typeof form) => (e: { target: { value: string } }) =>
+        setForm((f) => ({ ...f, [k]: e.target.value }));
+
+    return (
+        <form
+            onSubmit={(e) => {
+                e.preventDefault();
+                void onAdd(form).then((ok) => {
+                    /* Cleared only on success, so a rejected username does
+                       not take the other three fields with it. */
+                    if (ok) setForm({ username: '', name: '', email: '', homeSiteId: UNASSIGNED });
+                });
+            }}
+        >
+            <div className="izy-row">
+                <label className="izy-field">Full name
+                    <input value={form.name} onChange={set('name')} required maxLength={120} />
+                </label>
+                <label className="izy-field">Username
+                    <input
+                        value={form.username}
+                        onChange={set('username')}
+                        required
+                        minLength={2}
+                        maxLength={120}
+                        pattern="[A-Za-z0-9._@+\-]+"
+                        title="Letters, digits, and . _ @ + - only"
+                    />
+                    <span className="izy-muted izy-field-note">
+                        What they type to sign in. Lower case, and it cannot be changed later.
+                    </span>
+                </label>
+                <label className="izy-field">Email
+                    <input type="email" value={form.email} onChange={set('email')} required maxLength={200} />
+                    <span className="izy-muted izy-field-note">
+                        Required: it is the only route to &ldquo;Forgotten your password&rdquo;.
+                    </span>
+                </label>
+                <label className="izy-field">Home pharmacy
+                    <select value={form.homeSiteId} onChange={set('homeSiteId')}>
+                        <option value={UNASSIGNED}>No home pharmacy</option>
+                        {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                </label>
+                <button className="izy-btn" type="submit" disabled={busy}>Create the driver</button>
+            </div>
+        </form>
     );
 }
 

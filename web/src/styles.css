@@ -1697,3 +1697,31 @@ body {
    hairline above it does the work the border was doing -- one line rather
    than four sides. */
 .izy-section .izy-section + .izy-section { border-top: 1px solid var(--izy-line); padding-top: 2px; }
+
+/* The optional paperwork on a controlled delivery: identification and the
+   stamped receipt. Quieter than .izy-id-required on purpose -- that one is
+   a thing the courier MUST do and is drawn to stop them, this one is a
+   thing they MAY have been handed. Same box, no alarm. */
+.izy-controlled-papers { border-style: dashed; }
+.izy-controlled-papers > .izy-field-note:first-child { margin-top: 0; }
+
+/* ── The roster's admin column and the covers picker ──────────────────────
+   The row was three tracks: who, contact, home pharmacy. Covering and the
+   admin buttons are a fourth and a second line rather than two more
+   columns, because nine pharmacies of checkboxes cannot share a row with
+   a name without one of them wrapping badly at every width. */
+.izy-roster-covers {
+    grid-column: 1 / -1;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+    margin-top: 6px; font-size: 12px;
+}
+.izy-cover-pick { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.izy-cover-pick input { margin: 0; }
+.izy-roster-admin { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; }
+/* Red on the outline only. A solid red slab for "off the roster" on a page
+   of forty rows makes the page shout; the outline is still unmistakable. */
+.izy-btn.izy-danger { border-color: #b91c1c; color: #b91c1c; }
+.izy-btn.izy-danger:hover:not(:disabled) { background: rgba(185, 28, 28, 0.06); }
+/* The one moment a plaintext credential is on screen. */
+.izy-issued .izy-secret { font-family: Consolas, ui-monospace, monospace; font-size: 15px; font-weight: 700; letter-spacing: 0.04em; }
+.izy-issued p { margin: 0 0 8px; }

@@ -19,6 +19,10 @@ import { mockFetch } from '../../test/setup';
 
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
 const session = { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null };
+/* The create/reset/remove controls go to /api/users, which is guarded by
+   requireAdmin on the SESSION role -- not the project role. A dispatcher
+   with project role 'admin' is still staff to that endpoint. */
+const adminSession = { id: 1, username: 'admin', name: 'Administrator', role: 'admin', route: null };
 
 /* The counters as University Health supplied them, shortened to the three
    the cases below actually need. */
@@ -31,7 +35,7 @@ const sites = [
 const driver = (over = {}) => ({
     username: 'dana.whitfield', name: 'Dana Whitfield', email: 'dana.whitfield@example.com',
     phone: '(210) 555 0142',
-    status: 'active', role: 'courier', homeSiteId: 1,
+    status: 'active', role: 'courier', homeSiteId: 1, alsoCovers: [] as number[],
     homeSiteCode: 'green', homeSiteName: 'Robert B. Green', onShift: false, ...over,
 });
 
@@ -54,6 +58,10 @@ const routes = (over = {}) => ({
     'GET /api/projects/uh/uh/roster': rosterData(),
     ...over,
 });
+
+function renderAsAdmin(over = {}) {
+    return renderRoster(routes({ 'GET /api/session': adminSession, ...over }));
+}
 
 function renderRoster(r = routes()) {
     const mocked = mockFetch(r);
@@ -283,5 +291,226 @@ describe('the driver roster', () => {
            doing the obvious thing. */
         renderRoster();
         expect(await screen.findByText(/default and not a restriction/)).toBeInTheDocument();
+    });
+});
+
+describe('one driver, several pharmacies', () => {
+    /* The board has always offered a stop to anybody whose homeSiteId OR
+       alsoCovers matches the site -- see targetsFor() in Board.tsx. The
+       roster screen simply never read the field, which is why "a driver
+       can only work one pharmacy" was believed. It was never true of the
+       system, only of this page. */
+
+    it('offers every pharmacy except the one they are already homed at', async () => {
+        renderRoster();
+        await screen.findByText('Dana Whitfield');
+        // Homed at Robert B. Green, so the other two are offerable.
+        expect(screen.getByRole('checkbox', { name: 'Southeast' })).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: 'Vida' })).toBeInTheDocument();
+        expect(screen.queryByRole('checkbox', { name: 'Robert B. Green' })).not.toBeInTheDocument();
+    });
+
+    it('shows what they already cover', async () => {
+        renderRoster(routes({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ alsoCovers: [3] })] }),
+        }));
+        await screen.findByText('Dana Whitfield');
+        expect(screen.getByRole('checkbox', { name: 'Vida' })).toBeChecked();
+        expect(screen.getByRole('checkbox', { name: 'Southeast' })).not.toBeChecked();
+    });
+
+    it('sends the home pharmacy with the covers list', async () => {
+        /* The endpoint validates alsoCovers against homeSiteId and drops
+           the home site from it. Sending covers alone reads homeSiteId as
+           absent, which would clear it. */
+        const mocked = renderRoster();
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Southeast' }));
+        await waitFor(() => {
+            const body = mocked.bodies['PUT /api/projects/uh/uh/roster/dana.whitfield'] as
+                { homeSiteId: number; alsoCovers: number[] };
+            expect(body).toBeTruthy();
+            expect(body.alsoCovers).toEqual([2]);
+            expect(body.homeSiteId, 'the home must travel with it').toBe(1);
+        });
+    });
+
+    it('removes one without disturbing the others', async () => {
+        const mocked = renderRoster(routes({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ alsoCovers: [2, 3] })] }),
+        }));
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Southeast' }));
+        await waitFor(() => {
+            const body = mocked.bodies['PUT /api/projects/uh/uh/roster/dana.whitfield'] as { alsoCovers: number[] };
+            expect(body.alsoCovers).toEqual([3]);
+        });
+    });
+
+    it('does not fall over when the field is missing entirely', async () => {
+        /* A row without the field would throw on .includes() and take the
+           whole page with it. Absent means "covers nowhere else". */
+        const { alsoCovers: _gone, ...withoutField } = driver();
+        renderRoster(routes({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [withoutField as Driver] }),
+        }));
+        expect(await screen.findByText('Dana Whitfield')).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: 'Southeast' })).not.toBeChecked();
+    });
+});
+
+describe('what only an admin may do', () => {
+    it('hides create, reset and remove from a dispatcher', async () => {
+        renderRoster();
+        await screen.findByText('Dana Whitfield');
+        expect(screen.queryByRole('button', { name: 'New password' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Off the roster' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: /Add a driver/ })).not.toBeInTheDocument();
+    });
+
+    it('shows them to an admin', async () => {
+        renderAsAdmin();
+        await screen.findByText('Dana Whitfield');
+        expect(screen.getByRole('button', { name: 'New password' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Off the roster' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /Add a driver/ })).toBeInTheDocument();
+    });
+
+    it('still lets a dispatcher set the home pharmacy and the covers', async () => {
+        /* The roster endpoints take any dispatcher. Only /api/users is
+           admin-only, so hiding too much would be a regression. */
+        renderRoster();
+        await screen.findByText('Dana Whitfield');
+        expect(screen.getByRole('combobox', { name: 'Home pharmacy for Dana Whitfield' })).toBeEnabled();
+        expect(screen.getByRole('checkbox', { name: 'Southeast' })).toBeEnabled();
+    });
+});
+
+describe('creating a driver', () => {
+    it('writes the account and the courier membership, in that order', async () => {
+        /* An account without the membership signs in to an empty run,
+           which looks exactly like a quiet day. Both or it is not a
+           driver. */
+        const mocked = renderAsAdmin({
+            'POST /api/users': { status: 201, body: { username: 'ada' } },
+            'PUT /api/users/ada/memberships/uh': { ok: true },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: /Add a driver/ }));
+        fireEvent.change(screen.getByLabelText(/^Full name/), { target: { value: 'Ada Pay' } });
+        fireEvent.change(screen.getByLabelText(/^Username/), { target: { value: 'ada' } });
+        fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: 'ada@example.com' } });
+        fireEvent.change(screen.getByLabelText(/^Home pharmacy$/), { target: { value: '2' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create the driver' }));
+
+        await waitFor(() => {
+            expect(mocked.calls).toContain('POST /api/users');
+            expect(mocked.calls).toContain('PUT /api/users/ada/memberships/uh');
+        });
+        const made = mocked.bodies['POST /api/users'] as { role: string; email: string; password: string };
+        expect(made.role, 'the platform role that lets them hold a phone PIN').toBe('driver');
+        expect(made.email).toBe('ada@example.com');
+        expect(made.password, 'generated here, never typed').toMatch(/^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/);
+
+        const member = mocked.bodies['PUT /api/users/ada/memberships/uh'] as
+            { role: string; settings: { homeSiteId?: number } };
+        expect(member.role, 'courier is what gives them work').toBe('courier');
+        expect(member.settings.homeSiteId).toBe(2);
+    });
+
+    it('shows the password once, and only after it worked', async () => {
+        renderAsAdmin({
+            'POST /api/users': { status: 201, body: { username: 'ada' } },
+            'PUT /api/users/ada/memberships/uh': { ok: true },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: /Add a driver/ }));
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText(/^Full name/), { target: { value: 'Ada Pay' } });
+        fireEvent.change(screen.getByLabelText(/^Username/), { target: { value: 'ada' } });
+        fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: 'ada@example.com' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create the driver' }));
+
+        const panel = await screen.findByRole('alert');
+        expect(panel).toHaveTextContent(/signs in as/);
+        expect(panel).toHaveTextContent(/Shown once/);
+    });
+
+    it('says nothing about a password when the create failed', async () => {
+        /* A panel reading "Ada signs in with abcd-efgh-jkmn" over a 409 is
+           a credential that does not exist, handed to somebody. */
+        renderAsAdmin({
+            'POST /api/users': { status: 409, body: { error: 'Username already exists' } },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: /Add a driver/ }));
+        fireEvent.change(screen.getByLabelText(/^Full name/), { target: { value: 'Ada Pay' } });
+        fireEvent.change(screen.getByLabelText(/^Username/), { target: { value: 'dana.whitfield' } });
+        fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: 'ada@example.com' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create the driver' }));
+
+        await screen.findByText(/Username already exists/);
+        expect(screen.queryByText(/Shown once/)).not.toBeInTheDocument();
+    });
+});
+
+describe('resetting and removing', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it('asks before signing somebody out, and does nothing if refused', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        const mocked = renderAsAdmin();
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'New password' }));
+        await waitFor(() => {
+            expect(mocked.calls.some((c) => c.includes('/password'))).toBe(false);
+        });
+    });
+
+    it('warns that the reset signs them out mid-round', async () => {
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        renderAsAdmin();
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'New password' }));
+        expect(confirm.mock.calls[0]?.[0]).toMatch(/signed out of the app everywhere/);
+    });
+
+    it('sets a generated password and shows it once', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const mocked = renderAsAdmin({
+            'POST /api/users/dana.whitfield/password': { ok: true, revokedSessions: 2 },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'New password' }));
+        const panel = await screen.findByRole('alert');
+        expect(panel).toHaveTextContent(/Dana Whitfield/);
+        const sent = mocked.bodies['POST /api/users/dana.whitfield/password'] as { password: string };
+        expect(sent.password).toMatch(/^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/);
+    });
+
+    it('removes the MEMBERSHIP, never the account', async () => {
+        /* Deleting a signatory is what the append-only trigger on
+           custody_events exists to prevent. Off the roster means they stop
+           being offered work and keep every delivery they ever made. */
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const mocked = renderAsAdmin({
+            'DELETE /api/users/dana.whitfield/memberships/uh': { ok: true },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Off the roster' }));
+        await waitFor(() => {
+            expect(mocked.calls).toContain('DELETE /api/users/dana.whitfield/memberships/uh');
+        });
+        expect(mocked.calls.some((c) => c.startsWith('DELETE /api/users/dana.whitfield') && !c.includes('memberships')))
+            .toBe(false);
+    });
+
+    it('says their history survives, in the confirmation', async () => {
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        renderAsAdmin();
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Off the roster' }));
+        expect(confirm.mock.calls[0]?.[0]).toMatch(/past deliveries and their signatures all stay/);
     });
 });
