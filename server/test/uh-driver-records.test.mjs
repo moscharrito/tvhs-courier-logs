@@ -412,8 +412,9 @@ describe('what it comes to', () => {
         await setRates({ scheduled: 450, stat: 700, adhoc: 500 });
         const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
         const ada = res.body.drivers.find((d) => d.username === 'pay.ada');
-        /* Two stat and one adhoc. The failed attempt pays nothing. */
-        expect(ada.payCents).toBe(700 + 700 + 500);
+        /* Two stat delivered, one adhoc delivered, and one stat that came
+           back. From 5 November the return pays the stat rate too. */
+        expect(ada.payCents).toBe(700 + 700 + 500 + 700);
     });
 
     it('refuses a partial total when a level that was worked has no rate', async () => {

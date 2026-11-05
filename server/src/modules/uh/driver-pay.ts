@@ -96,7 +96,20 @@ export interface PayLine {
     label: string;
     /** How many completed deliveries on this line. */
     delivered: number;
-    /** Cents each, as the rate card says. */
+    /**
+     * How many were attempted and came back.
+     *
+     * PAID AT THE SAME RATE AS A DELIVERY, decided by the owner on
+     * 5 November: "Returned Order also pays the driver since they went to
+     * the stop but patient was unresponsive". The drive is the work, and
+     * whether somebody answered the door is not the courier's doing.
+     *
+     * Kept as its own count rather than added into `delivered`, because
+     * the two are different facts: one is money, the other is what
+     * actually happened at the door, and the screen reports both.
+     */
+    failed: number;
+    /** Cents each, as the rate card says. Applies to both counts above. */
     rateCents: number;
     /** Null when the rate is unset: see the header. */
     payCents: number | null;
@@ -166,18 +179,34 @@ export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings):
     let delivered = 0;
     let failed = 0;
 
+    /* BOTH OUTCOMES ARE PAID, AT THE SAME RATE.
+     *
+     * Until 5 November only a delivery earned anything and a dry run
+     * earned nothing. The owner's rule: a courier who drove to the door
+     * and found nobody in did the work, so a returned stop pays what a
+     * delivered one does.
+     *
+     * THE MARGIN CONSEQUENCE IS REAL AND WAS ACCEPTED. University Health
+     * are billed a dry-run fee for a failed attempt, which is lower than
+     * the delivery fee; paying the full rate on those stops can cost more
+     * than they earn. That is a commercial decision, recorded here so
+     * nobody later reads it as an arithmetic mistake.
+     *
+     * The counts stay apart. `delivered` and `failed` are what happened;
+     * the pay below is computed from their sum. A screen that merged them
+     * would lose the only number that says whether a round went well.
+     */
     for (const stop of stops) {
-        if (stop.status === 'delivered') {
-            delivered += 1;
-            const rateCents = rateFor(stop, rates);
-            const { key, label } = lineOf(stop, rates);
-            const line = lines[key] ?? { label, delivered: 0, rateCents, payCents: 0 };
-            line.delivered += 1;
-            line.rateCents = rateCents;
-            lines[key] = line;
-        } else if (stop.status === 'failed') {
-            failed += 1;
-        }
+        const paidOutcome = stop.status === 'delivered' || stop.status === 'failed';
+        if (!paidOutcome) continue;
+        if (stop.status === 'delivered') delivered += 1; else failed += 1;
+
+        const rateCents = rateFor(stop, rates);
+        const { key, label } = lineOf(stop, rates);
+        const line = lines[key] ?? { label, delivered: 0, failed: 0, rateCents, payCents: 0 };
+        if (stop.status === 'delivered') line.delivered += 1; else line.failed += 1;
+        line.rateCents = rateCents;
+        lines[key] = line;
     }
 
     let total = 0;
@@ -188,18 +217,23 @@ export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings):
             everyRateSet = false;
             continue;
         }
-        line.payCents = line.delivered * line.rateCents;
+        line.payCents = (line.delivered + line.failed) * line.rateCents;
         total += line.payCents;
     }
 
     return {
         delivered,
         failed,
-        /* Nothing delivered is nothing owed, and that IS an answer rather
-           than a missing rate: a driver with no completed deliveries is owed
-           nought whatever the rate card says. */
-        payCents: delivered === 0 ? 0 : (everyRateSet ? total : null),
-        rateSet: delivered === 0 ? true : everyRateSet,
+        /* NOTHING ATTEMPTED is nothing owed, and that IS an answer rather
+           than a missing rate: a driver who went nowhere is owed nought
+           whatever the rate card says.
+
+           It used to read `delivered === 0`, which became wrong the moment
+           a return started paying: a courier whose every stop came back
+           would have been told they were owed nought with no hint that a
+           rate was missing. */
+        payCents: delivered + failed === 0 ? 0 : (everyRateSet ? total : null),
+        rateSet: delivered + failed === 0 ? true : everyRateSet,
         /* payFor has no idea what a day is, so it never awards a bonus.
            withBonus() puts it on afterwards, from dates the caller worked
            out by counting assigned against finished. */
@@ -271,8 +305,9 @@ export function addTotals(a: PayTotals, b: PayTotals): PayTotals {
     const lines: Record<string, PayLine> = {};
     for (const source of [a.lines, b.lines]) {
         for (const [key, line] of Object.entries(source)) {
-            const into = lines[key] ?? { label: line.label, delivered: 0, rateCents: line.rateCents, payCents: 0 };
+            const into = lines[key] ?? { label: line.label, delivered: 0, failed: 0, rateCents: line.rateCents, payCents: 0 };
             into.delivered += line.delivered;
+            into.failed += line.failed;
             into.rateCents = line.rateCents;
             /* One unset side makes the sum unset, for the same reason a
                partial total is the dangerous answer. */

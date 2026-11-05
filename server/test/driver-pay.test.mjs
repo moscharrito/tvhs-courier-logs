@@ -40,14 +40,29 @@ describe('what a set of stops comes to', () => {
         expect(got.payCents).toBe(450 + 450 + 700);
     });
 
-    it('pays nothing for a failed attempt, and still counts it', () => {
-        /* The decision nobody has actually taken: a courier who drove to a
-           door and found nobody in has done work. Counting it keeps the
-           question visible rather than letting it disappear. */
+    it('pays a failed attempt at the delivery rate, and still counts it apart', () => {
+        /* THE DECISION, TAKEN 5 NOVEMBER. It sat in this file for weeks as
+           "the decision nobody has actually taken": a courier who drove to
+           a door and found nobody in has done work. The owner's answer is
+           that the drive is the work, so a returned stop pays what a
+           delivered one does.
+
+           The counts stay apart. Three payable stops at 450 is 1350, and
+           the fact that two of them came back is still on the record --
+           that is the only number saying whether the round went well. */
         const got = payFor([stop('delivered'), stop('failed'), stop('failed')], rates({ scheduled: 450 }));
         expect(got.delivered).toBe(1);
         expect(got.failed).toBe(2);
-        expect(got.payCents).toBe(450);
+        expect(got.payCents).toBe(1350);
+    });
+
+    it('still pays nothing for a stop that was never attempted', () => {
+        /* The rule widened to failures, not to everything. A cancelled or
+           still-open stop is not work done at a door. */
+        const got = payFor([stop('cancelled'), stop('picked_up'), stop('ready')], rates({ scheduled: 450 }));
+        expect(got.payCents).toBe(0);
+        expect(got.delivered).toBe(0);
+        expect(got.failed).toBe(0);
     });
 
     it('ignores anything that is neither, because only outcomes are payable', () => {
@@ -92,10 +107,23 @@ describe('a rate nobody has set', () => {
         expect(got.rateSet).toBe(true);
     });
 
-    it('answers nought for somebody who delivered nothing, which is a real answer', () => {
-        const got = payFor([stop('failed')], rates());
+    it('answers nought for somebody who did nothing, which is a real answer', () => {
+        /* NOTHING ATTEMPTED, not "nothing delivered". This read
+           `[stop('failed')]` while a failure paid nothing, and that became
+           the wrong test the moment one did: a courier whose every stop
+           came back would have been told they were owed nought with no
+           hint that a rate was missing. An empty day is the real case. */
+        const got = payFor([], rates());
         expect(got.payCents).toBe(0);
         expect(got.rateSet).toBe(true);
+    });
+
+    it('withholds the total when a rate is missing and every stop came back', () => {
+        /* The case the old test was accidentally covering up. */
+        const got = payFor([stop('failed'), stop('failed')], rates());
+        expect(got.payCents, 'a rate is unset, so the figure is unknown').toBeNull();
+        expect(got.rateSet).toBe(false);
+        expect(got.failed).toBe(2);
     });
 
     it('treats a service level it holds no rate for as unset, not as free', () => {
@@ -112,7 +140,8 @@ describe('rolling days into months and months into years', () => {
         const sum = addTotals(a, b);
         expect(sum.delivered).toBe(3);
         expect(sum.failed).toBe(1);
-        expect(sum.payCents).toBe(450 * 3);
+        /* Four payable stops now, not three: the failure pays too. */
+        expect(sum.payCents).toBe(450 * 4);
     });
 
     it('makes the whole sum unanswerable when any part of it is', () => {
