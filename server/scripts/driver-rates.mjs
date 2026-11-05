@@ -170,6 +170,25 @@ function print(pay) {
     for (const level of LEVELS) {
         console.log(`    ${level.padEnd(10)}${money(pay.perDeliveryCents?.[level], pay.currency)}`);
     }
+    /* THE BONUS IS PRINTED EVEN WHEN IT IS OFF, unlike a zone rate.
+       "not set" beside the zones means a rate nobody has filled in; a
+       bonus of nought is a deliberate state and the commonest one, so
+       leaving the line out would make "is the bonus on?" unanswerable
+       from the only screen that reports pay.
+
+       It was missing entirely for one commit: the flags were added and
+       the read-back was not, so the run that set it could not show it.
+       A settings script that cannot prove what it just wrote is the one
+       thing this script exists not to be. */
+    console.log('');
+    const bonus = pay.completionBonusCents;
+    if (typeof bonus === 'number' && bonus > 0) {
+        const from = pay.completionBonusFrom;
+        console.log(`  Completion bonus  ${money(bonus, pay.currency)} per finished day`);
+        console.log(`    from            ${from ?? 'every day in the range (RETROACTIVE)'}`);
+    } else {
+        console.log('  Completion bonus  off');
+    }
 }
 
 async function main() {
