@@ -414,5 +414,90 @@ if (cfg.status !== 200 || !pay) {
 }
 say('');
 
+/* ------------------------------------- which stops have no zone, and where */
+
+/* WHY THIS IS THE OTHER HALF OF THE RATE CARD.
+ *
+ * The section above says what a zone is worth. This says how many stops had
+ * no zone at all, which is the thing that cannot be fixed on the settings
+ * screen. One of them withholds the pay for a driver's whole range, so the
+ * useful output is not a count but a LIST OF ZIPS: those are the rows
+ * missing from zone_zips, and adding them is the actual repair.
+ *
+ * Paid outcomes only -- delivered and failed. A pending order has not earned
+ * anything yet and its ZIP may still be geocoded, so counting it here would
+ * overstate the problem and send somebody chasing a zone for a stop that
+ * nobody has driven to. Still a GET. */
+const payFrom = value('from', '');
+const payTo = value('to', '');
+if (payFrom && payTo) {
+    say('  UNZONED DELIVERIES');
+    say('  ------------------');
+    say(`  ${payFrom} to ${payTo}, delivered and attempted stops only`);
+    say('');
+
+    const byZip = new Map();
+    let paid = 0;
+    let scanned = 0;
+    let cursor = null;
+    let pages = 0;
+    let failedRead = '';
+
+    /* A thousand a page is the server's own maximum, and two days of this
+       contract is over a thousand stops. The guard is so a wrong date range
+       cannot walk the whole year. */
+    while (pages < 25) {
+        const qs = `from=${payFrom}&to=${payTo}&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+        const page = await get(`/api/projects/${project}/uh/orders?${qs}`);
+        if (page.status !== 200 || !Array.isArray(page.body?.orders)) {
+            failedRead = `could not be read (HTTP ${page.status}). This is NOT "nothing is unzoned".`;
+            break;
+        }
+        for (const o of page.body.orders) {
+            scanned += 1;
+            if (o.status !== 'delivered' && o.status !== 'failed') continue;
+            paid += 1;
+            if (o.zone !== null && o.zone !== undefined) continue;
+            const zip = String(o.zip ?? '').trim() || '(no ZIP on the order)';
+            const seen = byZip.get(zip) ?? { stops: 0, city: o.city ?? '' };
+            seen.stops += 1;
+            if (!seen.city && o.city) seen.city = o.city;
+            byZip.set(zip, seen);
+        }
+        pages += 1;
+        cursor = page.body.nextCursor ?? null;
+        if (!cursor) break;
+    }
+
+    if (failedRead) {
+        say(`    ${failedRead}`);
+    } else {
+        const unzoned = [...byZip.values()].reduce((n, v) => n + v.stops, 0);
+        say(`    ${scanned} orders in the range, ${paid} of them delivered or attempted.`);
+        if (cursor) say('    MORE PAGES REMAIN -- the range is wider than this script will walk.');
+        if (unzoned === 0) {
+            say('    None of them is unzoned. A driver record still reading "rate not set"');
+            say('    is therefore a rate at zero on the basis above, not a gap in the map.');
+        } else {
+            const pct = ((unzoned / Math.max(paid, 1)) * 100).toFixed(1);
+            say(`    ${unzoned} of them (${pct}%) went to a ZIP with no zone.`);
+            say('');
+            say('    Add these to zone_zips. Until then, every driver who worked one of');
+            say('    them shows no pay for the whole range, however complete the card is.');
+            say('');
+            for (const [zip, v] of [...byZip.entries()].sort((a, b) => b[1].stops - a[1].stops)) {
+                say(`      ${String(zip).padEnd(12)} ${String(v.stops).padStart(4)} stops   ${v.city}`);
+            }
+        }
+    }
+    say('');
+} else {
+    say('  UNZONED DELIVERIES');
+    say('  ------------------');
+    say('    Not checked. Pass --from and --to to count the stops whose ZIP has no');
+    say('    zone, which is the half of "rate not set" that no rate can fix.');
+    say('');
+}
+
 say('  Nothing was changed: this script only sends GET.');
 say('');
