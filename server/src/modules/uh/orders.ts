@@ -27,7 +27,7 @@ import type { FileStorage } from '../../core/files/storage';
 import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
 import { presentHandling, signingInstruction, handlingFlags } from './handling';
-import { SIGNATURE_RULES } from '../../db/schema/uh';
+import { SIGNATURE_RULES, SERVICE_TYPES } from '../../db/schema/uh';
 import { dateIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
@@ -36,6 +36,7 @@ import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { searchFragment, ORDER_SEARCH_COLUMNS } from './search';
 import { recordOrderEvent, insertCustodyEvent } from './order-events';
+import { deleteOrders, emptyPlannedRuns, removeObjects } from './order-delete';
 import { directionsFor, parseOrigin } from './directions';
 import { getConfig } from '../../config';
 import {
@@ -583,7 +584,29 @@ export function createOrdersRouter(
         if (q['to'] && /^\d{4}-\d{2}-\d{2}$/.test(q['to'])) { where.push('o.service_date <= ?'); args.push(q['to']); applied.push('to'); }
         if (q['siteId']) { where.push('o.site_id = ?'); args.push(Number(q['siteId'])); applied.push('siteId'); }
         if (q['status'] && (ORDER_STATUSES as readonly string[]).includes(q['status'])) { where.push('o.status = ?'); args.push(q['status']); applied.push('status'); }
-        if (q['serviceType']) { where.push('o.service_type = ?'); args.push(String(q['serviceType'])); applied.push('serviceType'); }
+        /* ONE LEVEL OR SEVERAL. `serviceType=stat` is what every caller sent
+           until the ad hoc screen wanted "the orders somebody typed by
+           hand", which is STAT AND ad hoc and is not expressible as one
+           value. A comma list keeps the single-value form working exactly
+           as before and costs one split.
+
+           Unknown names are dropped rather than passed through: an
+           unrecognised level would otherwise become `service_type = 'xyz'`
+           and return an empty list, which reads as "there are none" rather
+           than "you asked for something that does not exist". If nothing in
+           the list is recognised the filter is not applied at all. */
+        if (q['serviceType']) {
+            const levels = String(q['serviceType']).split(',')
+                .map((v) => v.trim())
+                .filter((v) => (SERVICE_TYPES as readonly string[]).includes(v));
+            if (levels.length === 1) {
+                where.push('o.service_type = ?'); args.push(levels[0]!); applied.push('serviceType');
+            } else if (levels.length > 1) {
+                where.push(`o.service_type IN (${levels.map(() => '?').join(',')})`);
+                args.push(...levels);
+                applied.push('serviceType');
+            }
+        }
         if (q['assignedTo'] === 'unassigned') { where.push('o.assigned_to_username IS NULL'); applied.push('assignedTo'); }
         else if (q['assignedTo']) { where.push('o.assigned_to_username = ?'); args.push(String(q['assignedTo'])); applied.push('assignedTo'); }
         if (q['zone'] === 'out_of_area') { where.push('o.zone IS NULL'); applied.push('zone'); }
@@ -978,6 +1001,111 @@ export function createOrdersRouter(
          * question somebody will eventually ask us in writing. */
         await req.audit('order.directions', 'order', String(order.id), { embedded: answer.available });
         res.json(answer);
+    }));
+
+    /* ──────────────────────────────── deleting one order, completely
+     *
+     * "We took that call wrong" is the commonest thing that goes wrong with
+     * an order typed by hand, and this is the answer to it. A STAT entered
+     * against the wrong pharmacy, a phone call logged twice, an ad hoc
+     * order for a patient who rang back to cancel: all of them are a row
+     * that should not exist, and until now the only way out was to cancel
+     * it, which leaves it on the board's history, in the day's counts and
+     * in the next duplicate check.
+     *
+     * IT IS THE SAME MACHINERY AS DELETING A LIST, deliberately. The policy
+     * was set on 4 November for lists and is not re-litigated here: this
+     * DELETES, there is no undo, and it will remove an order a courier has
+     * collected, delivered, photographed and got signed for, including one
+     * already on an issued invoice. modules/uh/order-delete.ts holds the
+     * whole of it -- the child tables, the append-only triggers and the
+     * bucket -- and both callers use that one copy.
+     *
+     * WHAT SURVIVES IS THE AUDIT ROW, which is the difference between a
+     * deletion and a disappearance. It records what the order WAS, because
+     * after this nothing else does: its reference, its pharmacy, its
+     * service level, its status, and whether it was on a run or an invoice
+     * when it went.
+     *
+     * NO REFUSAL, BUT THE ANSWER SAYS WHAT WENT. A single order is not a
+     * list: the screen asking for this can show exactly what is about to be
+     * destroyed and make the person read it, which a list of seventy-nine
+     * never could. The refusing is better done there, with the facts in
+     * front of somebody, than here with a rule that guesses which deletions
+     * are the mistaken ones.
+     *
+     * ADMIN ONLY, like deleting a list. A pharmacy may raise an order and
+     * read its own back; destroying one is not theirs to do, and nor is it
+     * a courier's.
+     */
+    const Remove = z.object({ reason: z.string().trim().max(200).optional() });
+
+    router.delete('/:id', staff, wrap(async (req, res) => {
+        const order = await loadOr404(req, res);
+        if (!order) return;
+
+        const body = Remove.safeParse(req.body ?? {});
+        if (!body.success) {
+            res.status(400).json({ error: 'Invalid request', details: body.error.issues.map((i) => i.message) });
+            return;
+        }
+
+        const projectId = req.project!.id;
+        const id = Number(order.id);
+
+        /* READ BEFORE IT GOES. Every one of these is unrecoverable the
+           moment the row does, and the audit line below is all that is
+           left to say what was here. */
+        const was = {
+            reference: String(order.external_ref ?? ''),
+            siteId: Number(order.site_id),
+            serviceType: String(order.service_type),
+            serviceDate: String(order.service_date),
+            status: String(order.status),
+            assignedTo: String(order.assigned_to_username ?? ''),
+        };
+        const invoiced = await client.execute({
+            sql: `SELECT i.id, i.status FROM invoice_lines l
+                    JOIN invoices i ON i.id = l.invoice_id
+                   WHERE l.project_id = ? AND l.order_id = ?`,
+            args: [projectId, id],
+        });
+        const onInvoices = invoiced.rows.map((r) => `${Number(r['id'])}:${String(r['status'])}`);
+
+        const { removed, fileKeys, byStatus, touchedRuns } = await deleteOrders(client, projectId, [id]);
+        const emptiedRuns = await emptyPlannedRuns(client, projectId, touchedRuns);
+
+        /* WRITTEN AFTER THE DELETE AND BEFORE THE RESPONSE. audit_events is
+           not touched by any of the above, so this outlives everything it
+           describes. */
+        await req.audit('order.delete', 'order', String(id), {
+            ...was,
+            filesDeleted: fileKeys.length,
+            runsRemoved: emptiedRuns,
+            /* Named because deleting a line off an issued invoice changes a
+               figure somebody has already been sent. */
+            onInvoices,
+            reason: (body.data.reason ?? '').slice(0, 200),
+            /* Said plainly in the trail, because somebody reading it a year
+               from now needs to know this was not a cancellation. */
+            permanent: true,
+        });
+
+        const { filesRemoved, filesLeftBehind } = await removeObjects(storage, fileKeys);
+
+        res.json({
+            ok: true,
+            id,
+            deleted: removed,
+            was,
+            byStatus,
+            onInvoices,
+            filesDeleted: fileKeys.length,
+            filesRemovedFromStorage: filesRemoved,
+            filesLeftInStorage: filesLeftBehind,
+            runsRemoved: emptiedRuns,
+            permanent: true,
+        });
     }));
 
     router.get('/:id', readers, wrap(async (req, res) => {

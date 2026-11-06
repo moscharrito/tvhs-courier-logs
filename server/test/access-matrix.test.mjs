@@ -381,6 +381,11 @@ const MATRIX = [
     ['GET', `${UH}/orders/export.xlsx`, UH_LEAD_READ, 'the list on screen, as a file, scoped the same way'],
     ['GET', `${UH}/orders/summary`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999`, UH_LEAD_READ, ''],
+    /* Deleting one order, permanently, the same way a whole list goes.
+       UH_STAFF and not UH_DISPATCH: a lead may raise an order and read
+       their own counter's back, and destroying one is no more theirs to do
+       than destroying a list is. */
+    ['DELETE', `${UH}/orders/999999`, UH_STAFF, 'a mistaken STAT or ad hoc order, removed completely; no undo'],
     ['POST', `${UH}/orders/999999/out-of-area`, UH_STAFF, 'a courier cannot authorise their own long drive'],
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999/directions`, UH_LEAD_READ, ''],
