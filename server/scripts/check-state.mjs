@@ -343,5 +343,76 @@ if (dir.status !== 200 || !Array.isArray(dir.body?.users ?? dir.body)) {
 }
 say('');
 
+/* ------------------------------------------------- what a driver is paid */
+
+/* WHY THIS IS WORTH A SECTION.
+ *
+ * "Rate not set" on a driver record is one sentence covering two quite
+ * different situations, and the screen cannot tell them apart:
+ *
+ *   the rate for a service level or zone that was worked is still zero; or
+ *   a stop was delivered to a ZIP that is not on the zone map at all.
+ *
+ * The second has no rate and CANNOT have one: perZoneCents holds zones 1 to
+ * 5 and there is no out-of-zone figure to set. driver-pay.ts refuses to pay
+ * nought for it on purpose -- a driver who made a delivery should not earn
+ * nothing because a table is incomplete -- so one unzoned stop withholds the
+ * pay for the WHOLE range, not just that line.
+ *
+ * So this prints the rate card as the server actually holds it, says which
+ * of the two sets of numbers is live, and names any that are unset. Still a
+ * GET: the rates are changed on the settings screen, never from here. */
+say('  DRIVER PAY RATE CARD');
+say('  --------------------');
+const cfg = await get(`/api/projects/${project}/settings`);
+const pay = cfg.body?.settings?.driverPay;
+if (cfg.status !== 200 || !pay) {
+    say(`    could not be read (HTTP ${cfg.status}). This is NOT "no rates are set".`);
+} else {
+    const cur = String(pay.currency ?? 'USD');
+    const money = (c) => (Number(c) > 0
+        ? `${cur} ${(Number(c) / 100).toFixed(2)}`
+        : 'NOT SET  <-- pay is withheld for anything on this line');
+    const onZones = pay.basis === 'zone';
+
+    say(`    Paid by   ${onZones ? 'ZONE of the destination ZIP' : 'SERVICE LEVEL (scheduled / stat / ad hoc)'}`);
+    say(`    Currency  ${cur}`);
+    say('');
+    say(`    By service level${onZones ? '   (NOT in use -- these are ignored while the basis is zone)' : '   <-- in use'}`);
+    for (const k of ['scheduled', 'stat', 'adhoc']) {
+        say(`      ${k.padEnd(10)} ${money(pay.perDeliveryCents?.[k])}`);
+    }
+    say('');
+    say(`    By zone${onZones ? '   <-- in use' : '   (NOT in use -- these are ignored while the basis is service level)'}`);
+    for (const z of [1, 2, 3, 4, 5]) {
+        say(`      zone ${z}     ${money(pay.perZoneCents?.[z])}`);
+    }
+    /* Not an omission anybody can correct on the settings screen: there is
+       no field for it. Said here so nobody goes looking for one. */
+    say('      no zone    NO SUCH RATE EXISTS. A ZIP off the zone map cannot be');
+    say('                 priced, so any stop outside zones 1-5 withholds the pay');
+    say('                 for the whole range it falls in. Fix the ZIP map, not the');
+    say('                 rate card: server/scripts has the zone loaders.');
+    say('');
+    const bonus = Number(pay.completionBonusCents ?? 0);
+    say(`    Finishing the day  ${bonus > 0 ? `${cur} ${(bonus / 100).toFixed(2)}` : 'off'}`
+        + (bonus > 0 && pay.completionBonusFrom ? `   from ${pay.completionBonusFrom}` : ''));
+
+    const live = onZones
+        ? [1, 2, 3, 4, 5].map((z) => [`zone ${z}`, Number(pay.perZoneCents?.[z] ?? 0)])
+        : ['scheduled', 'stat', 'adhoc'].map((k) => [k, Number(pay.perDeliveryCents?.[k] ?? 0)]);
+    const missing = live.filter(([, c]) => !(c > 0)).map(([k]) => k);
+    say('');
+    if (missing.length > 0) {
+        say(`    UNSET ON THE BASIS IN USE: ${missing.join(', ')}`);
+        say('    Any day that includes one of these shows no pay at all, by design:');
+        say('    a partial sum is a plausible number that is smaller than the truth.');
+    } else {
+        say('    Every rate on the basis in use is set. A record still reading');
+        say('    "rate not set" is therefore an UNZONED STOP, not a missing rate.');
+    }
+}
+say('');
+
 say('  Nothing was changed: this script only sends GET.');
 say('');
