@@ -74,6 +74,10 @@ interface Preview {
     receivedAt: string;
     sheetName: string;
     headers: string[];
+    /** The sheet had no column names, so `headers` are spreadsheet letters. */
+    headerless: boolean;
+    /** A real value from each column, to map a headerless sheet by. */
+    headerSamples?: string[];
     mapping: Record<string, string>;
     mappingSource: 'request' | 'saved' | 'detected';
     missingRequired: string[];
@@ -574,10 +578,28 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                             <h3 style={{ marginTop: 20 }}>Columns</h3>
                             <p className="izy-muted">
                                 {preview.mappingSource === 'saved' && 'Using the mapping saved for this pharmacy. '}
-                                {preview.mappingSource === 'detected' && 'Guessed from the header row. Check it before importing. '}
+                                {preview.mappingSource === 'detected' && !preview.headerless && 'Guessed from the header row. Check it before importing. '}
+                                {preview.mappingSource === 'detected' && preview.headerless && 'Nothing could be guessed: this file has no column names. '}
                                 {preview.mappingSource === 'request' && 'Using the mapping you set. '}
                                 Sheet {preview.sheetName || 'CSV'}, {preview.headers.length} columns.
                             </p>
+
+                            {preview.headerless && (
+                                /* SAY SO, LOUDLY. A screen offering columns
+                                   called A, B and C looks like the upload
+                                   failed, and an operator who assumes that
+                                   re-uploads instead of mapping. The second
+                                   sentence is the one that matters: this
+                                   file used to lose its first delivery, and
+                                   the person importing it is the only one
+                                   who can confirm it no longer does. */
+                                <div className="izy-alert warn" role="status">
+                                    This file has <b>no column names</b> — it starts at the first delivery.
+                                    The columns are listed by their spreadsheet letter with a value from
+                                    each one beside it, so pick the field that matches the value.
+                                    {' '}Row 1 is a delivery and is included in the {preview.summary.willImport} below.
+                                </div>
+                            )}
                             <div className="izy-row">
                                 {ALL_FIELDS.map((f) => (
                                     <label className="izy-field" key={f}>
@@ -591,7 +613,14 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                             }}
                                         >
                                             <option value="">not mapped</option>
-                                            {preview.headers.filter((h) => h !== '').map((h) => <option key={h} value={h}>{h}</option>)}
+                                            {preview.headers.filter((h) => h !== '').map((h) => {
+                                                /* A sample value only where the name is useless.
+                                                   "Zip" needs no help; "D" does. */
+                                                const sample = preview.headerless
+                                                    ? (preview.headerSamples?.[preview.headers.indexOf(h)] ?? '')
+                                                    : '';
+                                                return <option key={h} value={h}>{sample === '' ? h : `${h} — ${sample}`}</option>;
+                                            })}
                                         </select>
                                     </label>
                                 ))}

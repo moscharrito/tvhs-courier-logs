@@ -626,6 +626,64 @@ describe('ListImport', () => {
         expect(screen.getByRole('button', { name: /^Import 0 orders$/ })).toBeDisabled();
     });
 
+    /* ONE PHARMACY SENDS NO COLUMN NAMES, so its columns arrive called A, B
+       and C. A screen that just shows those looks like the upload failed,
+       and an operator who reads it that way re-uploads instead of mapping.
+       It also has to say that row 1 is a delivery: that file used to lose
+       its first patient on every import, and the person doing the import is
+       the only one who can confirm it no longer does. */
+    const headerless = {
+        ...preview,
+        headerless: true,
+        headers: ['A', 'B', 'C', 'D'],
+        headerSamples: ['ADA LOVELACE', '1 ANALYTICAL WAY', 'SATX', '78207'],
+        mapping: {},
+        mappingSource: 'detected',
+    };
+
+    it('says a file has no column names rather than showing a bare A, B, C', async () => {
+        stub(baseRoutes, { status: 200, body: headerless });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+
+        const note = await screen.findByRole('status');
+        expect(note).toHaveTextContent(/no column names/i);
+        expect(note).toHaveTextContent(/Row 1 is a delivery/i);
+        // And it must not claim to have guessed from a header row there isn't.
+        expect(screen.queryByText(/Guessed from the header row/i)).not.toBeInTheDocument();
+    });
+
+    it('shows a value beside each column letter, so the operator can tell them apart', async () => {
+        stub(baseRoutes, { status: 200, body: headerless });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+        await screen.findByRole('status');
+
+        const zip = screen.getByLabelText(/^ZIP/);
+        expect(zip).toHaveTextContent('D — 78207');
+        expect(zip).toHaveTextContent('A — ADA LOVELACE');
+    });
+
+    it('leaves the column names alone for the sites that send them', async () => {
+        stub(baseRoutes);
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        await screen.findByText('Daily list import');
+        fireEvent.change(screen.getByLabelText('Pharmacy'), { target: { value: '7' } });
+        pickFile();
+        fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
+        await screen.findByText('1 of 3 rows will be imported');
+
+        expect(screen.getByLabelText(/^ZIP/)).toHaveTextContent('Zip Code');
+        expect(screen.getByLabelText(/^ZIP/)).not.toHaveTextContent('—');
+        expect(screen.queryByText(/no column names/i)).not.toBeInTheDocument();
+    });
+
     it('says the file was already imported', async () => {
         stub(baseRoutes, { status: 200, body: { ...preview, alreadyImportedListId: 5 } });
         render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);

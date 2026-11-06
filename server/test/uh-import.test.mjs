@@ -16,6 +16,7 @@ import {
     parseCsv, sniffDelimiter, cellText, findHeaderRow, autoMap, headerFingerprint,
     normalizeServiceType, normalizeBoolean, normalizePhone, normalizeZip,
     dedupeKeyFor, parseRows, readSheet, missingRequiredMappings,
+    looksHeaderless, cellShape, modalShapes, columnLetter,
 } from '../src/modules/uh/import-parse.ts';
 
 const FIXTURES = path.join(import.meta.dirname, 'fixtures');
@@ -124,6 +125,169 @@ describe('header detection', () => {
     it('refuses a header with nothing underneath it', () => {
         expect(findHeaderRow([['Name', 'Zip']])).toBe(-1);
         expect(findHeaderRow([])).toBe(-1);
+    });
+});
+
+/* A SHEET THAT STARTS AT THE FIRST DELIVERY.
+ *
+ * One site sends its list with no row of column names. findHeaderRow took
+ * the first delivery for the header, so that patient was dropped from every
+ * import -- not rejected, not counted, absent -- and the mapping the
+ * operator confirmed pointed at that patient's name, so it matched nothing
+ * the next morning and had to be redone daily.
+ *
+ * The rows below are synthetic, like every other fixture in this file. They
+ * reproduce the awkward part of the shape -- data in row 1, a gap at F --
+ * and nothing else about that pharmacy.
+ */
+describe('a sheet with no header row', () => {
+    const DELIVERIES = [
+        'ADA LOVELACE,1 ANALYTICAL WAY,SATX,78207,210-555-0100,,4',
+        'GRACE HOPPER,2 COMPILER ST,SATX,78228,210-555-0101,,2',
+        'ALAN TURING,3 LATTICE RD,SATX,78223,210-555-0102,,1',
+        'KAREN SPARCK,4 BEACON AVE,SATX,78237,210-555-0103,,3',
+    ];
+    const HEADERLESS = DELIVERIES.join('\n');
+    const HEADERED = ['Patient Name,Address,City,Zip,Phone,Notes,Qty', ...DELIVERIES].join('\n');
+    const buf = (s) => Buffer.from(s, 'utf8');
+
+    it('tells a delivery apart from a row of column names', () => {
+        expect(looksHeaderless(parseCsv(HEADERLESS), 0)).toBe(true);
+        expect(looksHeaderless(parseCsv(HEADERED), 0)).toBe(false);
+    });
+
+    it('treats a header row as a header even when it names only one required column', () => {
+        /* The BC3 layout: Patient and Delivery Address but no ZIP column at
+           all. Two of three required fields is a header row with a gap in
+           it, not a delivery, and reading it as data would invent a stop. */
+        const grid = parseCsv([
+            'Picked Up,Patient,Delivery Address,Phone #,# of Medications,Fridge/ID',
+            'Y,ADA LOVELACE,1 ANALYTICAL WAY,210-555-0100,4,N',
+            'Y,GRACE HOPPER,2 COMPILER ST,210-555-0101,2,Y',
+            'N,ALAN TURING,3 LATTICE RD,210-555-0102,1,N',
+        ].join('\n'));
+        expect(looksHeaderless(grid, 0)).toBe(false);
+    });
+
+    it('will not guess from too few columns, and keeps the old behaviour', () => {
+        /* Two comparable columns is not evidence. Reading labels as a
+           delivery puts a junk row in front of the operator; reading a
+           delivery as labels loses a patient quietly. The uncertain case
+           has to take the recoverable path. */
+        const grid = parseCsv('ADA LOVELACE,78207\nGRACE HOPPER,78228\nALAN TURING,78223');
+        expect(looksHeaderless(grid, 0)).toBe(false);
+    });
+
+    it('keeps the first delivery and names the columns the way Excel does', async () => {
+        const sheet = await readSheet(buf(HEADERLESS), 'list.csv');
+        expect(sheet.headerless).toBe(true);
+        expect(sheet.headers).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G']);
+        expect(sheet.rows).toHaveLength(4);
+        // THE POINT OF ALL OF THIS: row 1 is a delivery and it is row 1.
+        expect(sheet.rowNumbers[0]).toBe(1);
+        expect(sheet.rows[0][3]).toBe('78207');
+    });
+
+    it('leaves a sheet that has a header row exactly as it was', async () => {
+        const sheet = await readSheet(buf(HEADERED), 'list.csv');
+        expect(sheet.headerless).toBe(false);
+        expect(sheet.headers[0]).toBe('Patient Name');
+        expect(sheet.rows).toHaveLength(4);
+        expect(sheet.rowNumbers[0]).toBe(2);
+    });
+
+    it('imports every row of a headerless sheet, mapped by column letter', async () => {
+        const sheet = await readSheet(buf(HEADERLESS), 'list.csv');
+        const mapping = {
+            recipientName: 'A', addressLine: 'B', city: 'C', zip: 'D',
+            recipientPhone: 'E', quantity: 'G',
+        };
+        expect(missingRequiredMappings(mapping)).toEqual([]);
+        const results = parseRows(sheet, mapping);
+        expect(results).toHaveLength(4);
+        expect(results.every((r) => r.issues.every((i) => i.severity !== 'error'))).toBe(true);
+        expect(results.map((r) => r.row.zip)).toEqual(['78207', '78228', '78223', '78237']);
+        expect(results[0].row.row).toBe(1);
+        expect(results[0].row.quantity).toBe(4);
+    });
+
+    it('fingerprints the same layout the same way tomorrow', async () => {
+        /* The reason the saved mapping was never once reused: the old
+           fingerprint hashed row 1, which is a different patient every
+           morning. Column letters plus column shapes do not move. */
+        const tomorrow = [
+            'CHARLES BABBAGE,9 DIFFERENCE RD,SATX,78201,210-555-0200,,1',
+            'EDSGER DIJKSTRA,8 SHORTEST PATH,SATX,78213,210-555-0201,,5',
+            'BARBARA LISKOV,7 SUBSTITUTION LN,SATX,78240,210-555-0202,,2',
+            'TONY HOARE,6 QUICKSORT CT,SATX,78250,210-555-0203,,1',
+        ].join('\n');
+        const a = await readSheet(buf(HEADERLESS), 'list.csv');
+        const b = await readSheet(buf(tomorrow), 'list.csv');
+        expect(a.shape).toBe(b.shape);
+        expect(headerFingerprint(a.headers, a.shape)).toBe(headerFingerprint(b.headers, b.shape));
+    });
+
+    it('notices a headerless sheet whose columns have been reordered', async () => {
+        /* Column letters alone would survive this and read phone numbers as
+           ZIPs for ever. The shapes are what catch it. */
+        const swapped = [
+            'ADA LOVELACE,1 ANALYTICAL WAY,SATX,210-555-0100,78207,,4',
+            'GRACE HOPPER,2 COMPILER ST,SATX,210-555-0101,78228,,2',
+            'ALAN TURING,3 LATTICE RD,SATX,210-555-0102,78223,,1',
+            'KAREN SPARCK,4 BEACON AVE,SATX,210-555-0103,78237,,3',
+        ].join('\n');
+        const a = await readSheet(buf(HEADERLESS), 'list.csv');
+        const b = await readSheet(buf(swapped), 'list.csv');
+        expect(a.headers).toEqual(b.headers);
+        expect(headerFingerprint(a.headers, a.shape)).not.toBe(headerFingerprint(b.headers, b.shape));
+    });
+
+    it('does not disturb the fingerprints already saved for the other sites', () => {
+        /* Every site but one has a header row and a mapping stored against
+           the old hash. Folding shapes in for those would make all of them
+           re-map a layout that has not changed, so the caller omits it and
+           the hash has to come out identical. */
+        const headers = ['Patient Name', 'Address', 'City', 'Zip'];
+        expect(headerFingerprint(headers)).toBe(headerFingerprint(headers, ''));
+        expect(headerFingerprint(headers)).not.toBe(headerFingerprint(headers, 'text|text|text|zip'));
+    });
+});
+
+describe('cell shapes', () => {
+    it('reads the shapes that tell a label from a value', () => {
+        expect(cellShape('')).toBe('empty');
+        expect(cellShape('  ')).toBe('empty');
+        expect(cellShape('78207')).toBe('zip');
+        expect(cellShape('78207-1234')).toBe('zip');
+        expect(cellShape('210-555-0100')).toBe('phone');
+        expect(cellShape('(210) 555 0100')).toBe('phone');
+        expect(cellShape('12105550100')).toBe('phone');
+        expect(cellShape('2026-11-05')).toBe('date');
+        expect(cellShape('4')).toBe('number');
+        expect(cellShape('-2.5')).toBe('number');
+        expect(cellShape('Zip')).toBe('text');
+        expect(cellShape('Phone Number')).toBe('text');
+    });
+
+    it('says nothing about a column that is mostly blank', () => {
+        /* Fridge/ID is filled on 22 of 61 rows at one site. A column like
+           that must not be allowed to veto a decision. */
+        const rows = [['a', 'Y'], ['b', ''], ['c', ''], ['d', ''], ['e', '']];
+        expect(modalShapes(rows)).toEqual(['text', 'empty']);
+    });
+
+    it('says nothing about a column that cannot make its mind up', () => {
+        const rows = [['78207'], ['x'], ['78223'], ['y'], ['78228']];
+        expect(modalShapes(rows)).toEqual(['empty']);
+    });
+
+    it('names columns the way a spreadsheet does', () => {
+        expect(columnLetter(0)).toBe('A');
+        expect(columnLetter(25)).toBe('Z');
+        expect(columnLetter(26)).toBe('AA');
+        expect(columnLetter(27)).toBe('AB');
+        expect(columnLetter(51)).toBe('AZ');
+        expect(columnLetter(52)).toBe('BA');
     });
 });
 

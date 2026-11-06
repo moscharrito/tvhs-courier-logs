@@ -101,6 +101,30 @@ export interface SheetData {
     rowNumbers: number[];
     /** Sheet name for xlsx, empty for csv. */
     sheetName: string;
+    /**
+     * The sheet had no row of column names, so `headers` are column letters
+     * and the first row of the file is a delivery. See looksHeaderless.
+     *
+     * The operator has to be told: a mapping screen offering A, B, C with no
+     * explanation looks like the file failed to load.
+     */
+    headerless: boolean;
+    /**
+     * The shape each column settled into, joined -- "text|text|zip|phone".
+     *
+     * WHAT IT IS FOR. A headerless sheet has no labels to fingerprint, so
+     * column letters alone would make a saved mapping survive a column
+     * REORDER and read the wrong columns for ever after -- the exact failure
+     * the fingerprint exists to prevent. Folding the shapes in means TDI
+     * moving its phone column breaks the fingerprint and asks for the
+     * mapping again.
+     *
+     * It cannot catch a swap between two columns of the same shape (name and
+     * address are both text). Nothing in a headerless file can. The preview
+     * table is the backstop there, which is why it shows values and not just
+     * letters.
+     */
+    shape: string;
 }
 
 /* ------------------------------------------------------------------ files */
@@ -177,12 +201,174 @@ export function cellText(value: unknown): string {
 const looksLikeXlsx = (filename: string, bytes: Buffer) =>
     /\.xlsx?$/i.test(filename) || (bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4b);
 
+/* ----------------------------------------------- is there a header at all? */
+
+/* ONE PHARMACY SENDS NO COLUMN NAMES.
+ *
+ * TDI's daily list starts at the delivery. Row 1 is a patient, a street, a
+ * city, a ZIP and a phone number -- there is no row of labels above it, and
+ * there never has been. Every other site sends Patient / Address / City / Zip
+ * across the top.
+ *
+ * findHeaderRow takes the first row with two filled cells, so for that file
+ * it took the first DELIVERY. What followed was not a crash. It was:
+ *
+ *   - row 1 became the column names, so that patient was dropped from the
+ *     import. Not rejected, not reported: absent. 68 of 69 rows arrived and
+ *     the count looked plausible.
+ *   - autoMap found no synonyms in a patient's name, so every required field
+ *     was unmapped and the operator had to map the columns by hand.
+ *   - the mapping they confirmed pointed at header TEXT -- that patient's
+ *     name -- so the next day it matched nothing and had to be redone.
+ *   - headerFingerprint hashed a different patient every morning, so the
+ *     saved mapping was never once reused.
+ *
+ * The daily re-map is why nobody noticed the missing delivery: the file
+ * always needed hand-holding, so hand-holding it never looked wrong.
+ *
+ * SO: WORK OUT WHETHER THE ROW IS A LABEL OR A DELIVERY, and when it is a
+ * delivery, give the sheet column letters for names and keep the row.
+ *
+ * Column letters are what the operator is looking at in Excel anyway, and
+ * they do not change tomorrow -- which is the part that makes the saved
+ * mapping stick for the first time.
+ */
+
+/** What a cell LOOKS like. Not what it means -- see cellShape. */
+export type CellShape = 'empty' | 'zip' | 'phone' | 'number' | 'date' | 'text';
+
+const ZIP_SHAPE = /^\d{5}(?:-\d{4})?$/;
+const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
+const NUMBER_SHAPE = /^-?\d+(?:\.\d+)?$/;
+const PHONE_PUNCT = /^[0-9\s().+\-/]+$/;
+
+/**
+ * The shape of one cell.
+ *
+ * DELIBERATELY NOT A GUESS AT MEANING. A ten-digit MRN reads as 'phone' here
+ * and that is fine: the shape is only ever compared against the same column
+ * in other rows, so it has to be CONSISTENT, not correct. Nothing downstream
+ * reads a value because of its shape.
+ */
+export function cellShape(value: string): CellShape {
+    const s = value.trim();
+    if (s === '') return 'empty';
+    /* ZIP before number: 78207 is both, and the five-digit reading is the
+       one that tells a header row apart from a delivery. */
+    if (ZIP_SHAPE.test(s)) return 'zip';
+    if (DATE_SHAPE.test(s)) return 'date';
+    const digits = s.replace(/\D/g, '');
+    if (PHONE_PUNCT.test(s) && (digits.length === 10 || digits.length === 11)) return 'phone';
+    if (NUMBER_SHAPE.test(s)) return 'number';
+    return 'text';
+}
+
+/** How many data rows to look at before deciding. Enough to be sure, few
+ *  enough that a 1,400-row Tuesday does not pay for the whole sheet. */
+const SHAPE_SAMPLE = 30;
+
+/** A column needs this much agreement below before it is worth comparing. */
+const SHAPE_AGREEMENT = 0.8;
+
+/** At least this many columns must have an opinion, or we cannot tell. */
+const MIN_COMPARABLE = 3;
+
+/**
+ * The shape each column settles into, across the rows given.
+ *
+ * 'empty' means NO OPINION -- the column is blank or too mixed to argue
+ * from. Fridge/ID is filled on 22 of 61 rows at Pavilion, and a column like
+ * that should not be allowed to veto anything.
+ */
+export function modalShapes(rows: readonly string[][]): CellShape[] {
+    const sample = rows.filter((r) => r.some((c) => c.trim() !== '')).slice(0, SHAPE_SAMPLE);
+    if (sample.length === 0) return [];
+    const width = sample.reduce((w, r) => Math.max(w, r.length), 0);
+    const out: CellShape[] = [];
+
+    for (let i = 0; i < width; i += 1) {
+        const counts = new Map<CellShape, number>();
+        let filled = 0;
+        for (const r of sample) {
+            const shape = cellShape(r[i] ?? '');
+            if (shape === 'empty') continue;
+            filled += 1;
+            counts.set(shape, (counts.get(shape) ?? 0) + 1);
+        }
+        if (filled * 2 < sample.length) { out.push('empty'); continue; }
+        let best: CellShape = 'empty';
+        let bestN = 0;
+        for (const [shape, n] of counts) if (n > bestN) { best = shape; bestN = n; }
+        out.push(bestN >= filled * SHAPE_AGREEMENT ? best : 'empty');
+    }
+    return out;
+}
+
+/**
+ * Is the candidate row a delivery rather than a row of column names?
+ *
+ * BOTH TESTS HAVE TO AGREE, and they fail in opposite directions on purpose.
+ *
+ *   1. A row that names even ONE required column is a header row, whatever
+ *      it looks like. BC3 sends Patient / Delivery Address / Phone and no
+ *      ZIP column at all -- two of three required fields -- and that is a
+ *      header row with a gap in it, not a delivery.
+ *
+ *   2. A delivery looks like the deliveries under it. A header row does not:
+ *      RBG's says "Zip" over a column of ZIPs and "Phone Number" over a
+ *      column of phone numbers, and those mismatches are what give it away.
+ *
+ * Test 1 alone would call any oddly-labelled header row a delivery. Test 2
+ * alone would be fooled by a header row whose every column happens to be
+ * text. Requiring both means the answer is only "no header" when the row
+ * carries positive evidence of being data AND no evidence of being labels.
+ *
+ * WHEN IN DOUBT IT SAYS FALSE -- a header row, the behaviour since 1.1.
+ * Wrongly reading labels as a delivery puts a junk row in front of the
+ * operator; wrongly reading a delivery as labels loses a patient quietly.
+ * Only one of those is recoverable, so the uncertain case takes the old path.
+ */
+export function looksHeaderless(grid: readonly string[][], candidate: number): boolean {
+    const row = grid[candidate];
+    if (!row) return false;
+
+    /* 1. Does it name any column we cannot import without? */
+    const mapped = autoMap(row.map((c) => c.trim()));
+    if (REQUIRED_FIELDS.some((f) => mapped[f])) return false;
+
+    /* 2. Does it look like what is underneath it? */
+    const modal = modalShapes(grid.slice(candidate + 1));
+    let compared = 0;
+    for (let i = 0; i < modal.length; i += 1) {
+        const want = modal[i];
+        if (want === undefined || want === 'empty') continue;
+        compared += 1;
+        if (cellShape(row[i] ?? '') !== want) return false;
+    }
+    return compared >= MIN_COMPARABLE;
+}
+
+/** Excel's own name for a column: 0 -> A, 25 -> Z, 26 -> AA. */
+export function columnLetter(index: number): string {
+    let n = index;
+    let out = '';
+    do {
+        out = String.fromCharCode(65 + (n % 26)) + out;
+        n = Math.floor(n / 26) - 1;
+    } while (n >= 0);
+    return out;
+}
+
 /**
  * Read an uploaded file into a header row and data rows.
  *
  * The header is not assumed to be row 1: pharmacy exports often carry a title
  * and a blank line first. The header is the first row with at least two
  * non-empty cells that is followed by a row of the same shape.
+ *
+ * It is not assumed to EXIST either. One site sends a list that starts at the
+ * first delivery; that sheet comes back with column letters for headers,
+ * `headerless` set, and no row of it missing. See looksHeaderless.
  */
 export async function readSheet(bytes: Buffer, filename: string): Promise<SheetData> {
     let grid: string[][];
@@ -211,16 +397,28 @@ export async function readSheet(bytes: Buffer, filename: string): Promise<SheetD
     const headerIndex = findHeaderRow(grid);
     if (headerIndex === -1) throw new ImportError('No header row found. The file needs a row of column names above the data.');
 
-    const headers = (grid[headerIndex] ?? []).map((h) => h.trim());
+    /* IS THAT ROW A LABEL OR A DELIVERY? One pharmacy sends no labels, and
+       reading its first delivery as the column names dropped that patient
+       every day. When there are none, the data starts where the "header"
+       was and the columns are named the way Excel names them. */
+    const headerless = looksHeaderless(grid, headerIndex);
+    const firstDataRow = headerless ? headerIndex : headerIndex + 1;
+
     const rows: string[][] = [];
     const rowNumbers: number[] = [];
-    for (let i = headerIndex + 1; i < grid.length; i += 1) {
+    for (let i = firstDataRow; i < grid.length; i += 1) {
         const r = grid[i] ?? [];
         if (r.every((c) => c === '')) continue; // blank separator rows
         rows.push(r);
         rowNumbers.push(i + 1); // 1-based, as the spreadsheet shows it
     }
-    return { headers, rows, rowNumbers, sheetName };
+
+    const width = rows.reduce((w, r) => Math.max(w, r.length), (grid[headerIndex] ?? []).length);
+    const headers = headerless
+        ? Array.from({ length: width }, (_, i) => columnLetter(i))
+        : (grid[headerIndex] ?? []).map((h) => h.trim());
+
+    return { headers, rows, rowNumbers, sheetName, headerless, shape: modalShapes(rows).join('|') };
 }
 
 /** The first row with two or more non-empty cells that has data under it. */
@@ -376,10 +574,19 @@ export function autoMap(headers: string[]): Mapping {
     return mapping;
 }
 
-/** A stable hash of the header shape, so a changed export is noticed. */
-export function headerFingerprint(headers: string[]): string {
+/**
+ * A stable hash of the header shape, so a changed export is noticed.
+ *
+ * `shape` is for headerless sheets ONLY, and it is passed there because
+ * column letters are identical every day no matter what the columns hold --
+ * see SheetData.shape. Passing it for a sheet that HAS headers would change
+ * every fingerprint already stored and make all nine sites re-map, so the
+ * caller omits it unless the sheet is headerless.
+ */
+export function headerFingerprint(headers: string[], shape?: string): string {
     const norm = headers.map(normalizeHeader).filter((h) => h !== '').sort();
-    return createHash('sha256').update(norm.join('|')).digest('hex').slice(0, 32);
+    const basis = shape === undefined || shape === '' ? norm.join('|') : `${norm.join('|')}#${shape}`;
+    return createHash('sha256').update(basis).digest('hex').slice(0, 32);
 }
 
 /* ------------------------------------------------------------- row values */

@@ -346,7 +346,12 @@ export function createImportsRouter(
             return null;
         }
 
-        const fingerprint = headerFingerprint(sheet.headers);
+        /* A HEADERLESS SHEET IS FINGERPRINTED BY ITS COLUMN SHAPES as well
+           as its names, because its names are column letters and those are
+           the same every morning whatever the columns hold. Omitted for
+           every other sheet so the fingerprints already saved still match
+           and nobody re-maps a layout that has not changed. */
+        const fingerprint = headerFingerprint(sheet.headers, sheet.headerless ? sheet.shape : undefined);
         const saved = await savedMapping(project.id, options.siteId);
         const detected = autoMap(sheet.headers);
         // Precedence: what the operator sent, else a saved mapping whose
@@ -500,6 +505,22 @@ export function createImportsRouter(
             receivedAt: a.receivedAt.toISOString(),
             sheetName: a.sheet.sheetName,
             headers: a.sheet.headers,
+            /* So the mapping screen can say why the columns are called A, B
+               and C, and that row 1 is a delivery rather than a lost label
+               row. Without it that screen looks like a failed upload. */
+            headerless: a.sheet.headerless,
+            /* ONE REAL VALUE PER COLUMN, for the mapping dropdowns.
+               A headerless sheet's columns are called A, B and C, which
+               says nothing about what is in them -- and a swap between two
+               columns of the same shape is invisible without this, because
+               the fingerprint cannot see it either. Same authorisation as
+               the preview rows below: shown to the operator doing the
+               import, transient, never logged. Truncated because this is a
+               label, not the data. */
+            headerSamples: a.sheet.headers.map((_, i) => {
+                const found = a.sheet.rows.find((r) => (r[i] ?? '').trim() !== '');
+                return found ? (found[i] ?? '').trim().slice(0, 24) : '';
+            }),
             mapping: a.mapping,
             mappingSource: a.mappingSource,
             headerFingerprint: a.fingerprint,
