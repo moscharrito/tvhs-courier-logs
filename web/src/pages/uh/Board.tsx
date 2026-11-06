@@ -86,32 +86,6 @@ interface Lane {
     counts: { total: number; remaining: number; done: number; overdue: number };
 }
 
-/* ONE PROPOSED CLUSTER, from GET /runs/propose.
- *
- * Nearby stops off one counter, grouped by ZIP and held inside a spread the
- * planner can state. Not a run: nothing exists until a dispatcher puts a
- * driver on it, which is the whole point of the panel below. */
-interface PlanCluster {
-    kind: 'stat' | 'standard';
-    orderIds: number[];
-    zips: string[];
-    siteIds: number[];
-    earliestDueAt: string | null;
-}
-
-interface Plan {
-    serviceDate: string;
-    runs: PlanCluster[];
-    unplaced: Array<{ orderId: number; why: string }>;
-    notes: string[];
-    driversNeeded: number;
-    /** Parallel to `runs`. The planner's pick, to preselect. Never binding. */
-    suggested: Array<{ username: string; name: string; why: string } | null>;
-    fleet: { onShift: number; roster: number };
-    site: { id: number; code: string; name: string } | null;
-    excluded: { held: number; otherSite: number; offShift: number };
-}
-
 /* The board as this page renders it.
  *
  * A poll no longer carries the cards inside the lanes and the pool; they
@@ -224,20 +198,6 @@ export function Board() {
     /* Narrows the lanes below. Not in the URL: it is a glance at one
        driver during a wave, not a view somebody links to. */
     const [laneFilter, setLaneFilter] = useState('');
-    /* THE PROPOSAL, AND WHAT THE DISPATCHER HAS DONE WITH IT.
-     *
-     * Asked for, not polled: planning is something somebody does at noon,
-     * and a plan that reshuffled itself every fifteen seconds under a
-     * half-made decision would be unusable.
-     *
-     * `planPick` and `planTaken` are keyed by the cluster's FIRST ORDER ID,
-     * not by its position. Clusters are disjoint sets of orders, so that id
-     * identifies one of them for as long as the plan is on screen -- and an
-     * index would shift the moment a cluster was taken, moving somebody
-     * else's chosen driver onto a different pile of stops. */
-    const [plan, setPlan] = useState<Plan | null>(null);
-    const [planPick, setPlanPick] = useState<Record<number, string>>({});
-    const [planTaken, setPlanTaken] = useState<number[]>([]);
     const pollRef = useRef<number | null>(null);
     /* The cards we already hold, and the cursor that says what we have seen.
        Refs rather than state: a poll reads and replaces both, and making them
@@ -369,49 +329,37 @@ export function Board() {
      * The target is `run:<id>` or `courier:<username>`, because the dropdown
      * now offers both and a bare number could not tell them apart.
      * allowMove covers dragging between lanes. */
-    /** Put one order or a whole cluster on a run, or on a driver who has not
-     *  got one yet.
-     *
-     *  ONE WRITE PATH FOR BOTH. A card dragged out of the pool and a cluster
-     *  accepted from the plan are the same act -- these orders, that driver
-     *  -- and they go through the same two endpoints. The panel that used to
-     *  propose waves was removed on 3 November because it had its own way of
-     *  creating runs and its own rules about who could be offered one, and a
-     *  second copy of those rules is a second place for them to drift. This
-     *  is the first half of not repeating that. */
-    const sendTo = async (orderIds: number[], target: string, label: string) => {
-        const refused = (r: unknown) => (r as { rejected?: Array<{ error?: string }> }).rejected ?? [];
-        const stop = (r: unknown) => {
-            const no = refused(r);
-            if (no.length > 0) throw new ApiError(409, no[0]?.error ?? 'Could not assign that order');
-        };
-
-        if (target.startsWith('courier:')) {
-            /* ONE CALL, NOT TWO. The create endpoint takes its stops with
-               it, so there is no window in which a run exists with
-               nothing on it because the second request failed -- which
-               would leave an empty lane on the board and the card still
-               in the pool, looking like the assignment simply vanished. */
-            stop(await api(`${base}/runs`, {
-                method: 'POST',
-                json: {
-                    courierUsername: target.slice('courier:'.length),
-                    label,
-                    serviceDate: data?.serviceDate,
-                    orderIds,
-                },
-            }));
-            return;
-        }
-
-        const runId = Number(target.slice('run:'.length));
-        stop(await api(`${base}/runs/${runId}/stops`, {
-            method: 'POST', json: { orderIds, allowMove: true },
-        }));
-    };
-
     const assign = (orderId: number, target: string) => act(
-        () => sendTo([orderId], target, 'Wave'),
+        async () => {
+            const refused = (r: unknown) => (r as { rejected?: Array<{ error?: string }> }).rejected ?? [];
+            const stop = (r: unknown) => {
+                const no = refused(r);
+                if (no.length > 0) throw new ApiError(409, no[0]?.error ?? 'Could not assign that order');
+            };
+
+            if (target.startsWith('courier:')) {
+                /* ONE CALL, NOT TWO. The create endpoint takes its stops with
+                   it, so there is no window in which a run exists with
+                   nothing on it because the second request failed -- which
+                   would leave an empty lane on the board and the card still
+                   in the pool, looking like the assignment simply vanished. */
+                stop(await api(`${base}/runs`, {
+                    method: 'POST',
+                    json: {
+                        courierUsername: target.slice('courier:'.length),
+                        label: 'Wave',
+                        serviceDate: data?.serviceDate,
+                        orderIds: [orderId],
+                    },
+                }));
+                return;
+            }
+
+            const runId = Number(target.slice('run:'.length));
+            stop(await api(`${base}/runs/${runId}/stops`, {
+                method: 'POST', json: { orderIds: [orderId], allowMove: true },
+            }));
+        },
         `Order ${orderId} assigned.`,
     );
 
@@ -468,89 +416,15 @@ export function Board() {
             .map((l) => ({
                 value: `run:${l.run.id}`,
                 label: `${l.courier.name}${l.run.label ? ` (${l.run.label})` : ''}`,
-                username: l.courier.username,
             }));
 
         /* idleCouriers is exactly "on the board, with no lane today", so
            these two lists cannot name the same person twice. */
         const free = (data?.idleCouriers ?? [])
             .filter((c) => c.onShift && mapped(c))
-            .map((c) => ({ value: `courier:${c.username}`, label: `${c.name} — starts a run`, username: c.username }));
+            .map((c) => ({ value: `courier:${c.username}`, label: `${c.name} — starts a run` }));
 
         return [...running, ...free];
-    };
-
-    /* ───────────────────────────────────────────── planning one counter
-     *
-     * THE SECOND HALF OF NOT REPEATING 3 NOVEMBER. The old panel had its
-     * own courier picker; this one has no picker of its own at all. Every
-     * dropdown below is targetsFor(), the same list the pool's "Assign
-     * to..." offers for a card at that counter -- on shift AND mapped to
-     * that pharmacy, including the driver who covers it without being
-     * based there, and offering an existing lane as readily as a driver
-     * with no run yet. One rule, read in one place.
-     *
-     * The clusters come from the server. The driver does not. That split is
-     * deliberate: grouping stops is arithmetic and belongs in cluster.ts,
-     * and deciding who drives is a judgement University Health took back
-     * from us on 2 November when they turned auto-assign off. So the plan
-     * arrives as a suggestion against each pile and nothing moves until
-     * somebody presses the button. */
-
-    /** The cluster's identity for as long as the plan is on screen. */
-    const clusterKey = (c: PlanCluster) => c.orderIds[0] ?? -1;
-
-    /** The planner suggested a name; find the option that IS that person.
-     *
-     *  It names a driver, not a run, and it does not know who already has
-     *  one -- so a "courier:<username>" suggestion is the wrong value for
-     *  somebody already out on a lane, and the select would fall blank
-     *  rather than preselect. Matching on the username instead picks the
-     *  lane they are already driving, which is where those stops belong. */
-    const optionFor = (siteId: number, username: string | null): string => {
-        if (username === null) return '';
-        const options = targetsFor(siteId);
-        return options.find((o) => o.username === username)?.value ?? '';
-    };
-
-    const planWave = () => {
-        const site = sites.find((s) => String(s.id) === get('siteId'));
-        if (!site) return Promise.resolve();
-        const day = get('serviceDate') || data?.serviceDate || '';
-        return act(
-            async () => {
-                const got = await api<Plan>(
-                    `${base}/runs/propose?site=${encodeURIComponent(site.code)}`
-                    + (day ? `&serviceDate=${encodeURIComponent(day)}` : ''),
-                );
-                setPlan(got);
-                setPlanTaken([]);
-                setPlanPick(Object.fromEntries(got.runs.map((c, i) => [
-                    clusterKey(c),
-                    optionFor(site.id, got.suggested[i]?.username ?? null),
-                ])));
-            },
-            'Planned.',
-        );
-    };
-
-    const assignCluster = (cluster: PlanCluster) => {
-        const key = clusterKey(cluster);
-        const target = planPick[key] ?? '';
-        if (target === '') return Promise.resolve();
-        const n = cluster.orderIds.length;
-        return act(
-            async () => {
-                await sendTo(cluster.orderIds, target, cluster.kind === 'stat' ? 'STAT' : 'Wave');
-                /* Struck off the moment it becomes a real run. Leaving it
-                   there invites a second press, and the second press would
-                   move the same stops onto somebody else -- which the
-                   server would allow, because by then they are an ordinary
-                   assigned order being reassigned. */
-                setPlanTaken((taken) => [...taken, key]);
-            },
-            `${n} ${n === 1 ? 'stop' : 'stops'} assigned.`,
-        );
     };
 
     /* ON SHIFT, FROM THE SHIFTS TABLE. Not `present`, which is "used the app
@@ -786,166 +660,30 @@ export function Board() {
                         )}
                     </Section>
 
-                    {/* ─────────────────────────── PLANNING ONE COUNTER.
+                    {/* NO "PLAN THE WAVE" HERE ANY MORE. It proposed runs
+                        for a whole noon release at once, which was the
+                        right tool while the sweep assigned work. Dispatch
+                        now picks every driver by hand from the pool above,
+                        and a second way to create runs -- with its own
+                        courier picker and its own rules about who may be
+                        offered -- was a second place for those rules to
+                        drift. Removed 3 November as redundant.
 
-                        "Plan the wave" was removed on 3 November: it
-                        proposed runs for a whole noon release at once,
-                        which was right while the sweep assigned work, and
-                        it carried its own courier picker and its own rules
-                        about who could be offered a run -- a second place
-                        for those rules to drift.
+                        PUT BACK ON 6 NOVEMBER AND TAKEN OUT AGAIN THE SAME
+                        DAY, on the owner's instruction. The second attempt
+                        answered the objection above -- it had no courier
+                        picker of its own, it reused targetsFor() and
+                        POST /runs, and it assigned one cluster at a time
+                        rather than a whole wave -- and it was removed
+                        anyway. So the reason is not the one written above
+                        any more, and rebuilding it to fix those things
+                        would be building it a third time.
 
-                        This is not that. It groups ONE pharmacy's waiting
-                        stops, it has no picker of its own (every dropdown
-                        is targetsFor(), the pool's own list), and it
-                        creates runs through the same POST /runs the pool
-                        uses. Nothing is assigned until a dispatcher presses
-                        a button on one cluster, which is the control
-                        University Health asked for when they turned
-                        auto-assign off on 2 November.
-
-                        One pharmacy at a time, because that is how the
-                        lists arrive and how the drivers are hired. The
-                        planner refuses an unscoped plan staffed from one
-                        counter's roster, and so does this. */}
-                    {get('siteId') !== '' && (
-                        <Section
-                            id="uh.board.waveplanner"
-                            /* NOT "Plan the wave", which is what the button
-                               inside it says. A Section renders its own title
-                               inside the collapse toggle, so sharing the
-                               wording puts two buttons of the same name on
-                               the screen -- ambiguous to a screen reader and
-                               to anybody driving this from the keyboard. */
-                            title="Wave planner"
-                            summary={plan === null
-                                ? 'Group the waiting stops at this pharmacy into rounds'
-                                : `${plan.runs.length - planTaken.length} of ${plan.runs.length} left to assign`}
-                        >
-                            <div className="izy-row">
-                                <button
-                                    className="izy-btn secondary"
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => { void planWave(); }}
-                                >
-                                    {plan === null ? 'Plan the wave' : 'Re-plan'}
-                                </button>
-                                {/* NO FLEET COUNT HERE. A site-scoped plan
-                                    always comes back with "<pharmacy>: N of M
-                                    drivers on shift" as its first note, and
-                                    held drivers as its last. Printing the
-                                    same two numbers beside the button put the
-                                    sentence on screen twice, once with the
-                                    pharmacy's name on it and once without --
-                                    and the one without reads as a fleet-wide
-                                    figure when it is this counter's. */}
-                            </div>
-
-                            {plan !== null && plan.notes.length > 0 && (
-                                /* The planner's own sentences, not codes. They say
-                                   when the day does not fit, and that is the number
-                                   a dispatcher can still act on at 12:05. */
-                                <ul className="izy-muted">
-                                    {plan.notes.map((n) => <li key={n}>{n}</li>)}
-                                </ul>
-                            )}
-
-                            {plan !== null && plan.runs.length === 0 && (
-                                <p className="izy-muted">
-                                    Nothing waiting to group at this pharmacy. Every stop is either on a run
-                                    already or has not been imported yet.
-                                </p>
-                            )}
-
-                            {plan !== null && plan.runs.map((cluster) => {
-                                const key = clusterKey(cluster);
-                                if (planTaken.includes(key)) return null;
-                                const siteId = cluster.siteIds[0] ?? Number(get('siteId'));
-                                const options = targetsFor(siteId);
-                                const picked = planPick[key] ?? '';
-                                const stops = cluster.orderIds.length;
-                                return (
-                                    <div className="izy-card" key={key}>
-                                        <div className="izy-row">
-                                            <b>
-                                                {cluster.kind === 'stat' ? 'STAT · ' : ''}
-                                                {stops} {stops === 1 ? 'stop' : 'stops'}
-                                            </b>
-                                            <span className="izy-muted">
-                                                ZIP {cluster.zips.slice(0, 6).join(', ')}
-                                                {cluster.zips.length > 6 && ` +${cluster.zips.length - 6} more`}
-                                            </span>
-                                            {cluster.earliestDueAt !== null && (
-                                                <span className="izy-muted">
-                                                    first due {clock(cluster.earliestDueAt)}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="izy-row">
-                                            <label className="izy-field">
-                                                Driver
-                                                <select
-                                                    value={picked}
-                                                    aria-label={`Driver for the ${stops}-stop round in ${cluster.zips[0] ?? 'this area'}`}
-                                                    onChange={(e) => setPlanPick((p) => ({ ...p, [key]: e.target.value }))}
-                                                >
-                                                    <option value="">Choose a driver</option>
-                                                    {options.map((o) => (
-                                                        <option key={o.value} value={o.value}>{o.label}</option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <button
-                                                className="izy-btn"
-                                                type="button"
-                                                disabled={busy || picked === ''}
-                                                onClick={() => { void assignCluster(cluster); }}
-                                            >
-                                                Assign {stops} {stops === 1 ? 'stop' : 'stops'}
-                                            </button>
-                                            {/* A PLAIN LINK, NOT A FETCH. The browser carries
-                                                the session and writes the file itself; building
-                                                a blob here would keep a second copy of a sheet
-                                                of patient addresses in this tab's memory for as
-                                                long as it stayed open. Same reason as the
-                                                driver and list exports.
-
-                                                The ids are in the URL, so the sheet is of THIS
-                                                pile -- not of whatever the planner would group
-                                                if it ran again a minute later. */}
-                                            <a
-                                                className="izy-btn secondary"
-                                                href={`${base}/runs/propose.xlsx?orders=${cluster.orderIds.join(',')}`
-                                                    + `&serviceDate=${encodeURIComponent(plan.serviceDate)}`}
-                                            >
-                                                Download Excel
-                                            </a>
-                                        </div>
-                                        {options.length === 0 && (
-                                            <p className="izy-muted">
-                                                No driver at this pharmacy is on shift. Nothing can be assigned
-                                                here until somebody goes on shift in the app — the sheet still
-                                                downloads.
-                                            </p>
-                                        )}
-                                    </div>
-                                );
-                            })}
-
-                            {plan !== null && plan.unplaced.length > 0 && (
-                                /* Never silently dropped. The planner returns every
-                                   order it could not place, and the count is what tells
-                                   a dispatcher at noon that today needs more drivers --
-                                   while there is still time to ring them. */
-                                <div className="izy-alert warn" role="status">
-                                    {plan.unplaced.length} {plan.unplaced.length === 1 ? 'stop' : 'stops'} did
-                                    not fit in any round. Today needs {plan.driversNeeded}{' '}
-                                    {plan.driversNeeded === 1 ? 'driver' : 'drivers'} at this capacity.
-                                </div>
-                            )}
-                        </Section>
-                    )}
+                        Ask before writing this panel again. The planner
+                        underneath is untouched and still served at
+                        GET /runs/propose; it is the SCREEN that is not
+                        wanted. git log for "A pile of nearby stops with no
+                        way to hand it to anybody" has the whole of it. */}
 
                     {/* ───────────────────────────────── THE LANES, IN PAGES.
 

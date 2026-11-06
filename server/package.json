@@ -14,7 +14,6 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/cli.ts",
-    "preview:wave": "tsx scripts/preview-wave.mjs",
     "seed:demo": "tsx scripts/seed-demo.mjs",
     "rehearse": "tsx scripts/rehearse.mjs",
     "rehearse:two": "tsx scripts/two-drivers.mjs",

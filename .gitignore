@@ -159,10 +159,3 @@ pod-*.pdf
 # are already covered by *.drivers.csv and *.docx above -- this is the
 # wrapper, which is not.
 salazar-login.ps1
-
-# The throwaway database scripts/preview-wave.mjs builds to look at the wave
-# planner. Invented patients, rebuilt from scratch on every run -- but no
-# database file is ignored anywhere else in here (server/test/.idxprobe.db is
-# actually tracked), so without this line a scratch copy of a patient board
-# is one `git add -A` away from a public repository.
-server/.preview/
