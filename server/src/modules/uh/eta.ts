@@ -205,6 +205,46 @@ export function etaFrom(input: EtaInput, placement: Placement | null, perStop: n
  *  list above this caps at 500 rows anyway. */
 const IN_CHUNK = 400;
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE MEDIAN IS CACHED, BECAUSE THE PORTAL ASKS EVERY TWENTY SECONDS.
+ *
+ * minutesPerStop reads every completed stop in the last 28 days. For
+ * University Health that is in the region of sixteen thousand rows, and the
+ * client portal is a live page that reloads on a 20-second timer for every
+ * pharmacy that has it open. Putting the estimate on the list without this
+ * turned one figure into roughly half a million rows a minute crossing the
+ * connection, which is slow, and on Turso is also metered.
+ *
+ * A median over four weeks does not move between one poll and the next. Ten
+ * minutes stale is invisible to a pharmacist and a hundredth of the reads.
+ *
+ * ONLY A REAL ANSWER IS CACHED. A null means "not enough completed stops to
+ * learn from", which is precisely the state that changes the moment a project
+ * starts delivering -- and a project with too little history to measure is
+ * also one whose scan is cheap, so nothing is gained by holding on to it.
+ *
+ * KEYED ON THE WINDOW AS WELL AS THE PROJECT. `now` is a parameter, and a
+ * caller asking about a different four weeks is asking a different question.
+ * Tests pass an explicit date for exactly that reason.
+ */
+const MEDIAN_TTL_MS = 10 * 60 * 1000;
+const medians = new Map<number, { at: number; minutes: number }>();
+
+/** The median, from this process if it was asked recently enough. */
+async function cachedMinutesPerStop(client: Client, projectId: number, now: Date): Promise<number | null> {
+    const hit = medians.get(projectId);
+    if (hit && Math.abs(now.getTime() - hit.at) < MEDIAN_TTL_MS) return hit.minutes;
+    const fresh = await minutesPerStop(client, projectId, now);
+    if (fresh !== null) medians.set(projectId, { at: now.getTime(), minutes: fresh });
+    return fresh;
+}
+
+/** Drop what has been remembered. For tests, and for a caller that has just
+ *  changed history out from under it. */
+export function forgetMedians(): void {
+    medians.clear();
+}
+
 const chunked = <T>(xs: readonly T[], n: number): T[][] => {
     const out: T[][] = [];
     for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
@@ -304,7 +344,7 @@ export async function etasFor(
        deliveries still sitting on the counter should not pay for a 28-day
        scan of every completed stop to be told "not yet collected". */
     const estimable = live.filter((i) => i.pickupAt !== null && placements.has(i.orderId));
-    const perStop = estimable.length > 0 ? await minutesPerStop(client, projectId, now) : null;
+    const perStop = estimable.length > 0 ? await cachedMinutesPerStop(client, projectId, now) : null;
     const open = estimable.length > 0
         ? await openSequences(client, projectId, [...new Set(estimable.map((i) => placements.get(i.orderId)!.runId))])
         : new Map<number, number[]>();

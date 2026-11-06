@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
-import { minutesPerStop, etaFor, etasFor, MIN_SAMPLES, MAX_USEFUL_MINUTES } from '../src/modules/uh/eta.ts';
+import { minutesPerStop, etaFor, etasFor, forgetMedians, MIN_SAMPLES, MAX_USEFUL_MINUTES } from '../src/modules/uh/eta.ts';
 
 const UH = '/api/projects/uh/uh';
 const ORDERS = `${UH}/orders`;
@@ -256,15 +256,44 @@ describe('the whole page at once', () => {
         const runRes = await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Page', orderIds: ids });
         expect(runRes.status, JSON.stringify(runRes.body)).toBe(201);
 
+        forgetMedians();
         const spy = counting();
-        const got = await etasFor(spy.client, projectId, ids.map((id) => ({
+        const page = ids.map((id) => ({
             projectId, orderId: id, status: 'picked_up',
             arrivedAt: null, pickupAt: '2026-09-20T14:00:00.000Z',
-        })), new Date('2026-09-21T00:00:00.000Z'));
+        }));
+        const at = new Date('2026-09-21T00:00:00.000Z');
+        const got = await etasFor(spy.client, projectId, page, at);
 
         expect(got.size).toBe(20);
         /* The placements, the median, and the open stops on the runs those
            touch. Twenty rows the old way would have been sixty. */
+        expect(spy.calls.length).toBe(3);
+
+        /* And the portal reloads every twenty seconds. The median is a
+           four-week figure that cannot have moved, so the second poll does
+           not read four weeks of stops again. */
+        const again = counting();
+        await etasFor(again.client, projectId, page, at);
+        expect(again.calls.length).toBe(2);
+    });
+
+    it('learns the median again once what it remembered is stale', async () => {
+        /* Ten minutes, so a project that starts delivering does not look
+           unestimable all afternoon. Asked about a different four weeks is a
+           different question, which is also how the tests above get a fresh
+           answer while the live endpoint gets a cached one. */
+        const mine = await order();
+        await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Stale', orderIds: [mine.id] });
+        const one = [{
+            projectId, orderId: mine.id, status: 'picked_up',
+            arrivedAt: null, pickupAt: '2026-09-20T14:00:00.000Z',
+        }];
+
+        forgetMedians();
+        await etasFor(client, projectId, one, new Date('2026-09-21T00:00:00.000Z'));
+        const spy = counting();
+        await etasFor(spy.client, projectId, one, new Date('2026-09-21T01:00:00.000Z'));
         expect(spy.calls.length).toBe(3);
     });
 
