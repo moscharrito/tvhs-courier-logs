@@ -32,7 +32,78 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { daysBeforeIn, todayIn } from '../../lib/when';
 import type { Site } from './Sites';
 
-interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
+interface PayLine {
+    label: string; delivered: number; rateCents: number; payCents: number | null;
+    /** Attempted and not completed. Paid at the same rate since 5 November.
+     *  Optional only so a fixture or an older server does not fail to type. */
+    failed?: number;
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY NO PAY IS SHOWN, IN THE TERMS THE PROJECT ACTUALLY PAYS IN.
+ *
+ * This banner used to read "the per-delivery rate is not set for every
+ * SERVICE LEVEL" whatever the project paid on, so a contract paying by zone
+ * was sent to study the wrong half of the rate card. driver-pay.ts is
+ * explicit that a reader must never be shown service levels when the basis
+ * is zones, and this was the screen doing it.
+ *
+ * IT ALSO COVERED TWO DIFFERENT PROBLEMS WITH ONE SENTENCE:
+ *
+ *   a rate that is still zero, which somebody fixes on the settings screen;
+ *
+ *   a stop whose destination ZIP is not on the zone map, for which NO RATE
+ *   EXISTS AND NONE CAN BE SET -- perZoneCents holds zones 1 to 5 and there
+ *   is no out-of-zone figure. The gap is in the zone list, not the card.
+ *
+ * The second one is the cruel case: one unzoned stop withholds the pay for
+ * the WHOLE range, and somebody told "a rate is not set" will search the
+ * settings screen for a field that does not exist. driver-pay.ts keys that
+ * line 'unzoned' precisely so it can be told apart, and nothing read it.
+ *
+ * DERIVED FROM `lines`, NOT FROM A SECOND FLAG. The server already says
+ * which lines have no rate; a parallel boolean is how the two come to
+ * disagree. It also means a site manager, whose money fields the server
+ * strips, now gets no banner at all -- `!rateSet` on a deleted field was
+ * `!undefined`, so they were being told pay was unset when it was merely
+ * hidden from them.
+ */
+export function RateNote({ basis, lines }: {
+    basis: 'serviceType' | 'zone';
+    lines?: Record<string, PayLine> | undefined;
+}) {
+    const unpaid = Object.entries(lines ?? {}).filter(([, l]) => l.rateCents <= 0);
+    if (unpaid.length === 0) return null;
+
+    const noZone = unpaid.find(([key]) => key === 'unzoned')?.[1];
+    const unset = unpaid.filter(([key]) => key !== 'unzoned').map(([, l]) => l.label);
+    const stops = noZone ? noZone.delivered + (noZone.failed ?? 0) : 0;
+    const one = stops === 1;
+
+    return (
+        <div className="izy-alert warn" role="status">
+            {unset.length > 0 && (
+                <p>
+                    No pay is shown because the per-delivery rate is not set for every{' '}
+                    {basis === 'zone' ? 'zone' : 'service level'} worked in this range:{' '}
+                    <strong>{unset.join(', ')}</strong>. The delivery counts are complete and
+                    correct; the money is waiting on the rate card in this project&apos;s settings.
+                </p>
+            )}
+            {noZone && (
+                <p>
+                    {unset.length === 0 && 'Every rate on the rate card is set. '}
+                    {one ? 'One delivery' : `${stops} deliveries`} went to a ZIP that is not on the
+                    zone map, and <strong>there is no rate for that, nor one that can be set</strong>
+                    {' '}&mdash; the card holds zones 1 to 5 and nothing else. A single such stop
+                    withholds the pay for the whole range, so the fix is to add the ZIP to the zone
+                    list rather than to hunt for a missing rate.
+                </p>
+            )}
+        </div>
+    );
+}
 
 /* IS THERE MONEY IN THIS ANSWER AT ALL?
  *
@@ -192,13 +263,7 @@ export function Drivers() {
                 Somebody looking at this screen for the first time needs to
                 know whether they are looking at a payment run or at a
                 delivery count. */}
-            {!data.rateSet && (
-                <div className="izy-alert warn" role="status">
-                    No pay is shown because the per-delivery rates are not set for every service level
-                    that was worked. The delivery counts below are complete and correct; the money is
-                    waiting on the rate card in this project&apos;s settings.
-                </div>
-            )}
+            <RateNote basis={data.totals.basis} lines={data.totals.lines} />
 
             <div className="izy-card">
                 <div className="izy-row">

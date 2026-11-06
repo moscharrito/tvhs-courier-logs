@@ -31,6 +31,36 @@ const totals = (over = {}) => ({
     ...over,
 });
 
+/* WHAT AN UNSET RATE ACTUALLY LOOKS LIKE ON THE WIRE.
+ *
+ * The line is present and priced at nought -- driver-pay.ts builds a line
+ * for every service level or zone that was worked and then refuses to turn
+ * a zero rate into a zero payment. `rateSet: false` beside a fully priced
+ * breakdown cannot happen, and fixtures that said it did let the banner
+ * assert against a state the server never sends. */
+const unpriced = (over = {}) => totals({
+    payCents: null,
+    rateSet: false,
+    lines: {
+        stat: { label: 'stat', delivered: 2, failed: 0, rateCents: 700, payCents: 1400 },
+        adhoc: { label: 'adhoc', delivered: 1, failed: 1, rateCents: 0, payCents: null },
+    },
+    ...over,
+});
+
+/* Paid by zone, with stops that landed outside the zone map. There is no
+   rate for those and none that can be set. */
+const unzoned = (over = {}) => totals({
+    payCents: null,
+    rateSet: false,
+    basis: 'zone',
+    lines: {
+        'zone-1': { label: 'Zone 1', delivered: 9, failed: 0, rateCents: 650, payCents: 5850 },
+        unzoned: { label: 'No zone', delivered: 3, failed: 1, rateCents: 0, payCents: null },
+    },
+    ...over,
+});
+
 const everyone = (over = {}) => ({
     from: '2026-10-01', to: '2026-10-31', timezone: 'America/Chicago', currency: 'USD',
     rateSet: true,
@@ -133,20 +163,20 @@ describe('every driver', () => {
         renderDrivers({
             'GET /api/projects/uh/uh/drivers*': everyone({
                 rateSet: false,
-                totals: totals({ payCents: null, rateSet: false }),
-                drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...totals({ payCents: null, rateSet: false }) }],
+                totals: unpriced(),
+                drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...unpriced() }],
             }),
         });
-        const warned = await screen.findByText(/rates are not set/i);
-        expect(warned).toHaveTextContent(/counts below are complete/i);
+        const warned = await screen.findByText(/rate is not set/i);
+        expect(warned).toHaveTextContent(/delivery counts are complete/i);
     });
 
     it('shows no money at all when a rate is missing, not a zero', async () => {
         renderDrivers({
             'GET /api/projects/uh/uh/drivers*': everyone({
                 rateSet: false,
-                totals: totals({ payCents: null, rateSet: false }),
-                drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...totals({ payCents: null, rateSet: false }) }],
+                totals: unpriced(),
+                drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...unpriced() }],
             }),
         });
         await screen.findByRole('link', { name: 'Ada Pay' });
@@ -296,11 +326,11 @@ describe('narrowed to one pharmacy', () => {
             'GET /api/projects/uh/uh/drivers*': everyone({
                 siteId: 7,
                 rateSet: false,
-                totals: totals({ payCents: null, rateSet: false }),
+                totals: unpriced(),
             }),
         });
         await screen.findByRole('heading', { name: 'Drivers' });
-        expect(screen.getByText(/No pay is shown because the per-delivery rates/)).toBeInTheDocument();
+        expect(screen.getByText(/No pay is shown because the per-delivery rate/)).toBeInTheDocument();
         expect(pharmacyWarning()).toBeInTheDocument();
         expect(screen.getByText('for this pharmacy')).toBeInTheDocument();
         expect(screen.getByText('rate not set')).toBeInTheDocument();
@@ -419,5 +449,117 @@ describe('a courier reading their own', () => {
         renderMine();
         await screen.findByRole('heading', { name: 'Your deliveries' });
         expect(screen.queryByRole('link', { name: /all drivers/i })).toBeNull();
+    });
+});
+
+/* ────────────────────────────────────── why no pay is shown
+ *
+ * The banner said "service level" whatever the project paid on, and covered
+ * two problems with one sentence: a rate still at zero, which somebody fixes
+ * on the settings screen, and a stop outside the zone map, for which no rate
+ * exists and none can be set. The second sent people hunting for a field
+ * that is not there.
+ */
+describe('the rate notice', () => {
+    const show = (t: Record<string, unknown>) => renderDrivers({
+        'GET /api/projects/uh/uh/drivers*': everyone({
+            rateSet: false, totals: t,
+            drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...t }],
+        }),
+    });
+
+    it('names the service levels that have no rate, not just that one does not', async () => {
+        show(unpriced());
+        const warned = await screen.findByText(/No pay is shown because the per-delivery rate/);
+        expect(warned).toHaveTextContent('service level');
+        // The one that is actually missing, so nobody checks all three.
+        expect(warned).toHaveTextContent('adhoc');
+        expect(warned).not.toHaveTextContent('zone');
+    });
+
+    it('says zone, not service level, when the project pays by zone', async () => {
+        /* driver-pay.ts: a reader must never be shown a column headed
+           "service level" with zones in it. This banner was doing exactly
+           that, and it sends somebody to the wrong half of the rate card. */
+        show(unzoned({
+            lines: {
+                'zone-1': { label: 'Zone 1', delivered: 9, failed: 0, rateCents: 650, payCents: 5850 },
+                'zone-3': { label: 'Zone 3', delivered: 2, failed: 0, rateCents: 0, payCents: null },
+            },
+        }));
+        const warned = await screen.findByText(/No pay is shown because the per-delivery rate/);
+        expect(warned).toHaveTextContent('every zone worked');
+        expect(warned).toHaveTextContent('Zone 3');
+        expect(warned).not.toHaveTextContent('service level');
+    });
+
+    it('says a stop off the zone map has no rate that anybody can set', async () => {
+        show(unzoned());
+        /* Four stops: three delivered and one attempted, both paid alike
+           since 5 November. */
+        const warned = await screen.findByText(/4 deliveries went to a ZIP/);
+        expect(warned).toHaveTextContent('no rate for that, nor one that can be set');
+        expect(warned).toHaveTextContent('zones 1 to 5');
+        // The actionable half: the gap is in the zone list, not the card.
+        expect(warned).toHaveTextContent(/add the ZIP to the zone list/i);
+    });
+
+    it('says the rate card is fine when the only problem is the zone map', async () => {
+        /* The confusing state: every rate set, and still no pay. Somebody
+           reading "a rate is not set" here searches the settings screen for
+           a field that does not exist. */
+        show(unzoned());
+        const warned = await screen.findByText(/went to a ZIP/);
+        expect(warned).toHaveTextContent('Every rate on the rate card is set');
+        expect(screen.queryByText(/No pay is shown because the per-delivery rate/)).toBeNull();
+    });
+
+    it('reads as one delivery rather than 1 deliveries', async () => {
+        show(unzoned({
+            lines: { unzoned: { label: 'No zone', delivered: 1, failed: 0, rateCents: 0, payCents: null } },
+        }));
+        expect(await screen.findByText(/One delivery went to a ZIP/)).toBeInTheDocument();
+    });
+
+    it('says both things when both are true', async () => {
+        show(unzoned({
+            lines: {
+                'zone-3': { label: 'Zone 3', delivered: 2, failed: 0, rateCents: 0, payCents: null },
+                unzoned: { label: 'No zone', delivered: 3, failed: 1, rateCents: 0, payCents: null },
+            },
+        }));
+        const missing = await screen.findByText(/No pay is shown because the per-delivery rate/);
+        expect(missing).toHaveTextContent('Zone 3');
+        expect(screen.getByText(/4 deliveries went to a ZIP/)).toBeInTheDocument();
+        /* Not claimed, because it is not true here. */
+        expect(document.body.textContent).not.toMatch(/Every rate on the rate card is set/);
+    });
+
+    it('stays silent when every rate that was worked is set', async () => {
+        renderDrivers();
+        await screen.findByRole('link', { name: 'Ada Pay' });
+        expect(screen.queryByText(/No pay is shown/)).toBeNull();
+        expect(screen.queryByText(/went to a ZIP/)).toBeNull();
+    });
+
+    it('tells a site manager nothing about rates, because pay is merely hidden', async () => {
+        /* The server strips the money fields for a lead, rateSet included.
+           The old banner read `!data.rateSet`, and `!undefined` is true, so
+           a site manager was told the rates were unset when in fact they
+           were none of their business. Driven by the lines now, which are
+           stripped with everything else. */
+        renderDrivers({
+            'GET /api/me/projects': asLead,
+            'GET /api/projects/uh/uh/drivers*': (() => {
+                const e = everyone() as Record<string, unknown>;
+                delete e['currency']; delete e['rateSet'];
+                e['totals'] = { delivered: 3, failed: 1, basis: 'serviceType' };
+                e['drivers'] = [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, delivered: 3, failed: 1, basis: 'serviceType' }];
+                return e;
+            })(),
+        });
+        await screen.findByRole('link', { name: 'Ada Pay' });
+        expect(screen.queryByText(/No pay is shown/)).toBeNull();
+        expect(screen.queryByText(/rate is not set/)).toBeNull();
     });
 });

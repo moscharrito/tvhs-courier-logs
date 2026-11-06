@@ -28,12 +28,12 @@ import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { daysBeforeIn, todayIn } from '../../lib/when';
-import { money } from './Drivers';
+import { money, RateNote } from './Drivers';
 import { handleUnder } from '../../lib/people';
 import { CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { ReturnIcon } from '../../app/Icons';
 
-interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null }
+interface PayLine { label: string; delivered: number; rateCents: number; payCents: number | null; failed?: number }
 
 interface Totals {
     delivered: number;
@@ -143,14 +143,9 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
                 </p>
             )}
 
-            {/* Said once rather than as a dash in every row. */}
-            {!data.totals.rateSet && (
-                <div className="izy-alert warn" role="status">
-                    No pay is shown because the per-delivery rate is not set for every service level
-                    worked in this range. The counts below are complete; the money is waiting on the
-                    rate card.
-                </div>
-            )}
+            {/* Said once rather than as a dash in every row, and in the terms
+                this project pays in. See RateNote. */}
+            <RateNote basis={data.totals.basis} lines={data.totals.lines} />
 
             <div className="izy-card">
                 <div className="izy-row">
