@@ -24,6 +24,17 @@
       "port": 5173
     },
     {
+      "name": "preview-wave",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview:wave",
+        "-w",
+        "server"
+      ],
+      "port": 3000
+    },
+    {
       "name": "server-built",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

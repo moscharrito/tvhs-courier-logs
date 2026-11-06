@@ -152,3 +152,17 @@ __pycache__/
 # their prescription. scripts/check-pod.mjs writes one here so it can be
 # opened and looked at, and this repository is PUBLIC. Never committed.
 pod-*.pdf
+
+# One driver whose username collided with another's on the onboarding batch.
+# The wrapper names him in its comments and writes a live credential beside
+# itself; the csv it reads carries his email address. The csv and the .docx
+# are already covered by *.drivers.csv and *.docx above -- this is the
+# wrapper, which is not.
+salazar-login.ps1
+
+# The throwaway database scripts/preview-wave.mjs builds to look at the wave
+# planner. Invented patients, rebuilt from scratch on every run -- but no
+# database file is ignored anywhere else in here (server/test/.idxprobe.db is
+# actually tracked), so without this line a scratch copy of a patient board
+# is one `git add -A` away from a public repository.
+server/.preview/
