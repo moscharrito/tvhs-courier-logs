@@ -287,5 +287,61 @@ if (who !== '') {
     say('');
 }
 
+/* ------------------------------------------- who can see the client portal */
+
+/* WHY THIS IS WORTH A SECTION.
+ *
+ * A pharmacy sees the portal for exactly the sites its membership names,
+ * and a membership naming NONE sees nothing at all -- client-portal.ts
+ * scopeFor(), which is the one implementation of the rule.
+ *
+ * lead-scope.ts used to claim the opposite in a comment: that a pharmacy
+ * with no siteIds meant the whole project "because that is how a contract
+ * manager is expressed". No code ever did that. Anybody who set up the
+ * contract manager by following that sentence created an account that
+ * opens an empty portal -- which reads as a broken feature rather than an
+ * unfinished membership, and would be debugged in the wrong place.
+ *
+ * So: every pharmacy viewer, and what they can actually see. A contract
+ * manager is the one with all nine. Still a GET. */
+say('  CLIENT PORTAL VIEWERS');
+say('  ---------------------');
+const allSites = await get(`/api/projects/${project}/uh/sites`);
+const siteList = Array.isArray(allSites.body) ? allSites.body : [];
+const codeOfSite = (id) => siteList.find((x) => Number(x.id) === Number(id))?.code ?? `#${id}`;
+
+const dir = await get('/api/users');
+if (dir.status !== 200 || !Array.isArray(dir.body?.users ?? dir.body)) {
+    say(`    could not be read (HTTP ${dir.status}). This is NOT "nobody has portal access".`);
+} else {
+    const users = dir.body.users ?? dir.body;
+    const viewers = [];
+    for (const u of users) {
+        const m = (u.memberships ?? []).find((x) => x.code === project && x.role === 'pharmacy');
+        if (!m) continue;
+        const raw = m.settings?.siteIds;
+        const ids = Array.isArray(raw) ? raw.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+        viewers.push({ username: u.username, name: u.name, ids: [...new Set(ids)], status: u.status });
+    }
+    if (viewers.length === 0) {
+        say('    nobody has a pharmacy membership on this project.');
+    }
+    for (const v of viewers.sort((a, b) => b.ids.length - a.ids.length)) {
+        const disabled = v.status && v.status !== 'active' ? '   [DISABLED]' : '';
+        if (v.ids.length === 0) {
+            say(`    ${String(v.name ?? '?')}  (${v.username})${disabled}`);
+            say('      SEES NOTHING -- no siteIds on the membership. If this is meant to be');
+            say(`      the contract manager, it needs every site listed, not none. ${siteList.length} exist.`);
+        } else if (v.ids.length === siteList.length) {
+            say(`    ${String(v.name ?? '?')}  (${v.username})${disabled}`);
+            say(`      all ${v.ids.length} pharmacies  <-- contract manager`);
+        } else {
+            say(`    ${String(v.name ?? '?')}  (${v.username})${disabled}`);
+            say(`      ${v.ids.length} of ${siteList.length}: ${v.ids.map(codeOfSite).join(', ')}`);
+        }
+    }
+}
+say('');
+
 say('  Nothing was changed: this script only sends GET.');
 say('');

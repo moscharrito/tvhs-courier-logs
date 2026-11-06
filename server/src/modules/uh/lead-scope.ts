@@ -17,11 +17,24 @@
  * AN UNSCOPED LEAD SEES NOTHING, NOT EVERYTHING.
  *
  * `settings.siteIds` missing or empty means a membership nobody finished
- * configuring. A pharmacy membership with no siteIds means the whole project,
- * because that is how a contract manager is expressed and it was designed
- * that way. A lead is the opposite: the role exists to be narrow, and
+ * configuring, and it sees NOTHING. The role exists to be narrow, and
  * defaulting a half-made one to the whole contract would turn an
  * administrative oversight into a disclosure.
+ *
+ * THE SAME IS TRUE OF A PHARMACY, and this comment used to say the opposite.
+ * It claimed "a pharmacy membership with no siteIds means the whole project,
+ * because that is how a contract manager is expressed and it was designed
+ * that way". No code has ever done that. client-portal.ts scopeFor() -- the
+ * one implementation, which imports.ts also uses -- gives a pharmacy exactly
+ * the sites its membership names and an unscoped one nothing, for the reason
+ * it states: a mistake in a settings form must not quietly hand one counter
+ * the other eight pharmacies' patients.
+ *
+ * SO A CONTRACT MANAGER IS A PHARMACY MEMBERSHIP THAT NAMES EVERY SITE, not
+ * one that names none. Somebody setting one up by following the old sentence
+ * would have created an account that sees an empty portal and reads as a
+ * broken feature rather than an unfinished membership. Corrected 6 November
+ * after it nearly sent exactly that answer.
  *
  * `1 = 0` rather than an error: a lead whose account is not finished sees an
  * empty board and rings somebody, which is a better failure than a stack
