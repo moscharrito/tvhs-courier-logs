@@ -476,6 +476,13 @@ const MATRIX = [
     ['GET', `${UH}/threads/999999`, UH_MEMBER, 'a thread is scoped to the order, not to a role'],
     ['POST', `${UH}/threads/999999`, UH_MEMBER, 'same check, same place'],
     ['GET', `${UH}/runs/propose`, UH_DISPATCH, 'the shape of the whole day across every counter, which no single pharmacy may read'],
+    /* Patient names, phones and home addresses for a group of stops named in
+       the URL, so it is dispatch and a lead, exactly like the proposal it is
+       a sheet of. A lead's own counters only -- the handler scopes it, and
+       uh-runs-propose-export.test.mjs proves naming an id is not permission
+       to read it. Not a courier: a cluster has no courier yet, which is the
+       whole reason this endpoint exists. */
+    ['GET', `${UH}/runs/propose.xlsx`, UH_DISPATCH, 'one proposed cluster as a spreadsheet, before anybody is assigned to drive it'],
     ['GET', `${UH}/runs/999999`, UH_DISPATCH_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_DISPATCH, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'scoped to the sites on the membership, which for the Site Manager is all eight'],
