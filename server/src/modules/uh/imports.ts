@@ -66,6 +66,7 @@ import type { FileStorage } from '../../core/files/storage';
 /* The one signing path for a delete, shared with the retention purge
    rather than written a second time here. */
 import { deleteFromBucket } from '../../core/retention/routes';
+import { deleteOrders, emptyPlannedRuns, removeObjects } from './order-delete';
 import { todayIn } from '../../core/dates';
 import { custodyEventStatement, recordOrderEvent, type OrderStateRow } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
@@ -1165,106 +1166,29 @@ export function createImportsRouter(
         }
 
         const ordersRs = await client.execute({
-            sql: 'SELECT id, status FROM orders WHERE project_id = ? AND daily_list_id = ?',
+            sql: 'SELECT id FROM orders WHERE project_id = ? AND daily_list_id = ?',
             args: [projectId, id],
         });
         const ids = ordersRs.rows.map((o) => Number(o['id']));
-        const marks = ids.map(() => '?').join(',');
 
-        /* Counted before anything goes, because afterwards there is nothing
-           left to count and the audit row is the only account of what this
-           removed. */
-        const byStatus: Record<string, number> = {};
-        for (const o of ordersRs.rows) {
-            const k = String(o['status']);
-            byStatus[k] = (byStatus[k] ?? 0) + 1;
-        }
+        /* THE ROWS GO HERE, in modules/uh/order-delete.ts, which counts the
+           statuses and reads the run ids and the S3 keys before anything is
+           removed -- afterwards there is nothing left to count, and the
+           audit row below is the only account of what this took. Deleting
+           ONE order uses the same function. */
+        const { removed, fileKeys, byStatus, touchedRuns: touched } = await deleteOrders(client, projectId, ids);
 
-        /* WHICH RUNS HELD THIS WORK, read before the stops go: afterwards
-           nothing says which runs they were on. */
-        let touched: number[] = [];
-        if (ids.length > 0) {
-            const held = await client.execute({
-                sql: `SELECT DISTINCT run_id FROM run_stops WHERE project_id = ? AND order_id IN (${marks})`,
-                args: [projectId, ...ids],
-            });
-            touched = held.rows.map((r) => Number(r['run_id']));
-        }
-
-        /* THE PHOTOGRAPHS. The rows go with everything else below; the
-           objects in the bucket would not, and a deleted delivery whose
-           identity photograph is still sitting in S3 is the opposite of
-           what was asked for. Keys are read now and the objects removed
-           after the rows, so a failure to reach S3 cannot leave a row
-           pointing at an object that is already gone. */
-        const fileRs = ids.length === 0 ? { rows: [] } : await client.execute({
-            sql: `SELECT id, s3_key FROM files WHERE project_id = ? AND order_id IN (${marks})`,
-            args: [projectId, ...ids],
-        });
-        const fileKeys = fileRs.rows.map((f) => String(f['s3_key']));
-
-        let removed = 0;
-        for (const { trigger } of APPEND_ONLY) {
-            await client.execute(`DROP TRIGGER IF EXISTS ${trigger}`);
-        }
-        try {
-            if (ids.length > 0) {
-                for (const table of CHILDREN_BY_ORDER) {
-                    await client.execute({
-                        sql: `DELETE FROM ${table} WHERE order_id IN (${marks})`,
-                        args: ids,
-                    });
-                }
-                await client.execute({
-                    sql: `DELETE FROM files WHERE project_id = ? AND order_id IN (${marks})`,
-                    args: [projectId, ...ids],
-                });
-                /* A second go at one of these deliveries is its own order on
-                   its own list. It keeps existing; it just stops claiming to
-                   be a reattempt of a row that is not there. */
-                await client.execute({
-                    sql: `UPDATE orders SET reattempt_of_order_id = NULL WHERE reattempt_of_order_id IN (${marks})`,
-                    args: ids,
-                });
-                const gone = await client.execute({
-                    sql: `DELETE FROM orders WHERE project_id = ? AND id IN (${marks})`,
-                    args: [projectId, ...ids],
-                });
-                removed = Number(gone.rowsAffected ?? 0);
-            }
-            /* Rows of the sheet that never became an order -- blocked,
-               skipped, or folded into a box series -- are keyed to the list
-               rather than to an order, so they need their own sweep. */
-            await client.execute({ sql: 'DELETE FROM daily_list_rows WHERE daily_list_id = ?', args: [id] });
-        } finally {
-            /* ALWAYS, and the same DDL the migrations and the retention
-               purge use. A delete that threw halfway must not also leave the
-               evidence tables writable. */
-            await client.execute(`CREATE TRIGGER IF NOT EXISTS custody_events_no_delete BEFORE DELETE ON custody_events
-BEGIN
-\tSELECT RAISE(ABORT, 'custody_events is append-only');
-END`);
-            await client.execute(`CREATE TRIGGER IF NOT EXISTS order_messages_no_delete BEFORE DELETE ON order_messages
-BEGIN
-\tSELECT RAISE(ABORT, 'order_messages is append-only');
-END`);
-        }
+        /* Rows of the sheet that never became an order -- blocked, skipped,
+           or folded into a box series -- are keyed to the LIST rather than
+           to an order, so deleteOrders above cannot have reached them and
+           they need their own sweep. */
+        await client.execute({ sql: 'DELETE FROM daily_list_rows WHERE daily_list_id = ?', args: [id] });
 
         /* A PLANNED run this emptied is a round nobody is doing. Only the
            ones it emptied, and only planned ones: a started run is a thing
            that happened, and deleting it would remove the record that a
            courier went out. */
-        let emptiedRuns = 0;
-        if (touched.length > 0) {
-            const runMarks = touched.map(() => '?').join(',');
-            const emptied = await client.execute({
-                sql: `DELETE FROM runs
-                       WHERE project_id = ? AND status = 'planned' AND id IN (${runMarks})
-                         AND id NOT IN (SELECT run_id FROM run_stops)`,
-                args: [projectId, ...touched],
-            });
-            emptiedRuns = Number(emptied.rowsAffected ?? 0);
-        }
+        const emptiedRuns = await emptyPlannedRuns(client, projectId, touched);
 
         await client.execute({
             sql: 'DELETE FROM daily_lists WHERE project_id = ? AND id = ?',
@@ -1296,21 +1220,7 @@ END`);
            network blip reaching S3 must not turn a completed delete into a
            500 that invites somebody to press it again. Orphans are findable
            by key prefix and the lifecycle rule collects them. */
-        let filesRemoved = 0;
-        let filesLeftBehind = 0;
-        if (storage.available) {
-            for (const key of fileKeys) {
-                try {
-                    await deleteFromBucket(storage, key);
-                    filesRemoved += 1;
-                } catch {
-                    /* Counted, not thrown. The caller is told how many the
-                       bucket kept, which is the number somebody would need
-                       to go and look for. */
-                    filesLeftBehind += 1;
-                }
-            }
-        }
+        const { filesRemoved, filesLeftBehind } = await removeObjects(storage, fileKeys);
 
         res.json({
             ok: true,
