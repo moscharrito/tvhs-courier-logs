@@ -367,3 +367,70 @@ describe('isValidTimezone', () => {
         expect(isValidTimezone('')).toBe(false);
     });
 });
+
+/* ───────────────────────────────── the rate for a stop that is in no zone
+ *
+ * Added 6 November. perZoneCents held zones 1 to 5 and nothing else, so a
+ * delivery to a ZIP missing from zone_zips could not be priced at all and
+ * one of them withheld a driver's pay for the whole range.
+ */
+describe('driverPay.outOfZoneCents', () => {
+    it('is unset by default, like every band beside it', () => {
+        /* Zero is "nobody has set this", not "worth nothing". The whole
+           module turns a zero rate into withheld pay for that reason. */
+        expect(DEFAULT_PROJECT_SETTINGS.driverPay.outOfZoneCents).toBe(0);
+    });
+
+    it('is accepted as whole cents and read back', async () => {
+        await reset();
+        const res = await admin.patch(UH).send({ driverPay: { outOfZoneCents: 2800 } });
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        expect(res.body.settings.driverPay.outOfZoneCents).toBe(2800);
+        // The bands beside it are untouched.
+        expect(res.body.settings.driverPay.perZoneCents).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
+        await reset();
+    });
+
+    it('is reported as overridden, so the screen can mark it', async () => {
+        await reset();
+        const res = await admin.patch(UH).send({ driverPay: { outOfZoneCents: 2800 } });
+        expect(res.body.overridden).toContain('driverPay.outOfZoneCents');
+        await reset();
+    });
+
+    it('refuses a fraction of a cent and a negative', async () => {
+        await reset();
+        for (const bad of [2800.5, -100]) {
+            const res = await admin.patch(UH).send({ driverPay: { outOfZoneCents: bad } });
+            expect(res.status, `${bad} should be refused`).toBe(400);
+        }
+        await reset();
+    });
+
+    it('refuses a slipped decimal point rather than paying it', async () => {
+        /* Same cap as the bands. 2800 is $28; 280000 is $2,800 a stop and
+           is far likelier to be a typo than a rate. */
+        await reset();
+        const res = await admin.patch(UH).send({ driverPay: { outOfZoneCents: 280_000 } });
+        expect(res.status).toBe(400);
+        await reset();
+    });
+
+    it('falls back to unset when the stored value is not whole cents', () => {
+        /* A blob edited by hand, or written by an older version. It must
+           not be coerced into something plausible. */
+        for (const junk of ['28.00', 12.5, -1, null, {}]) {
+            expect(resolveSettings({ driverPay: { outOfZoneCents: junk } }).driverPay.outOfZoneCents).toBe(0);
+        }
+    });
+
+    it('survives a patch to a different leaf', async () => {
+        await reset();
+        await admin.patch(UH).send({ driverPay: { outOfZoneCents: 2800 } });
+        await admin.patch(UH).send({ driverPay: { basis: 'zone' } });
+        const got = (await admin.get(UH)).body.settings.driverPay;
+        expect(got.outOfZoneCents).toBe(2800);
+        expect(got.basis).toBe('zone');
+        await reset();
+    });
+});

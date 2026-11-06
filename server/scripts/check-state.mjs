@@ -387,19 +387,29 @@ if (cfg.status !== 200 || !pay) {
     for (const z of [1, 2, 3, 4, 5]) {
         say(`      zone ${z}     ${money(pay.perZoneCents?.[z])}`);
     }
-    /* Not an omission anybody can correct on the settings screen: there is
-       no field for it. Said here so nobody goes looking for one. */
-    say('      no zone    NO SUCH RATE EXISTS. A ZIP off the zone map cannot be');
-    say('                 priced, so any stop outside zones 1-5 withholds the pay');
-    say('                 for the whole range it falls in. Fix the ZIP map, not the');
-    say('                 rate card: server/scripts has the zone loaders.');
+    /* Its own rate since 6 November. Zero still withholds, like every band
+       above it. The warning stays whatever it is set to: this one figure
+       pays for genuinely out-of-area work AND for a ZIP that is merely
+       missing from zone_zips, and it cannot tell them apart. */
+    const outOfZone = Number(pay.outOfZoneCents ?? 0);
+    say(`      no zone    ${money(outOfZone)}`);
+    if (outOfZone > 0) {
+        say('                 Paid, so nothing is withheld -- but this rate covers both');
+        say('                 real out-of-area work and a ZIP simply missing from the');
+        say('                 map. See UNZONED DELIVERIES below for which ZIPs these are.');
+    } else {
+        say('                 Unset, so any stop outside zones 1-5 withholds the pay for');
+        say('                 the whole range it falls in. Either price it here or add');
+        say('                 the ZIP to zone_zips -- the list below says which.');
+    }
     say('');
     const bonus = Number(pay.completionBonusCents ?? 0);
     say(`    Finishing the day  ${bonus > 0 ? `${cur} ${(bonus / 100).toFixed(2)}` : 'off'}`
         + (bonus > 0 && pay.completionBonusFrom ? `   from ${pay.completionBonusFrom}` : ''));
 
     const live = onZones
-        ? [1, 2, 3, 4, 5].map((z) => [`zone ${z}`, Number(pay.perZoneCents?.[z] ?? 0)])
+        ? [...[1, 2, 3, 4, 5].map((z) => [`zone ${z}`, Number(pay.perZoneCents?.[z] ?? 0)]),
+            ['no zone', outOfZone]]
         : ['scheduled', 'stat', 'adhoc'].map((k) => [k, Number(pay.perDeliveryCents?.[k] ?? 0)]);
     const missing = live.filter(([, c]) => !(c > 0)).map(([k]) => k);
     say('');

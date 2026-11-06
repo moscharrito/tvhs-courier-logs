@@ -14,6 +14,7 @@
  *   node server/scripts/driver-rates.mjs --show
  *   node server/scripts/driver-rates.mjs --basis zone --zone1 5.00 --zone2 7.25 \
  *       --zone3 12.00 --zone4 22.00 --zone5 28.00
+ *   node server/scripts/driver-rates.mjs --no-zone 28.00   (a ZIP on no zone)
  *   node server/scripts/driver-rates.mjs --show --base https://logs.izyglobalservices.com
  *   node server/scripts/driver-rates.mjs --bonus 150.00 --bonus-from 2026-11-05
  *   node server/scripts/driver-rates.mjs --bonus 0          (switch it off)
@@ -107,6 +108,26 @@ if (bonusFrom !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(bonusFrom)) {
     process.exit(1);
 }
 
+/* ── THE STOP THAT IS IN NO ZONE ───────────────────────────────────────
+ *
+ * Its own flag and not a sixth zone, because it is the price of not being
+ * in one. Until this existed a delivery to a ZIP missing from zone_zips
+ * had no rate and none could be set, and one of them withheld a driver's
+ * pay for the whole range.
+ *
+ * SETTING IT DOES NOT FIX THE MAP. This one number pays for work that was
+ * genuinely out of area and for a ZIP somebody simply never added, and it
+ * cannot tell them apart -- so once it is set, the second kind stops
+ * announcing itself and starts quietly costing money. check-state.mjs
+ * --from --to lists which ZIPs these actually are; run it before deciding
+ * this is the right fix rather than a zone_zips row.
+ */
+const outOfZoneCents = cents(value('no-zone'));
+if (outOfZoneCents === null) {
+    console.error('--no-zone must be a money amount like 28.00, or 0 to withhold it again.');
+    process.exit(1);
+}
+
 const perZoneCents = {};
 const perDeliveryCents = {};
 let bad = false;
@@ -125,6 +146,7 @@ if (bad) process.exit(1);
 const patch = {
     ...(basis === undefined ? {} : { basis }),
     ...(Object.keys(perZoneCents).length > 0 ? { perZoneCents } : {}),
+    ...(outOfZoneCents === undefined ? {} : { outOfZoneCents }),
     ...(Object.keys(perDeliveryCents).length > 0 ? { perDeliveryCents } : {}),
     ...(bonusCents === undefined ? {} : { completionBonusCents: bonusCents }),
     ...(bonusFrom === undefined ? {} : { completionBonusFrom: bonusFrom }),
@@ -164,6 +186,14 @@ function print(pay) {
     console.log(`  By zone${star(pay.basis === 'zone')}`);
     for (const z of [1, 2, 3, 4, 5]) {
         console.log(`    zone ${z}   ${money(pay.perZoneCents?.[z], pay.currency)}`);
+    }
+    /* Read back like the others, and said plainly when it is off: "not set"
+       here is the state in which a single out-of-area stop withholds a
+       driver's whole range, which is worth being able to see. */
+    console.log(`    no zone  ${money(pay.outOfZoneCents, pay.currency)}`);
+    if (!(pay.outOfZoneCents > 0)) {
+        console.log('             while this is unset, one stop outside zones 1-5');
+        console.log('             withholds the pay for the whole range it falls in');
     }
     console.log('');
     console.log(`  By service level${star(pay.basis !== 'zone')}`);

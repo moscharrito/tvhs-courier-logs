@@ -69,12 +69,42 @@ interface PayLine {
  * `!undefined`, so they were being told pay was unset when it was merely
  * hidden from them.
  */
-export function RateNote({ basis, lines }: {
+export function RateNote({ basis, lines, currency }: {
     basis: 'serviceType' | 'zone';
     lines?: Record<string, PayLine> | undefined;
+    /** Absent for a site manager, who is shown no money at all. */
+    currency?: string | undefined;
 }) {
     const unpaid = Object.entries(lines ?? {}).filter(([, l]) => l.rateCents <= 0);
-    if (unpaid.length === 0) return null;
+
+    /* PAID, BUT STILL A GAP IN THE MAP.
+     *
+     * Once outOfZoneCents is set these stops earn and nothing is withheld,
+     * so every warning above goes quiet -- and the reason they were unzoned
+     * goes quiet with it. Two different things are being paid at this one
+     * rate: work that really was outside the contracted area, and a ZIP
+     * that is simply missing from zone_zips. The second is a data fault
+     * that now costs money silently, so it is said plainly, in a calm
+     * notice rather than a warning: nothing is wrong with the pay. */
+    const paidNoZone = lines?.['unzoned'];
+    const paidStops = paidNoZone && paidNoZone.rateCents > 0
+        ? paidNoZone.delivered + (paidNoZone.failed ?? 0)
+        : 0;
+
+    if (unpaid.length === 0) {
+        if (paidStops === 0) return null;
+        return (
+            <div className="izy-alert" role="status">
+                <p>
+                    {paidStops === 1 ? 'One delivery' : `${paidStops} deliveries`} went to a ZIP that
+                    is on no zone and {paidStops === 1 ? 'was' : 'were'} paid at the out-of-zone rate
+                    {currency && paidNoZone ? ` of ${money(paidNoZone.rateCents, currency)}` : ''}.
+                    {' '}That rate covers genuinely out-of-area work <em>and</em> a ZIP merely missing
+                    from the zone list, and it cannot tell them apart. Worth checking which this was.
+                </p>
+            </div>
+        );
+    }
 
     const noZone = unpaid.find(([key]) => key === 'unzoned')?.[1];
     const unset = unpaid.filter(([key]) => key !== 'unzoned').map(([, l]) => l.label);
@@ -263,7 +293,7 @@ export function Drivers() {
                 Somebody looking at this screen for the first time needs to
                 know whether they are looking at a payment run or at a
                 delivery count. */}
-            <RateNote basis={data.totals.basis} lines={data.totals.lines} />
+            <RateNote basis={data.totals.basis} lines={data.totals.lines} currency={data.currency} />
 
             <div className="izy-card">
                 <div className="izy-row">

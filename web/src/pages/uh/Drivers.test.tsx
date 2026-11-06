@@ -563,3 +563,74 @@ describe('the rate notice', () => {
         expect(screen.queryByText(/rate is not set/)).toBeNull();
     });
 });
+
+/* ────────────────────── when the gap is paid over rather than closed
+ *
+ * outOfZoneCents gives a stop with no zone a rate. Nothing is withheld
+ * after that and every warning goes quiet -- and the reason those stops
+ * were unzoned goes quiet with it. One rate pays for work that really was
+ * out of area and for a ZIP nobody ever added to the map, so the second
+ * kind stops announcing itself and starts costing money silently.
+ */
+describe('a paid out-of-zone line', () => {
+    const paidOutOfZone = (over = {}) => totals({
+        payCents: 11650, rateSet: true, basis: 'zone',
+        lines: {
+            'zone-1': { label: 'Zone 1', delivered: 9, failed: 0, rateCents: 650, payCents: 5850 },
+            unzoned: { label: 'No zone', delivered: 2, failed: 0, rateCents: 2800, payCents: 5600 },
+        },
+        ...over,
+    });
+
+    const show = (t: Record<string, unknown>) => renderDrivers({
+        'GET /api/projects/uh/uh/drivers*': everyone({
+            totals: t,
+            drivers: [{ username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...t }],
+        }),
+    });
+
+    it('says the stops were paid at the out-of-zone rate, and what it was', async () => {
+        show(paidOutOfZone());
+        const note = await screen.findByText(/2 deliveries went to a ZIP that is on no zone/);
+        expect(note).toHaveTextContent('$28.00');
+    });
+
+    it('says the rate cannot tell a far stop from a missing ZIP', async () => {
+        /* The whole reason this notice exists. Without it, setting the rate
+           turns a data fault into an invisible cost. */
+        show(paidOutOfZone());
+        const note = await screen.findByText(/went to a ZIP that is on no zone/);
+        expect(note).toHaveTextContent('cannot tell them apart');
+        expect(note).toHaveTextContent(/worth checking which this was/i);
+    });
+
+    it('is a calm notice, not a warning, because nothing is wrong with the pay', async () => {
+        show(paidOutOfZone());
+        const note = await screen.findByText(/went to a ZIP that is on no zone/);
+        expect(note.closest('.izy-alert')).not.toHaveClass('warn');
+        expect(screen.queryByText(/No pay is shown/)).toBeNull();
+    });
+
+    it('says nothing when every stop had a zone', async () => {
+        show(totals({
+            payCents: 5850, rateSet: true, basis: 'zone',
+            lines: { 'zone-1': { label: 'Zone 1', delivered: 9, failed: 0, rateCents: 650, payCents: 5850 } },
+        }));
+        await screen.findByRole('link', { name: 'Ada Pay' });
+        expect(screen.queryByText(/on no zone/)).toBeNull();
+    });
+
+    it('warns instead when the rate is set and another band is not', async () => {
+        /* The paid notice must not displace a real withholding. */
+        show(paidOutOfZone({
+            payCents: null, rateSet: false,
+            lines: {
+                'zone-3': { label: 'Zone 3', delivered: 1, failed: 0, rateCents: 0, payCents: null },
+                unzoned: { label: 'No zone', delivered: 2, failed: 0, rateCents: 2800, payCents: 5600 },
+            },
+        }));
+        const warned = await screen.findByText(/No pay is shown because the per-delivery rate/);
+        expect(warned).toHaveTextContent('Zone 3');
+        expect(screen.queryByText(/went to a ZIP that is on no zone/)).toBeNull();
+    });
+});

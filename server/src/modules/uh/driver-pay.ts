@@ -45,10 +45,18 @@
  * out can be zone 1. Paying on measured distance would disagree with the
  * invoice for the same stop.
  *
- * AN UNZONED STOP HAS NO RATE, which is the missing-rate rule again rather
- * than a new one: a ZIP outside the zone map resolves to null pay, never to
- * nought. The alternative is paying a driver nothing for a delivery they
- * made because a table was incomplete.
+ * AN UNZONED STOP HAS ITS OWN RATE, and until one is set it has no rate at
+ * all -- which is the missing-rate rule again rather than a new one: a ZIP
+ * outside the zone map resolves to null pay, never to nought. The
+ * alternative is paying a driver nothing for a delivery they made because a
+ * table was incomplete.
+ *
+ * `outOfZoneCents` lets the owner price that work instead of withholding it.
+ * It is a rate, not a fallback: zero still withholds. And it cannot tell a
+ * genuinely out-of-area stop from a ZIP that is merely missing from
+ * zone_zips, so the breakdown keeps its own "No zone" line whatever the
+ * rate is. A gap that is being paid over has to stay visible or nobody ever
+ * closes it.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * WHO A DELIVERY BELONGS TO.
@@ -158,7 +166,10 @@ export function rateFor(stop: PayableStop, rates: DriverPaySettings): number {
     if (rates.basis === 'zone') {
         return stop.zone !== null && (PAID_ZONES as readonly number[]).includes(stop.zone)
             ? rates.perZoneCents[stop.zone as PaidZone]
-            : 0;
+            /* A ZIP on no zone is priced by its own rate, which is zero
+               until somebody sets one -- and zero still means "no pay
+               shown", not "paid nought". See outOfZoneCents. */
+            : rates.outOfZoneCents;
     }
     return (PAID_SERVICE_TYPES as readonly string[]).includes(stop.serviceType)
         ? rates.perDeliveryCents[stop.serviceType as PaidServiceType]

@@ -145,7 +145,7 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
 
             {/* Said once rather than as a dash in every row, and in the terms
                 this project pays in. See RateNote. */}
-            <RateNote basis={data.totals.basis} lines={data.totals.lines} />
+            <RateNote basis={data.totals.basis} lines={data.totals.lines} currency={data.currency} />
 
             <div className="izy-card">
                 <div className="izy-row">

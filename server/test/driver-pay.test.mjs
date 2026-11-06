@@ -21,10 +21,13 @@ const rates = (over = {}) => ({
 });
 
 /** Rates keyed on the destination zone, which is what the offer letter pays. */
-const zoneRates = (over = {}) => ({
+const zoneRates = ({ outOfZoneCents = 0, ...zones } = {}) => ({
     basis: 'zone',
     perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 },
-    perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, ...over },
+    perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, ...zones },
+    /* Lifted out of the zone map rather than spread into it: it is not a
+       sixth zone, it is the price of not being in one. */
+    outOfZoneCents,
     currency: 'USD',
 });
 
@@ -287,5 +290,83 @@ describe('when a project pays by zone', () => {
 
         expect(byLevel.payCents).toBe(1150);
         expect(byZone.payCents).toBe(1000);
+    });
+});
+
+/* ───────────────────────────────── pricing a stop that is in no zone
+ *
+ * Until 6 November an unzoned stop had no rate and none could be set: the
+ * card held zones 1 to 5 and nothing else, so one delivery to a ZIP missing
+ * from zone_zips withheld a driver's pay for the whole range. The owner can
+ * price it now. Zero still withholds -- it is a rate, not a fallback.
+ */
+describe('the out-of-zone rate', () => {
+    it('pays a stop whose ZIP is on no zone', () => {
+        const got = payFor([
+            stop('delivered', 'scheduled', 1),
+            stop('delivered', 'scheduled', null),
+        ], zoneRates({ 1: 500, outOfZoneCents: 2800 }));
+
+        expect(got.rateSet).toBe(true);
+        expect(got.payCents).toBe(500 + 2800);
+        expect(got.lines['unzoned'].rateCents).toBe(2800);
+        expect(got.lines['unzoned'].payCents).toBe(2800);
+    });
+
+    it('keeps it on its own line rather than folding it into a zone', () => {
+        /* A gap that is being paid over has to stay visible, or the ZIP is
+           never added to the map and the overpayment never ends. */
+        const got = payFor([stop('delivered', 'scheduled', null)], zoneRates({ outOfZoneCents: 2800 }));
+        expect(got.lines['unzoned'].label).toBe('No zone');
+        expect(got.lines['zone-1']).toBeUndefined();
+    });
+
+    it('prices an unknown zone number the same as no zone at all', () => {
+        /* Zone 9 is not a zone. It is off the map by another route and it
+           must not quietly become zone 1 or zone 5. */
+        const got = payFor([stop('delivered', 'scheduled', 9)], zoneRates({ 1: 500, outOfZoneCents: 2800 }));
+        expect(got.lines['unzoned'].payCents).toBe(2800);
+        expect(got.payCents).toBe(2800);
+    });
+
+    it('withholds, as before, while it is unset', () => {
+        const got = payFor([stop('delivered', 'scheduled', null)], zoneRates({ 1: 500 }));
+        expect(got.rateSet).toBe(false);
+        expect(got.payCents).toBeNull();
+        expect(got.lines['unzoned'].payCents).toBeNull();
+    });
+
+    it('pays an attempt at the same rate as a delivery', () => {
+        /* The owner's rule from 5 November: a courier who drove to the door
+           and found nobody in did the work. Out of area is further. */
+        const got = payFor([
+            stop('delivered', 'scheduled', null),
+            stop('failed', 'scheduled', null),
+        ], zoneRates({ outOfZoneCents: 2800 }));
+        expect(got.lines['unzoned'].delivered).toBe(1);
+        expect(got.lines['unzoned'].failed).toBe(1);
+        expect(got.payCents).toBe(5600);
+    });
+
+    it('is ignored entirely while the project pays by service level', () => {
+        /* It prices the absence of a zone, and on the service-level basis
+           there are no zones to be absent from. Setting it must not change
+           a single figure. */
+        const stops = [stop('delivered', 'stat', null), stop('delivered', 'stat', 3)];
+        const without = payFor(stops, rates({ stat: 700 }));
+        const with_ = payFor(stops, { ...rates({ stat: 700 }), outOfZoneCents: 2800 });
+        expect(with_.payCents).toBe(without.payCents);
+        expect(with_.payCents).toBe(1400);
+        expect(with_.lines['unzoned']).toBeUndefined();
+    });
+
+    it('still refuses a partial total when a band beside it is unpriced', () => {
+        const got = payFor([
+            stop('delivered', 'scheduled', null),
+            stop('delivered', 'scheduled', 2),
+        ], zoneRates({ outOfZoneCents: 2800 }));
+        expect(got.payCents).toBeNull();
+        expect(got.lines['unzoned'].payCents).toBe(2800);
+        expect(got.lines['zone-2'].payCents).toBeNull();
     });
 });

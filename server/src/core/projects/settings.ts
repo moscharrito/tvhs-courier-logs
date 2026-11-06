@@ -185,6 +185,29 @@ export interface DriverPaySettings {
      */
     perZoneCents: { 1: number; 2: number; 3: number; 4: number; 5: number };
     /**
+     * Cents per completed delivery to a destination whose ZIP is on NO zone,
+     * used when `basis` is 'zone'. Zero is unset, as everywhere else here.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * IT IS A RATE, NOT A FALLBACK, AND THE DIFFERENCE MATTERS.
+     *
+     * driver-pay.ts refuses to resolve an unzoned stop to nought, because
+     * paying a driver nothing for a delivery they made is the wrong answer
+     * to an incomplete table. That refusal stands: zero here still means no
+     * pay is shown. What this adds is the ability to say a real number --
+     * out-of-area work is further and the owner may price it higher than
+     * any band.
+     *
+     * WHAT IT CANNOT TELL APART. A ZIP is unzoned for two quite different
+     * reasons: the stop really was outside the contracted area, or the ZIP
+     * is simply missing from zone_zips. This pays both the same, and once
+     * it pays, nobody notices the second kind any more. So the breakdown
+     * keeps its own "No zone" line whatever this is set to, and the driver
+     * record says how many stops were paid on it: a gap that is being paid
+     * over has to stay visible or it is never closed.
+     */
+    outOfZoneCents: number;
+    /**
      * A flat amount a driver earns for FINISHING a day's assigned work,
      * on top of the per-delivery rate. Cents. Zero is off.
      *
@@ -440,6 +463,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         basis: 'serviceType',
         perDeliveryCents: { scheduled: 0, stat: 0, adhoc: 0 },
         perZoneCents: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        /* Unset, like the bands. A project that has not priced out-of-area
+           work shows no pay for it rather than inventing one. */
+        outOfZoneCents: 0,
         /* Off. See the interface: switching it on is a decision about money
            already owed, so it is never made by a deploy. */
         completionBonusCents: 0,
@@ -560,6 +586,10 @@ export const SettingsPatch = z.object({
             4: z.number().int().min(0).max(100_000).optional(),
             5: z.number().int().min(0).max(100_000).optional(),
         }).strict().optional(),
+        /* Out-of-area work is priced higher than any band, so the same cap
+           has more room under it here than it looks. Still refuses a
+           slipped decimal. */
+        outOfZoneCents: z.number().int().min(0).max(100_000).optional(),
         /* Capped at $1,000 for the same reason as the rates: a slipped
            decimal is refused rather than disbursed. */
         completionBonusCents: z.number().int().min(0).max(100_000).optional(),
@@ -775,6 +805,11 @@ function driverPaySection(raw: unknown): DriverPaySettings {
         perZoneCents: {
             1: zoneCents(1), 2: zoneCents(2), 3: zoneCents(3), 4: zoneCents(4), 5: zoneCents(5),
         },
+        outOfZoneCents: typeof source['outOfZoneCents'] === 'number'
+            && Number.isInteger(source['outOfZoneCents'])
+            && (source['outOfZoneCents'] as number) >= 0
+            ? source['outOfZoneCents'] as number
+            : defaults.outOfZoneCents,
         completionBonusCents: bonusCents,
         completionBonusFrom: bonusFrom,
         currency,
