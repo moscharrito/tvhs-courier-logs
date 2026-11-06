@@ -26,6 +26,42 @@ import { slaLabel, type Sla } from './Orders';
 
 interface Pharmacy { id: number; code: string; name: string }
 
+/**
+ * How far away a delivery is, as the server worked it out.
+ *
+ * A POSITION IN A QUEUE, NOT A ROUTED ARRIVAL. The server cannot send a
+ * patient's address to a routing service, so this is "N stops ahead of it at
+ * about M minutes a stop" and `note` says so in those words. Rendering it as
+ * a clock time would turn an average into a promise, which is why nothing
+ * here formats one.
+ *
+ * Optional because a page served by an older server has no such field, and a
+ * portal that throws is worse than one missing a column.
+ */
+interface Eta {
+    /** Minutes from now. Null for every basis but 'estimated'. */
+    minutes: number | null;
+    stopsAhead: number | null;
+    basis: 'no_run' | 'not_collected' | 'no_history' | 'too_far' | 'arrived' | 'estimated';
+    /** One sentence saying what this is, or why there is no figure. */
+    note: string;
+}
+
+/**
+ * "about 25 minutes", "about 1 hr 20 min".
+ *
+ * Rounded to five minutes above a quarter of an hour, because the input is a
+ * median multiplied by a queue length and "about 73 minutes" claims a
+ * precision it has not got.
+ */
+export function awayLabel(minutes: number): string {
+    const m = minutes > 15 ? Math.round(minutes / 5) * 5 : minutes;
+    if (m < 60) return `about ${m} min`;
+    const h = Math.floor(m / 60);
+    const rest = m % 60;
+    return rest === 0 ? `about ${h} hr` : `about ${h} hr ${rest} min`;
+}
+
 interface ClientOrder {
     id: number; reference: string; serviceType: string; serviceDate: string;
     pharmacy: string; recipientName: string; address: string; city: string; zip: string;
@@ -35,6 +71,8 @@ interface ClientOrder {
     arrivedAt: string | null; deliveredAt: string | null; returnedAt: string | null;
     receivedBy: string; noSignatureReason: string; failureReason: string;
     courier: string; sla: Sla;
+    /** How far away it is. See the Eta note above; absent on an older server. */
+    eta?: Eta | null;
     /* How the pharmacy sent it (drizzle/0051). Optional so a page served by
        an older server renders rather than throwing: these are new fields on
        an endpoint the portal already had. */
@@ -605,6 +643,27 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                             {o.status !== 'delivered' && o.status !== 'failed' && (
                                 <><br /><span className="izy-muted">{slaLabel(o.sla).text}</span></>
                             )}
+                            {/* HOW FAR AWAY IT IS, which is the question this
+                                page exists to answer and the one thing a
+                                pharmacist previously had to open each row in
+                                turn to find out.
+
+                                Only when there is a figure. The server's
+                                refusals are honest and necessary -- not yet
+                                collected, not enough history -- but printed
+                                against forty rows they are forty lines of
+                                why-not, and the reason belongs on the
+                                delivery somebody actually asked about. The
+                                stops are shown beside the minutes so this
+                                reads as a queue position rather than a
+                                routed promise; it is not one. */}
+                            {o.eta?.basis === 'estimated' && o.eta.minutes !== null && (
+                                <><br /><strong>{awayLabel(o.eta.minutes)} away</strong>
+                                    {o.eta.stopsAhead !== null && o.eta.stopsAhead > 0 && (
+                                        <span className="izy-muted"> · {o.eta.stopsAhead} {o.eta.stopsAhead === 1 ? 'stop' : 'stops'} ahead</span>
+                                    )}
+                                </>
+                            )}
                         </td>
                         <td className="izy-muted">
                             {o.pickedUpAt && <>collected {clock(o.pickedUpAt)}<br /></>}
@@ -667,6 +726,31 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                             {detail.receivedBy && <tr><th>Signed for by</th><td>{detail.receivedBy}</td></tr>}
                             {detail.noSignatureReason && <tr><th>Left without a signature</th><td>{detail.noSignatureReason}</td></tr>}
                             <tr><th>Courier</th><td>{detail.courier || 'not yet assigned'}</td></tr>
+                            {/* ON THE SCREEN AT LAST. The server has computed
+                                this for a single delivery since it was built
+                                and no page ever read it, so "estimated
+                                delivery time", which University Health asked
+                                for by name, existed only in the JSON.
+
+                                The note is shown whether or not there is a
+                                figure, because here it is the answer: a
+                                pharmacist who opened one delivery to ask when
+                                it will arrive is better served by "not yet
+                                collected from the pharmacy" than by a blank
+                                row. */}
+                            {detail.eta && (
+                                <tr>
+                                    <th>How far away</th>
+                                    <td>
+                                        {detail.eta.basis === 'estimated' && detail.eta.minutes !== null
+                                            ? <strong>{awayLabel(detail.eta.minutes)}</strong>
+                                            : <span className="izy-muted">no estimate</span>}
+                                        {detail.eta.note && (
+                                            <><br /><span className="izy-muted">{detail.eta.note}</span></>
+                                        )}
+                                    </td>
+                                </tr>
+                            )}
                         </tbody>
                     </table>
 

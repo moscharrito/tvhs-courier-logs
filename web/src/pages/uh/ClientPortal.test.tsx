@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { ClientPortal } from './ClientPortal';
+import { ClientPortal, awayLabel } from './ClientPortal';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
 
@@ -476,5 +476,127 @@ describe('arriving from the performance page', () => {
         renderPortal();
         await settled();
         expect(screen.queryByText(/^Showing/)).toBeNull();
+    });
+});
+
+/* ───────────────────────────────────────── how far away it is
+ *
+ * The server worked this out for a single delivery from the start and no
+ * screen ever read it, so "estimated delivery time", which University Health
+ * asked for by name, existed only in the JSON. It is on the list now, because
+ * a pharmacy watching a dozen deliveries wants to know which is next without
+ * opening twelve panels.
+ */
+describe('the estimate on the list', () => {
+    const onItsWay = (eta: unknown) => order({
+        status: 'picked_up', arrivedAt: null, deliveredAt: null, receivedBy: '',
+        sla: sla({ state: 'due', minutesToDue: 40 }), eta,
+    });
+
+    it('says how far away a delivery on the way is', async () => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders*`]: list({
+                orders: [onItsWay({ minutes: 36, stopsAhead: 2, basis: 'estimated', note: '2 stops ahead of it, at about 12 minutes a stop.' })],
+            }),
+        }));
+        await settled();
+
+        const row = screen.getByText('Ines Vargas').closest('tr') as HTMLElement;
+        expect(row).toHaveTextContent('about 35 min away');
+        /* The queue position beside the figure, so nobody reads it as a
+           routed arrival. It is not one: see modules/uh/eta.ts. */
+        expect(row).toHaveTextContent('2 stops ahead');
+    });
+
+    it('rounds, because the input is a median times a queue length', async () => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders*`]: list({
+                orders: [onItsWay({ minutes: 73, stopsAhead: 5, basis: 'estimated', note: '' })],
+            }),
+        }));
+        await settled();
+        // "about 73 minutes" claims a precision this has not got.
+        const row = screen.getByText('Ines Vargas').closest('tr') as HTMLElement;
+        expect(row).toHaveTextContent('about 1 hr 15 min away');
+        expect(row).not.toHaveTextContent('73');
+    });
+
+    it('never shows it as a clock time, which would read as a promise', async () => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders*`]: list({
+                orders: [onItsWay({ minutes: 24, stopsAhead: 1, basis: 'estimated', note: '' })],
+            }),
+        }));
+        await settled();
+        const row = screen.getByText('Ines Vargas').closest('tr') as HTMLElement;
+        expect(row.textContent).not.toMatch(/\d{1,2}:\d{2}\s*(am|pm)?\s*(arriv|eta|away)/i);
+    });
+
+    it('stays quiet on the list when there is no figure', async () => {
+        /* The refusals are honest and they are not list material: forty rows
+           of "not yet collected" is forty lines of why-not. The reason
+           belongs on the delivery somebody actually asked about. */
+        renderPortal(routes({
+            [`GET ${BASE}/orders*`]: list({
+                orders: [onItsWay({ minutes: null, stopsAhead: null, basis: 'not_collected', note: 'Not yet collected from the pharmacy.' })],
+            }),
+        }));
+        await settled();
+        const row = screen.getByText('Ines Vargas').closest('tr') as HTMLElement;
+        expect(row).not.toHaveTextContent('away');
+        expect(row).not.toHaveTextContent('Not yet collected');
+    });
+
+    it('renders a list from a server too old to send one', async () => {
+        /* The field is new on an endpoint the portal already had. A page that
+           throws is worse than a page without a column. */
+        renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ orders: [onItsWay(undefined)] }) }));
+        await settled();
+        expect(screen.getByText('Ines Vargas')).toBeInTheDocument();
+    });
+
+    it('gives the reason on the delivery somebody opens', async () => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders/21`]: detail({
+                status: 'assigned', arrivedAt: null, deliveredAt: null, receivedBy: '',
+                eta: { minutes: null, stopsAhead: null, basis: 'not_collected', note: 'Not yet collected from the pharmacy.' },
+            }),
+        }));
+        await settled();
+        fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
+
+        const proof = await screen.findByRole('region', { name: /Proof of delivery for Ines Vargas/ });
+        expect(proof).toHaveTextContent('How far away');
+        /* Here the refusal IS the answer: a pharmacist who opened one
+           delivery to ask when it arrives is better served by the reason
+           than by a blank row. */
+        expect(proof).toHaveTextContent('Not yet collected from the pharmacy');
+        expect(proof).toHaveTextContent('no estimate');
+    });
+
+    it('shows the figure and its basis on the delivery somebody opens', async () => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders/21`]: detail({
+                status: 'picked_up', arrivedAt: null, deliveredAt: null, receivedBy: '',
+                eta: { minutes: 36, stopsAhead: 2, basis: 'estimated', note: '2 stops ahead of it, at about 12 minutes a stop.' },
+            }),
+        }));
+        await settled();
+        fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
+
+        const proof = await screen.findByRole('region', { name: /Proof of delivery for Ines Vargas/ });
+        expect(proof).toHaveTextContent('about 35 min');
+        expect(proof).toHaveTextContent('at about 12 minutes a stop');
+    });
+});
+
+describe('awayLabel', () => {
+    it('leaves a short wait alone and rounds a long one', () => {
+        expect(awayLabel(7)).toBe('about 7 min');
+        expect(awayLabel(15)).toBe('about 15 min');
+        expect(awayLabel(36)).toBe('about 35 min');
+        expect(awayLabel(60)).toBe('about 1 hr');
+        expect(awayLabel(73)).toBe('about 1 hr 15 min');
+        expect(awayLabel(145)).toBe('about 2 hr 25 min');
     });
 });

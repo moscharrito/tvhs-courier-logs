@@ -132,6 +132,18 @@ describe('a contract manager exporting the day', () => {
         expect(header.join(' ')).not.toMatch(/_id|_at\b|external_ref/);
     });
 
+    it('carries no estimated arrival, because a spreadsheet is read tomorrow', async () => {
+        /* The portal's list shows how far away each delivery is, and that
+           figure is a position in a courier's queue: true for about ten
+           minutes. A column of them in a file somebody keeps would be read
+           next week as though it meant something. Deliberately absent, so
+           this is a decision rather than an omission waiting to be "fixed". */
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await manager.get(`${CLIENT}/orders.xlsx?from=${today}&to=${today}`).buffer().parse(binary);
+        const [header] = await sheetOf(res);
+        expect(header.join(' ')).not.toMatch(/eta|how far|away|stops ahead|estimate/i);
+    });
+
     it('says on the file what it is and that it holds patient data', async () => {
         /* A spreadsheet outlives the conversation that produced it. */
         const manager = await agentFor('uh.manager', 'manager-pass-1');

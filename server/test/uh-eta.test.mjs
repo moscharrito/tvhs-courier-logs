@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
-import { minutesPerStop, etaFor, MIN_SAMPLES, MAX_USEFUL_MINUTES } from '../src/modules/uh/eta.ts';
+import { minutesPerStop, etaFor, etasFor, MIN_SAMPLES, MAX_USEFUL_MINUTES } from '../src/modules/uh/eta.ts';
 
 const UH = '/api/projects/uh/uh';
 const ORDERS = `${UH}/orders`;
@@ -207,4 +207,145 @@ describe('what the pharmacy is shown', () => {
         expect(res.body.eta.minutes).toBeNull();
         expect(res.body.eta.note).toMatch(/not yet planned/i);
     });
+});
+
+/* ───────────────────────────────────────────── a page at a time
+ *
+ * The estimate was computed for one delivery and shown on no screen, which
+ * made "track our deliveries" something a pharmacy could only do one row at a
+ * time. Putting it on the list is only useful if the list stays quick, so
+ * these hold the query count as well as the figures.
+ */
+describe('the whole page at once', () => {
+    /* A stand-in that records what was asked, so "three queries, not three a
+       row" is a test rather than a claim in a comment. */
+    const counting = () => {
+        const calls = [];
+        return { calls, client: { execute: (q) => { calls.push(q); return client.execute(q); } } };
+    };
+
+    const input = (o, over = {}) => ({
+        projectId, orderId: o.id, status: o.status ?? 'ready',
+        arrivedAt: null, pickupAt: null, ...over,
+    });
+
+    it('answers every row it is given', async () => {
+        const some = [await order(), await order(), await order()];
+        const got = await etasFor(client, projectId, some.map((o) => input(o)));
+        expect(got.size).toBe(3);
+        for (const o of some) expect(got.get(o.id).basis, `#${o.id}`).toBe('no_run');
+    });
+
+    it('spends nothing at all on deliveries that are already finished', async () => {
+        /* Forty delivered rows is what a pharmacy's afternoon looks like. The
+           answer needs no lookup, so it should cost no lookup. */
+        const spy = counting();
+        const inputs = [];
+        for (let i = 1; i <= 40; i += 1) {
+            inputs.push({ projectId, orderId: 900000 + i, status: 'delivered', arrivedAt: null, pickupAt: null });
+        }
+        const got = await etasFor(spy.client, projectId, inputs);
+        expect(spy.calls.length).toBe(0);
+        expect(got.size).toBe(40);
+        expect(got.get(900001).basis).toBe('arrived');
+    });
+
+    it('costs three queries for a page rather than three a row', async () => {
+        const ids = [];
+        for (let i = 0; i < 20; i += 1) ids.push((await order()).id);
+        const runRes = await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Page', orderIds: ids });
+        expect(runRes.status, JSON.stringify(runRes.body)).toBe(201);
+
+        const spy = counting();
+        const got = await etasFor(spy.client, projectId, ids.map((id) => ({
+            projectId, orderId: id, status: 'picked_up',
+            arrivedAt: null, pickupAt: '2026-09-20T14:00:00.000Z',
+        })), new Date('2026-09-21T00:00:00.000Z'));
+
+        expect(got.size).toBe(20);
+        /* The placements, the median, and the open stops on the runs those
+           touch. Twenty rows the old way would have been sixty. */
+        expect(spy.calls.length).toBe(3);
+    });
+
+    it('gives the same answer as opening that one delivery', async () => {
+        const ahead = await order();
+        const mine = await order();
+        await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Agree', orderIds: [ahead.id, mine.id] });
+        const one = { projectId, orderId: mine.id, status: 'picked_up', arrivedAt: null, pickupAt: '2026-09-20T14:00:00.000Z' };
+        const at = new Date('2026-09-21T00:00:00.000Z');
+
+        const batched = (await etasFor(client, projectId, [one], at)).get(mine.id);
+        const alone = await etaFor(client, one, at);
+        expect(batched).toEqual(alone);
+        expect(batched.basis).toBe('estimated');
+    });
+
+    it('cannot be looking at two runs, because a stop belongs to one', async () => {
+        /* Both lookups pick the newest run_stops row for an order, which
+           sounds like it decides something and does not: the schema allows
+           only one. Asserted so that the day somebody relaxes the index to
+           let a delivery be replanned, this is a failing test rather than a
+           silent choice of whichever row came back first. */
+        const mine = await order();
+        const first = await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'First plan', orderIds: [mine.id] });
+        expect(first.status, JSON.stringify(first.body)).toBe(201);
+        const second = await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Second plan', orderIds: [] });
+
+        await expect(client.execute({
+            sql: 'INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES (?, ?, ?, ?)',
+            args: [projectId, second.body.id, mine.id, 1],
+        })).rejects.toThrow(/UNIQUE/i);
+    });
+});
+
+describe('the list the pharmacy actually reads', () => {
+    /* The history the rest of this file teaches is dated September, and the
+       endpoint learns from the real clock: twenty-eight days back, which is
+       what LEARN_DAYS is for. A list test therefore needs its own recent
+       history or the server honestly answers "not enough completed stops". */
+    async function teachRecentHistory(gapMinutes, howMany) {
+        const runRes = await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'Recent', orderIds: [] });
+        let at = Date.now() - (howMany + 2) * gapMinutes * 60000;
+        for (let i = 0; i < howMany + 1; i += 1) {
+            const o = await order();
+            await client.execute({
+                sql: 'UPDATE orders SET status = ?, delivered_at = ? WHERE id = ?',
+                args: ['delivered', new Date(at).toISOString(), o.id],
+            });
+            await client.execute({
+                sql: 'INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES (?, ?, ?, ?)',
+                args: [projectId, runRes.body.id, o.id, i + 1],
+            });
+            at += gapMinutes * 60000;
+        }
+    }
+
+    it('carries how far away each delivery is', async () => {
+        await teachRecentHistory(10, MIN_SAMPLES + 2);
+        const ahead = await order();
+        const mine = await order();
+        await admin.post(RUNS).send({ courierUsername: 'ada.courier', label: 'On the list', orderIds: [ahead.id, mine.id] });
+        /* Collected, so there is a journey to be part of. */
+        await client.execute({
+            sql: "UPDATE orders SET status = 'picked_up', pickup_at = ? WHERE id IN (?, ?)",
+            args: [new Date().toISOString(), ahead.id, mine.id],
+        });
+
+        const res = await pharmacist.get(`${UH}/client/orders`);
+        expect(res.status).toBe(200);
+        /* Every row, not only the ones with a figure: a missing key reads as
+           "no estimate" to one caller and throws in another. */
+        for (const row of res.body.orders) expect(row.eta, `#${row.id}`).toBeTruthy();
+
+        const row = res.body.orders.find((o) => o.id === mine.id);
+        expect(row.eta.basis).toBe('estimated');
+        expect(row.eta.stopsAhead).toBe(1);
+        expect(row.eta.minutes).toBeGreaterThan(0);
+        // A queue position, not a clock time. See the module header.
+        expect(row.eta.note).not.toMatch(/\d{1,2}:\d{2}/);
+    });
+
+    /* Whether it stays off the spreadsheet is asserted in
+       uh-client-export.test.mjs, where the workbook is actually opened. */
 });

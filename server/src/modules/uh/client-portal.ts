@@ -37,7 +37,7 @@ import { mayReset } from './portal-capability';
 import { presentHandling, handlingFlags } from './handling';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
-import { etaFor } from './eta';
+import { etaFor, etasFor } from './eta';
 import { scopedReport, GROUPINGS, type Grouping } from './reports';
 import type { FileStorage } from '../../core/files/storage';
 import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos } from './pod-photos';
@@ -528,18 +528,41 @@ export function createClientPortalRouter(
     router.get('/orders', viewer, wrap(async (req, res) => {
         const got = await gatherOrders(req, res, MAX_ROWS);
         if (!got) return;
-        const { scope, sites, q, from, to, rows, names, truncated } = got;
+        const { project, scope, sites, q, from, to, rows, names, truncated } = got;
 
         await req.audit('client.list', 'order', null, {
             from, to, rows: rows.length, sites: sites.length,
             filters: Object.keys(q).filter((k) => ['status', 'siteId', 'reference'].includes(k)),
         });
 
+        /* ───────────────────────── how far away each one is, on the list
+         *
+         * This was computed for a single delivery and nowhere else, which
+         * made "track their own deliveries in real time" a thing you could
+         * only do one delivery at a time: a pharmacy watching a dozen had to
+         * open each in turn to find out which was next. The estimate was
+         * already being worked out and then shown to nobody, because the
+         * screen never read it either.
+         *
+         * Not in the export. A spreadsheet is opened tomorrow and a queue
+         * position is true for about ten minutes; a stale ETA in a file
+         * somebody keeps is worse than no column.
+         *
+         * Three queries for the whole page, not three per row. See etasFor.
+         */
+        const etas = await etasFor(client, project.id, rows.map((r) => ({
+            projectId: project.id, orderId: Number(r.id), status: r.status,
+            arrivedAt: r.arrived_at, pickupAt: r.pickup_at,
+        })));
+
         res.json({
             from,
             to,
             pharmacies: sites,
-            orders: rows.map((r) => present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '')),
+            orders: rows.map((r) => ({
+                ...present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? ''),
+                eta: etas.get(Number(r.id)) ?? null,
+            })),
             truncated,
             notes: scopeNote(sites, scope),
         });

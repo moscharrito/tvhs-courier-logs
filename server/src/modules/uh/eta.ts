@@ -139,42 +139,49 @@ export interface EtaInput {
 }
 
 /**
- * How far away one delivery is.
+ * True when there is nothing left to estimate: the courier is at the door, or
+ * the delivery is closed.
  *
- * Reads the run this order sits in, counts the stops before it that are not
- * finished, and multiplies by what a stop has been taking.
+ * Its own predicate because it is asked twice for different reasons -- once
+ * to decide, and once BEFORE any lookup so that a page of yesterday's
+ * deliveries costs no queries at all. Two copies of this test is how a list
+ * ends up estimating an arrival for something delivered last Tuesday.
  */
-export async function etaFor(client: Client, input: EtaInput, now = new Date()): Promise<Eta> {
-    /* Already there. Nothing to estimate and saying "about 6 minutes" while a
-       courier stands at the door reads as broken. */
-    if (input.arrivedAt !== null) return refuse('arrived');
-    if (input.status === 'delivered' || input.status === 'failed' || input.status === 'cancelled') {
-        return refuse('arrived');
-    }
+export function settled(input: EtaInput): boolean {
+    return input.arrivedAt !== null
+        || input.status === 'delivered'
+        || input.status === 'failed'
+        || input.status === 'cancelled';
+}
 
-    const stop = await client.execute({
-        sql: `SELECT rs.run_id, rs.sequence FROM run_stops rs
-              WHERE rs.project_id = ? AND rs.order_id = ?
-              ORDER BY rs.id DESC LIMIT 1`,
-        args: [input.projectId, input.orderId],
-    });
-    const mine = stop.rows[0];
-    if (!mine) return refuse('no_run');
+/** Where a stop sits in its run. */
+export interface Placement {
+    /** Stops earlier in the same run that nobody has closed yet. */
+    stopsAhead: number;
+}
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE DECISION, IN ONE PLACE.
+ *
+ * Every refusal described in the header is made here and nowhere else, so the
+ * figure a pharmacist sees against a row on a list of forty deliveries and
+ * the figure they see having opened that row are the same figure, reached the
+ * same way. The callers differ only in how they fetch: one delivery at a
+ * time, or five hundred in three queries.
+ *
+ * `placement` null means no run. `perStop` null means not enough history.
+ * Both are refusals, and neither is zero.
+ */
+export function etaFrom(input: EtaInput, placement: Placement | null, perStop: number | null): Eta {
+    /* Already there. Saying "about 6 minutes" while a courier stands at the
+       door reads as broken. */
+    if (settled(input)) return refuse('arrived');
+    if (!placement) return refuse('no_run');
     /* Before pickup there is no journey to be part of, only a plan. */
     if (input.pickupAt === null) return refuse('not_collected');
 
-    /* Stops earlier in the run that nobody has closed yet, this one included
-       in the queue but not in the count of what is ahead. */
-    const ahead = await client.execute({
-        sql: `SELECT COUNT(*) AS n FROM run_stops rs JOIN orders o ON o.id = rs.order_id
-              WHERE rs.project_id = ? AND rs.run_id = ? AND rs.sequence < ?
-                AND o.status NOT IN ('delivered', 'failed', 'cancelled')`,
-        args: [input.projectId, Number(mine['run_id']), Number(mine['sequence'])],
-    });
-    const stopsAhead = Number(ahead.rows[0]?.['n'] ?? 0);
-
-    const perStop = await minutesPerStop(client, input.projectId, now);
+    const { stopsAhead } = placement;
     if (perStop === null) return refuse('no_history', stopsAhead);
 
     /* Plus one for this stop's own drive: a courier with nothing ahead of
@@ -192,4 +199,134 @@ export async function etaFor(client: Client, input: EtaInput, now = new Date()):
             ? `On the way now; a stop has been taking about ${perStop} minutes.`
             : `${stopsAhead} ${stopsAhead === 1 ? 'stop' : 'stops'} ahead of it, at about ${perStop} minutes a stop.`,
     };
+}
+
+/** How many ids to put in one IN list. Well under any variable limit, and the
+ *  list above this caps at 500 rows anyway. */
+const IN_CHUNK = 400;
+
+const chunked = <T>(xs: readonly T[], n: number): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+    return out;
+};
+
+/**
+ * The run and sequence each of these orders currently sits at.
+ *
+ * Ascending id with the last write winning, which is the newest row. The
+ * single-delivery lookup said `ORDER BY rs.id DESC LIMIT 1` and this is the
+ * same rule for many orders at once.
+ *
+ * In practice neither rule decides anything: `run_stops_order_unique`
+ * (drizzle/0010) is a UNIQUE INDEX on (project_id, order_id), so an order is
+ * in at most one run and there is never a second row to choose between. Kept
+ * deliberate rather than tidied away, because if that index is ever relaxed
+ * to let a delivery be replanned, this should pick the newer plan rather than
+ * whichever row the engine happened to hand back first.
+ */
+async function placementsOf(
+    client: Client, projectId: number, orderIds: readonly number[],
+): Promise<Map<number, { runId: number; sequence: number }>> {
+    const found = new Map<number, { runId: number; sequence: number }>();
+    for (const batch of chunked(orderIds, IN_CHUNK)) {
+        const rs = await client.execute({
+            sql: `SELECT order_id, run_id, sequence FROM run_stops
+                  WHERE project_id = ? AND order_id IN (${batch.map(() => '?').join(',')})
+                  ORDER BY id`,
+            args: [projectId, ...batch],
+        });
+        for (const row of rs.rows) {
+            found.set(Number(row['order_id']), {
+                runId: Number(row['run_id']), sequence: Number(row['sequence']),
+            });
+        }
+    }
+    return found;
+}
+
+/** The sequence numbers still open on each of these runs, so a stop's queue
+ *  position is counted in memory rather than with a query per delivery. */
+async function openSequences(
+    client: Client, projectId: number, runIds: readonly number[],
+): Promise<Map<number, number[]>> {
+    const byRun = new Map<number, number[]>();
+    for (const batch of chunked(runIds, IN_CHUNK)) {
+        const rs = await client.execute({
+            sql: `SELECT rs.run_id, rs.sequence FROM run_stops rs JOIN orders o ON o.id = rs.order_id
+                  WHERE rs.project_id = ? AND rs.run_id IN (${batch.map(() => '?').join(',')})
+                    AND o.status NOT IN ('delivered', 'failed', 'cancelled')`,
+            args: [projectId, ...batch],
+        });
+        for (const row of rs.rows) {
+            const run = Number(row['run_id']);
+            const seqs = byRun.get(run) ?? [];
+            seqs.push(Number(row['sequence']));
+            byRun.set(run, seqs);
+        }
+    }
+    return byRun;
+}
+
+/**
+ * How far away a whole page of deliveries is.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THREE QUERIES, NOT THREE PER ROW.
+ *
+ * The single-delivery version cost three round trips, which is nothing when a
+ * pharmacist opens one delivery and 1,500 when the portal lists five hundred.
+ * A tracking page that takes eleven seconds is a tracking page nobody leaves
+ * open, and a pharmacy watching a dozen deliveries is the entire point of it.
+ *
+ * So: the median stop time once for the project, the run placements for every
+ * order in one IN list, and the open stops on the runs those touch in
+ * another. The queue position is then counted in memory. Deliveries that are
+ * already finished cost nothing: `settled` answers them before any lookup.
+ *
+ * Returns an entry for EVERY id asked about -- a missing key would read as
+ * "no estimate" to one caller and crash another.
+ */
+export async function etasFor(
+    client: Client, projectId: number, inputs: readonly EtaInput[], now = new Date(),
+): Promise<Map<number, Eta>> {
+    const out = new Map<number, Eta>();
+    const live: EtaInput[] = [];
+    for (const input of inputs) {
+        if (settled(input)) out.set(input.orderId, etaFrom(input, null, null));
+        else live.push(input);
+    }
+    if (live.length === 0) return out;
+
+    const placements = await placementsOf(client, projectId, live.map((i) => i.orderId));
+
+    /* Only learn the median when something could actually use it. A page of
+       deliveries still sitting on the counter should not pay for a 28-day
+       scan of every completed stop to be told "not yet collected". */
+    const estimable = live.filter((i) => i.pickupAt !== null && placements.has(i.orderId));
+    const perStop = estimable.length > 0 ? await minutesPerStop(client, projectId, now) : null;
+    const open = estimable.length > 0
+        ? await openSequences(client, projectId, [...new Set(estimable.map((i) => placements.get(i.orderId)!.runId))])
+        : new Map<number, number[]>();
+
+    for (const input of live) {
+        const mine = placements.get(input.orderId);
+        if (!mine) { out.set(input.orderId, etaFrom(input, null, perStop)); continue; }
+        const ahead = (open.get(mine.runId) ?? []).filter((seq) => seq < mine.sequence).length;
+        out.set(input.orderId, etaFrom(input, { stopsAhead: ahead }, perStop));
+    }
+    return out;
+}
+
+/**
+ * How far away one delivery is.
+ *
+ * Through the batch, so there is one lookup rule as well as one decision. For
+ * a single order this is the same three queries it always was.
+ */
+export async function etaFor(client: Client, input: EtaInput, now = new Date()): Promise<Eta> {
+    const got = await etasFor(client, input.projectId, [input], now);
+    /* etasFor answers every id it is given, so the fallback is unreachable.
+       It is here because a type cannot know that. */
+    return got.get(input.orderId) ?? refuse('no_run');
 }
