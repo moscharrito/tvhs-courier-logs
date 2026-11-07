@@ -69,6 +69,11 @@ interface Detail extends OrderRow {
     /* Absent for a courier. The server withholds it rather than the screen
        hiding it, so this is undefined rather than a blank card. */
     pricing?: Pricing;
+    /* The signed part 3, proving undelivered medication reached a counter.
+       Three states: available, nothing came back, or photographed but this
+       server cannot serve it. Optional because a browser holding a cached
+       bundle can outlive the server that grew the field. */
+    returnForm?: { available: boolean; reason: string };
     allowed: string[];
 }
 
@@ -181,6 +186,41 @@ export function OrderDetail() {
                 compact
                 detail="The signed record for this delivery"
             />
+
+            {/* PROOF THE MEDICATION GOT BACK.
+
+                The pharmacy's portal grew this first, and our copy of a
+                delivery is supposed to show the same facts as theirs: the
+                last time one side learned about a photograph and the other
+                did not, dispatch spent a fortnight downloading a proof of
+                delivery with nothing in it to look at.
+
+                Inline rather than only in the PDF, because the question it
+                answers -- "did that actually come back?" -- gets asked on
+                the phone while somebody is looking at this screen. */}
+            {order.returnForm?.available && (
+                <div className="izy-card">
+                    <h2>Proof of return</h2>
+                    <figure className="izy-pod-photo">
+                        <img
+                            src={`/api/projects/${code}/uh/orders/${order.id}/return-form`}
+                            alt="The signed return form for this delivery"
+                            loading="lazy"
+                        />
+                        <figcaption className="izy-muted">
+                            Part 3 of the docket, signed at the counter when the packages were handed
+                            back and photographed by the courier. One form covers everything returned
+                            together, so it may list other deliveries brought back at the same time.
+                        </figcaption>
+                    </figure>
+                </div>
+            )}
+            {order.returnForm && !order.returnForm.available && order.returnForm.reason && (
+                <div className="izy-card">
+                    <h2>Proof of return</h2>
+                    <p className="izy-muted">{order.returnForm.reason}</p>
+                </div>
+            )}
 
             <div className="izy-card">
                 <div className="izy-row-between">

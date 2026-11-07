@@ -141,3 +141,66 @@ describe('a site lead looking one up', () => {
         expect(screen.getAllByText(/Ines Vargas/).length).toBeGreaterThan(0);
     });
 });
+
+/* ───────────────────────────────── proof that it came back
+ *
+ * Inline rather than only inside the PDF, because the question it answers
+ * -- "did that actually come back?" -- gets asked on the phone while
+ * somebody is looking at this screen.
+ */
+describe('the return form on our own copy', () => {
+    const cameBack = (over = {}) => ({
+        status: 'failed', deliveredAt: null, receivedBy: '', failureReason: 'nobody_home',
+        returnedAt: '2026-10-31T20:10:00.000Z', ...over,
+    });
+
+    it('shows the signed sheet when there is one', async () => {
+        renderAs(asLead, cameBack({ returnForm: { available: true, reason: '' } }));
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.getByRole('heading', { name: 'Proof of return' })).toBeInTheDocument();
+        expect(screen.getByAltText(/signed return form/i))
+            .toHaveAttribute('src', '/api/projects/uh/uh/orders/4182/return-form');
+    });
+
+    it('says the sheet may name other patients, because it does', async () => {
+        renderAs(asLead, cameBack({ returnForm: { available: true, reason: '' } }));
+        await screen.findByRole('heading', { name: 'Order #4182' });
+        expect(screen.getByText(/may list other deliveries brought back at the same time/i))
+            .toBeInTheDocument();
+    });
+
+    it('gives the reason instead of a broken image', async () => {
+        renderAs(asLead, cameBack({
+            returnForm: {
+                available: false,
+                reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
+            },
+        }));
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.getByRole('heading', { name: 'Proof of return' })).toBeInTheDocument();
+        expect(screen.getByText(/no photograph of the signed return form/i)).toBeInTheDocument();
+        expect(screen.queryByAltText(/signed return form/i)).toBeNull();
+    });
+
+    it('says nothing at all about a delivery that never came back', async () => {
+        /* A return is a custody fact and never an outcome: the card must not
+           imply a missing sheet on a delivery that arrived. */
+        renderAs(asLead, { returnForm: { available: false, reason: '' } });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+        expect(screen.queryByRole('heading', { name: 'Proof of return' })).toBeNull();
+    });
+
+    it('renders against a server too old to send the field', async () => {
+        renderAs(asLead, cameBack());
+        await screen.findByRole('heading', { name: 'Order #4182' });
+        expect(screen.queryByRole('heading', { name: 'Proof of return' })).toBeNull();
+        /* That the rest of the page is still there. Asserted on the proof
+           of delivery link rather than the patient's name: the name is
+           drawn in different places for different roles and outcomes, and
+           an assertion that moves with the layout tells you nothing about
+           the field this test is actually about. */
+        expect(screen.getByText('Proof of delivery (PDF)')).toBeInTheDocument();
+    });
+});

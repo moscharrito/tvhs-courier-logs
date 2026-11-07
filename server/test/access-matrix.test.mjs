@@ -388,6 +388,10 @@ const MATRIX = [
     ['DELETE', `${UH}/orders/999999`, UH_STAFF, 'a mistaken STAT or ad hoc order, removed completely; no undo'],
     ['POST', `${UH}/orders/999999/out-of-area`, UH_STAFF, 'a courier cannot authorise their own long drive'],
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_LEAD_READ, ''],
+    /* Our copy of the signed part 3. Same readers as the document it is a
+       page of: a courier may see the sheet they photographed on their own
+       run, and a lead their own pharmacy's. */
+    ['GET', `${UH}/orders/999999/return-form`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999/directions`, UH_LEAD_READ, ''],
     ['POST', `${UH}/orders/999999/events`, UH_OPERATES, 'which event is then gated by role again'],
     /* Sending somebody back to a door. Dispatch only: a courier does not

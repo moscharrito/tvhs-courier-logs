@@ -131,6 +131,53 @@ export async function returnPhoto(
 }
 
 /**
+ * What to tell a screen about the return form.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THREE ANSWERS, AND THEY ARE GENUINELY DIFFERENT TO A READER.
+ *
+ *   nothing came back, so there is nothing to say;
+ *   something came back and here is the signed sheet;
+ *   something came back and the sheet cannot be served from here.
+ *
+ * The third is why this asks storage instead of assuming. A flag the server
+ * guesses is a link to a 404, and "there is no photograph" told to somebody
+ * when the truth is "this server cannot reach the bucket" makes them stop
+ * asking about medication that may genuinely be missing.
+ *
+ * `returnedAt` rather than the status: a return is a custody fact and never
+ * an outcome, so a failed delivery sitting in a van and one already back on
+ * a counter share a status and are not the same thing. See
+ * modules/uh/returns.ts.
+ *
+ * HERE RATHER THAN IN EITHER ROUTER, because both the pharmacy's copy and
+ * ours show this and they are supposed to agree. The last time one copy
+ * learned about a photograph and the other did not, dispatch spent a
+ * fortnight downloading a proof of delivery with nothing in it. That is the
+ * whole reason this file exists.
+ */
+export async function returnFormStatus(
+    client: Client, storage: FileStorage, projectId: number, orderId: number, returnedAt: string | null,
+): Promise<{ available: boolean; reason: string }> {
+    if (!returnedAt) return { available: false, reason: '' };
+    const found = await returnPhoto(client, projectId, orderId);
+    if (!found) {
+        return {
+            available: false,
+            reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
+        };
+    }
+    if (!storage.available) {
+        return {
+            available: false,
+            reason: 'The signed return form was photographed. File storage is not configured on this '
+                + 'server, so it cannot be shown.',
+        };
+    }
+    return { available: true, reason: '' };
+}
+
+/**
  * The newest unbound photograph named by a custody event of one type.
  *
  * `f.order_id IS NULL` is the half that keeps this from printing the same

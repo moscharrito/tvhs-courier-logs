@@ -40,7 +40,7 @@ import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor, etasFor } from './eta';
 import { scopedReport, GROUPINGS, type Grouping } from './reports';
 import type { FileStorage } from '../../core/files/storage';
-import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos, returnPhoto } from './pod-photos';
+import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus } from './pod-photos';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
@@ -311,38 +311,11 @@ export function createClientPortalRouter(
         };
     }
 
-    /**
-     * What to tell the client about the return form.
-     *
-     * Three states, and they are genuinely different to a pharmacist:
-     * nothing came back; something came back and here is the signed sheet;
-     * something came back and the sheet cannot be shown. The last one is
-     * why this asks storage rather than assuming -- a link to a photograph
-     * this server cannot serve is worse than a sentence saying why.
-     *
-     * `returnedAt` rather than the status: a return is a custody fact and
-     * never an outcome, so a failed delivery sitting in a van and one
-     * already back on a counter have the same status and are not the same
-     * thing. See modules/uh/returns.ts.
-     */
-    async function returnFormFor(projectId: number, orderId: number, returnedAt: string | null) {
-        if (!returnedAt) return { available: false, reason: '' };
-        const found = await returnPhoto(client, projectId, orderId);
-        if (!found) {
-            return {
-                available: false,
-                reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
-            };
-        }
-        if (!storage.available) {
-            return {
-                available: false,
-                reason: 'The signed return form was photographed. File storage is not configured on this '
-                    + 'server, so it cannot be shown.',
-            };
-        }
-        return { available: true, reason: '' };
-    }
+    /* The return form's three states live in pod-photos.ts, because our own
+       copy of this delivery shows the same thing and the two must not learn
+       about a photograph separately. See returnFormStatus. */
+    const returnFormFor = (projectId: number, orderId: number, returnedAt: string | null) =>
+        returnFormStatus(client, storage, projectId, orderId, returnedAt);
 
     /** What to tell the client about the photograph, asked rather than assumed. */
     async function photoFor(projectId: number, orderId: number) {

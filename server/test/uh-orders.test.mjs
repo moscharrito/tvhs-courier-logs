@@ -539,3 +539,85 @@ describe('access control', () => {
         expect(custody.map((r) => r.code)).toEqual(['uh']);
     });
 });
+
+/* ────────────────────────────── our copy of the return form
+ *
+ * The pharmacy's portal grew this first. Our copy of a delivery is supposed
+ * to show the same facts as theirs, and the last time one side learned
+ * about a photograph and the other did not, dispatch spent a fortnight
+ * downloading a proof of delivery with nothing in it.
+ */
+describe('the return form on our own order view', () => {
+    const PROJECT = 'SELECT project_id FROM orders WHERE id = ?';
+
+    /** A failed delivery carried back to a counter, with the one sheet that
+     *  covers everything returned together. order_id NULL is the shape that
+     *  needed its own lookup. */
+    async function broughtBack({ photographed = true } = {}) {
+        const order = await makeOrder();
+        const pid = Number((await sql(PROJECT, [order.id])).rows[0].project_id);
+        const at = new Date().toISOString();
+
+        let fileId = null;
+        if (photographed) {
+            fileId = Number((await sql(
+                `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+                 VALUES (?, NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', 'route.courier', ?, ?) RETURNING id`,
+                [pid, `uh/test/return/${Math.random()}.jpg`, at, at],
+            )).rows[0].id);
+        }
+        await sql(
+            `INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status, file_id)
+             VALUES (?, ?, 'returned', ?, 'route.courier', 'failed', 'failed', ?)`,
+            [pid, order.id, at, fileId],
+        );
+        await sql('UPDATE orders SET returned_at = ? WHERE id = ?', [at, order.id]);
+        return order;
+    }
+
+    it('tells dispatch the signed sheet exists', async () => {
+        const order = await broughtBack();
+        const res = await admin.get(`${BASE}/${order.id}`);
+        expect(res.status).toBe(200);
+        /* Storage is unconfigured in tests, so it cannot be served -- and
+           saying why beats a link to a 404. */
+        expect(res.body.returnForm.available).toBe(false);
+        expect(res.body.returnForm.reason).toMatch(/file storage is not configured/i);
+    });
+
+    it('says plainly when something came back with no photograph', async () => {
+        const order = await broughtBack({ photographed: false });
+        const res = await admin.get(`${BASE}/${order.id}`);
+        expect(res.body.returnForm.reason).toMatch(/no photograph of the signed return form/i);
+    });
+
+    it('says nothing about a delivery that never came back', async () => {
+        /* A return is a custody fact and never an outcome. The card must not
+           imply a missing sheet on a delivery that arrived. */
+        const order = await makeOrder();
+        const res = await admin.get(`${BASE}/${order.id}`);
+        expect(res.body.returnForm).toEqual({ available: false, reason: '' });
+    });
+
+    it('answers the same thing the pharmacy is told', async () => {
+        /* THE POINT OF THE SHARED HELPER. Two routes, one sentence: these
+           drifted once already over a photograph and the fix was to stop
+           having two copies of the question. */
+        const order = await broughtBack();
+        const ours = (await admin.get(`${BASE}/${order.id}`)).body.returnForm;
+        const theirs = (await admin.get(`/api/projects/uh/uh/client/orders/${order.id}`)).body.returnForm;
+        expect(ours).toEqual(theirs);
+    });
+
+    it('refuses the photograph when storage cannot serve it, rather than 404', async () => {
+        const order = await broughtBack();
+        const res = await admin.get(`${BASE}/${order.id}/return-form`);
+        expect(res.status).toBe(503);
+        expect(res.body.code).toBe('files.unavailable');
+    });
+
+    it('has none to offer when nothing was photographed', async () => {
+        const order = await broughtBack({ photographed: false });
+        expect((await admin.get(`${BASE}/${order.id}/return-form`)).status).toBe(404);
+    });
+});

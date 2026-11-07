@@ -21,7 +21,7 @@ import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { namesFor, displayName } from './people';
-import { hasProofPhoto, attachPhotos } from './pod-photos';
+import { hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus } from './pod-photos';
 import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
 import { priceOrder } from './order-pricing';
@@ -1191,8 +1191,52 @@ export function createOrdersRouter(
                 describes: EVENT_RULES[String(e['type']) as CustodyEventType]?.describes ?? '',
             })),
             pricing,
+            /* WHETHER THE MEDICATION GOT BACK, as something dispatch can
+               look at rather than only download.
+
+               Our copy and the client's are supposed to show the same
+               facts, and this is the field that stops them diverging
+               again: the portal grew the return form first, and the last
+               time one copy learned about a photograph and the other did
+               not, dispatch spent a fortnight reading a proof of delivery
+               with nothing in it. */
+            returnForm: await returnFormStatus(client, storage, req.project!.id, Number(order.id), order.returned_at),
             allowed: availableEvents(order.status as OrderStatus, [roleOf(req)]),
         });
+    }));
+
+    /* ------------------------------------------------- the return form ----
+     *
+     * The signed part 3, proving undelivered medication reached a counter.
+     * The pharmacy's copy of this route is in client-portal.ts; this is
+     * ours, and the two exist for the reason stated above the pod.pdf
+     * handler: one document, two routes, and the pair drift the moment only
+     * one of them learns something.
+     *
+     * `readers` rather than dispatch-only. A courier opening their own run's
+     * Details link may see the sheet they themselves photographed, and a
+     * site lead may see it for their own pharmacy -- leadScope is applied by
+     * loadOr404 like everywhere else here.
+     */
+    router.get('/:id/return-form', readers, wrap(async (req, res) => {
+        const order = await loadOr404(req, res);
+        if (!order) return;
+
+        const found = await returnPhoto(client, req.project!.id, Number(order.id));
+        if (!found) { res.status(404).json({ error: 'No return form was photographed for this delivery' }); return; }
+
+        if (!storage.available) {
+            res.status(503).json({
+                error: 'File storage is not configured on this server, so the photograph cannot be shown.',
+                code: 'files.unavailable',
+            });
+            return;
+        }
+
+        await req.audit('order.return_form', 'file', String(found.id), { orderId: Number(order.id) });
+
+        const signed = storage.presignDownload(found.key);
+        res.redirect(302, signed.url);
     }));
 
     return router;
