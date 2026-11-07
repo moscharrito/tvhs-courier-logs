@@ -557,6 +557,11 @@ interface DetailResponse extends ClientOrder {
        server that grew this field, and a proof of delivery panel that throws
        is worse than one with no photograph in it. */
     photo?: { available: boolean; reason: string };
+    /* The signed part 3, proving undelivered medication reached a counter.
+       Absent on a delivery that never came back, and absent entirely from a
+       server older than this field -- hence optional, for the same reason
+       `photo` is. */
+    returnForm?: { available: boolean; reason: string };
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -830,6 +835,39 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                     {!detail.photo?.available && detail.photo?.reason && (
                         <p className="izy-muted">{detail.photo.reason}</p>
                     )}
+                </>
+            )}
+
+            {/* OUTSIDE the proof-of-delivery block, because a return is the
+                opposite of one: these are the deliveries that did NOT
+                happen, and the proof block is gated on the handover.
+
+                A pharmacy's question about a failed delivery is not "show
+                me the door", it is "where is my medication". The courier
+                has photographed the signed part 3 at the counter on every
+                return since the signature came off glass, and until now no
+                screen showed it to the people whose medication it was. */}
+            {detail?.returnForm?.available && (
+                <>
+                    <h3>Proof of return</h3>
+                    <figure className="izy-pod-photo">
+                        <img
+                            src={`/api/projects/${code}/uh/client/orders/${order.id}/return-form`}
+                            alt={`The signed return form for ${order.recipientName}`}
+                            loading="lazy"
+                        />
+                        <figcaption className="izy-muted">
+                            Part 3 of the docket, signed at the counter when the packages were handed back
+                            and photographed by the courier. One form covers everything returned together,
+                            so it may list other deliveries brought back at the same time.
+                        </figcaption>
+                    </figure>
+                </>
+            )}
+            {detail?.returnForm && !detail.returnForm.available && detail.returnForm.reason && (
+                <>
+                    <h3>Proof of return</h3>
+                    <p className="izy-muted">{detail.returnForm.reason}</p>
                 </>
             )}
 

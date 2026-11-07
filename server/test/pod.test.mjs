@@ -15,7 +15,7 @@ import path from 'node:path';
 import { startServer, tempDb, removeDir, storedForm } from './helpers/server.mjs';
 import { buildPdf, Page, PAGE, toLatin, wrap, textWidth } from '../src/core/pdf/writer.ts';
 import { renderPod, fitStrokes, stamp, podFilename } from '../src/modules/uh/pod.ts';
-import { collectionPhoto } from '../src/modules/uh/pod-photos.ts';
+import { collectionPhoto, returnPhoto } from '../src/modules/uh/pod-photos.ts';
 
 const ORDERS = '/api/projects/uh/uh/orders';
 const RUNS = '/api/projects/uh/uh/runs';
@@ -454,11 +454,14 @@ describe('our copy and the client copy', () => {
     /** A stored photograph, as a finished upload would leave one. */
     async function storedFile(kind, orderId) {
         const at = new Date().toISOString();
-        await client.execute({
+        /* Returns the id, like batchFile, so a test can name this file in a
+           custody event. Most callers ignore it. */
+        const rs = await client.execute({
             sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
-                  VALUES (?, ?, ?, ?, 'image/jpeg', 1024, 'stored', 'ada.courier', ?, ?)`,
+                  VALUES (?, ?, ?, ?, 'image/jpeg', 1024, 'stored', 'ada.courier', ?, ?) RETURNING id`,
             args: [projectId, orderId, kind, `uh/test/${kind}/${Math.random()}.jpg`, at, at],
         });
+        return Number(rs.rows[0].id);
     }
 
     /** A stored photograph belonging to no order: a collection form. */
@@ -573,6 +576,84 @@ describe('our copy and the client copy', () => {
         await pickupEventNaming(order.id, Number(rs.rows[0].id));
 
         expect(await collectionPhoto(client, projectId, order.id)).toBeNull();
+    });
+
+    /* ─────────────────────────────────────────────────────────────────
+     * THE RETURN FORM, AND THE LABEL IT WAS WEARING.
+     *
+     * A return is photographed in exactly the shape a collection is:
+     * files.order_id NULL, because one sheet covers everything handed
+     * back together, with the id on every order's `returned` event. So
+     * the collection query -- "newest custody event naming an unbound
+     * file" -- found it, and the document printed the return under the
+     * heading "The pharmacy's collection form" over a caption saying the
+     * pharmacy signed it handing the packages OVER.
+     *
+     * Pinned at the lookup for the same reason as the block above: no
+     * bucket here, so no photograph page renders.
+     */
+    async function returnEventNaming(orderId, fileId) {
+        await client.execute({
+            sql: `INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status, file_id)
+                  VALUES (?, ?, 'returned', ?, 'ada.courier', 'failed', 'failed', ?)`,
+            args: [projectId, orderId, new Date().toISOString(), fileId],
+        });
+    }
+
+    it('finds the form signed when undelivered packages came back', async () => {
+        const order = await deliveredOrder();
+        const fileId = await batchFile('courier_form');
+
+        expect(await returnPhoto(client, projectId, order.id)).toBeNull();
+
+        await returnEventNaming(order.id, fileId);
+
+        const found = await returnPhoto(client, projectId, order.id);
+        expect(found?.id).toBe(fileId);
+    });
+
+    it('does not hand the return form back as the collection form', async () => {
+        /* THE BUG. One order, collected and later returned, so two unbound
+           forms exist and the return is the newer. Before this, both
+           lookups answered with the return. */
+        const order = await deliveredOrder();
+        const collected = await batchFile('courier_form');
+        await pickupEventNaming(order.id, collected);
+        const brought = await batchFile('courier_form');
+        await returnEventNaming(order.id, brought);
+
+        expect((await collectionPhoto(client, projectId, order.id))?.id).toBe(collected);
+        expect((await returnPhoto(client, projectId, order.id))?.id).toBe(brought);
+    });
+
+    it('keeps the collection form when nothing came back', async () => {
+        const order = await deliveredOrder();
+        const collected = await batchFile('courier_form');
+        await pickupEventNaming(order.id, collected);
+
+        expect((await collectionPhoto(client, projectId, order.id))?.id).toBe(collected);
+        expect(await returnPhoto(client, projectId, order.id)).toBeNull();
+    });
+
+    it('ignores a form bound to one delivery, which is a different page', async () => {
+        /* A form photographed AT THE DOOR carries an order id and is found
+           by storedPhoto. Letting it through here would print it twice,
+           once correctly and once as a batch document about other
+           patients. */
+        const order = await deliveredOrder();
+        const bound = await storedFile('courier_form', order.id);
+        await returnEventNaming(order.id, bound);
+
+        expect(await returnPhoto(client, projectId, order.id)).toBeNull();
+    });
+
+    it('takes the newest return when something came back twice', async () => {
+        const order = await deliveredOrder();
+        await returnEventNaming(order.id, await batchFile('courier_form'));
+        const second = await batchFile('courier_form');
+        await returnEventNaming(order.id, second);
+
+        expect((await returnPhoto(client, projectId, order.id))?.id).toBe(second);
     });
 
     it('both say there is none when the photograph is gone', async () => {

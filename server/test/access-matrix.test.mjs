@@ -519,6 +519,11 @@ const MATRIX = [
        its own audit action: reading a government ID should be a deliberate
        act, not a side effect of opening a delivery. */
     ['GET', `${UH}/client/orders/999999/id-photo`, UH_CLIENT_VIEW, ''],
+    /* The signed part 3, proving undelivered medication reached a counter.
+       Its own row and its own audit action for the same reason as the one
+       above: "who checked that a return actually happened" is asked during
+       a dispute and should be answerable on its own. */
+    ['GET', `${UH}/client/orders/999999/return-form`, UH_CLIENT_VIEW, ''],
 
     /* --- the contract manager resetting their own counters' passwords
        (modules/uh/portal-reset.ts), which is what replaced the forced

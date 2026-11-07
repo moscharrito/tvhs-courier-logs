@@ -97,6 +97,55 @@ export async function storedPhoto(
 export async function collectionPhoto(
     client: Client, projectId: number, orderId: number,
 ): Promise<StoredPhoto | null> {
+    return batchPhotoOn(client, projectId, orderId, 'picked_up');
+}
+
+/**
+ * The return form: the paper the PHARMACY signed when undelivered packages
+ * came BACK over the counter, photographed by the courier.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE OTHER END OF THE SAME JOURNEY, AND IT WAS WEARING THE WRONG LABEL.
+ *
+ * Returns have photographed part 3 of the docket since the signature came
+ * off glass, and the picture goes in exactly the shape a collection does:
+ * `files.order_id` NULL, because one sheet covers everything handed back
+ * together, with its id on every order's `returned` custody event.
+ *
+ * Which meant `collectionPhoto` found it. That query asked for "the newest
+ * custody event naming an unbound file", and on a returned delivery the
+ * newest one is the return, not the collection -- so the document printed
+ * the return form under the heading "The pharmacy's collection form", over
+ * a caption saying it was signed when the pharmacy HANDED THE PACKAGES
+ * OVER. The one document whose job is to say what happened to a delivery
+ * described the end of its life as the beginning.
+ *
+ * Both now name the event they mean. A delivery that was collected at a
+ * counter and later came back has two batch forms and shows both, which is
+ * the truth: two handovers happened and each has its own sheet.
+ */
+export async function returnPhoto(
+    client: Client, projectId: number, orderId: number,
+): Promise<StoredPhoto | null> {
+    return batchPhotoOn(client, projectId, orderId, 'returned');
+}
+
+/**
+ * The newest unbound photograph named by a custody event of one type.
+ *
+ * `f.order_id IS NULL` is the half that keeps this from printing the same
+ * picture twice: a form photographed at the door is bound to the order, is
+ * already found by storedPhoto, and is a different page of this document.
+ * Only the unbound batch ones come through here.
+ *
+ * Ordered by id rather than by `at`: `at` is a claim a phone made and id is
+ * the append order, which is the chain. A courier who collected, was turned
+ * back, and collected again has two pickups, and the second one's form is
+ * the one that describes the packages in the van.
+ */
+async function batchPhotoOn(
+    client: Client, projectId: number, orderId: number, type: 'picked_up' | 'returned',
+): Promise<StoredPhoto | null> {
     const rs = await client.execute({
         /* Joined to `files` so a dangling id -- a row removed by retention,
            an upload that never completed -- comes back as no photograph
@@ -104,17 +153,12 @@ export async function collectionPhoto(
         sql: `SELECT f.id, f.s3_key, f.content_type
                 FROM custody_events e
                 JOIN files f ON f.id = e.file_id
-               WHERE e.project_id = ? AND e.order_id = ?
+               WHERE e.project_id = ? AND e.order_id = ? AND e.type = ?
                  AND e.file_id IS NOT NULL
                  AND f.status = 'stored'
                  AND f.order_id IS NULL
                ORDER BY e.id DESC LIMIT 1`,
-        /* `f.order_id IS NULL` is the half that keeps this from printing the
-           same picture twice: a form photographed at the door is bound to
-           the order, is already found by storedPhoto, and is a different
-           page of this document. Only the unbound batch ones come through
-           here. */
-        args: [projectId, orderId],
+        args: [projectId, orderId, type],
     });
     const row = rs.rows[0];
     return row
@@ -174,6 +218,13 @@ export async function attachPhotos(
            the only picture on a delivery that was handed over on paper. */
         const collected = await collectionPhoto(client, projectId, orderId);
         if (collected) data.collectionPhoto = { bytes: await fetchPhoto(storage, collected.key) };
+
+        /* The other end of the chain, and the only proof that undelivered
+           medication got back to a counter. Until now this picture was
+           taken on every return and printed by nothing -- or, worse,
+           printed as the collection form. See returnPhoto. */
+        const back = await returnPhoto(client, projectId, orderId);
+        if (back) data.returnPhoto = { bytes: await fetchPhoto(storage, back.key) };
     } catch {
         /* See the header. The record is worth more than the pictures. */
     }

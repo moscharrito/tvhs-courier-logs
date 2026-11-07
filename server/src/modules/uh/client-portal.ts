@@ -40,7 +40,7 @@ import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor, etasFor } from './eta';
 import { scopedReport, GROUPINGS, type Grouping } from './reports';
 import type { FileStorage } from '../../core/files/storage';
-import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos } from './pod-photos';
+import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos, returnPhoto } from './pod-photos';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
@@ -309,6 +309,39 @@ export function createClientPortalRouter(
             /** Attempts made after this one. More than one is a third go. */
             attempts: after.rows.map((r) => ({ id: Number(r['id']), status: String(r['status']) })),
         };
+    }
+
+    /**
+     * What to tell the client about the return form.
+     *
+     * Three states, and they are genuinely different to a pharmacist:
+     * nothing came back; something came back and here is the signed sheet;
+     * something came back and the sheet cannot be shown. The last one is
+     * why this asks storage rather than assuming -- a link to a photograph
+     * this server cannot serve is worse than a sentence saying why.
+     *
+     * `returnedAt` rather than the status: a return is a custody fact and
+     * never an outcome, so a failed delivery sitting in a van and one
+     * already back on a counter have the same status and are not the same
+     * thing. See modules/uh/returns.ts.
+     */
+    async function returnFormFor(projectId: number, orderId: number, returnedAt: string | null) {
+        if (!returnedAt) return { available: false, reason: '' };
+        const found = await returnPhoto(client, projectId, orderId);
+        if (!found) {
+            return {
+                available: false,
+                reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
+            };
+        }
+        if (!storage.available) {
+            return {
+                available: false,
+                reason: 'The signed return form was photographed. File storage is not configured on this '
+                    + 'server, so it cannot be shown.',
+            };
+        }
+        return { available: true, reason: '' };
     }
 
     /** What to tell the client about the photograph, asked rather than assumed. */
@@ -869,6 +902,13 @@ export function createClientPortalRouter(
                untrue about their own delivery is worse than one that says
                nothing, so it now asks. */
             photo,
+            /* WHETHER THE MEDICATION GOT BACK, as something to look at.
+               A pharmacy's question about a failed delivery is "where is my
+               medication", and the signed part 3 answering it has been
+               photographed on every return and shown on no screen. Asked
+               rather than assumed, like `photo` above: a flag the server
+               guesses is a link to a 404. */
+            returnForm: await returnFormFor(project.id, id, order.returned_at),
             /* "Procedures for reattempting delivery", which a pharmacy could
                previously only answer by noticing a second order with a
                similar reference and guessing. Both directions, because the
@@ -964,6 +1004,52 @@ export function createClientPortalRouter(
            a patient's driving licence" is answerable on its own rather than
            by filtering a general photograph log. */
         await req.audit('client.id_photo', 'file', String(found.id), { orderId: id });
+
+        const signed = storage.presignDownload(found.key);
+        res.redirect(302, signed.url);
+    }));
+
+    /* ----------------------------------------------- the return form ----
+     *
+     * THE PROOF THE MEDICATION CAME BACK.
+     *
+     * A pharmacy's question about a failed delivery is not "where is the
+     * photograph of the door" -- it is "where is my medication". The
+     * courier has photographed part 3 of the docket, signed at the counter,
+     * on every return since the signature came off glass, and no screen
+     * anywhere showed it. The picture existed and its owner could not look
+     * at it, which is the same hole the doorstep photograph was in before
+     * ticket 1.2.8.
+     *
+     * ITS OWN ROUTE, like identification, because it is a different fact
+     * from the handover and belongs in its own audit line: "who checked
+     * that a return actually happened" is a question somebody will ask
+     * during a dispute, and it should not be answerable only by filtering a
+     * general photograph log.
+     *
+     * A BATCH DOCUMENT, SO IT NAMES OTHER PATIENTS. One sheet covers
+     * everything handed back together, and the screen says so. It goes to
+     * the covered entity, who are entitled to their own patients' data, and
+     * the scope check below is still the pharmacy's own sites only.
+     */
+    router.get('/orders/:id/return-form', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const id = Number(req.params['id']);
+        const order = await orderInScope(req, id);
+        if (!order) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        const found = await returnPhoto(client, project.id, id);
+        if (!found) { res.status(404).json({ error: 'No return form was photographed for this delivery' }); return; }
+
+        if (!storage.available) {
+            res.status(503).json({
+                error: 'File storage is not configured on this server, so the photograph cannot be shown.',
+                code: 'files.unavailable',
+            });
+            return;
+        }
+
+        await req.audit('client.return_form', 'file', String(found.id), { orderId: id });
 
         const signed = storage.presignDownload(found.key);
         res.redirect(302, signed.url);

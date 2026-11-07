@@ -116,6 +116,11 @@ export interface PodData {
      *  found through the custody chain instead of by order id -- see
      *  collectionPhoto in pod-photos.ts. */
     collectionPhoto?: { bytes?: Buffer | undefined } | undefined;
+    /** The form the pharmacy signed when undelivered packages came BACK over
+     *  the counter. Like collectionPhoto it covers a batch, and like it, it
+     *  is reached through the custody events rather than by order_id. See
+     *  returnPhoto in pod-photos.ts. */
+    returnPhoto?: { bytes?: Buffer | undefined } | undefined;
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -502,6 +507,23 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
             data.collectionPhoto.bytes, 'Ph2', 'The pharmacy’s collection form',
             'The form the pharmacy signed when it handed the packages over, photographed by the courier at the '
             + 'counter. One form covers the whole collection, so it may list other deliveries made on the same run.',
+        );
+    }
+    /* AFTER THE COLLECTION FORM, because it is the last thing that happened
+       and that one is the first. A delivery that went out and came back has
+       both, and the order of the pages is the order of the handovers.
+
+       This picture has been taken on every return since the signature came
+       off glass and was printed by nothing -- or printed as the collection
+       form, which said the pharmacy signed it handing the packages OVER. It
+       is the proof the medication got back to a counter, which is the one
+       question a pharmacy asks about a delivery that failed. */
+    if (data.returnPhoto?.bytes) {
+        photoPage(
+            data.returnPhoto.bytes, 'Ph3', 'The pharmacy’s return form',
+            'Part 3 of the docket, signed by the pharmacy when the undelivered packages were handed back, '
+            + 'photographed by the courier at the counter. One form covers everything returned together, so it '
+            + 'may list other deliveries brought back at the same time.',
         );
     }
 

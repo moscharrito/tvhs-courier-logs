@@ -714,3 +714,120 @@ describe('the filters the drill-down needs', () => {
         expect(detail.rows).toBe(list.body.orders.length);
     });
 });
+
+/* ────────────────────────────────────── proof that it came back
+ *
+ * A pharmacy's question about a failed delivery is "where is my
+ * medication", not "show me the door". The courier has photographed the
+ * signed part 3 at the counter on every return since the signature came
+ * off glass, and no screen showed it to the people whose medication it
+ * was -- the same hole the doorstep photograph was in before 1.2.8.
+ */
+describe('the return form', () => {
+    const client = () => srv.core.client;
+    const projectId = () => srv.core.uhProjectId ?? null;
+
+    /** A failed delivery that was carried back to a counter, with the one
+     *  sheet that covers everything returned together. */
+    async function broughtBack({ photographed = true } = {}) {
+        const order = await delivered();
+        /* Recorded through the API so the row is the shape the real thing
+           produces, not one this test invented. */
+        await admin.post(`${ORDERS}/${order.id}/events`).send({
+            type: 'attempted', reason: 'nobody_home',
+        });
+        const pid = Number((await client().execute({
+            sql: 'SELECT project_id FROM orders WHERE id = ?', args: [order.id],
+        })).rows[0].project_id);
+
+        let fileId = null;
+        if (photographed) {
+            const at = new Date().toISOString();
+            /* order_id NULL: one sheet, several deliveries. That shape is
+               the whole reason this needed its own lookup. */
+            fileId = Number((await client().execute({
+                sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+                      VALUES (?, NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', 'ada.courier', ?, ?) RETURNING id`,
+                args: [pid, `uh/test/return/${Math.random()}.jpg`, at, at],
+            })).rows[0].id);
+        }
+        await client().execute({
+            sql: `INSERT INTO custody_events (project_id, order_id, type, at, actor, from_status, to_status, file_id)
+                  VALUES (?, ?, 'returned', ?, 'ada.courier', 'failed', 'failed', ?)`,
+            args: [pid, order.id, new Date().toISOString(), fileId],
+        });
+        await client().execute({
+            sql: 'UPDATE orders SET returned_at = ? WHERE id = ?',
+            args: [new Date().toISOString(), order.id],
+        });
+        void projectId;
+        return { order, fileId };
+    }
+
+    it('tells the pharmacy the signed sheet exists', async () => {
+        const { order } = await broughtBack();
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get(`${CLIENT}/orders/${order.id}`);
+        expect(res.status).toBe(200);
+        expect(res.body.returnForm).toBeTruthy();
+        /* Storage is unconfigured in tests, so it cannot be shown -- and
+           saying why is the point. A flag the server guesses is a link to
+           a 404. */
+        expect(res.body.returnForm.available).toBe(false);
+        expect(res.body.returnForm.reason).toMatch(/file storage is not configured/i);
+    });
+
+    it('says plainly when something came back with no photograph', async () => {
+        const { order } = await broughtBack({ photographed: false });
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get(`${CLIENT}/orders/${order.id}`);
+        expect(res.body.returnForm.available).toBe(false);
+        expect(res.body.returnForm.reason).toMatch(/no photograph of the signed return form/i);
+    });
+
+    it('says nothing at all about a delivery that never came back', async () => {
+        /* A return is a custody fact, never an outcome: a delivery that
+           arrived has no return form and the panel must not imply one is
+           missing. */
+        const order = await delivered();
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get(`${CLIENT}/orders/${order.id}`);
+        expect(res.body.returnForm).toEqual({ available: false, reason: '' });
+    });
+
+    it('refuses the photograph when storage cannot serve it, rather than 404', async () => {
+        /* The two are different answers: "there is none" and "there is one
+           and this server cannot reach it". A pharmacist told the first
+           when the second is true stops asking. */
+        const { order } = await broughtBack();
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get(`${CLIENT}/orders/${order.id}/return-form`);
+        expect(res.status).toBe(503);
+        expect(res.body.code).toBe('files.unavailable');
+    });
+
+    it('has none to offer when nothing was photographed', async () => {
+        const { order } = await broughtBack({ photographed: false });
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        expect((await uh.get(`${CLIENT}/orders/${order.id}/return-form`)).status).toBe(404);
+    });
+
+    it('is not found for another pharmacy, never forbidden', async () => {
+        /* A 403 would confirm the delivery exists, which is itself
+           something this viewer is not entitled to know. */
+        const { order } = await broughtBack();
+        await client().execute({
+            sql: 'UPDATE orders SET site_id = ? WHERE id = ?', args: [green.id, order.id],
+        });
+        const uh = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await uh.get(`${CLIENT}/orders/${order.id}/return-form`);
+        expect(res.status).toBe(404);
+        expect(JSON.stringify(res.body)).not.toMatch(/forbidden|not allowed/i);
+    });
+
+    it('shows an unscoped account nothing, as everywhere else', async () => {
+        const { order } = await broughtBack();
+        const nobody = await agentFor('uh.newstarter', 'client-pass-2');
+        expect((await nobody.get(`${CLIENT}/orders/${order.id}/return-form`)).status).toBe(404);
+    });
+});

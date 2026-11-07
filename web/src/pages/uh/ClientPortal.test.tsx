@@ -600,3 +600,65 @@ describe('awayLabel', () => {
         expect(awayLabel(145)).toBe('about 2 hr 25 min');
     });
 });
+
+/* ───────────────────────────────────────────── proof that it came back
+ *
+ * A pharmacy's question about a failed delivery is "where is my
+ * medication", not "show me the door". The courier photographs the signed
+ * part 3 at the counter on every return, and until now no screen showed it
+ * to the people whose medication it was.
+ */
+describe('the proof of return', () => {
+    const openProof = async (over: Record<string, unknown>) => {
+        renderPortal(routes({
+            [`GET ${BASE}/orders/21`]: detail({
+                status: 'failed', deliveredAt: null, receivedBy: '',
+                failureReason: 'nobody_home', ...over,
+            }),
+        }));
+        await settled();
+        fireEvent.click(screen.getByRole('button', { name: 'Proof' }));
+        return screen.findByRole('region', { name: /Proof of delivery for Ines Vargas/ });
+    };
+
+    it('shows the signed sheet when there is one', async () => {
+        const proof = await openProof({ returnForm: { available: true, reason: '' } });
+        expect(proof).toHaveTextContent('Proof of return');
+        const img = screen.getByAltText(/signed return form for Ines Vargas/i);
+        expect(img).toHaveAttribute('src', '/api/projects/uh/uh/client/orders/21/return-form');
+    });
+
+    it('says the sheet covers other deliveries, because it does', async () => {
+        /* One form covers everything handed back together. A pharmacist
+           reading it as evidence about this patient alone is reading it
+           wrong, so the caption says so. */
+        const proof = await openProof({ returnForm: { available: true, reason: '' } });
+        expect(proof).toHaveTextContent(/may list other deliveries brought back at the same time/i);
+    });
+
+    it('gives the reason instead of a broken image', async () => {
+        const proof = await openProof({
+            returnForm: {
+                available: false,
+                reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
+            },
+        });
+        expect(proof).toHaveTextContent('Proof of return');
+        expect(proof).toHaveTextContent(/no photograph of the signed return form/i);
+        expect(screen.queryByAltText(/signed return form/i)).toBeNull();
+    });
+
+    it('says nothing at all about a delivery that never came back', async () => {
+        /* A return is a custody fact and never an outcome. A delivery that
+           arrived has no return form, and the panel must not imply one is
+           missing. */
+        const proof = await openProof({ returnForm: { available: false, reason: '' } });
+        expect(proof).not.toHaveTextContent('Proof of return');
+    });
+
+    it('renders against a server too old to send the field', async () => {
+        const proof = await openProof({});
+        expect(proof).not.toHaveTextContent('Proof of return');
+        expect(proof).toHaveTextContent('Ines Vargas');
+    });
+});
