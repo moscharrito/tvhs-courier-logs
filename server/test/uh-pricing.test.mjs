@@ -186,17 +186,61 @@ describe('seeded data and endpoints', () => {
         expect(res.body.settings).toEqual(DEFAULT_PRICING_SETTINGS);
     });
 
-    it('loads 72 zone ZIPs in the counts the bid table lists', async () => {
+    it('loads the 72 zone ZIPs from the bid table, plus 78234 added since', async () => {
+        /* THE BID TABLE'S OWN NUMBERS STAY WRITTEN OUT, so an addition to
+           the map reads as an addition rather than disappearing into a new
+           total somebody would have to diff to notice. 0063 added 78234 at
+           zone 1 on 7 November 2026: Fort Sam Houston, missing from BT-89AO
+           while both its neighbours are zone 1, and a delivery had gone
+           there and been billed per loaded mile. */
+        const BID_TABLE = { 1: 38, 2: 7, 3: 13, 4: 11, 5: 3 };
+        const ADDED = { 1: 1 };
+
         const res = await admin.get(UH);
-        expect(res.body.zoneZipCounts).toEqual([
-            { zone: 1, zips: 38 }, { zone: 2, zips: 7 }, { zone: 3, zips: 13 }, { zone: 4, zips: 11 }, { zone: 5, zips: 3 },
-        ]);
+        expect(res.body.zoneZipCounts).toEqual(
+            [1, 2, 3, 4, 5].map((zone) => ({ zone, zips: BID_TABLE[zone] + (ADDED[zone] ?? 0) })),
+        );
+
         const all = (await admin.get(`${UH}/zones`)).body;
-        expect(all).toHaveLength(72);
-        expect(new Set(all.map((z) => z.zip)).size).toBe(72);
+        const total = Object.values(BID_TABLE).reduce((n, v) => n + v, 0)
+            + Object.values(ADDED).reduce((n, v) => n + v, 0);
+        expect(all).toHaveLength(total);
+        expect(new Set(all.map((z) => z.zip)).size).toBe(total);
+
         // Places are carried for the outlying towns only.
         expect(all.find((z) => z.zip === '78015')).toEqual({ zip: '78015', zone: 5, place: 'Boerne' });
         expect(all.find((z) => z.zip === '78229')).toEqual({ zip: '78229', zone: 1, place: null });
+    });
+
+    it('prices 78234 as zone 1, and as out of area on the day before', async () => {
+        /* DATED TODAY, NOT BACKDATED. zones.ts takes the newest
+           effective_from on or before the service date, so writing this with
+           the original table's 2026-05-18 would have re-priced the delivery
+           that went there on 5 November -- moving what a courier was paid
+           for a day already settled and what University Health were billed.
+        
+           Asserted through the quote endpoint rather than the map, because
+           what matters is the money the ZIP produces. */
+        const zoneOne = await admin.post(`${UH}/quote`).send({
+            zip: '78234', serviceType: 'scheduled', at: '2026-11-07T15:00:00.000Z',
+        });
+        expect(zoneOne.status, JSON.stringify(zoneOne.body)).toBe(200);
+        expect(zoneOne.body.zone).toBe(1);
+
+        const before = await admin.post(`${UH}/quote`).send({
+            zip: '78234', serviceType: 'scheduled', at: '2026-11-05T15:00:00.000Z',
+        });
+        expect(before.status).toBe(200);
+        expect(before.body.zone).toBeNull();
+    });
+
+    it('agrees with the neighbours 78234 sits between', async () => {
+        /* The evidence the zone was chosen on. If either of these ever moves
+           band, 78234 is worth looking at again. */
+        const all = (await admin.get(`${UH}/zones`)).body;
+        for (const zip of ['78233', '78234', '78235']) {
+            expect(all.find((z) => z.zip === zip)?.zone, zip).toBe(1);
+        }
     });
 
     it('maps the ZIPs that carry the most volume', async () => {

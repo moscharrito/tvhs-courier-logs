@@ -159,3 +159,4 @@ pod-*.pdf
 # are already covered by *.drivers.csv and *.docx above -- this is the
 # wrapper, which is not.
 salazar-login.ps1
+dispatch-login.ps1
