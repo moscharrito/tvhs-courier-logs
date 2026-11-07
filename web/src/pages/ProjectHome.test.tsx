@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ProjectHome } from './ProjectHome';
 import { AuthProvider } from '../app/auth';
@@ -49,8 +49,8 @@ const routes = (role: string) => ({
     'GET /api/projects/uh/uh/pricing*': { zones: [], zipRates: [] },
 });
 
-function renderAs(role: string) {
-    mockFetch(routes(role));
+function renderAs(role: string, over: Record<string, unknown> = {}) {
+    mockFetch({ ...routes(role), ...over });
     render(
         <MemoryRouter initialEntries={['/projects/uh']}>
             <AuthProvider>
@@ -76,6 +76,30 @@ describe('the site manager, who is dispatch', () => {
            take one FOR is leadMaySee inside the handler, not this flag. */
         renderAs('lead');
         expect(await screen.findByRole('heading', { name: /STAT or ad hoc order/i })).toBeInTheDocument();
+    });
+
+    it('may remove an order it mistyped, so a wrong STAT does not sit there', async () => {
+        /* DELETE /orders/:id takes `lead` since 7 November, scoped by
+           loadOr404 to their own counters. The flag here has to agree with
+           that guard or the screen draws a button the server refuses.
+        
+           The list has to come back with a row in it or there is no Delete
+           to look for, and the test passes on an empty table -- which is
+           what the first version of it did. */
+        renderAs('lead', {
+            'GET /api/projects/uh/uh/orders*': {
+                orders: [{
+                    id: 41, externalRef: 'RX-9001', serviceType: 'stat', siteId: 7,
+                    recipientName: 'Ines Vargas', address: '1200 Encanto Street', zip: '78215',
+                    status: 'ready', assignedTo: null, dueAt: null,
+                }],
+                total: 1,
+            },
+        });
+        fireEvent.click(await screen.findByRole('button', { name: /STAT or ad hoc order/i }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Find orders' }));
+
+        expect(await screen.findByRole('button', { name: /Delete order 41/ })).toBeInTheDocument();
     });
 
     it('is kept away from the commercials', async () => {

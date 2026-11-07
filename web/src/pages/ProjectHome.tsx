@@ -115,14 +115,15 @@ export function ProjectHome() {
                 Taking a STAT by phone creates billable work and POST /orders
                 is admin-only on the server; wiring this to the import flag
                 would have drawn dispatch a form the server then refuses. */}
-            {/* Dispatch takes a STAT by phone; deleting one permanently
-                stays with an administrator. Two flags because the server
-                draws the same line. */}
+            {/* Dispatch takes a STAT by phone and may remove one it
+                mistyped. Still two flags: they are the same answer today
+                and the server decides each separately, so a change to one
+                must not quietly move the other. */}
             <NewOrder
                 projectCode={project.code}
                 timezone={project.timezone}
                 canCreate={canImport}
-                canDelete={canManage}
+                canDelete={canImport}
             />
             <Sites projectCode={project.code} canManage={canManage} />
             <Pricing projectCode={project.code} />

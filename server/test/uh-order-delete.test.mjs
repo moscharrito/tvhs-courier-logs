@@ -159,9 +159,19 @@ describe('deleting one order', () => {
         expect((await admin.get(`${ORDERS}/${order.id}`)).status).toBe(200);
     });
 
-    it('will not let a lead delete, even at their own pharmacy', async () => {
-        /* A lead may raise an order and read their own counter's back.
-           Destroying one is no more theirs to do than destroying a list. */
+    it('lets a lead delete at their own pharmacy, and nowhere else', async () => {
+        /* THIS USED TO ASSERT THE OPPOSITE, on the reasoning that destroying
+           an order was no more a lead's to do than destroying a list. Both
+           halves of that moved on 7 November: `lead` is the contract's
+           dispatcher, it withdraws lists, and the order most in need of
+           removing is the one dispatch just mistyped. Making them ring an
+           administrator to undo their own typo is how a wrong STAT stays on
+           a board.
+        
+           What did not move is the scope. A dispatcher deletes on counters
+           their membership names and nowhere else, and the refusal is 404
+           rather than 403 because a 403 confirms the order exists -- the one
+           thing a lead at another site should not learn by guessing ids. */
         await admin.post('/api/users').send({
             username: 'del.lead', name: 'Del Lead', password: 'del-lead-pass-1', role: 'driver',
         });
@@ -171,9 +181,14 @@ describe('deleting one order', () => {
         const lead = srv.agent();
         await lead.post('/api/login').send({ username: 'del.lead', password: 'del-lead-pass-1' });
 
-        const order = await makeOrder();
-        expect((await lead.delete(`${ORDERS}/${order.id}`).send({})).status).toBe(403);
-        expect((await admin.get(`${ORDERS}/${order.id}`)).status).toBe(200);
+        const theirs = await makeOrder();
+        expect((await lead.delete(`${ORDERS}/${theirs.id}`).send({})).status).toBe(200);
+        expect((await admin.get(`${ORDERS}/${theirs.id}`)).status).toBe(404);
+
+        const elsewhere = await makeOrder({ siteId: siteId('discharge') });
+        expect((await lead.delete(`${ORDERS}/${elsewhere.id}`).send({})).status).toBe(404);
+        // Still there: a refusal that deleted it anyway would be the worst case.
+        expect((await admin.get(`${ORDERS}/${elsewhere.id}`)).status).toBe(200);
     });
 
     it('refuses anonymous', async () => {

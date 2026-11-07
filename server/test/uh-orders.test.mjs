@@ -680,15 +680,53 @@ describe('a manual order taken by dispatch', () => {
         expect((await courier.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER })).status).toBe(403);
     });
 
-    it('may not delete one, which is the line the screen draws too', async () => {
-        /* Creating work is recoverable: a wrong order is cancelled and the
-           record says who took it. Deleting takes the row, its custody
-           events, its messages and its files, and the audit line is the only
-           survivor. That stays with an administrator. */
+    it('may delete the one it just mistyped', async () => {
+        /* The order most in need of removing is the one dispatch typed
+           wrong thirty seconds ago. Making them ring an administrator to
+           undo their own typo is how a wrong STAT stays on a board. */
         const made = await dispatch.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER });
         expect(made.status).toBe(201);
-        expect((await dispatch.delete(`${BASE}/${made.body.id}`)).status).toBe(403);
-        expect((await admin.delete(`${BASE}/${made.body.id}`)).status).toBe(200);
+
+        const gone = await dispatch.delete(`${BASE}/${made.body.id}`);
+        expect(gone.status, JSON.stringify(gone.body)).toBe(200);
+        expect(gone.body.permanent).toBe(true);
+
+        const rows = await sql('SELECT COUNT(*) AS n FROM orders WHERE id = ?', [made.body.id]);
+        expect(Number(rows.rows[0].n)).toBe(0);
+    });
+
+    it('cannot delete an order on a counter it is not named on', async () => {
+        /* 404 rather than 403, because a 403 confirms the order exists and
+           that is the one bit a lead at another site should not learn by
+           guessing ids. loadOr404 does this for every route here. */
+        const made = await admin.post(BASE).send({ siteId: otherSiteId, ...NEW_ORDER });
+        expect(made.status).toBe(201);
+        expect((await oneCounter.delete(`${BASE}/${made.body.id}`)).status).toBe(404);
+
+        const rows = await sql('SELECT COUNT(*) AS n FROM orders WHERE id = ?', [made.body.id]);
+        expect(Number(rows.rows[0].n), 'it must still be there').toBe(1);
+    });
+
+    it('still refuses a courier, who deletes nothing', async () => {
+        const made = await admin.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER });
+        const courier = await memberWith('courier', 'del.courier');
+        expect((await courier.delete(`${BASE}/${made.body.id}`)).status).toBe(403);
+    });
+
+    it('records who deleted it, which is all that survives', async () => {
+        const made = await dispatch.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER });
+        await dispatch.delete(`${BASE}/${made.body.id}`).send({ reason: 'typed twice' });
+        const rows = await sql(
+            `SELECT username, detail FROM audit_events
+              WHERE action = 'order.delete' AND entity = 'order' AND entity_id = ?`,
+            [String(made.body.id)],
+        );
+        expect(rows.rows.length).toBe(1);
+        expect(String(rows.rows[0].username)).toBe('stat.dispatch');
+        expect(String(rows.rows[0].detail)).toContain('typed twice');
+        /* Said plainly in the trail, because somebody reading it a year from
+           now needs to know this was not a cancellation. */
+        expect(String(rows.rows[0].detail)).toContain('"permanent":true');
     });
 
     it('records the dispatcher as the person who took it', async () => {

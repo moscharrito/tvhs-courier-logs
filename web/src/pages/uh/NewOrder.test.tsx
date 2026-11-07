@@ -245,13 +245,18 @@ describe('NewOrder', () => {
 
 /* ────────────────── taking an order is not the same as destroying one
  *
- * Dispatch gained POST /orders on 7 November; DELETE /orders/:id stayed
- * with an administrator. One flag used to draw this whole panel, delete
- * button included, so widening it would have handed dispatch a Delete the
- * server refuses -- which reads as a broken product rather than as a
- * permission somebody does not have.
+ * Both are dispatch's today, and they are still two flags: the server
+ * decides each on its own guard, so a change to one must not quietly move
+ * the other. This pins the panel with deleting withheld -- the shape no
+ * role is in this week and any role could be next -- because a prop with
+ * nobody exercising it is a prop that stops working silently.
+ *
+ * The failure it stands against: one flag used to draw this whole panel,
+ * delete button included, so widening it for dispatch would have handed
+ * them a Delete the server then refused. A button that 403s reads as a
+ * broken product rather than as a permission somebody does not have.
  */
-describe('a dispatcher who may take an order but not delete one', () => {
+describe('the panel with deleting withheld', () => {
     const asDispatch = async (r: Record<string, unknown>) => {
         const mocked = mockFetch(r);
         render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete={false} />);

@@ -296,11 +296,15 @@ export function createOrdersRouter(
      * the same job arriving by a different route, and queueing it behind an
      * administrator means the order is typed late or not at all.
      *
-     * NOT the same guard as deleting one. Creating work is recoverable --
-     * the wrong order can be cancelled, and the record says who took it.
-     * Deleting one takes the row, its custody events, its messages and its
-     * files, and the audit line is all that survives; that stays with an
-     * administrator until somebody decides otherwise.
+     * DELETING ONE TOO, from 7 November. It was held back a day on the
+     * argument that creating work is recoverable and destroying it is not,
+     * which is true and was the wrong place to draw the line: the order
+     * dispatch most needs to remove is the one dispatch just mistyped, and
+     * making them ring an administrator to undo their own typo is how a
+     * wrong STAT stays on a board. The protections that matter are the ones
+     * on the act itself -- two steps on the screen, the row named in the
+     * confirmation, and an audit line recording who, what and why that
+     * outlives everything it describes.
      *
      * THE SCOPE CHECK IS NEW AND HAD TO BE. This handler only ever asked
      * whether the site belonged to the PROJECT, which was enough while the
@@ -1077,7 +1081,10 @@ export function createOrdersRouter(
      */
     const Remove = z.object({ reason: z.string().trim().max(200).optional() });
 
-    router.delete('/:id', staff, wrap(async (req, res) => {
+    /* `dispatch`, and the scope comes free: loadOr404 below answers 404 for
+       a lead reaching outside their pharmacies, so a dispatcher can only
+       ever delete an order on a counter they are named on. */
+    router.delete('/:id', dispatch, wrap(async (req, res) => {
         const order = await loadOr404(req, res);
         if (!order) return;
 

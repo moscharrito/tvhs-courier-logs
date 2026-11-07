@@ -400,7 +400,12 @@ const MATRIX = [
        UH_STAFF and not UH_DISPATCH: a lead may raise an order and read
        their own counter's back, and destroying one is no more theirs to do
        than destroying a list is. */
-    ['DELETE', `${UH}/orders/999999`, UH_STAFF, 'a mistaken STAT or ad hoc order, removed completely; no undo'],
+    /* Dispatch too, from 7 November: the order most in need of removing is
+       the one dispatch just mistyped, and making them ring an administrator
+       to undo their own typo is how a wrong STAT stays on a board. Scoped by
+       loadOr404, which answers 404 for a lead reaching outside their own
+       counters. */
+    ['DELETE', `${UH}/orders/999999`, UH_DISPATCH, 'a mistaken STAT or ad hoc order, removed completely; no undo'],
     ['POST', `${UH}/orders/999999/out-of-area`, UH_STAFF, 'a courier cannot authorise their own long drive'],
     ['GET', `${UH}/orders/999999/pod.pdf`, UH_LEAD_READ, ''],
     /* Our copy of the signed part 3. Same readers as the document it is a
