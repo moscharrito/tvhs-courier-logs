@@ -102,29 +102,60 @@ describe('the site manager, who is dispatch', () => {
         expect(await screen.findByRole('button', { name: /Delete order 41/ })).toBeInTheDocument();
     });
 
+    it('gets the row it actually works from, and nothing else', async () => {
+        /* Set on 7 November at the owner's direction. Performance,
+           Discrepancies, Returns and the client's view are reporting and
+           client-facing screens -- read when answering a question about the
+           contract, not while running a day -- so they came off the row of
+           the person running the day. */
+        renderAs('lead');
+        await screen.findByRole('heading', { name: /daily list/i });
+
+        for (const name of ['Open the board', 'Search orders', 'Drivers record', 'Driver roster']) {
+            expect(screen.getByRole('link', { name }), name).toBeInTheDocument();
+        }
+        for (const name of ['Performance', 'Discrepancies', 'Returns', "The client's view"]) {
+            expect(screen.queryByRole('link', { name }), name).toBeNull();
+        }
+    });
+
+    it('is given the driver roster, which the server always allowed', async () => {
+        /* GET and PUT on /roster are UH_DISPATCH -- lead plus admin -- and
+           only this link was drawn tighter, so the person who plans the
+           waves could not see which pharmacy each driver works from. */
+        renderAs('lead');
+        await screen.findByRole('heading', { name: /daily list/i });
+        expect(screen.getByRole('link', { name: 'Driver roster' }))
+            .toHaveAttribute('href', '/projects/uh/roster');
+    });
+
     it('is kept away from the commercials', async () => {
         /* The manager sees the operation and not what it bills at. */
         renderAs('lead');
         await screen.findByRole('heading', { name: /daily list/i });
-        for (const name of ['Invoices', 'Driver roster', 'Driver applications']) {
+        /* Driver roster came OFF this list on 7 November: it is operational,
+           not commercial -- which pharmacy each driver works from is what
+           lets the board offer a proposed run to somebody who drives that
+           counter -- and the server had always allowed it. */
+        for (const name of ['Invoices', 'Driver applications']) {
             expect(screen.queryByRole('link', { name })).toBeNull();
         }
     });
 
-    it('keeps the screens it already had', async () => {
-        renderAs('lead');
-        await screen.findByRole('heading', { name: /daily list/i });
-        expect(screen.getByRole('link', { name: 'Drivers record' })).toBeInTheDocument();
-        expect(screen.getByRole('link', { name: /client/i })).toBeInTheDocument();
-    });
 });
 
 describe('an administrator', () => {
-    it('keeps everything, unchanged by widening the import flag', async () => {
+    it('keeps every shortcut, including the four dispatch no longer gets', async () => {
+        /* Narrowing dispatch's row must not narrow anybody else's: these
+           pages did not move, only the shortcut to them. */
         renderAs('admin');
-        expect(await screen.findByRole('heading', { name: /daily list/i })).toBeInTheDocument();
-        expect(screen.getByRole('link', { name: 'Invoices' })).toBeInTheDocument();
-        expect(screen.getByRole('link', { name: 'Driver roster' })).toBeInTheDocument();
+        await screen.findByRole('heading', { name: /daily list/i });
+        for (const name of [
+            'Open the board', 'Search orders', 'Performance', 'Discrepancies', 'Returns',
+            'Drivers record', 'Driver roster', 'Invoices', 'Driver applications', "The client's view",
+        ]) {
+            expect(screen.getByRole('link', { name }), name).toBeInTheDocument();
+        }
     });
 });
 

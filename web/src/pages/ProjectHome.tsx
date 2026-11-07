@@ -45,8 +45,12 @@ export function ProjectHome() {
        waiting on an administrator.
 
        Which counters they may upload for is their membership's scope, on the
-       server. This flag only decides whether the panel is offered. */
-    const canImport = canManage || project.role === 'lead';
+       server. This flag only decides what the page offers.
+
+       Named `canDispatch` rather than `canImport` since 7 November: it also
+       decides the driver roster now, and a flag named after one screen is a
+       flag somebody reuses on a second and then renames nothing. */
+    const canDispatch = canManage || project.role === 'lead';
 
     /* A courier gets their run and nothing else. The rest of this page is
        sites, pricing, settings and the whole day's list of patient addresses,
@@ -73,12 +77,29 @@ export function ProjectHome() {
             <nav className="izy-card izy-quick" aria-label="Dispatch">
                 <Link className="izy-btn" to={`/projects/${project.code}/board`}>Open the board</Link>
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
-                <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
-                <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
+                {/* ───────────────────── THE ROW IS WHAT THE ROLE DOES
+                    Performance, Discrepancies, Returns and the client's view
+                    came off dispatch's row on 7 November at the owner's
+                    direction. They are reporting and client-facing screens:
+                    read when somebody is answering a question about the
+                    contract, not while running a day.
+                    NOTHING WAS TAKEN AWAY BUT THE SHORTCUT. Every one of
+                    these endpoints still admits a lead and every page still
+                    loads at its own URL. This row is a shortcut list, and a
+                    shortcut nobody uses is clutter on the screen somebody
+                    opens forty times a day. */}
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
+                )}
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/discrepancies`}>Discrepancies</Link>
+                )}
                 {/* Undelivered medication going back to the pharmacy that
                     issued it. Half of what the site manager role exists for,
                     and it was missing from this page entirely. */}
-                <Link className="izy-btn secondary" to={`/projects/${project.code}/returns`}>Returns</Link>
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/returns`}>Returns</Link>
+                )}
                 {/* What each driver delivered, and -- for an administrator --
                     what it comes to. The site manager gets the same page with
                     the money stripped out by the server, not hidden by the
@@ -88,7 +109,13 @@ export function ProjectHome() {
                     rather than during one: it is what lets the board offer
                     each proposed run to somebody who drives that counter,
                     instead of asking for twenty-three decisions at noon. */}
-                {canManage && (
+                {/* THE SERVER ALWAYS LET DISPATCH IN HERE. GET and PUT on
+                    /roster are UH_DISPATCH -- lead plus admin -- and only
+                    this link was drawn tighter, so the person who plans the
+                    waves could not see which pharmacy each driver works
+                    from. That is the thing that lets the board offer a
+                    proposed run to somebody who drives that counter. */}
+                {canDispatch && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/roster`}>Driver roster</Link>
                 )}
                 {canManage && (
@@ -102,19 +129,17 @@ export function ProjectHome() {
                 {/* Staff see exactly what the client sees. A portal nobody on
                     our side ever looks at is a portal nobody can answer a
                     question about. */}
-                <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
+                )}
             </nav>
 
             {/* The daily job, so it stays open. */}
-            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} canWithdraw={canImport} />
+            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canDispatch} canWithdraw={canDispatch} />
 
             {/* Everything below folds away and remembers that it did. These
                 are reference and occasional work: a phone order, the site
                 list, the rate card, the contract parameters. */}
-            {/* STILL canManage, deliberately, now that canImport is wider.
-                Taking a STAT by phone creates billable work and POST /orders
-                is admin-only on the server; wiring this to the import flag
-                would have drawn dispatch a form the server then refuses. */}
             {/* Dispatch takes a STAT by phone and may remove one it
                 mistyped. Still two flags: they are the same answer today
                 and the server decides each separately, so a change to one
@@ -122,8 +147,8 @@ export function ProjectHome() {
             <NewOrder
                 projectCode={project.code}
                 timezone={project.timezone}
-                canCreate={canImport}
-                canDelete={canImport}
+                canCreate={canDispatch}
+                canDelete={canDispatch}
             />
             <Sites projectCode={project.code} canManage={canManage} />
             <Pricing projectCode={project.code} />
