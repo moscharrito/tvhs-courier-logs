@@ -385,7 +385,11 @@ const MATRIX = [
     ['DELETE', `${UH}/imports/mappings/999999`, UH_LIST_REPAIR, ''],
 
     /* --- orders: patient names and addresses. */
-    ['POST', `${UH}/orders`, UH_STAFF, 'a manual order'],
+    /* Taking a STAT by phone is dispatch: a pharmacy ringing to say "this
+       one has to go now" is the day's work arriving by another route, and
+       queueing it behind an administrator means it is typed late. Which
+       counter they may take it FOR is leadMaySee, inside the handler. */
+    ['POST', `${UH}/orders`, UH_DISPATCH, 'a manual order'],
     ['GET', `${UH}/orders`, UH_LEAD_READ, 'couriers narrowed to their own work inside, leads to their own pharmacies'],
     /* The same list and the same scoping, because it runs the same filterFor:
        a courier exports their own work and a lead their own pharmacies. */

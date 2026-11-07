@@ -621,3 +621,85 @@ describe('the return form on our own order view', () => {
         expect((await admin.get(`${BASE}/${order.id}/return-form`)).status).toBe(404);
     });
 });
+
+/* ───────────────────────────── dispatch taking a STAT by phone
+ *
+ * `lead` is the contract's dispatcher. A pharmacy ringing to say "this one
+ * has to go now" is the day's work arriving by another route, and queueing
+ * it behind an administrator means it is typed late or not at all.
+ */
+describe('a manual order taken by dispatch', () => {
+    let dispatch;
+    let oneCounter;
+    let otherSiteId;
+
+    beforeAll(async () => {
+        const sites = (await admin.get('/api/projects/uh/uh/sites')).body;
+        otherSiteId = sites.find((s) => s.id !== dischargeId).id;
+
+        await admin.post('/api/users').send({
+            username: 'stat.dispatch', name: 'Dispatch Team', password: 'member-pass-12', role: 'staff',
+        });
+        await admin.put('/api/users/stat.dispatch/memberships/uh').send({
+            role: 'lead', settings: { siteIds: [dischargeId, otherSiteId] },
+        });
+        dispatch = srv.agent();
+        await dispatch.post('/api/login').send({ username: 'stat.dispatch', password: 'member-pass-12' });
+
+        await admin.post('/api/users').send({
+            username: 'stat.onecounter', name: 'One Counter', password: 'member-pass-12', role: 'staff',
+        });
+        await admin.put('/api/users/stat.onecounter/memberships/uh').send({
+            role: 'lead', settings: { siteIds: [dischargeId] },
+        });
+        oneCounter = srv.agent();
+        await oneCounter.post('/api/login').send({ username: 'stat.onecounter', password: 'member-pass-12' });
+    });
+
+    it('creates one for a counter its membership names', async () => {
+        const res = await dispatch.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(res.body.siteId).toBe(dischargeId);
+        expect(res.body.serviceType).toBe('stat');
+    });
+
+    it('is refused a counter its membership does not name', async () => {
+        /* THE HOLE THIS CLOSES. The handler only ever asked whether the site
+           belonged to the PROJECT, which was enough while the one role that
+           could reach it saw every counter anyway. Opening the guard without
+           this would have let a lead on one counter take orders for all
+           eight -- a guard widened into a hole, because the narrowing that
+           made it safe lived in the guard itself. */
+        const res = await oneCounter.post(BASE).send({ siteId: otherSiteId, ...NEW_ORDER });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('order.siteNotYours');
+    });
+
+    it('still refuses a courier, who takes no orders at all', async () => {
+        const courier = await memberWith('courier', 'stat.courier');
+        expect((await courier.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER })).status).toBe(403);
+    });
+
+    it('may not delete one, which is the line the screen draws too', async () => {
+        /* Creating work is recoverable: a wrong order is cancelled and the
+           record says who took it. Deleting takes the row, its custody
+           events, its messages and its files, and the audit line is the only
+           survivor. That stays with an administrator. */
+        const made = await dispatch.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER });
+        expect(made.status).toBe(201);
+        expect((await dispatch.delete(`${BASE}/${made.body.id}`)).status).toBe(403);
+        expect((await admin.delete(`${BASE}/${made.body.id}`)).status).toBe(200);
+    });
+
+    it('records the dispatcher as the person who took it', async () => {
+        /* The point of them having their own login: "who took this order"
+           has to answer with a person, not with whoever shares an account. */
+        const res = await dispatch.post(BASE).send({ siteId: dischargeId, ...NEW_ORDER });
+        expect(res.status).toBe(201);
+        const rows = await sql(
+            `SELECT actor FROM custody_events WHERE order_id = ? AND type = 'created'`,
+            [res.body.id],
+        );
+        expect(String(rows.rows[0].actor)).toBe('stat.dispatch');
+    });
+});

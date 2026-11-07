@@ -37,7 +37,7 @@ const listed = (orders: unknown[], over: Record<string, unknown> = {}) => ({
 
 const found = async (r: Record<string, unknown>) => {
     const mocked = mockFetch(r);
-    render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
+    render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
     /* The panel is folded by default -- it is a phone-call form, not
        something anybody wants open all day -- so the list inside it has to
        be revealed before it can be used. */
@@ -171,13 +171,13 @@ describe('finding and removing an order taken by hand', () => {
 describe('NewOrder', () => {
     it('offers nothing at all to someone who cannot create orders', () => {
         mockFetch(routes);
-        const { container } = render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate={false} />);
+        const { container } = render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate={false} canDelete={false} />);
         expect(container).toBeEmptyDOMElement();
     });
 
     it('says STAT is two hours, and that it is also one hour from pickup', async () => {
         mockFetch(routes);
-        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
 
         expect(screen.getByText(/Saved now, this is due by/)).toBeInTheDocument();
@@ -186,7 +186,7 @@ describe('NewOrder', () => {
 
     it('drops the pickup clock line for ad hoc, which has no such rule', async () => {
         mockFetch(routes);
-        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'adhoc' } });
         expect(screen.queryByText(/one hour of pickup/)).not.toBeInTheDocument();
@@ -200,7 +200,7 @@ describe('NewOrder', () => {
                 dueAt: '2026-09-14T19:00:00.000Z', recipientName: 'Ines Vargas',
             },
         });
-        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fill();
         fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
@@ -220,7 +220,7 @@ describe('NewOrder', () => {
                 dueAt: '2026-09-14T19:00:00.000Z', recipientName: 'Theo Nakamura',
             },
         });
-        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fill();
         fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
@@ -232,7 +232,7 @@ describe('NewOrder', () => {
             ...routes,
             'POST /api/projects/uh/uh/orders': { status: 400, body: { error: 'Invalid request', details: ['zip: five digit ZIP, optionally ZIP+4'] } },
         });
-        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate />);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fill();
         fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
@@ -240,5 +240,42 @@ describe('NewOrder', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent('Invalid request');
         expect(screen.getByText('zip: five digit ZIP, optionally ZIP+4')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Create order' })).toBeInTheDocument();
+    });
+});
+
+/* ────────────────── taking an order is not the same as destroying one
+ *
+ * Dispatch gained POST /orders on 7 November; DELETE /orders/:id stayed
+ * with an administrator. One flag used to draw this whole panel, delete
+ * button included, so widening it would have handed dispatch a Delete the
+ * server refuses -- which reads as a broken product rather than as a
+ * permission somebody does not have.
+ */
+describe('a dispatcher who may take an order but not delete one', () => {
+    const asDispatch = async (r: Record<string, unknown>) => {
+        const mocked = mockFetch(r);
+        render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete={false} />);
+        fireEvent.click(await screen.findByRole('button', { name: /STAT or ad hoc order/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Find orders' }));
+        return mocked;
+    };
+
+    it('still gets the panel and the form', async () => {
+        await asDispatch(listed([taken()]));
+        expect(await screen.findByText(/Ines Vargas/)).toBeInTheDocument();
+    });
+
+    it('is given no Delete button to press', async () => {
+        await asDispatch(listed([taken()]));
+        await screen.findByText(/Ines Vargas/);
+        expect(screen.queryByRole('button', { name: /^Delete/ })).toBeNull();
+    });
+
+    it('can still read the list, which is how they check their own work', async () => {
+        /* The search is not the destructive half. A dispatcher looking for
+           the STAT they typed ten minutes ago should find it. */
+        const { calls } = await asDispatch(listed([taken()]));
+        await screen.findByText(/Ines Vargas/);
+        expect(calls.find((c) => c.includes('/orders?'))).toContain('serviceType=stat%2Cadhoc');
     });
 });

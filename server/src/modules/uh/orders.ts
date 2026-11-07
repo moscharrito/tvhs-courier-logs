@@ -288,6 +288,29 @@ export function createOrdersRouter(
 ): Router {
     const router = Router({ mergeParams: true });
     const staff = requireProjectRole('admin');
+    /* ─────────────────────────────────────────────────────────────────────
+     * TAKING A STAT BY PHONE IS DISPATCH.
+     *
+     * `lead` is the contract's dispatcher since 7.20 and took the daily list
+     * on 7 November; a pharmacy ringing to say "this one has to go now" is
+     * the same job arriving by a different route, and queueing it behind an
+     * administrator means the order is typed late or not at all.
+     *
+     * NOT the same guard as deleting one. Creating work is recoverable --
+     * the wrong order can be cancelled, and the record says who took it.
+     * Deleting one takes the row, its custody events, its messages and its
+     * files, and the audit line is all that survives; that stays with an
+     * administrator until somebody decides otherwise.
+     *
+     * THE SCOPE CHECK IS NEW AND HAD TO BE. This handler only ever asked
+     * whether the site belonged to the PROJECT, which was enough while the
+     * one role that could reach it saw every counter anyway. Opening it to
+     * a lead without more would have let a lead named on three counters
+     * take an order for the other five -- a guard widened into a hole,
+     * because the narrowing that made the old guard safe lived in the
+     * guard itself. leadMaySee now says, below, which counters are theirs.
+     */
+    const dispatch = requireProjectRole('admin', 'lead');
     /* Reading an order means reading a patient's name and address. Couriers
      * are included and then narrowed to their own work further down; a client
      * viewer is not, because this endpoint is the whole project and their view
@@ -336,7 +359,7 @@ export function createOrdersRouter(
 
     /* -------------------------------------------------------------- create */
 
-    router.post('/', staff, wrap(async (req, res) => {
+    router.post('/', dispatch, wrap(async (req, res) => {
         const body = parse(CreateOrder, req.body, res);
         if (!body) return;
 
@@ -347,6 +370,20 @@ export function createOrdersRouter(
         });
         const site = siteRs.rows[0];
         if (!site) { res.status(404).json({ error: 'Site not found in this project' }); return; }
+
+        /* WHOSE COUNTER THIS IS. An administrator passes through; a lead
+           gets the pharmacies their membership names, which is the same
+           rule every read on this router already follows. 403 rather than
+           404 because the site is not a secret -- a dispatcher knows the
+           pharmacy exists, they are simply not the person who takes its
+           orders, and telling them that is actionable. */
+        if (!leadMaySee(req, Number(site['id']))) {
+            res.status(403).json({
+                error: 'That pharmacy is not one this account takes orders for.',
+                code: 'order.siteNotYours',
+            });
+            return;
+        }
 
         /* ───────────────────────────── where a facility transfer is going
          *

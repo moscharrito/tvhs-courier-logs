@@ -71,13 +71,11 @@ describe('the site manager, who is dispatch', () => {
         expect(await screen.findByRole('heading', { name: /daily list/i })).toBeInTheDocument();
     });
 
-    it('is not offered the manual order form, which the server refuses', async () => {
-        /* POST /orders is UH_STAFF. Wiring this to the import flag would
-           have drawn dispatch a form that 403s: creating a STAT by phone is
-           billable work and stayed with an administrator. */
+    it('is offered the manual order form, because a STAT by phone is dispatch', async () => {
+        /* POST /orders takes `lead` since 7 November. Which counter they may
+           take one FOR is leadMaySee inside the handler, not this flag. */
         renderAs('lead');
-        await screen.findByRole('heading', { name: /daily list/i });
-        expect(screen.queryByRole('heading', { name: /STAT or ad hoc order/i })).toBeNull();
+        expect(await screen.findByRole('heading', { name: /STAT or ad hoc order/i })).toBeInTheDocument();
     });
 
     it('is kept away from the commercials', async () => {

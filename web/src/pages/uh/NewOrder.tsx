@@ -57,8 +57,23 @@ const EMPTY = {
  *  defaults in core/projects/settings; the server is the authority. */
 const WINDOW_MINUTES: Record<string, number> = { stat: 120, adhoc: 240 };
 
-export function NewOrder({ projectCode, timezone, canCreate }: {
+export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
     projectCode: string; timezone: string; canCreate: boolean;
+    /* ─────────────────────────────────────────────────────────────────
+     * SEPARATE FROM canCreate SINCE 7 NOVEMBER, when dispatch gained the
+     * right to take a STAT by phone.
+     *
+     * One flag used to draw this whole panel, delete button included, and
+     * widening it for dispatch would have handed them a Delete that the
+     * server refuses: DELETE /orders/:id is still admin-only, because
+     * creating work is recoverable -- a wrong order can be cancelled and
+     * the record says who took it -- while deleting one takes the row,
+     * its custody events, its messages and its files, leaving the audit
+     * line as the only survivor.
+     *
+     * A button that 403s reads as a broken product rather than as a
+     * permission somebody does not have. */
+    canDelete: boolean;
 }) {
     const base = `/api/projects/${projectCode}/uh/orders`;
     /* "Due by 4:01 PM" is a promise made to whoever is on the phone, so it is
@@ -345,7 +360,7 @@ export function NewOrder({ projectCode, timezone, canCreate }: {
                                 <td>{o.status}{o.assignedTo ? ` · ${o.assignedTo}` : ''}</td>
                                 <td>{o.dueAt ? clock(o.dueAt) : ''}</td>
                                 <td>
-                                    {confirming === o.id ? (
+                                    {!canDelete ? null : confirming === o.id ? (
                                         /* TWO STEPS, AND THE SECOND ONE SAYS WHAT GOES.
 
                                            A single order is not a list: the thing about
