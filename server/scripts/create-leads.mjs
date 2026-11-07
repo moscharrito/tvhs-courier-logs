@@ -97,6 +97,16 @@ if (!isLocal && !/^https:/i.test(base)) {
     process.exit(1);
 }
 
+/* BEFORE THE PASSWORD PROMPT, because an argument this script will refuse
+   should be refused while somebody still has their hands on the keyboard.
+   The precise check is further down, where `wanted` exists; this is the
+   cheap half of it, and its only job is to not ask for a credential it is
+   about to throw away. */
+if (value('email', '').trim() && !value('only', '').trim()) {
+    console.error('--email sets one address. Say which account with --only=<username>.');
+    process.exit(1);
+}
+
 const adminUser = process.env['SEED_ADMIN_USER'] ?? 'admin';
 const adminPass = await adminPassword({
     user: process.env['SEED_ADMIN_USER'] ?? 'admin', base, isLocal, label: 'create-leads.mjs',
@@ -136,6 +146,25 @@ const LEADS = [
         sites: ALL_COUNTERS,
         note: 'dispatch, returns and the drivers on site, across all eight counters',
     },
+    /* THE DISPATCH TEAM, which is the same role and a different shift.
+     *
+     * `lead` has been the contract's dispatcher since 7.20 and gained the
+     * daily list on 7 November, so this account needs no new role: it needs
+     * the same one, named for the people who sit in it. A second account
+     * rather than a shared one because the audit trail answers "who
+     * assigned this" with a username, and two people signing in as the site
+     * manager makes that question unanswerable.
+     *
+     * Every counter, because dispatch covers the contract. An account whose
+     * membership names none sees nothing -- deliberately, see
+     * modules/uh/lead-scope.ts -- and that is the failure mode to avoid
+     * here, not an over-wide one. */
+    {
+        username: 'dispatch',
+        name: 'Dispatch Team',
+        sites: ALL_COUNTERS,
+        note: 'the daily list, assignment, the board and what comes back, across all eight counters',
+    },
 ];
 
 /* EVERY ACCOUNT MODEL THIS SCRIPT HAS HAD BEFORE THIS ONE.
@@ -168,6 +197,10 @@ const RETIRED = [
  * lifetime -- both want this account treated as staff. */
 const PLATFORM_ROLE = 'staff';
 
+/* One address, for one account. Passed rather than held in this file
+   because it is a real person's mailbox and this repository is public. */
+const email = value('email', '').trim();
+
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const wanted = only.length === 0
     ? LEADS
@@ -175,6 +208,14 @@ const wanted = only.length === 0
 
 if (wanted.length === 0) {
     console.error(`--only=${only.join(',')} matched no lead. Known: ${LEADS.map((l) => l.username).join(', ')}`);
+    process.exit(1);
+}
+
+/* An address belongs to one person, so it may only be given to one account.
+   Without this, a run with no --only would quietly put the same mailbox on
+   every lead, and whoever owns it could then reset all of them. */
+if (email && wanted.length > 1) {
+    console.error(`--email sets one address and ${wanted.length} accounts are selected. Narrow it with --only=<username>.`);
     process.exit(1);
 }
 
@@ -266,7 +307,15 @@ async function main() {
             pass = password();
             insist(`create ${lead.username}`, await call('/api/users', {
                 method: 'POST',
-                body: JSON.stringify({ username: lead.username, name: lead.name, password: pass, role: PLATFORM_ROLE }),
+                /* AN ADDRESS AT CREATION OR THE RESET IS A DEAD END. A
+                   password reset sends a code to the address on the account,
+                   so one created without an address can only ever be reset
+                   by us. Optional here because not every account has one to
+                   give, and said out loud below when it is missing. */
+                body: JSON.stringify({
+                    username: lead.username, name: lead.name, password: pass, role: PLATFORM_ROLE,
+                    ...(email ? { email } : {}),
+                }),
             }), (s) => s === 201 || s === 200);
         } else if (has('reset')) {
             pass = password();

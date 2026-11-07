@@ -92,6 +92,17 @@ const UH_DISPATCH = ['lead', 'projectAdmin', 'platformAdmin'];
 const UH_DISPATCH_AND_COURIER = ['lead', 'courier', 'projectAdmin', 'platformAdmin'];
 const UH_MANAGE = UH_STAFF;
 const UH_CLIENT_VIEW = ['pharmacy', 'projectAdmin', 'platformAdmin'];
+/* The daily list: a pharmacy sends its own, and DISPATCH SENDS ANYBODY'S.
+   `lead` is the contract's dispatcher since 7.20 and the lists mostly arrive
+   by email for them to upload, so the one screen that starts the day cannot
+   be the one thing they are locked out of. Which counters they may upload
+   FOR is the scope on their membership, pinned in uh-client-import.test.mjs,
+   not something this table can express. */
+const UH_LIST_UPLOAD = ['pharmacy', 'lead', 'projectAdmin', 'platformAdmin'];
+/* Taking a list off a board, and the saved column mapping behind it. Not a
+   pharmacy: a counter that sent the wrong file rings dispatch rather than
+   having a list vanish from under whoever is part way through planning it. */
+const UH_LIST_REPAIR = ['lead', 'projectAdmin', 'platformAdmin'];
 const TVHS_MEMBER = ['outsider', 'platformAdmin'];
 /* Three TVHS endpoints are for drivers and nobody else, checked by platform
  * role inside the handler. The platform administrator is refused them too. */
@@ -353,25 +364,25 @@ const MATRIX = [
        they then reach is the scope, and uh-client-import.test.mjs is where
        that is pinned, because this table cannot express "their own site" with
        an id that deliberately does not exist. */
-    ['POST', `${UH}/imports/preview`, UH_CLIENT_VIEW, ''],
-    ['POST', `${UH}/imports`, UH_CLIENT_VIEW, ''],
-    ['GET', `${UH}/imports`, UH_CLIENT_VIEW, 'reading one discloses what uploading one did'],
-    ['GET', `${UH}/imports/export.xlsx`, UH_CLIENT_VIEW, 'which list arrived when, scoped like the list'],
-    ['GET', `${UH}/imports/999999`, UH_CLIENT_VIEW, ''],
+    ['POST', `${UH}/imports/preview`, UH_LIST_UPLOAD, ''],
+    ['POST', `${UH}/imports`, UH_LIST_UPLOAD, ''],
+    ['GET', `${UH}/imports`, UH_LIST_UPLOAD, 'reading one discloses what uploading one did'],
+    ['GET', `${UH}/imports/export.xlsx`, UH_LIST_UPLOAD, 'which list arrived when, scoped like the list'],
+    ['GET', `${UH}/imports/999999`, UH_LIST_UPLOAD, ''],
     /* Scoped exactly like reading one, because it IS reading one: a pharmacy
        may take its own list away as a sheet, and a list belonging to another
        counter answers 404 rather than 403 so ids cannot be walked. */
-    ['GET', `${UH}/imports/999999/export.xlsx`, UH_CLIENT_VIEW, 'a pharmacy takes its own list away as a file'],
+    ['GET', `${UH}/imports/999999/export.xlsx`, UH_LIST_UPLOAD, 'a pharmacy takes its own list away as a file'],
     /* NOT scoped like reading one, and the narrowing is deliberate. Sending a
        list and reading it back concern a pharmacy's own counter; taking one
        off removes work from a board dispatch now assigns by hand, so a
        counter that sent the wrong file rings dispatch rather than having a
        list vanish from under whoever is part way through planning it. */
-    ['DELETE', `${UH}/imports/999999`, UH_STAFF, 'withdrawing a list is dispatch, unlike sending or reading one'],
+    ['DELETE', `${UH}/imports/999999`, UH_LIST_REPAIR, 'withdrawing a list is dispatch, unlike sending or reading one'],
     /* The saved mapping stays ours: reading or clearing it is a repair, and a
        pharmacy gets everything it needs from a preview instead. */
-    ['GET', `${UH}/imports/mappings/999999`, UH_STAFF, 'the saved mapping is a dispatch repair'],
-    ['DELETE', `${UH}/imports/mappings/999999`, UH_STAFF, ''],
+    ['GET', `${UH}/imports/mappings/999999`, UH_LIST_REPAIR, 'the saved mapping is a dispatch repair'],
+    ['DELETE', `${UH}/imports/mappings/999999`, UH_LIST_REPAIR, ''],
 
     /* --- orders: patient names and addresses. */
     ['POST', `${UH}/orders`, UH_STAFF, 'a manual order'],

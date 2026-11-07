@@ -472,3 +472,133 @@ describe('the portal upload is off until a contract switches it on', () => {
         expect((await them.get(`${CLIENT}/summary`)).body.canUploadList).toBe(true);
     });
 });
+
+/* ───────────────────────────────── dispatch taking a list in
+ *
+ * Ticket 7.20 made `lead` the contract's dispatcher, and every part of that
+ * job was already theirs -- runs, reassignment, the board, any order, the
+ * proof of delivery -- except the one screen that starts the day. The lists
+ * mostly arrive by email for dispatch to upload, so a dispatcher who cannot
+ * take a list in cannot dispatch.
+ */
+describe('dispatch uploading a list', () => {
+    /** A lead named on every counter: the contract's dispatcher. */
+    const asDispatch = () => agentFor('uh.dispatch', 'dispatch-pass-1');
+    /** A lead named on one counter, to prove the guard is not the scope. */
+    const asOneCounter = () => agentFor('uh.onecounter', 'dispatch-pass-2');
+
+    beforeAll(async () => {
+        await admin.post('/api/users').send({
+            username: 'uh.dispatch', name: 'Dispatch Team', password: 'dispatch-pass-1', role: 'staff',
+        });
+        await admin.put('/api/users/uh.dispatch/memberships/uh').send({
+            role: 'lead', settings: { siteIds: [discharge.id, green.id] },
+        });
+        await admin.post('/api/users').send({
+            username: 'uh.onecounter', name: 'One Counter', password: 'dispatch-pass-2', role: 'staff',
+        });
+        await admin.put('/api/users/uh.onecounter/memberships/uh').send({
+            role: 'lead', settings: { siteIds: [discharge.id] },
+        });
+    });
+
+    it('can preview a list for any counter it is named on', async () => {
+        const them = await asDispatch();
+        for (const site of [discharge, green]) {
+            const res = await upload(them, `${BASE}/preview`, { siteId: site.id, serviceDate: tomorrow });
+            expect(res.status, JSON.stringify(res.body).slice(0, 300)).toBe(200);
+            expect(res.body.site.id).toBe(site.id);
+        }
+    });
+
+    it('can commit one, and the orders are real orders', async () => {
+        const day = ownDay();
+        const them = await asDispatch();
+        const res = await upload(them, BASE, { siteId: green.id, serviceDate: day });
+        expect(res.status, JSON.stringify(res.body).slice(0, 300)).toBe(201);
+        expect(res.body.summary.imported).toBeGreaterThan(0);
+
+        const rows = await sql(
+            'SELECT COUNT(*) AS n FROM orders WHERE site_id = ? AND service_date = ?',
+            [green.id, day],
+        );
+        expect(Number(rows.rows[0].n)).toBe(res.body.summary.imported);
+    });
+
+    it('is refused a counter its membership does not name', async () => {
+        /* The guard says who may knock; the scope says what they touch. A
+           lead on one counter is not the contract's dispatcher. */
+        const them = await asOneCounter();
+        const res = await upload(them, `${BASE}/preview`, { siteId: green.id, serviceDate: tomorrow });
+        expect(res.status).toBe(403);
+    });
+
+    it('can read the lists back and take one away as a file', async () => {
+        /* Reading one is the same disclosure as uploading one. A dispatcher
+           who cannot see what arrived cannot tell a pharmacy it did. */
+        const them = await asDispatch();
+        const list = await them.get(BASE);
+        expect(list.status).toBe(200);
+        /* A bare array, like the pharmacy's own view of the same route. */
+        expect(Array.isArray(list.body)).toBe(true);
+        /* Both counters it is named on, not just the one it uploaded for. */
+        const seen = new Set(list.body.map((l) => l.site.id));
+        expect(seen.has(green.id)).toBe(true);
+        expect((await them.get(`${BASE}/export.xlsx`)).status).toBe(200);
+    });
+
+    it('can withdraw a list, which a pharmacy cannot', async () => {
+        /* Taking a list off removes work from a board dispatch assigns by
+           hand. Dispatch may; the counter that sent the wrong file rings
+           them. */
+        const day = ownDay();
+        const them = await asDispatch();
+        const made = await upload(them, BASE, { siteId: discharge.id, serviceDate: day });
+        expect(made.status).toBe(201);
+
+        const pharmacist = await agentFor('uh.uploader', 'upload-pass-1');
+        expect((await pharmacist.delete(`${BASE}/${made.body.id}`)).status).toBe(403);
+        expect((await them.delete(`${BASE}/${made.body.id}`)).status).toBe(200);
+    });
+
+    it('may read and clear the saved column mapping, which a pharmacy may not', async () => {
+        const them = await asDispatch();
+        const pharmacist = await agentFor('uh.uploader', 'upload-pass-1');
+        expect((await pharmacist.get(`${BASE}/mappings/${discharge.id}`)).status).toBe(403);
+        expect([200, 404]).toContain((await them.get(`${BASE}/mappings/${discharge.id}`)).status);
+    });
+
+    it('uploads whether or not the contract takes lists through the portal', async () => {
+        /* THE ONE THAT WOULD HAVE BITTEN. `isOurs` decided who dispatch was
+           by asking scopeFor for wholeProject, which is true for an
+           administrator and nobody else -- so a lead let in here would have
+           been treated as a pharmacy uploading for itself and gated by
+           listRelease.allowPortalUpload, which is off for this contract.
+           The setting is about whether a CLIENT may upload. */
+        const off = await admin.patch('/api/projects/uh/settings')
+            .send({ listRelease: { allowPortalUpload: false } });
+        expect(off.status).toBe(200);
+        try {
+            const pharmacist = await agentFor('uh.uploader', 'upload-pass-1');
+            const refused = await upload(pharmacist, `${BASE}/preview`, { siteId: discharge.id, serviceDate: tomorrow });
+            expect(refused.status).toBe(403);
+
+            const them = await asDispatch();
+            const allowed = await upload(them, `${BASE}/preview`, { siteId: discharge.id, serviceDate: tomorrow });
+            expect(allowed.status, JSON.stringify(allowed.body).slice(0, 300)).toBe(200);
+        } finally {
+            await admin.patch('/api/projects/uh/settings')
+                .send({ listRelease: { allowPortalUpload: true } });
+        }
+    });
+
+    it('may upload for a day that has passed, as dispatch repairing a day', async () => {
+        /* A pharmacy is refused a past service date because that would
+           create a day of deliveries nobody asked for. Dispatch is not: the
+           commonest reason to type one is that the list should have gone up
+           this morning. */
+        const them = await asDispatch();
+        const res = await upload(them, `${BASE}/preview`, { siteId: discharge.id, serviceDate: dayIn(-1) });
+        expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(200);
+    });
+});

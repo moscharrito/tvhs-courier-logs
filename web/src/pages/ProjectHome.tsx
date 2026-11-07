@@ -35,7 +35,18 @@ export function ProjectHome() {
        drivers on site. The manager sees the operation; this flag is what
        the commercials hang off, and it stays admin-only. */
     const canManage = project.role === 'admin';
-    const canImport = canManage;
+    /* TAKING THE DAY'S LIST IN IS DISPATCH, and dispatch is the site manager.
+
+       This read `canManage`, so the one screen that starts the day was the
+       one thing the person who runs the day could not touch -- they had the
+       board, the runs, the reassignment and every order, and no way to put
+       work on any of it. The lists mostly arrive by email for dispatch to
+       upload rather than through the portal, so that was the whole job
+       waiting on an administrator.
+
+       Which counters they may upload for is their membership's scope, on the
+       server. This flag only decides whether the panel is offered. */
+    const canImport = canManage || project.role === 'lead';
 
     /* A courier gets their run and nothing else. The rest of this page is
        sites, pricing, settings and the whole day's list of patient addresses,
@@ -95,12 +106,16 @@ export function ProjectHome() {
             </nav>
 
             {/* The daily job, so it stays open. */}
-            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} canWithdraw={canManage} />
+            <ListImport projectCode={project.code} timezone={project.timezone} canImport={canImport} canWithdraw={canImport} />
 
             {/* Everything below folds away and remembers that it did. These
                 are reference and occasional work: a phone order, the site
                 list, the rate card, the contract parameters. */}
-            <NewOrder projectCode={project.code} timezone={project.timezone} canCreate={canImport} />
+            {/* STILL canManage, deliberately, now that canImport is wider.
+                Taking a STAT by phone creates billable work and POST /orders
+                is admin-only on the server; wiring this to the import flag
+                would have drawn dispatch a form the server then refuses. */}
+            <NewOrder projectCode={project.code} timezone={project.timezone} canCreate={canManage} />
             <Sites projectCode={project.code} canManage={canManage} />
             <Pricing projectCode={project.code} />
             <ProjectSettings projectCode={project.code} />

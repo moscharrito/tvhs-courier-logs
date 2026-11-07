@@ -163,7 +163,24 @@ export function createImportsRouter(
     { client, storage }: { client: Client; storage: FileStorage },
 ): Router {
     const router = Router({ mergeParams: true });
-    const operate = requireProjectRole('admin', 'pharmacy');
+    /* ─────────────────────────────────────────────────────────────────────
+     * `lead` IS DISPATCH, AND DISPATCH UPLOADS THE LISTS.
+     *
+     * Ticket 7.20 turned the eight per-counter leads into one person who
+     * dispatches the whole contract. Every other part of that job was theirs
+     * already -- runs, reassignment, the board, any order, the proof of
+     * delivery -- and this was the hole: the one screen that starts the day
+     * belonged to pharmacies and administrators only. A dispatcher who
+     * cannot take a list in cannot dispatch, and the lists mostly arrive by
+     * email for them to upload, not through the portal.
+     *
+     * What they may upload FOR is still the scope on their membership, via
+     * allowedSiteIds below. A lead named on three counters uploads for three
+     * counters; a lead named on all nine is the contract's dispatcher. The
+     * guard says who may knock and the scope says what they touch, which is
+     * the same division as everywhere else here.
+     */
+    const operate = requireProjectRole('admin', 'pharmacy', 'lead');
     /* An import holds the pharmacy's whole list, patients included. Reading one
      * is the same disclosure as uploading one, so it takes the same role, and
      * the scope below then decides WHICH ones either way. */
@@ -177,10 +194,25 @@ export function createImportsRouter(
      * takes precedence over the saved one. So they can always get themselves
      * unstuck without being able to delete a thing the next morning's upload
      * depends on. */
-    const dispatchOnly = requireProjectRole('admin');
+    const dispatchOnly = requireProjectRole('admin', 'lead');
 
-    /** Dispatch, as opposed to a pharmacy uploading for itself. */
-    const isOurs = (req: Request) => scopeFor(req.membership?.role, req.membership?.settings ?? {}).wholeProject;
+    /**
+     * Dispatch, as opposed to a pharmacy uploading for itself.
+     *
+     * A ROLE TEST, NOT A SCOPE TEST, since 7 November. This read
+     * `scopeFor(...).wholeProject`, which is true for an administrator and
+     * for nobody else -- so the moment a lead was let in here they would
+     * have been treated as a pharmacy uploading for itself: gated by
+     * listRelease.allowPortalUpload, which is off, and unable to upload at
+     * all. The comment above uploadNotOffered has always said "dispatch is
+     * never gated by it", and the test that decided who dispatch was could
+     * not see them.
+     *
+     * The two questions are genuinely different and were only ever answered
+     * by one expression because, until there was a dispatcher, the same
+     * person was the answer to both.
+     */
+    const isOurs = (req: Request) => req.membership?.role === 'admin' || req.membership?.role === 'lead';
 
     /**
      * The sites this caller may import for, or null for "all of them".
