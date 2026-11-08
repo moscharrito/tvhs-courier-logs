@@ -64,6 +64,12 @@ emails.csv
 # username next to the mailbox that receives its reset code.
 emails.txt
 
+# set-portal-sites.mjs output, teed by bc3-login.ps1 so the before/after of a
+# live client portal's scope can be read without reading a terminal tab whose
+# scrollback holds a generated password. No secret in it; it does name the
+# pharmacies one client account can see.
+manager-scope.txt
+
 # One-off credential tooling and its output. Public repository.
 reset-uh-portals.py
 *.docx
