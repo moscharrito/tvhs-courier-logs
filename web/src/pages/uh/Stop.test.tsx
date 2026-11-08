@@ -699,7 +699,7 @@ describe('the stop that could not be completed', () => {
     it('offers a slot, in the place the driver already is', async () => {
         renderStop(routes());
         await openAttempt();
-        expect(screen.getByLabelText(/Photo \(optional\)/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/Upload signed sheet/)).toBeInTheDocument();
     });
 
     it('sends the picture to the bucket and the file id with the attempt', async () => {
@@ -709,7 +709,7 @@ describe('the stop that could not be completed', () => {
             [`POST ${ORDER}/attempt`]: { status: 201, body: { status: 'failed', photoFileId: 99 } },
         });
         await openAttempt();
-        fireEvent.change(screen.getByLabelText(/Photo \(optional\)/), { target: { files: [picture()] } });
+        fireEvent.change(screen.getByLabelText(/Upload signed sheet/), { target: { files: [picture()] } });
         fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
 
         /* THROUGH THE QUEUE, picture first. A dry run happens at a door
@@ -752,7 +752,7 @@ describe('the stop that could not be completed', () => {
         await openAttempt();
 
         const wrong = new File([new Uint8Array(4)], 'clip.mov', { type: 'video/quicktime' });
-        fireEvent.change(screen.getByLabelText(/Photo \(optional\)/), { target: { files: [wrong] } });
+        fireEvent.change(screen.getByLabelText(/Upload signed sheet/), { target: { files: [wrong] } });
 
         /* A sentence now rather than a four-hundred from the far end of a
            pharmacy car park. lib/photos.ts decides the type; the `accept`
@@ -776,7 +776,7 @@ describe('the stop that could not be completed', () => {
            makes the same call. And the dry run is NOT blocked by it: the
            photograph is evidence for an invoice line, and the stop is the
            thing that has to be recorded either way. */
-        await waitFor(() => expect(screen.queryByLabelText(/Photo \(optional\)/)).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByLabelText(/Upload signed sheet/)).not.toBeInTheDocument());
         fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
         await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/attempt`)).toBeDefined());
     });
@@ -785,7 +785,7 @@ describe('the stop that could not be completed', () => {
         setOnline(false);
         renderStop({ ...routes(), ...fileRoutes });
         await openAttempt();
-        fireEvent.change(screen.getByLabelText(/Photo \(optional\)/), { target: { files: [picture()] } });
+        fireEvent.change(screen.getByLabelText(/Upload signed sheet/), { target: { files: [picture()] } });
         fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
 
         await waitFor(() => expect(screen.getByText(/as soon as you have signal/)).toBeInTheDocument());

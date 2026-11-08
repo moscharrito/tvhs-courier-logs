@@ -1120,14 +1120,10 @@ export function Stop() {
                     {choice === 'attempt' && (
                         <form className="izy-card" onSubmit={attempt}>
                             <h2>Could not deliver</h2>
-                            <p className="izy-muted">
-                                Say what happened to each item. The contract charges a flat fee per item for an
-                                attempted delivery, so the reason is what the invoice line rests on.
-                            </p>
                             {order.packages.map((p) => (
                                 <div key={p.id} className="izy-stop">
                                     <div><b>{p.description || 'Package'}</b> · {p.quantity} {p.quantity === 1 ? 'item' : 'items'}</div>
-                                    <label className="izy-field">Reason
+                                    <label className="izy-field">Choose your reason
                                         <select
                                             aria-label={`Reason for package ${p.id}`}
                                             value={reasons[p.id]?.code ?? ''}
@@ -1154,23 +1150,31 @@ export function Stop() {
                                 through the outbox. That is the whole change
                                 drivers asked for.
 
-                                OPTIONAL, AND IT SAYS SO. On a handover
-                                there is always a form to photograph: the
-                                courier is holding it. Here there is
-                                sometimes nothing -- a suite number the
-                                building has never had, an address that does
-                                not exist. Making it compulsory would leave
-                                a driver in a car park choosing between
+                                STILL OPTIONAL, AND IT NO LONGER SAYS SO.
+                                On a handover there is always a form to
+                                photograph: the courier is holding it. Here
+                                there is sometimes nothing -- a suite number
+                                the building has never had, an address that
+                                does not exist. Making it compulsory would
+                                leave a driver in a car park choosing between
                                 photographing a wall and not recording the
-                                stop, and the stop is what matters. So the
-                                button stays enabled either way and the note
-                                asks rather than demands.
+                                stop, and the stop is what matters.
+
+                                So the button stays enabled with nothing
+                                attached, and that is now the ONLY thing
+                                saying the field can be skipped: the label
+                                said "Photo (optional)" until 8 November,
+                                when the sheet was cut back to two labels at
+                                the operator's instruction. If drivers start
+                                asking whether they have to take one, the
+                                word to put back is in the label, not in a
+                                paragraph under it.
 
                                 HIDDEN WHEN THERE IS NOWHERE TO PUT IT,
                                 rather than shown and then refused: the
                                 doorstep form above makes the same call. */}
                             {filesAvailable !== false && (
-                                <label className="izy-field">Photo (optional)
+                                <label className="izy-field">Upload signed sheet
                                     <input
                                         type="file"
                                         accept={PHOTO_ACCEPT}
@@ -1196,11 +1200,17 @@ export function Stop() {
                                             setAttemptPhoto(picked);
                                         }}
                                     />
-                                    <span className="izy-muted izy-field-note">
-                                        {attemptPhoto === null
-                                            ? 'The door, the address, the notice you left — whatever shows why it could not be delivered. The contract bills this stop, so the picture is what defends it.'
-                                            : 'Attached. It goes up with the attempt.'}
-                                    </span>
+                                    {/* ONLY THE CONFIRMATION. The sentence that used to
+                                        sit here when nothing was attached explained what to
+                                        photograph and why the contract wanted it; it was cut
+                                        on 8 November with the rest of the prose on this
+                                        sheet. What a driver cannot do without is being told
+                                        the file was taken, because the input itself only
+                                        shows a filename and an upload that silently dropped
+                                        looks identical. */}
+                                    {attemptPhoto !== null && (
+                                        <span className="izy-muted izy-field-note">Attached. It goes up with the attempt.</span>
+                                    )}
                                 </label>
                             )}
                             <CardButton
@@ -1209,9 +1219,7 @@ export function Stop() {
                                 tone="calmDanger"
                                 busy={busy}
                                 disabled={!attemptReady}
-                                detail={attemptReady
-                                    ? 'The contract charges per item attempted, so the reason is the invoice line'
-                                    : 'Choose a reason for every item first'}
+                                detail={attemptReady ? undefined : 'Choose a reason for every item first'}
                             />
                             <CardButton title="Back" tone="quiet" compact disabled={busy} onClick={() => setChoice(null)} />
                         </form>
