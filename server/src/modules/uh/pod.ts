@@ -121,6 +121,9 @@ export interface PodData {
      *  is reached through the custody events rather than by order_id. See
      *  returnPhoto in pod-photos.ts. */
     returnPhoto?: { bytes?: Buffer | undefined } | undefined;
+    /** Why the stop could not be completed, photographed at the door. The
+     *  one picture that defends a billed dry run. */
+    attemptPhoto?: { bytes?: Buffer | undefined } | undefined;
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -518,9 +521,26 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
        form, which said the pharmacy signed it handing the packages OVER. It
        is the proof the medication got back to a counter, which is the one
        question a pharmacy asks about a delivery that failed. */
+    /* ───────── BEFORE THE RETURN FORM, because the door came first.
+     *
+     * The pages of this document are the order of the handovers, which is
+     * the sentence written over the return form below. A delivery that was
+     * collected, attempted and brought back has three pictures and they
+     * read in that order: the counter, the door, the counter again.
+     *
+     * Addendum 1 charges a flat fee for every item on an attempted
+     * delivery. That makes the dry run the line on an invoice most likely
+     * to be queried, and this page the answer to the query. */
+    if (data.attemptPhoto?.bytes) {
+        photoPage(
+            data.attemptPhoto.bytes, 'Ph3', 'Why it could not be delivered',
+            'Photographed at the address by the courier when the delivery was recorded as attempted. '
+            + 'It belongs to this delivery alone.',
+        );
+    }
     if (data.returnPhoto?.bytes) {
         photoPage(
-            data.returnPhoto.bytes, 'Ph3', 'The pharmacy’s return form',
+            data.returnPhoto.bytes, 'Ph4', 'The pharmacy’s return form',
             'Part 3 of the docket, signed by the pharmacy when the undelivered packages were handed back, '
             + 'photographed by the courier at the counter. One form covers everything returned together, so it '
             + 'may list other deliveries brought back at the same time.',

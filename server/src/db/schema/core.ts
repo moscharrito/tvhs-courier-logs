@@ -195,7 +195,19 @@ export type Device = typeof devices.$inferSelect;
  */
 
 export const FILE_KINDS = [
-    'doorstep', 'pod', 'exception', 'signature',
+    'doorstep', 'pod', 'signature',
+    /* WHY A STOP COULD NOT BE COMPLETED, photographed at the door by the
+     * courier recording the dry run: the closed office, the wrong house
+     * number on the porch, the docket annotated and brought back.
+     *
+     * It is the oldest kind in this list and until 8 November nothing wrote
+     * it. That was not an oversight to tidy away -- Addendum 1 bills a flat
+     * fee for every item on an attempted delivery, so a dry run is the line
+     * on the invoice most likely to be disputed, and the only thing that
+     * settles the dispute is the picture. The reason it sat unused is that
+     * the driver's screen had a photograph slot on "Handed over" and none
+     * on "Could not deliver"; the kind was ready and the slot was not. */
+    'exception',
     /* University Health signs their own paper form and we photograph it
      * (drizzle/0038). This replaces the drawn signature at their request. */
     'courier_form',
@@ -256,7 +268,12 @@ export const files = sqliteTable(
            actually has; this is what a future generated migration would
            compare against, and the two drifting apart is how somebody later
            gets a diff that silently narrows a live constraint. */
-        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature','courier_form','patient_id','stamped_receipt')`),
+        /* `return_form` was missing here while drizzle/0065 had already
+           widened the live constraint -- exactly the drift the paragraph
+           above warns about, introduced by the change that wrote the
+           warning. A generated migration comparing against this would have
+           narrowed a constraint the database has. */
+        check('files_kind_check', sql`${t.kind} IN ('doorstep','pod','exception','signature','courier_form','patient_id','stamped_receipt','return_form')`),
         check('files_status_check', sql`${t.status} IN ('pending','stored')`),
     ],
 );

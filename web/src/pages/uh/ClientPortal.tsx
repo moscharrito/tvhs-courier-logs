@@ -583,6 +583,9 @@ interface DetailResponse extends ClientOrder {
        server older than this field -- hence optional, for the same reason
        `photo` is. */
     returnForm?: { available: boolean; reason: string };
+    /** Why it could not be delivered. Optional on the stop, so an empty
+     *  reason with `available: false` means only that nobody took one. */
+    attemptPhoto?: { available: boolean; reason: string };
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -868,6 +871,46 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                 has photographed the signed part 3 at the counter on every
                 return since the signature came off glass, and until now no
                 screen showed it to the people whose medication it was. */}
+            {/* ───────── WHY IT COULD NOT BE DELIVERED
+                Before the return form, in the order the two things happened:
+                the stop failed at the door, and the medication came back to
+                a counter afterwards.
+
+                "Where is my medication" is the first question a pharmacy
+                asks about a failed delivery and the return form answers it.
+                "What actually happened" is the second, and the only answer
+                on this screen was a reason code chosen from a list of six.
+                Addendum 1 bills every item on an attempted delivery, so the
+                client paying for it may see what it rests on.
+
+                SILENT WHEN THERE IS NOTHING. The slot is optional on the
+                driver's screen -- there is nothing to photograph at an
+                address that does not exist -- so a heading announcing an
+                absence on every dry run would be a heading people learn to
+                skip. See attemptPhotoStatus. */}
+            {detail?.attemptPhoto?.available && (
+                <>
+                    <h3>Why it could not be delivered</h3>
+                    <figure className="izy-pod-photo">
+                        <img
+                            src={`/api/projects/${code}/uh/client/orders/${order.id}/attempt-photo`}
+                            alt={`What the courier photographed at the address for ${order.recipientName}`}
+                            loading="lazy"
+                        />
+                        <figcaption className="izy-muted">
+                            Photographed at the address by the courier when the delivery was recorded as
+                            attempted. It belongs to this delivery alone.
+                        </figcaption>
+                    </figure>
+                </>
+            )}
+            {detail?.attemptPhoto && !detail.attemptPhoto.available && detail.attemptPhoto.reason && (
+                <>
+                    <h3>Why it could not be delivered</h3>
+                    <p className="izy-muted">{detail.attemptPhoto.reason}</p>
+                </>
+            )}
+
             {detail?.returnForm?.available && (
                 <>
                     <h3>Proof of return</h3>

@@ -96,7 +96,7 @@ export function Stop() {
     /* Amending a stop that already has an outcome: which photograph is
        being replaced, and the file picked for it. Null when the driver has
        not asked to replace anything, which is nearly always. */
-    const [amend, setAmend] = useState<'courier_form' | 'patient_id' | 'stamped_receipt' | null>(null);
+    const [amend, setAmend] = useState<'courier_form' | 'patient_id' | 'stamped_receipt' | 'exception' | null>(null);
     const [amendPhoto, setAmendPhoto] = useState<File | null>(null);
     /* ADDENDUM 2 CLAUSE 4. University Health forbid leaving a package
        anywhere unattended, and a delivery is not complete until a person has
@@ -128,6 +128,18 @@ export function Stop() {
     /* The stamped receipt that travels with a controlled item. Its own
        photograph, not a second use of the form slot: see FILE_KINDS. */
     const [receiptPhoto, setReceiptPhoto] = useState<File | null>(null);
+    /* ───────── THE PICTURE ON A STOP THAT COULD NOT BE COMPLETED
+     *
+     * "Handed over" has had a photograph slot since the signature came off
+     * glass. "Could not deliver" had none, and that is the whole of what
+     * drivers were reporting when they said there was nowhere to upload:
+     * not a missing screen somewhere else, a missing field on the form in
+     * front of them.
+     *
+     * Its own state, like every other photograph on this screen, for the
+     * reason stated under `reasons` below: two forms sharing one box means
+     * picking a file on one silently fills the other. */
+    const [attemptPhoto, setAttemptPhoto] = useState<File | null>(null);
     /* Its own, not the doorstep branch's: two forms sharing one box means
        typing in one silently fills the other. */
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
@@ -252,6 +264,7 @@ export function Stop() {
             setChoice(null);
             setSignedName('');
             setPhoto(null);
+            setAttemptPhoto(null);
             setNoSignatureReason('');
             await load();
         } catch (err) {
@@ -325,7 +338,24 @@ export function Stop() {
         const packages = order.packages
             .filter((p) => reasons[p.id]?.code)
             .map((p) => ({ packageId: p.id, reasonCode: reasons[p.id]!.code, note: reasons[p.id]!.note ?? '' }));
-        void post('attempt', { packages }, 'Successful. Proceed to your next stop.');
+        /* THROUGH THE QUEUE WITH THE ATTEMPT, not uploaded ahead of it --
+           the same argument as the delivery above, and it bites harder
+           here. A dry run happens at a door nobody answered, which is
+           disproportionately a basement, a gated yard, a building with no
+           signal. Uploading first would mean the one stop most likely to
+           need the picture is the one least able to send it, and a failure
+           would record nothing at all. Offline, the attempt and its
+           photograph wait together and go up in order. */
+        const photos: QueuedPhoto[] = [];
+        if (attemptPhoto !== null) {
+            photos.push({
+                blob: attemptPhoto,
+                contentType: photoType(attemptPhoto) ?? 'image/jpeg',
+                kind: 'exception',
+                bodyKey: 'exceptionFileId',
+            });
+        }
+        void post('attempt', { packages }, 'Successful. Proceed to your next stop.', undefined, photos);
     };
 
     /* ─────────────── A STOP THAT ALREADY HAS AN OUTCOME (4 November)
@@ -585,6 +615,25 @@ export function Stop() {
                                             onClick={() => { setAmend('stamped_receipt'); setAmendPhoto(null); }}
                                         />
                                     )}
+                                    {/* ONLY ON A DRY RUN, and adding is the
+                                        point rather than replacing. A driver
+                                        who recorded the attempt without a
+                                        picture -- in a hurry, or because the
+                                        slot is optional and they skipped it
+                                        -- had no second way in, which is the
+                                        gap that made a return recorded
+                                        without its sheet unrepairable. The
+                                        server refuses this kind on anything
+                                        that was handed over. */}
+                                    {order.status === 'failed' && (
+                                        <CardButton
+                                            title="Add or replace the photo"
+                                            tone="secondary"
+                                            compact
+                                            disabled={busy}
+                                            onClick={() => { setAmend('exception'); setAmendPhoto(null); }}
+                                        />
+                                    )}
                                 </>
                             )}
                         </>
@@ -595,7 +644,9 @@ export function Stop() {
                             <label className="izy-field">
                                 {amend === 'courier_form'
                                     ? 'The signed form'
-                                    : amend === 'stamped_receipt' ? 'The stamped receipt' : 'The identification'}
+                                    : amend === 'stamped_receipt' ? 'The stamped receipt'
+                                        : amend === 'exception' ? 'Why it could not be delivered'
+                                            : 'The identification'}
                                 <input
                                     type="file"
                                     accept={PHOTO_ACCEPT}
@@ -1097,6 +1148,61 @@ export function Stop() {
                                     )}
                                 </div>
                             ))}
+                            {/* ───────── THE SAME SLOT "HANDED OVER" HAS.
+                                One field, in the place a driver already is,
+                                with the same validation and the same trip
+                                through the outbox. That is the whole change
+                                drivers asked for.
+
+                                OPTIONAL, AND IT SAYS SO. On a handover
+                                there is always a form to photograph: the
+                                courier is holding it. Here there is
+                                sometimes nothing -- a suite number the
+                                building has never had, an address that does
+                                not exist. Making it compulsory would leave
+                                a driver in a car park choosing between
+                                photographing a wall and not recording the
+                                stop, and the stop is what matters. So the
+                                button stays enabled either way and the note
+                                asks rather than demands.
+
+                                HIDDEN WHEN THERE IS NOWHERE TO PUT IT,
+                                rather than shown and then refused: the
+                                doorstep form above makes the same call. */}
+                            {filesAvailable !== false && (
+                                <label className="izy-field">Photo (optional)
+                                    <input
+                                        type="file"
+                                        accept={PHOTO_ACCEPT}
+                                        capture="environment"
+                                        disabled={busy}
+                                        onChange={(e) => {
+                                            /* The same check the two forms above
+                                               make, and for the same reason: a
+                                               camera often reports image/jpg or
+                                               nothing at all, so lib/photos.ts
+                                               decides rather than trusting the
+                                               browser -- and a file too large is
+                                               a sentence now instead of a
+                                               four-hundred after the upload. */
+                                            const picked = e.target.files?.[0] ?? null;
+                                            const problem = picked === null ? null : photoProblem(picked);
+                                            if (problem !== null) {
+                                                setMsg({ kind: 'error', text: problem });
+                                                setAttemptPhoto(null);
+                                                return;
+                                            }
+                                            setMsg(null);
+                                            setAttemptPhoto(picked);
+                                        }}
+                                    />
+                                    <span className="izy-muted izy-field-note">
+                                        {attemptPhoto === null
+                                            ? 'The door, the address, the notice you left — whatever shows why it could not be delivered. The contract bills this stop, so the picture is what defends it.'
+                                            : 'Attached. It goes up with the attempt.'}
+                                    </span>
+                                </label>
+                            )}
                             <CardButton
                                 submit
                                 title="Record the attempt"

@@ -37,6 +37,11 @@ export const ID_KIND = ['patient_id'] as const;
  *  one order it was attached to rather than to a batch. See returnPhoto. */
 export const RETURN_KIND = ['return_form'] as const;
 
+/** Why a stop could not be completed, photographed at the door. Always one
+ *  order's own picture: a dry run is a thing that happened at one address,
+ *  so there is no batch path here and none of batchPhotoOn's complications. */
+export const ATTEMPT_KIND = ['exception'] as const;
+
 export interface StoredPhoto {
     id: number;
     key: string;
@@ -145,6 +150,52 @@ export async function returnPhoto(
     const attached = await storedPhoto(client, projectId, orderId, RETURN_KIND);
     if (attached) return attached;
     return batchPhotoOn(client, projectId, orderId, 'returned');
+}
+
+/**
+ * The photograph a courier took when a stop could not be completed.
+ *
+ * No batch half, unlike the two forms above: those are one sheet covering a
+ * trolley, and this is a closed door at one address. Newest wins, for the
+ * standing reason in this file -- a courier who photographed twice did so
+ * because the first one was no good.
+ */
+export async function attemptPhoto(
+    client: Client, projectId: number, orderId: number,
+): Promise<StoredPhoto | null> {
+    return storedPhoto(client, projectId, orderId, ATTEMPT_KIND);
+}
+
+/**
+ * What to tell a screen about the attempt photograph.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * IT IS OPTIONAL, AND THAT CHANGES THE THIRD ANSWER.
+ *
+ * returnFormStatus below says "something came back and no sheet was
+ * recorded", because a return with no signed sheet is a gap worth naming.
+ * A dry run with no photograph is not: there is nothing to photograph at an
+ * address that does not exist, and a card on every failed delivery saying
+ * so would train people to read past it.
+ *
+ * So the absence is silent, and the only thing said out loud is a
+ * photograph that exists and cannot be served -- which is a fault on this
+ * server, not a fact about the stop, and the one case where "there is no
+ * photograph" would be a lie.
+ */
+export async function attemptPhotoStatus(
+    client: Client, storage: FileStorage, projectId: number, orderId: number,
+): Promise<{ available: boolean; reason: string }> {
+    const found = await attemptPhoto(client, projectId, orderId);
+    if (!found) return { available: false, reason: '' };
+    if (!storage.available) {
+        return {
+            available: false,
+            reason: 'The courier photographed why this could not be delivered. File storage is not '
+                + 'configured on this server, so it cannot be shown.',
+        };
+    }
+    return { available: true, reason: '' };
 }
 
 /**
@@ -287,6 +338,12 @@ export async function attachPhotos(
            medication got back to a counter. Until now this picture was
            taken on every return and printed by nothing -- or, worse,
            printed as the collection form. See returnPhoto. */
+        /* WHAT HAPPENED AT THE DOOR, on a stop that did not end in a
+           handover. Addendum 1 bills every item on an attempted delivery,
+           so this is the picture an invoice line is defended with. */
+        const why = await attemptPhoto(client, projectId, orderId);
+        if (why) data.attemptPhoto = { bytes: await fetchPhoto(storage, why.key) };
+
         const back = await returnPhoto(client, projectId, orderId);
         if (back) data.returnPhoto = { bytes: await fetchPhoto(storage, back.key) };
     } catch {

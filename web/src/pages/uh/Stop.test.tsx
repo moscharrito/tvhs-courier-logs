@@ -675,3 +675,163 @@ describe('Stop', () => {
         expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/21/stop');
     });
 });
+
+/* ─────────────────────────────── THE PHOTOGRAPH ON "COULD NOT DELIVER"
+ *
+ * "Handed over" has had a slot since the signature came off glass and this
+ * had none. That is the whole of what drivers were reporting when they said
+ * there was nowhere to upload: not a missing screen elsewhere, a missing
+ * field on the form in front of them.
+ *
+ * Addendum 1 charges a flat fee for every item on an attempted delivery, so
+ * a dry run is the invoice line most likely to be queried and the picture of
+ * the shut office is what answers the query.
+ */
+describe('the stop that could not be completed', () => {
+    const openAttempt = async () => {
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Could not deliver' }));
+        fireEvent.change(screen.getByLabelText('Reason for package 51'), { target: { value: 'no_access' } });
+    };
+
+    const picture = () => new File([new Uint8Array([1, 2, 3])], 'door.jpg', { type: 'image/jpeg' });
+
+    it('offers a slot, in the place the driver already is', async () => {
+        renderStop(routes());
+        await openAttempt();
+        expect(screen.getByLabelText(/Photo \(optional\)/)).toBeInTheDocument();
+    });
+
+    it('sends the picture to the bucket and the file id with the attempt', async () => {
+        const { fn, calls } = renderStop({
+            ...routes(),
+            ...fileRoutes,
+            [`POST ${ORDER}/attempt`]: { status: 201, body: { status: 'failed', photoFileId: 99 } },
+        });
+        await openAttempt();
+        fireEvent.change(screen.getByLabelText(/Photo \(optional\)/), { target: { files: [picture()] } });
+        fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
+
+        /* THROUGH THE QUEUE, picture first. A dry run happens at a door
+           nobody answered, which is disproportionately a basement or a
+           gated yard -- uploading ahead of the record would make the stop
+           most likely to need the photograph the one least able to send
+           it, and a failure would record nothing at all. */
+        const expected = [
+            'POST /api/projects/uh/uh/files',
+            'PUT https://bucket.test/put',
+            'POST /api/projects/uh/uh/files/99/stored',
+            `POST ${ORDER}/attempt`,
+        ];
+        await waitFor(() => expect(calls.filter((c) => expected.includes(c))).toEqual(expected));
+        expect(bodyOf(fn, `POST ${ORDER}/attempt`)).toMatchObject({
+            exceptionFileId: 99,
+            packages: [{ packageId: 51, reasonCode: 'no_access', note: '' }],
+        });
+    });
+
+    it('records the attempt without one, because there is not always something to photograph', async () => {
+        /* OPTIONAL ON PURPOSE. A suite number the building has never had
+           leaves a driver with nothing to point a camera at, and refusing
+           the stop until they produce a picture of that would have them
+           choosing between photographing a wall and recording nothing. */
+        const { fn } = renderStop({
+            ...routes(),
+            [`POST ${ORDER}/attempt`]: { status: 201, body: { status: 'failed' } },
+        });
+        await openAttempt();
+        expect(screen.getByRole('button', { name: 'Record the attempt' })).toBeEnabled();
+        fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
+
+        await waitFor(() => expect(screen.getByText('Successful. Proceed to your next stop.')).toBeInTheDocument());
+        expect(bodyOf(fn, `POST ${ORDER}/attempt`).exceptionFileId).toBeUndefined();
+    });
+
+    it('refuses a file the bucket would refuse, before the driver waits on it', async () => {
+        const { calls } = renderStop({ ...routes(), ...fileRoutes });
+        await openAttempt();
+
+        const wrong = new File([new Uint8Array(4)], 'clip.mov', { type: 'video/quicktime' });
+        fireEvent.change(screen.getByLabelText(/Photo \(optional\)/), { target: { files: [wrong] } });
+
+        /* A sentence now rather than a four-hundred from the far end of a
+           pharmacy car park. lib/photos.ts decides the type; the `accept`
+           attribute is a hint to the chooser and not a check. */
+        expect(await screen.findByRole('alert')).toBeInTheDocument();
+        /* NOT "nothing mentioning /files": the screen asks the status
+           endpoint on load, so that assertion passed for the wrong reason
+           and would have gone on passing if the upload had fired. */
+        expect(calls).not.toContain('POST /api/projects/uh/uh/files');
+    });
+
+    it('hides the slot when there is nowhere to put a picture, and still records the stop', async () => {
+        const { fn } = renderStop({
+            ...routes(),
+            'GET /api/projects/uh/uh/files/status/check': { available: false, reason: 'S3 is not configured' },
+            [`POST ${ORDER}/attempt`]: { status: 201, body: { status: 'failed' } },
+        });
+        await openAttempt();
+
+        /* Hidden rather than shown and then refused -- the doorstep form
+           makes the same call. And the dry run is NOT blocked by it: the
+           photograph is evidence for an invoice line, and the stop is the
+           thing that has to be recorded either way. */
+        await waitFor(() => expect(screen.queryByLabelText(/Photo \(optional\)/)).not.toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
+        await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/attempt`)).toBeDefined());
+    });
+
+    it('keeps the attempt and the picture together with no signal', async () => {
+        setOnline(false);
+        renderStop({ ...routes(), ...fileRoutes });
+        await openAttempt();
+        fireEvent.change(screen.getByLabelText(/Photo \(optional\)/), { target: { files: [picture()] } });
+        fireEvent.click(screen.getByRole('button', { name: 'Record the attempt' }));
+
+        await waitFor(() => expect(screen.getByText(/as soon as you have signal/)).toBeInTheDocument());
+        const waiting = await queued();
+        expect(waiting.length).toBe(1);
+        /* The photograph is in the entry, not uploaded and lost. */
+        expect(waiting[0]!.url).toContain('/attempt');
+        expect(waiting[0]!.photos?.length).toBe(1);
+        expect(waiting[0]!.photos?.[0]?.kind).toBe('exception');
+    });
+
+    /* ───────── AND AFTERWARDS, when the form has gone.
+     *
+     * The slot is optional, so a driver in a hurry skips it -- and once the
+     * attempt is recorded the form is not on screen any more. Without a
+     * second way in, a dry run photographed badly or not at all could never
+     * be completed by anybody, which is exactly what made a return recorded
+     * without its sheet unrepairable. */
+    const finishedAs = (status: string) => ({
+        ...routes(),
+        [`GET ${ORDER}`]: order({ status, arrivedAt: '2026-09-12T17:40:00.000Z' }),
+    });
+
+    it('lets a driver add the photograph to a dry run already recorded', async () => {
+        const { fn } = renderStop({
+            ...finishedAs('failed'),
+            ...fileRoutes,
+            [`POST ${ORDER}/evidence`]: { status: 201, body: { status: 'failed' } },
+        });
+        await screen.findByRole('heading', { name: 'Not delivered' });
+        fireEvent.click(screen.getByRole('button', { name: 'Add or replace the photo' }));
+
+        fireEvent.change(screen.getByLabelText(/Why it could not be delivered/), { target: { files: [picture()] } });
+        fireEvent.click(screen.getByRole('button', { name: 'Add this photo' }));
+
+        await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/evidence`)).toMatchObject({ kind: 'exception', fileId: 99 }));
+    });
+
+    it('does not offer it on a delivery that was handed over', async () => {
+        /* The server refuses the kind on anything that was delivered
+           (evidence.notFailed): the page it prints under says the courier
+           photographed why this could not be delivered, and on a handover
+           that caption is false. A control a driver can see is a control a
+           driver will try. */
+        renderStop(finishedAs('delivered'));
+        await screen.findByRole('heading', { name: 'Delivered' });
+        expect(screen.queryByRole('button', { name: 'Add or replace the photo' })).not.toBeInTheDocument();
+    });
+});

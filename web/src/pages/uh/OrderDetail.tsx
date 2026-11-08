@@ -76,6 +76,10 @@ interface Detail extends OrderRow {
        server cannot serve it. Optional because a browser holding a cached
        bundle can outlive the server that grew the field. */
     returnForm?: { available: boolean; reason: string };
+    /** Why it could not be delivered, photographed at the door. Optional on
+     *  the stop, so `available: false` with an empty reason is the ordinary
+     *  case and means only that nobody took one. */
+    attemptPhoto?: { available: boolean; reason: string };
     allowed: string[];
 }
 
@@ -200,6 +204,43 @@ export function OrderDetail() {
                 Inline rather than only in the PDF, because the question it
                 answers -- "did that actually come back?" -- gets asked on
                 the phone while somebody is looking at this screen. */}
+            {/* ───────── WHY IT COULD NOT BE DELIVERED
+                Before the return form, because the door came first and
+                these two read as the sequence they are: the stop failed,
+                then the medication went back.
+
+                NO CARD WHEN THERE IS NO PICTURE. The slot on the driver's
+                screen is optional -- there is nothing to photograph at an
+                address that does not exist -- so an absence is the ordinary
+                case and a card announcing it on every dry run is a card
+                people learn to read past. The server sends an empty reason
+                for that and words only for a photograph it cannot serve,
+                which is a fault on this server rather than a fact about the
+                stop. See attemptPhotoStatus. */}
+            {order.attemptPhoto?.available && (
+                <div className="izy-card">
+                    <h2>Why it could not be delivered</h2>
+                    <figure className="izy-pod-photo">
+                        <img
+                            src={`/api/projects/${code}/uh/orders/${order.id}/attempt-photo`}
+                            alt="What the courier photographed at the address when the delivery was attempted"
+                            loading="lazy"
+                        />
+                        <figcaption className="izy-muted">
+                            Photographed at the address by the courier when the delivery was recorded as
+                            attempted. The contract bills every item on an attempted delivery, so this is
+                            the evidence behind that line.
+                        </figcaption>
+                    </figure>
+                </div>
+            )}
+            {order.attemptPhoto && !order.attemptPhoto.available && order.attemptPhoto.reason && (
+                <div className="izy-card">
+                    <h2>Why it could not be delivered</h2>
+                    <p className="izy-muted">{order.attemptPhoto.reason}</p>
+                </div>
+            )}
+
             {order.returnForm?.available && (
                 <div className="izy-card">
                     <h2>Proof of return</h2>

@@ -21,7 +21,9 @@ import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { namesFor, displayName } from './people';
-import { hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus } from './pod-photos';
+import {
+    hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus, attemptPhoto, attemptPhotoStatus,
+} from './pod-photos';
 import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
 import { priceOrder } from './order-pricing';
@@ -1245,6 +1247,12 @@ export function createOrdersRouter(
                not, dispatch spent a fortnight reading a proof of delivery
                with nothing in it. */
             returnForm: await returnFormStatus(client, storage, req.project!.id, Number(order.id), order.returned_at),
+            /* WHY IT COULD NOT BE DELIVERED, as something dispatch can look
+               at. Beside the return form for the same reason that one is
+               here: our copy and the client's are supposed to show the same
+               facts, and a field that exists on only one of them is how
+               they drift. */
+            attemptPhoto: await attemptPhotoStatus(client, storage, req.project!.id, Number(order.id)),
             allowed: availableEvents(order.status as OrderStatus, [roleOf(req)]),
         });
     }));
@@ -1278,6 +1286,34 @@ export function createOrdersRouter(
         }
 
         await req.audit('order.return_form', 'file', String(found.id), { orderId: Number(order.id) });
+
+        const signed = storage.presignDownload(found.key);
+        res.redirect(302, signed.url);
+    }));
+
+    /* -------------------------------------------- the attempt photograph ----
+     *
+     * What the courier saw at the door on a stop that could not be
+     * completed. `readers`, like the return form above: the courier who
+     * took it may look at their own, and a site lead at their own
+     * pharmacy's, with leadScope applied by loadOr404.
+     */
+    router.get('/:id/attempt-photo', readers, wrap(async (req, res) => {
+        const order = await loadOr404(req, res);
+        if (!order) return;
+
+        const found = await attemptPhoto(client, req.project!.id, Number(order.id));
+        if (!found) { res.status(404).json({ error: 'No photograph was taken when this delivery was attempted' }); return; }
+
+        if (!storage.available) {
+            res.status(503).json({
+                error: 'File storage is not configured on this server, so the photograph cannot be shown.',
+                code: 'files.unavailable',
+            });
+            return;
+        }
+
+        await req.audit('order.attempt_photo', 'file', String(found.id), { orderId: Number(order.id) });
 
         const signed = storage.presignDownload(found.key);
         res.redirect(302, signed.url);

@@ -40,7 +40,10 @@ import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor, etasFor } from './eta';
 import { scopedReport, GROUPINGS, type Grouping } from './reports';
 import type { FileStorage } from '../../core/files/storage';
-import { PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus } from './pod-photos';
+import {
+    PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus,
+    attemptPhoto, attemptPhotoStatus,
+} from './pod-photos';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
@@ -882,6 +885,13 @@ export function createClientPortalRouter(
                rather than assumed, like `photo` above: a flag the server
                guesses is a link to a 404. */
             returnForm: await returnFormFor(project.id, id, order.returned_at),
+            /* AND WHY IT COULD NOT BE DELIVERED. "Where is my medication"
+               is the first question a pharmacy asks about a failed
+               delivery; "what happened" is the second, and until now the
+               only answer on screen was a reason code chosen from a list.
+               Addendum 1 bills the attempt, so the client paying for it may
+               see the picture it rests on. */
+            attemptPhoto: await attemptPhotoStatus(client, storage, project.id, id),
             /* "Procedures for reattempting delivery", which a pharmacy could
                previously only answer by noticing a second order with a
                similar reference and guessing. Both directions, because the
@@ -1023,6 +1033,31 @@ export function createClientPortalRouter(
         }
 
         await req.audit('client.return_form', 'file', String(found.id), { orderId: id });
+
+        const signed = storage.presignDownload(found.key);
+        res.redirect(302, signed.url);
+    }));
+
+    /* ----------------------------------------------- the attempt photograph */
+
+    router.get('/orders/:id/attempt-photo', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const id = Number(req.params['id']);
+        const order = await orderInScope(req, id);
+        if (!order) { res.status(404).json({ error: 'Delivery not found' }); return; }
+
+        const found = await attemptPhoto(client, project.id, id);
+        if (!found) { res.status(404).json({ error: 'No photograph was taken when this delivery was attempted' }); return; }
+
+        if (!storage.available) {
+            res.status(503).json({
+                error: 'File storage is not configured on this server, so the photograph cannot be shown.',
+                code: 'files.unavailable',
+            });
+            return;
+        }
+
+        await req.audit('client.attempt_photo', 'file', String(found.id), { orderId: id });
 
         const signed = storage.presignDownload(found.key);
         res.redirect(302, signed.url);

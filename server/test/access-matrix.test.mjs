@@ -424,6 +424,9 @@ const MATRIX = [
        page of: a courier may see the sheet they photographed on their own
        run, and a lead their own pharmacy's. */
     ['GET', `${UH}/orders/999999/return-form`, UH_LEAD_READ, ''],
+    /* And what the courier saw at the door on a stop that failed. Same
+       readers again: it is a page of the same document. */
+    ['GET', `${UH}/orders/999999/attempt-photo`, UH_LEAD_READ, ''],
     ['GET', `${UH}/orders/999999/directions`, UH_LEAD_READ, ''],
     ['POST', `${UH}/orders/999999/events`, UH_OPERATES, 'which event is then gated by role again'],
     /* Sending somebody back to a door. Dispatch only: a courier does not
@@ -566,6 +569,9 @@ const MATRIX = [
        above: "who checked that a return actually happened" is asked during
        a dispute and should be answerable on its own. */
     ['GET', `${UH}/client/orders/999999/return-form`, UH_CLIENT_VIEW, ''],
+    /* Why it could not be delivered. Addendum 1 bills the attempt, so the
+       client paying for it may read the evidence behind the line. */
+    ['GET', `${UH}/client/orders/999999/attempt-photo`, UH_CLIENT_VIEW, ''],
 
     /* --- the contract manager resetting their own counters' passwords
        (modules/uh/portal-reset.ts), which is what replaced the forced

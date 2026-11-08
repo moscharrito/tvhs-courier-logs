@@ -81,11 +81,17 @@ const Arrive = z.object({ ...Where, note: z.string().trim().max(300).default('')
 
 /* A better photograph of something already recorded.
  *
- * ONLY THE THREE KINDS THAT PROVE SOMETHING. 'signature', 'pod' and
- * 'exception' are written by other parts of the system and are not a
- * courier's to replace from a phone; 'patient_id' is, because the angle it
- * was shot at is exactly the thing that goes wrong. */
-const EvidenceKinds = ['courier_form', 'patient_id', 'stamped_receipt', 'doorstep', 'return_form'] as const;
+ * ONLY THE KINDS A COURIER TOOK IN THE FIRST PLACE. 'signature' and 'pod'
+ * are the system's own objects and are not a courier's to replace from a
+ * phone; 'patient_id' is, because the angle it was shot at is exactly the
+ * thing that goes wrong.
+ *
+ * 'exception' joined the list on 8 November, when "Could not deliver"
+ * gained the photograph slot that "Handed over" always had. It is here for
+ * the same reason stamped_receipt is: the ordinary slot is gone by the time
+ * a driver realises the picture was no good, and without this route a dry
+ * run photographed badly is a dry run that cannot be defended. */
+const EvidenceKinds = ['courier_form', 'patient_id', 'stamped_receipt', 'doorstep', 'return_form', 'exception'] as const;
 const Evidence = z.object({
     ...Where,
     fileId: z.number().int().positive(),
@@ -203,6 +209,22 @@ const Attempt = z.object({
     /** Minutes spent at the door. Undefined means the app did not ask, which
      *  is a different fact from zero and is stored as one. */
     waitedMinutes: z.number().int().min(0).max(120).optional(),
+    /* ───────── WHY IT COULD NOT BE DELIVERED, IN A PICTURE (8 November)
+     *
+     * Optional, and that is a decision rather than a leftover. "Handed
+     * over" cannot be recorded without the signed form, because there is
+     * always a form -- the courier is holding it. Here there is sometimes
+     * nothing to photograph: an address that does not exist, a suite number
+     * the building has never had. Refusing the dry run until a driver
+     * produces a picture of that would leave them standing in a car park
+     * choosing between photographing a wall and not recording the stop,
+     * and the stop is what matters.
+     *
+     * So it is offered on every attempt and demanded on none. See the file
+     * check below: an id that names nothing is still refused, because a row
+     * claiming a photograph that is not there is worse than one claiming
+     * none. */
+    exceptionFileId: z.number().int().positive().optional(),
     /** One entry per package that could not be delivered. */
     packages: z.array(z.object({
         packageId: z.number().int().positive(),
@@ -859,6 +881,24 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
          * and are not the same thing. Record the hand-back on the return
          * screen; the photograph goes with it, and this route is for
          * afterwards. */
+        /* AND AN ATTEMPT PHOTOGRAPH ONLY WHERE THE DELIVERY FAILED.
+         *
+         * The page it prints under says the courier photographed why this
+         * could not be delivered. On a delivery that was handed over that
+         * caption is false, and the picture would sit in the proof of
+         * delivery contradicting the event two pages earlier. A courier
+         * whose handover photograph was no good replaces the signed form;
+         * that is what courier_form is for. */
+        if (body.kind === 'exception' && order.status !== 'failed') {
+            res.status(409).json({
+                error: 'This delivery was handed over. A photograph of why it could not be '
+                    + 'delivered does not belong on it; replace the signed form instead.',
+                code: 'evidence.notFailed',
+                status: order.status,
+            });
+            return;
+        }
+
         if (body.kind === 'return_form' && !order.returned_at) {
             res.status(409).json({
                 error: 'Nothing has been recorded as coming back on this delivery. '
@@ -897,7 +937,8 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             : body.kind === 'patient_id' ? 'the identification'
                 : body.kind === 'stamped_receipt' ? 'the stamped receipt'
                     : body.kind === 'return_form' ? 'the signed return form'
-                        : 'the doorstep photograph';
+                        : body.kind === 'exception' ? 'why it could not be delivered'
+                            : 'the doorstep photograph';
         await recordOrderEvent(client, {
             projectId,
             order,
@@ -913,7 +954,13 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                    delivery was recorded" would be describing the wrong
                    event on the one kind that is not about the door. */
                 reason: (() => {
-                    const after = body.kind === 'return_form' ? 'the hand-back' : 'the delivery';
+                    const after = body.kind === 'return_form' ? 'the hand-back'
+                        /* "after the delivery was recorded" on a stop where
+                           there was no delivery is the document describing
+                           the wrong event, same mistake the return form
+                           made. */
+                        : body.kind === 'exception' ? 'the attempt'
+                            : 'the delivery';
                     const head = `A new photograph of ${what} was added after ${after} was recorded`;
                     return body.note === '' ? `${head}.` : `${head}: ${body.note}`;
                 })(),
@@ -985,6 +1032,26 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             return;
         }
 
+        /* The same check the delivery makes, in the same words, because it
+           is the same mistake being prevented: a courier can put any
+           integer in this field, and a row claiming a photograph which
+           never finished uploading is worse than one claiming none. */
+        if (body.exceptionFileId !== undefined) {
+            const found = await client.execute({
+                sql: `SELECT id FROM files WHERE project_id = ? AND id = ? AND kind = 'exception' AND status = 'stored'
+                        AND (order_id IS NULL OR order_id = ?)`,
+                args: [projectId, body.exceptionFileId, Number(order.id)],
+            });
+            if (found.rows.length === 0) {
+                res.status(400).json({
+                    error: 'That photograph has not finished uploading.',
+                    code: 'attempt.fileNotStored',
+                    details: [`exceptionFileId: ${body.exceptionFileId}`],
+                });
+                return;
+            }
+        }
+
         const ids = body.packages.map((p) => p.packageId);
         let inferredArrival = false;
         try {
@@ -997,6 +1064,13 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                     timezone: req.project!.timezone,
                 event: {
                     type: 'attempted', at,
+                    /* ON THE EVENT, not only on the file row, exactly as a
+                       doorstep delivery does it. custody_events is
+                       append-only by trigger, so a photograph that is not
+                       named when the row is written can never be named by
+                       it -- and the chain of custody is what a dispute is
+                       read out of. */
+                    ...(body.exceptionFileId !== undefined ? { fileId: body.exceptionFileId } : {}),
                     // The order-level reason is a summary; the per-package
                     // codes below are what an invoice line is defended with.
                     reason: body.packages.map((p) => p.reasonCode).join(', '),
@@ -1014,6 +1088,19 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             throw err;
         }
 
+        /* Bound to the order after the event, never before, the way every
+           other photograph on this screen is: a file pointing at a stop
+           whose event was refused is a file nobody can explain. Binding is
+           also what makes it findable -- attemptPhoto looks photographs up
+           by order id, and an unbound row would be stored, paid for and
+           invisible. */
+        if (body.exceptionFileId !== undefined) {
+            await client.execute({
+                sql: 'UPDATE files SET order_id = ? WHERE project_id = ? AND id = ?',
+                args: [Number(order.id), projectId, body.exceptionFileId],
+            });
+        }
+
         for (const p of body.packages) {
             await client.execute({
                 sql: 'UPDATE packages SET failure_reason_code = ?, failure_note = ? WHERE project_id = ? AND order_id = ? AND id = ?',
@@ -1027,12 +1114,17 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             packages: ids.length,
             reasons: body.packages.map((p) => p.reasonCode),
             inferredArrival,
+            /* Whether the billed line has a picture behind it. A flag, not
+               the id: the audit trail says a photograph was taken, and the
+               custody event says which one. */
+            exceptionPhoto: body.exceptionFileId !== undefined,
         });
 
         res.status(201).json({
             ...(await reload(projectId, Number(order.id))),
             inferredArrival,
             packages: after,
+            ...(body.exceptionFileId !== undefined ? { photoFileId: body.exceptionFileId } : {}),
             /* The billing consequence, said plainly: Addendum 1 charges the
                flat fee for each item, so this is what the stop costs. */
             dryRunItems: failed.reduce((n, p) => n + p.quantity, 0),
