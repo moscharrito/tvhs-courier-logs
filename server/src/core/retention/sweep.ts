@@ -61,6 +61,19 @@ const COUNTERS: Record<RetentionCategory, Counter | null> = {
             return { count: Number(rs.rows[0]?.['n'] ?? 0), oldest: (rs.rows[0]?.['oldest'] as string | null) ?? null };
         },
     },
+    /* Counted on `uploaded_at`, the moment we took custody of the sheet,
+       not on the service_date it claims: a pharmacy may hand over next
+       week's list, and a retention clock that ran from a date somebody
+       typed could be set to any value from outside. */
+    pharmacy_list_files: {
+        async count(client, cutoff) {
+            const rs = await client.execute({
+                sql: `SELECT COUNT(*) AS n, MIN(uploaded_at) AS oldest FROM list_drops WHERE uploaded_at < ?`,
+                args: [cutoff],
+            });
+            return { count: Number(rs.rows[0]?.['n'] ?? 0), oldest: (rs.rows[0]?.['oldest'] as string | null) ?? null };
+        },
+    },
     signatures: {
         async count(client, cutoff) {
             const rs = await client.execute({
@@ -249,6 +262,35 @@ export async function purge(client: Client, options: PurgeOptions): Promise<Purg
             removed += 1;
         }
         detail['files'] = removed;
+        await recordPurge(client, { category, startedBy, reason, now, removed, detail });
+        return { ok: true, category, removed, detail };
+    }
+
+    /* The same shape as the photographs above, and the same refusal when
+       there is no bucket: rows without their objects leave spreadsheets of
+       patients in S3 with nothing pointing at them, which is strictly worse
+       than keeping both. */
+    if (category === 'pharmacy_list_files') {
+        if (!deleteObject) {
+            return {
+                ok: false,
+                reason: 'files_unavailable',
+                message: 'There is no bucket configured, so the spreadsheets cannot be deleted. Removing the rows '
+                    + 'would leave the objects in S3 with nothing pointing at them, which is worse than keeping both.',
+            };
+        }
+        const rs = await client.execute({
+            sql: 'SELECT id, s3_key FROM list_drops WHERE uploaded_at < ?',
+            args: [cutoff],
+        });
+        let removed = 0;
+        for (const row of rs.rows) {
+            // The object first, then the row. See the note above.
+            await deleteObject(String(row['s3_key']));
+            await client.execute({ sql: 'DELETE FROM list_drops WHERE id = ?', args: [Number(row['id'])] });
+            removed += 1;
+        }
+        detail['list_drops'] = removed;
         await recordPurge(client, { category, startedBy, reason, now, removed, detail });
         return { ok: true, category, removed, detail };
     }

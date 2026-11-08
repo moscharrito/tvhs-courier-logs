@@ -22,6 +22,7 @@
 export type RetentionCategory =
     | 'delivery_records'
     | 'proof_of_delivery_files'
+    | 'pharmacy_list_files'
     | 'signatures'
     | 'invoices'
     | 'audit_events'
@@ -85,6 +86,27 @@ export const RETENTION: Record<RetentionCategory, RetentionRule> = {
         holds: 'Doorstep photographs in S3. A patient\'s front door, often with their name on the package.',
         basis: 'PLACEHOLDER, and the same decision as the bucket lifecycle rule in docs/infra/s3-bucket.md, which is '
             + 'deliberately disabled for the same reason. Decide once, in both places.',
+        purgeable: true,
+    },
+    /* ─────────────────────────────────────────────────────────────────
+     * THE DROP BOX (drizzle/0064), added 7 November 2026.
+     *
+     * A category the moment the store existed, because the sweep's job is
+     * to be able to say "nothing was past retention on 3 November" about
+     * EVERYTHING we hold. A store this policy cannot count is one nobody
+     * can make that statement about, and it would have been the largest
+     * concentration of patient data in the system: not a photograph of one
+     * doorstep but a whole counter's day, every name and address, in a
+     * spreadsheet somebody can open.
+     */
+    pharmacy_list_files: {
+        category: 'pharmacy_list_files',
+        days: SEVEN_YEARS,
+        decided: false,
+        holds: 'Spreadsheets a pharmacy handed over, kept whole in S3: every patient name and address on one counter\'s day.',
+        basis: 'PLACEHOLDER, and the same decision as proof_of_delivery_files and the bucket lifecycle rule in '
+            + 'docs/infra/s3-bucket.md. Arguably SHORTER than the delivery records themselves: once a list has been '
+            + 'imported, the orders are the record and the sheet is a duplicate of it. Decide with the others.',
         purgeable: true,
     },
     signatures: {

@@ -160,3 +160,4 @@ pod-*.pdf
 # wrapper, which is not.
 salazar-login.ps1
 dispatch-login.ps1
+bc3-login.ps1

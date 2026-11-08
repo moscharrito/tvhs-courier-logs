@@ -157,17 +157,46 @@ const PORTALS = [
      * scopeFor's whole-project branch is for OUR roles and would hand a
      * client the dispatch board. Adding a ninth counter is therefore also a
      * change to this membership, which is the right amount of friction. */
+    /* ─────────────────────────────────────────────────────────────────
+     * BC3, AND IT IS NOT A COUNTER.
+     *
+     * University Health Business Center III is a site in `sites` because it
+     * is listed in the bid table, and it has never been a pharmacy: nobody
+     * dispenses there and 0006_sites.sql still carries the open question of
+     * whether it is a pickup location at all. It is kept out of COUNTERS
+     * above so that the volumes beside those eight stay a list of counters
+     * and nothing else.
+     *
+     * It gets a portal anyway, because the thing it needs is the one thing
+     * the portal now does without parsing: BC3's sheets have no ZIP or city
+     * column, so they cannot be imported and never could be -- which under
+     * the old shape meant BC3 had no way to send us anything at all. The
+     * drop box (drizzle/0064) takes a file without reading it, and that is
+     * exactly BC3's case.
+     */
+    {
+        key: 'bc3',
+        username: 'uh.bc3',
+        name: 'University Health Business Center III (portal)',
+        sites: ['bc3'],
+        note: 'not a counter: a drop box for sheets that cannot be imported, and its own deliveries',
+    },
     {
         key: 'manager',
         username: 'uh.manager',
         name: 'UH Contract Manager (portal)',
-        sites: COUNTERS.map((c) => c.code),
+        /* The eight counters AND BC3. Enumerated, as the note below says,
+           and BC3 is named here for the same reason it is named above: the
+           contract manager sees every site in the contract, and an account
+           holding eight of nine is not the contract manager -- it is an
+           account somebody forgot to finish. check.ps1 says so out loud. */
+        sites: [...COUNTERS.map((c) => c.code), 'bc3'],
         /* THE ONE ACCOUNT THAT MAY RESET THE OTHERS. See the header, and
            modules/uh/portal-reset.ts for what the capability does and does
            not reach: the eight counters above and nothing else, never an Izy
            login, never a courier, and never another manager. */
         capabilities: { mayResetPortalPasswords: true },
-        note: 'every counter, the contract view, the reports, and resetting the eight passwords',
+        note: 'every site, the contract view, the reports, and resetting the other portals',
     },
 ];
 
