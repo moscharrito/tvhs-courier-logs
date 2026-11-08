@@ -191,7 +191,7 @@ export async function attemptPhotoStatus(
     if (!storage.available) {
         return {
             available: false,
-            reason: 'The courier photographed why this could not be delivered. File storage is not '
+            reason: 'The courier uploaded the signed sheet for this attempt. File storage is not '
                 + 'configured on this server, so it cannot be shown.',
         };
     }

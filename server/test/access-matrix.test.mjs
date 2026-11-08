@@ -569,7 +569,7 @@ const MATRIX = [
        above: "who checked that a return actually happened" is asked during
        a dispute and should be answerable on its own. */
     ['GET', `${UH}/client/orders/999999/return-form`, UH_CLIENT_VIEW, ''],
-    /* Why it could not be delivered. Addendum 1 bills the attempt, so the
+    /* The signed sheet for the attempt. Addendum 1 bills the attempt, so the
        client paying for it may read the evidence behind the line. */
     ['GET', `${UH}/client/orders/999999/attempt-photo`, UH_CLIENT_VIEW, ''],
 

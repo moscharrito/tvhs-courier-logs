@@ -818,7 +818,7 @@ describe('the stop that could not be completed', () => {
         await screen.findByRole('heading', { name: 'Not delivered' });
         fireEvent.click(screen.getByRole('button', { name: 'Add or replace the photo' }));
 
-        fireEvent.change(screen.getByLabelText(/Why it could not be delivered/), { target: { files: [picture()] } });
+        fireEvent.change(screen.getByLabelText(/The signed sheet/), { target: { files: [picture()] } });
         fireEvent.click(screen.getByRole('button', { name: 'Add this photo' }));
 
         await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/evidence`)).toMatchObject({ kind: 'exception', fileId: 99 }));
@@ -826,10 +826,10 @@ describe('the stop that could not be completed', () => {
 
     it('does not offer it on a delivery that was handed over', async () => {
         /* The server refuses the kind on anything that was delivered
-           (evidence.notFailed): the page it prints under says the courier
-           photographed why this could not be delivered, and on a handover
-           that caption is false. A control a driver can see is a control a
-           driver will try. */
+           (evidence.notFailed): the page it prints under says the sheet was
+           uploaded when the delivery was recorded as ATTEMPTED, and on a
+           handover that is false. A control a driver can see is a control a
+           driver will try -- and the two labels are now one word apart. */
         renderStop(finishedAs('delivered'));
         await screen.findByRole('heading', { name: 'Delivered' });
         expect(screen.queryByRole('button', { name: 'Add or replace the photo' })).not.toBeInTheDocument();

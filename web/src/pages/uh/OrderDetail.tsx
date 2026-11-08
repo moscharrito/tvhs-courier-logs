@@ -76,7 +76,7 @@ interface Detail extends OrderRow {
        server cannot serve it. Optional because a browser holding a cached
        bundle can outlive the server that grew the field. */
     returnForm?: { available: boolean; reason: string };
-    /** Why it could not be delivered, photographed at the door. Optional on
+    /** The signed sheet for the attempt, uploaded by the courier. Optional on
      *  the stop, so `available: false` with an empty reason is the ordinary
      *  case and means only that nobody took one. */
     attemptPhoto?: { available: boolean; reason: string };
@@ -219,24 +219,24 @@ export function OrderDetail() {
                 stop. See attemptPhotoStatus. */}
             {order.attemptPhoto?.available && (
                 <div className="izy-card">
-                    <h2>Why it could not be delivered</h2>
+                    <h2>The signed sheet for the attempt</h2>
                     <figure className="izy-pod-photo">
                         <img
                             src={`/api/projects/${code}/uh/orders/${order.id}/attempt-photo`}
-                            alt="What the courier photographed at the address when the delivery was attempted"
+                            alt="The signed sheet the courier uploaded when the delivery was attempted"
                             loading="lazy"
                         />
                         <figcaption className="izy-muted">
-                            Photographed at the address by the courier when the delivery was recorded as
-                            attempted. The contract bills every item on an attempted delivery, so this is
-                            the evidence behind that line.
+                            Uploaded by the courier when the delivery was recorded as attempted. The
+                            contract bills every item on an attempted delivery, so this is the evidence
+                            behind that line.
                         </figcaption>
                     </figure>
                 </div>
             )}
             {order.attemptPhoto && !order.attemptPhoto.available && order.attemptPhoto.reason && (
                 <div className="izy-card">
-                    <h2>Why it could not be delivered</h2>
+                    <h2>The signed sheet for the attempt</h2>
                     <p className="izy-muted">{order.attemptPhoto.reason}</p>
                 </div>
             )}

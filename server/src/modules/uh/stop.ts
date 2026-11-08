@@ -883,16 +883,18 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
          * afterwards. */
         /* AND AN ATTEMPT PHOTOGRAPH ONLY WHERE THE DELIVERY FAILED.
          *
-         * The page it prints under says the courier photographed why this
-         * could not be delivered. On a delivery that was handed over that
-         * caption is false, and the picture would sit in the proof of
+         * The page it prints under says the sheet was uploaded when the
+         * delivery was recorded as ATTEMPTED. On a delivery that was handed
+         * over that is false, and the picture would sit in the proof of
          * delivery contradicting the event two pages earlier. A courier
          * whose handover photograph was no good replaces the signed form;
-         * that is what courier_form is for. */
+         * that is what courier_form is for -- and since both are now called
+         * a signed something on screen, this refusal is the only thing
+         * stopping one being filed as the other. */
         if (body.kind === 'exception' && order.status !== 'failed') {
             res.status(409).json({
-                error: 'This delivery was handed over. A photograph of why it could not be '
-                    + 'delivered does not belong on it; replace the signed form instead.',
+                error: 'This delivery was handed over. The signed sheet from an attempted '
+                    + 'delivery does not belong on it; replace the signed form instead.',
                 code: 'evidence.notFailed',
                 status: order.status,
             });
@@ -937,7 +939,12 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             : body.kind === 'patient_id' ? 'the identification'
                 : body.kind === 'stamped_receipt' ? 'the stamped receipt'
                     : body.kind === 'return_form' ? 'the signed return form'
-                        : body.kind === 'exception' ? 'why it could not be delivered'
+                        /* "the signed sheet", and courier_form above is
+                           "the signed form". Close enough to misread on
+                           their own, which is why `after` below is load
+                           bearing: one was added after the DELIVERY was
+                           recorded and this one after the ATTEMPT. */
+                        : body.kind === 'exception' ? 'the signed sheet'
                             : 'the doorstep photograph';
         await recordOrderEvent(client, {
             projectId,

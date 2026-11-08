@@ -533,8 +533,17 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
      * to be queried, and this page the answer to the query. */
     if (data.attemptPhoto?.bytes) {
         photoPage(
-            data.attemptPhoto.bytes, 'Ph3', 'Why it could not be delivered',
-            'Photographed at the address by the courier when the delivery was recorded as attempted. '
+            data.attemptPhoto.bytes, 'Ph3', 'The signed sheet for the attempt',
+            /* NAMED FOR THE DOCUMENT, NOT FOR THE OUTCOME, since 8 November.
+               The page was captioned "Why it could not be delivered" on the
+               reading that a dry run is photographed at the door -- the shut
+               office, the wrong house number. Operations put the sheet in
+               that slot instead, so the caption described something the
+               picture is not. "For the attempt" is the half that has to
+               stay: the signed form two pages earlier is a HANDOVER, and a
+               reader with both in front of them needs to know which stop
+               each one belongs to. */
+            'Uploaded by the courier when the delivery was recorded as attempted. '
             + 'It belongs to this delivery alone.',
         );
     }

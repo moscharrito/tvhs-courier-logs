@@ -583,7 +583,7 @@ interface DetailResponse extends ClientOrder {
        server older than this field -- hence optional, for the same reason
        `photo` is. */
     returnForm?: { available: boolean; reason: string };
-    /** Why it could not be delivered. Optional on the stop, so an empty
+    /** The signed sheet for the attempt. Optional on the stop, so an empty
      *  reason with `available: false` means only that nobody took one. */
     attemptPhoto?: { available: boolean; reason: string };
 }
@@ -890,23 +890,23 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                 skip. See attemptPhotoStatus. */}
             {detail?.attemptPhoto?.available && (
                 <>
-                    <h3>Why it could not be delivered</h3>
+                    <h3>The signed sheet for the attempt</h3>
                     <figure className="izy-pod-photo">
                         <img
                             src={`/api/projects/${code}/uh/client/orders/${order.id}/attempt-photo`}
-                            alt={`What the courier photographed at the address for ${order.recipientName}`}
+                            alt={`The signed sheet the courier uploaded for ${order.recipientName}`}
                             loading="lazy"
                         />
                         <figcaption className="izy-muted">
-                            Photographed at the address by the courier when the delivery was recorded as
-                            attempted. It belongs to this delivery alone.
+                            Uploaded by the courier when the delivery was recorded as attempted. It
+                            belongs to this delivery alone.
                         </figcaption>
                     </figure>
                 </>
             )}
             {detail?.attemptPhoto && !detail.attemptPhoto.available && detail.attemptPhoto.reason && (
                 <>
-                    <h3>Why it could not be delivered</h3>
+                    <h3>The signed sheet for the attempt</h3>
                     <p className="izy-muted">{detail.attemptPhoto.reason}</p>
                 </>
             )}

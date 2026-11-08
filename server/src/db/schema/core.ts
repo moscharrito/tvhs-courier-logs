@@ -196,9 +196,15 @@ export type Device = typeof devices.$inferSelect;
 
 export const FILE_KINDS = [
     'doorstep', 'pod', 'signature',
-    /* WHY A STOP COULD NOT BE COMPLETED, photographed at the door by the
-     * courier recording the dry run: the closed office, the wrong house
-     * number on the porch, the docket annotated and brought back.
+    /* WHAT THE COURIER UPLOADS ON A STOP THAT COULD NOT BE COMPLETED.
+     *
+     * Written for the picture taken at the door -- the closed office, the
+     * wrong house number on the porch -- and on 8 November operations
+     * relabelled the slot "Upload signed sheet", which is the annotated
+     * docket brought back rather than the door. The kind did not change and
+     * neither did what it proves; every caption that described a photograph
+     * of a DOOR moved with the label, because a caption asserting something
+     * the picture is not is worse than no caption.
      *
      * It is the oldest kind in this list and until 8 November nothing wrote
      * it. That was not an oversight to tidy away -- Addendum 1 bills a flat

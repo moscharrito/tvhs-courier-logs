@@ -645,7 +645,7 @@ export function Stop() {
                                 {amend === 'courier_form'
                                     ? 'The signed form'
                                     : amend === 'stamped_receipt' ? 'The stamped receipt'
-                                        : amend === 'exception' ? 'Why it could not be delivered'
+                                        : amend === 'exception' ? 'The signed sheet'
                                             : 'The identification'}
                                 <input
                                     type="file"

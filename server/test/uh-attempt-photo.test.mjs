@@ -323,8 +323,15 @@ describe('adding the photograph afterwards', () => {
            delivery is the document describing the wrong event -- the same
            mistake the return form made before it was given its own
            wording. */
-        expect(String(notes[0].reason)).toContain('why it could not be delivered');
+        expect(String(notes[0].reason)).toContain('the signed sheet');
         expect(String(notes[0].reason)).toContain('the attempt');
+        /* THE WHOLE POINT OF THE LAST TWO LINES TOGETHER. Since the slot was
+           relabelled on 8 November this note says "the signed sheet" and the
+           courier_form note says "the signed form" -- one word apart, on two
+           kinds that must never be filed as each other. What separates them
+           in the record is which event they were added after, so asserting
+           the first half without the second would pass on a note describing
+           the wrong stop entirely. */
         expect(String(notes[0].reason)).not.toContain('the delivery was recorded');
     });
 
@@ -359,10 +366,10 @@ describe('adding the photograph afterwards', () => {
             .send({ signedName: 'Alma Reyes', courierFormFileId: formId });
         expect(handed.status, JSON.stringify(handed.body)).toBe(201);
 
-        /* The page it prints under says the courier photographed why this
-           could not be delivered. On a handover that caption is false, and
-           the picture would sit in the proof of delivery contradicting the
-           event two pages earlier. */
+        /* The page it prints under says the sheet was uploaded when the
+           delivery was recorded as ATTEMPTED. On a handover that is false,
+           and the picture would sit in the proof of delivery contradicting
+           the event two pages earlier. */
         const fileId = await storedFile();
         const res = await courier.post(`${ORDERS}/${order.id}/evidence`)
             .send({ fileId, kind: 'exception' });
