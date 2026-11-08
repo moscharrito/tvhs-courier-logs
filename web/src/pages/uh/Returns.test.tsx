@@ -11,6 +11,8 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Returns } from './Returns';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
+import { IDBFactory } from 'fake-indexeddb';
+import { queued, resetOutboxForTests } from '../../lib/outbox';
 
 const session = { id: 4, username: 'ada.courier', name: 'Ada Courier', role: 'driver', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
@@ -325,5 +327,138 @@ describe('whose load, for staff', () => {
         });
         expect(await screen.findByText(/Nothing undelivered is still out with a courier/)).toBeInTheDocument();
         expect(screen.queryByLabelText(/Photo of the signed form/)).not.toBeInTheDocument();
+    });
+});
+
+/* ───────────────────── A COUNTER WITH NO SIGNAL
+ *
+ * A return happens inside a pharmacy -- the one place on a round with a
+ * concrete stockroom between the phone and the sky -- and at the end of a
+ * shift, when there is no coming back to try again.
+ *
+ * This screen used to upload the photograph by hand before it called
+ * sendOrQueue, and return early when that threw. So with no signal nothing
+ * was queued: a courier holding medication a pharmacist had just signed for
+ * was told to try again, and could not hand it back at all. The comment on
+ * that code claimed it followed "the same rule the door and the counter
+ * follow", and the door does the opposite -- it hands its photographs to
+ * the outbox and lets it wait.
+ *
+ * It now tries live first, because the server's refusals are correctable by
+ * the person standing there, and falls back to the queue for anything that
+ * is not a 4xx.
+ */
+describe('when it cannot be sent right now', () => {
+    /* A FRESH INDEXEDDB PER TEST, not just a reset of the module's
+       handles: resetOutboxForTests drops the cached connection and nothing
+       else, so entries queued by one test are still in the store for the
+       next one -- and a test asserting that NOTHING was queued would read
+       the previous test's hand-back and fail for the wrong reason. Same
+       pattern as Stop.test.tsx. */
+    beforeEach(() => {
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        resetOutboxForTests();
+    });
+
+    /** Fill the form in, ready to submit. */
+    const fillIn = () => {
+        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Night Pharmacist' } });
+        attachForm();
+        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
+    };
+
+    it('queues the hand-back, with its photograph, when the upload cannot go', async () => {
+        /* The file service unreachable: a 503 is what a restart looks like,
+           and putPhoto turns it into a retry rather than a refusal. */
+        const mocked = renderReturns({
+            ...routes(),
+            ...fileRoutes,
+            'POST /api/projects/uh/uh/files': { status: 503, body: { error: 'upstream' } },
+        });
+        await screen.findByRole('heading', { name: 'Take back' });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        /* NOT AN ERROR. The hand-back is on the phone. */
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+
+        const waiting = await queued();
+        expect(waiting.length).toBe(1);
+        /* Bound rather than indexed four times. noUncheckedIndexedAccess is
+           on, so `waiting[0].photos` is a type error -- and the build runs
+           tsc while vitest does not, which is how a green test run shipped
+           a failing deploy once already. */
+        const entry = waiting[0]!;
+        /* WITH THE PICTURE. An entry queued without it would post a return
+           the server refuses for a missing fileId -- which is the shape of
+           the bug this replaced, one layer down. */
+        expect(entry.photos?.length).toBe(1);
+        expect(entry.photos?.[0]?.kind).toBe('courier_form');
+        expect(entry.photos?.[0]?.bodyKey).toBe('courierFormFileId');
+        /* And the hand-back itself, so the flush has something to send. */
+        expect(entry.body).toMatchObject({
+            siteId: 7, signedName: 'Night Pharmacist', countedPackages: 3, orderIds: [21, 22],
+        });
+        /* The id is NOT in the queued body: the outbox puts it there once
+           the picture is actually in the bucket. */
+        expect(entry.body.courierFormFileId).toBeUndefined();
+
+        /* It did try to send it for real first. */
+        expect(mocked.calls).toContain('POST /api/projects/uh/uh/files');
+    });
+
+    it('queues it when the request itself never leaves the building', async () => {
+        const mocked = renderReturns({ ...routes(), ...fileRoutes });
+        await screen.findByRole('heading', { name: 'Take back' });
+
+        /* Signal that drops mid-submit: the network is "up" and fetch
+           rejects, which is the realistic failure in a stockroom and the
+           one navigator.onLine does not report. */
+        mocked.fn.mockImplementation(async () => { throw new TypeError('Failed to fetch'); });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+        expect((await queued()).length).toBe(1);
+    });
+
+    /* THE OTHER HALF, and the reason it tries live at all. */
+    it('does not queue a refusal the courier can fix on the spot', async () => {
+        renderReturns({
+            ...routes(),
+            ...fileRoutes,
+            [`POST ${RETURNS}`]: {
+                status: 400,
+                body: { error: '2 of these should have gone somewhere else. Add a note saying why they came here.', code: 'returns.offRule' },
+            },
+        });
+        await screen.findByRole('heading', { name: 'Take back' });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('should have gone somewhere else'));
+        /* IN THE QUEUE IT WOULD BE A REJECTED ENTRY somebody finds hours
+           later, long after the courier drove home -- for a mistake that
+           takes one sentence to fix while they are standing there. */
+        expect(await queued()).toEqual([]);
+        expect(screen.queryByText(/Saved on this phone/)).toBeNull();
+    });
+
+    it('keeps what was typed, so the note can be added and sent again', async () => {
+        renderReturns({
+            ...routes(),
+            ...fileRoutes,
+            [`POST ${RETURNS}`]: { status: 400, body: { error: 'Add a note saying why they came here.', code: 'returns.offRule' } },
+        });
+        await screen.findByRole('heading', { name: 'Take back' });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+        /* A refusal that cleared the form would make the fix a re-entry:
+           the name, the count and the photograph all over again, at a
+           counter, to add one sentence. */
+        expect((screen.getByLabelText('Printed name') as HTMLInputElement).value).toBe('Night Pharmacist');
+        expect((screen.getByLabelText('Packages counted') as HTMLInputElement).value).toBe('3');
     });
 });

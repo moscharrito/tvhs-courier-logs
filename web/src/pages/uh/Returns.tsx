@@ -38,7 +38,7 @@ import { useAuth } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
-import { sendOrQueue, uploadPhotoNow } from '../../lib/outbox';
+import { sendOrQueue, uploadPhotoNow, type QueuedPhoto } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoType, photoProblem } from '../../lib/photos';
 import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { ReturnIcon, RouteIcon } from '../../app/Icons';
@@ -238,59 +238,132 @@ function TakeBack({ code, forCourier, onBack }: {
         setMsg(null);
         const position = await currentPosition();
 
-        /* Uploaded before the return is recorded, and a failure records
-           nothing: the same rule the door and the counter follow. */
-        let courierFormFileId: number | undefined;
-        try {
-            courierFormFileId = await uploadPhotoNow({
-                module: `/api/projects/${code}/uh`,
-                orderId: null,
-                blob: formPhoto!,
-                contentType: photoType(formPhoto!) ?? "image/jpeg",
-                kind: 'courier_form',
-                idemKey: `return-${group.site.id}-${formPhoto!.size}-${formPhoto!.lastModified}`,
-            });
-        } catch (err) {
-            setBusy(false);
-            setMsg({
-                kind: 'error',
-                text: `The photo of the form could not be sent: ${err instanceof Error ? err.message : 'unknown error'}. `
-                    + 'Nothing was recorded. Try again.',
-            });
-            return;
-        }
+        /* LIVE FIRST, QUEUE ONLY IF LIVE WAS NOT POSSIBLE.
+         *
+         * Two things have to be true at once here and they pull apart.
+         *
+         * THE SERVER'S REFUSALS ARE CORRECTABLE AND THE COURIER IS AT THE
+         * COUNTER. "2 of these should have gone somewhere else, add a note
+         * saying why they came here" is returns.ts asking for one sentence
+         * from somebody who is standing in the pharmacy with the packages
+         * in their hands. It has to land on this screen, now. Routing it
+         * into the outbox turns a thirty-second fix into a rejected entry
+         * discovered by whoever reads the queue, hours after the courier
+         * drove home.
+         *
+         * AND A RETURN MUST STILL BE RECORDABLE WITH NO SIGNAL. A return
+         * happens inside a pharmacy -- the one place on a round with a
+         * concrete stockroom between the phone and the sky -- and at the
+         * end of a shift, when there is no second chance to come back and
+         * try again.
+         *
+         * sendOrQueue cannot do both: it queues unconditionally whenever
+         * photos are attached, so every refusal would go to the queue. And
+         * the code this replaces could do neither -- it called
+         * uploadPhotoNow directly and returned early when that threw, so
+         * with no signal nothing was queued and the courier was told to
+         * try again and could not hand the medication back at all. The
+         * comment on it claimed this was "the same rule the door and the
+         * counter follow", which it was not: the door hands its
+         * photographs to sendOrQueue and lets the outbox wait.
+         *
+         * So: try it live, show a 4xx, and fall back to the queue for
+         * everything else -- no signal, a network that is up and dead, a
+         * 502 from a restart.
+         *
+         * A LOST RESPONSE CANNOT DOUBLE-RECORD. If the POST is processed
+         * and the answer never arrives, the fallback queues it and the
+         * flush posts again -- but carrying() selects on
+         * `returned_at IS NULL`, so the second attempt finds nothing of
+         * that batch still out and records a hand-back of nothing. The
+         * orders come back under `refused` rather than returned twice.
+         */
+        const photos: QueuedPhoto[] = [{
+            blob: formPhoto!,
+            contentType: photoType(formPhoto!) ?? 'image/jpeg',
+            kind: 'courier_form',
+            bodyKey: 'courierFormFileId',
+        }];
 
-        try {
-            const outcome = await sendOrQueue({
-                url: base,
-                label: `Return at ${group.site.name}`,
-                orderId: null,
-                body: {
-                    siteId: group.site.id,
-                    signedName: signedName.trim(),
-                    courierFormFileId,
-                    countedPackages: countedNumber,
-                    /* The orders are named explicitly. The courier is looking
-                       at a list and handing over that list; letting the server
-                       recompute the batch between the two would hand back
-                       something the courier never saw. */
-                    orderIds: group.orders.map((o) => o.orderId),
-                    note: note.trim(),
-                    ...(position ?? {}),
-                },
-            });
-            if (outcome.sent) setDone(outcome.body as unknown as ReturnResult);
-            else setQueued(true);
+        /* The orders are named explicitly. The courier is looking at a list
+           and handing over that list; letting the server recompute the batch
+           between the two would hand back something the courier never saw. */
+        const payload = {
+            siteId: group.site.id,
+            signedName: signedName.trim(),
+            countedPackages: countedNumber,
+            orderIds: group.orders.map((o) => o.orderId),
+            note: note.trim(),
+            ...(position ?? {}),
+        };
+
+        const clear = () => {
             setFormPhoto(null);
             setSignedName('');
             setCounted('');
             setNote('');
             setSiteId('');
+        };
+
+        try {
+            const fileId = await uploadPhotoNow({
+                module: `/api/projects/${code}/uh`,
+                /* null, because one sheet covers everything in this batch:
+                   the file belongs to the hand-back, not to any single
+                   delivery in it. courier_form is a BATCH_KIND in
+                   core/files/routes.ts for exactly this. */
+                orderId: null,
+                blob: formPhoto!,
+                contentType: photoType(formPhoto!) ?? 'image/jpeg',
+                kind: 'courier_form',
+                idemKey: `return-${group.site.id}-${formPhoto!.size}-${formPhoto!.lastModified}`,
+            });
+            const result = await api<ReturnResult>(base, {
+                method: 'POST',
+                json: { ...payload, courierFormFileId: fileId },
+            });
+            setDone(result);
+            clear();
+            await refresh();
+            return;
+        } catch (err) {
+            /* A 4xx is this courier's to fix and says how. Anything else --
+               a fetch that never left the building, a 5xx, a photograph the
+               file service could not be asked about -- is not about what
+               was typed, and falls through to the queue below. */
+            const status = typeof err === 'object' && err !== null && 'status' in err
+                ? Number((err as { status: unknown }).status)
+                : 0;
+            if (status >= 400 && status < 500) {
+                setBusy(false);
+                setMsg(err instanceof ApiError
+                    ? { kind: 'error', text: err.message, details: err.details }
+                    : { kind: 'error', text: err instanceof Error && err.message.trim() !== ''
+                        ? err.message
+                        : 'That was refused. Check the count and the note.' });
+                return;
+            }
+        }
+
+        try {
+            await sendOrQueue({
+                url: base,
+                label: `Return at ${group.site.name}`,
+                orderId: null,
+                photos,
+                body: payload,
+            });
+            setQueued(true);
+            clear();
             await refresh();
         } catch (err) {
+            /* The queue refused it too, which on a phone with no room and
+               no signal is the honest end of the road. sendOrQueue's own
+               message says which, so it is not replaced here. */
+            const said = err instanceof Error ? err.message.trim() : '';
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
-                : { kind: 'error', text: 'Could not record the return. Try again.' });
+                : { kind: 'error', text: said === '' ? 'Could not record the return. Try again.' : said });
         } finally {
             setBusy(false);
         }
@@ -355,9 +428,15 @@ function TakeBack({ code, forCourier, onBack }: {
             )}
 
             {queued && (
+                /* TRUTHFUL EITHER WAY, same as the stop screen. This path is
+                   now only reached when sending live did not work, so
+                   "waiting for signal" is usually right -- but a 502 from a
+                   restart lands here too, and that sentence would be a lie
+                   on a phone with five bars. */
                 <div className="izy-alert warn" role="status">
-                    Saved on this phone. The handover will be sent as soon as you have signal, and this list
-                    will catch up then.
+                    {navigator.onLine === false
+                        ? 'Saved on this phone. The handover will be sent as soon as you have signal, and this list will catch up then.'
+                        : 'Saved on this phone and sending now. This list will catch up when it goes through.'}
                 </div>
             )}
 
