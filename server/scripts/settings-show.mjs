@@ -109,6 +109,8 @@ async function main() {
         return;
     }
     const s = (res.body?.settings ?? res.body) ?? {};
+    /* Read once, used by two sections. */
+    const hours = s.businessHours ?? {};
 
     console.log('  ─────────────────────────────── what we have told the client\n');
 
@@ -129,6 +131,54 @@ async function main() {
         'The pharmacies cannot upload. Lists come to us another way.',
     );
 
+    /* ─────────────── WHERE UNDELIVERED MEDICATION GOES BACK.
+     *
+     * Scope 1.2.9: back to the pharmacy of origin, or to the Discharge
+     * Pharmacy after hours. Said out loud here because it is a promise about
+     * controlled drugs that rests on TWO settings which can be moved
+     * independently -- the hours, and the code naming the after-hours
+     * pharmacy -- and because the second one fails SILENTLY. A code matching
+     * no site makes every return fall back to the pharmacy it came from,
+     * which on a closed counter means a courier standing at a locked door
+     * with medication in the van. modules/uh/returns.ts refuses to guess,
+     * deliberately, so the only place that mismatch is visible is here.
+     *
+     * The hours are businessHours, NOT the after-hours billing window: what
+     * matters is whether anybody is behind the counter, not what the hour
+     * costs. They differ between 07:00 and 08:00. */
+    console.log('  ─────────────────────────────── where undelivered medication goes back\n');
+    const back = s.returns ?? {};
+    const code = String(back.afterHoursSiteCode ?? '');
+    const sites = await call(`/api/projects/${project}/uh/sites`);
+    const list = Array.isArray(sites.body) ? sites.body : [];
+    const match = list.find((x) => x?.code === code) ?? null;
+
+    const when = `${hours.start}-${hours.end}`;
+    console.log(`    ${when.padEnd(16)}the pharmacy it came from`);
+    console.log(`    ${'any other hour'.padEnd(16)}${code === '' ? '(no after-hours pharmacy set)' : code}`
+        + `${match ? ` — ${match.name}` : ''}`);
+    console.log('');
+    if (code === '' || (list.length > 0 && match === null)) {
+        console.log(`    NOTHING IN ${project} MATCHES "${code}". Every return falls back to the`);
+        console.log('    pharmacy it came from, whatever the hour. The courier is told why on');
+        console.log('    the returns screen, which is the only warning anybody gets.');
+        if (list.length > 0) console.log(`    Codes that exist: ${list.map((x) => x.code).join(', ')}`);
+        console.log('');
+    } else if (list.length === 0) {
+        console.log(`    Could not read the sites (HTTP ${sites.status}), so the code above is`);
+        console.log('    printed unchecked. It resolving is the half that matters.');
+        console.log('');
+    }
+    /* THE BOUNDARY, out loud, because "on or before 8pm" and "after 8pm" are
+       how people say this and neither names the instant itself. The window is
+       half-open: 19:59 goes to the origin, 20:00 is already after hours. It
+       matches Addendum 1, which defines after-hours as between 8:00 p.m. and
+       7:00 a.m., so the two rules agree at the only second they could
+       disagree on. */
+    console.log(`    ${hours.end} itself is AFTER hours: the last minute going back to the`);
+    console.log('    pharmacy of origin is the one before it.');
+    console.log('');
+
     console.log('  ─────────────────────────────── what a courier is paid\n');
     const pay = s.driverPay ?? {};
     console.log(`  paying on: ${pay.basis === 'zone' ? 'ZONE of the destination ZIP' : 'SERVICE LEVEL'}`);
@@ -148,7 +198,6 @@ async function main() {
     console.log(`    scheduled   ${sla.scheduledMinutes} min from ${sla.clockStart === 'receipt' ? 'us receiving the order' : sla.clockStart}`);
     console.log(`    stat        ${sla.statMinutes} min overall, and ${sla.statFromPickupMinutes} min from pickup. Both bind.`);
     console.log(`    ad hoc      ${sla.adhocMinutes} min, with no separate from-pickup clock`);
-    const hours = s.businessHours ?? {};
     console.log(`    hours       ${hours.start}-${hours.end}, ${(hours.days ?? []).length} days a week`);
     console.log('');
 

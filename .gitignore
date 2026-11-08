@@ -186,3 +186,8 @@ bc3-login.ps1
 # public repository: the file never goes in. An address list in a csv is
 # already covered by *.emails.csv above; this is the wrapper, which is not.
 dispatch-emails.ps1
+
+# settings-show.mjs behind a Read-Host, because its prompt is dead in a
+# terminal tab the desktop app opened. Reads the live project and writes
+# nothing; ignored for the habit, not for its contents.
+settings-check.ps1
