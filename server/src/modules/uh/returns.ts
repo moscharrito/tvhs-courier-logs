@@ -32,6 +32,7 @@ import { resolveSettings, type ProjectSettings } from '../../core/projects/setti
 import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { TransitionError } from './lifecycle';
 import { localMinutes } from './pricing';
+import { namesFor } from './people';
 
 /* Same 0..1 space as every other signature in the platform. */
 const Point = z.object({
@@ -259,6 +260,74 @@ export function createReturnsRouter({ client }: { client: Client }): Router {
     }
 
     /* ---------------------------------------------------------------- read */
+
+    /**
+     * Who is still carrying something, for staff recording a return on
+     * somebody else's behalf.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * WITHOUT THIS, STAFF COULD NOT OPEN THE RETURN SCREEN AT ALL.
+     *
+     * `courierFor` has always required staff to name whose load they mean
+     * -- correctly, because the alternative is answering "what is in the
+     * van" with every undelivered package in the project. But the screen
+     * never asked. It called GET / with no `courier`, so an administrator
+     * or a site manager opening Returns got a 400 and a page with no
+     * destination, no counter and therefore no slot to photograph the
+     * signed form into. Half the reason the site manager role exists is
+     * taking undelivered items off a driver (ticket 7.20), and that half
+     * was unreachable from the browser.
+     *
+     * A LIST OF WHO IS CARRYING, NOT A LIST OF DRIVERS. Thirty-seven names
+     * where two of them have anything in a van is a worse screen than the
+     * two: the question at the end of a shift is "what medication is
+     * unaccounted for", which is this module's stated purpose, and a
+     * dropdown of empty drivers makes somebody check them one at a time.
+     * It also means the page has nothing to show when nothing is out,
+     * which is the right answer and a thing the old 400 could not say.
+     *
+     * STAFF ONLY. A courier's own load is GET / with no argument, and this
+     * would tell them what their colleagues are holding.
+     */
+    router.get('/outstanding', requireProjectRole('admin', 'lead'), wrap(async (req, res) => {
+        const project = req.project!;
+        const rs = await client.execute({
+            /* The same definition of "in the van" as carrying() -- failed
+               and not yet handed back -- counted per courier. Kept to one
+               query rather than carrying() per driver: a shift end is when
+               somebody is standing at a counter waiting for this page. */
+            sql: `SELECT o.assigned_to_username AS username,
+                         COUNT(*) AS orders,
+                         COALESCE(SUM((SELECT COALESCE(SUM(p.quantity), 0) FROM packages p
+                                        WHERE p.order_id = o.id AND p.outcome = 'failed')), 0) AS packages
+                    FROM orders o
+                   WHERE o.project_id = ? AND o.status = 'failed' AND o.returned_at IS NULL
+                     AND o.assigned_to_username IS NOT NULL AND o.assigned_to_username != ''
+                   GROUP BY o.assigned_to_username
+                   ORDER BY orders DESC, username`,
+            args: [project.id],
+        });
+
+        const rows = rs.rows.map((r) => ({
+            username: String(r['username']),
+            orders: Number(r['orders'] ?? 0),
+            packages: Number(r['packages'] ?? 0),
+        }));
+        /* The username stays on the row beside the name: it is the key
+           every other screen and the POST below join on, and a rename must
+           not rewrite it. Same rule as escalation.ts. */
+        const names = await namesFor(client, rows.map((r) => r.username));
+
+        res.json({
+            couriers: rows.map((r) => ({ ...r, name: names.get(r.username) ?? r.username })),
+            totals: {
+                couriers: rows.length,
+                orders: rows.reduce((n, r) => n + r.orders, 0),
+                packages: rows.reduce((n, r) => n + r.packages, 0),
+            },
+            notes: rows.length === 0 ? ['Nothing undelivered is still out with a courier.'] : [],
+        });
+    }));
 
     router.get('/', operate, wrap(async (req, res) => {
         const courier = courierFor(req, res);

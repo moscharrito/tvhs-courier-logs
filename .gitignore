@@ -58,6 +58,12 @@ docs/forms/mock-list-*.csv
 emails.csv
 *.emails.csv
 
+# set-emails.mjs output, teed to a file so it can be read without reading a
+# terminal tab whose scrollback may still hold a generated password. The
+# listing itself carries no password, but it IS a staff directory: every
+# username next to the mailbox that receives its reset code.
+emails.txt
+
 # One-off credential tooling and its output. Public repository.
 reset-uh-portals.py
 *.docx

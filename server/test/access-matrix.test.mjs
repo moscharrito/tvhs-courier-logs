@@ -526,6 +526,12 @@ const MATRIX = [
 
     /* --- medication coming back. */
     ['GET', `${UH}/returns`, UH_DISPATCH_AND_COURIER, 'handling what came back is half the site manager role'],
+    /* STAFF ONLY, unlike every other route in this block. A courier's
+       own load is GET /returns with no argument; this one answers
+       "who is still carrying something" across the contract, which is
+       what their colleagues are holding. It exists because staff have
+       to name whose load they mean and the screen had no way to ask. */
+    ['GET', `${UH}/returns/outstanding`, UH_DISPATCH, 'who still has undelivered medication, for whoever is taking it back'],
     ['POST', `${UH}/returns`, UH_DISPATCH_AND_COURIER, ''],
 
     /* --- the dispatch board: every patient address in the contract on one

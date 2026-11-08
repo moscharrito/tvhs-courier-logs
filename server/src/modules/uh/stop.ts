@@ -85,7 +85,7 @@ const Arrive = z.object({ ...Where, note: z.string().trim().max(300).default('')
  * 'exception' are written by other parts of the system and are not a
  * courier's to replace from a phone; 'patient_id' is, because the angle it
  * was shot at is exactly the thing that goes wrong. */
-const EvidenceKinds = ['courier_form', 'patient_id', 'stamped_receipt', 'doorstep'] as const;
+const EvidenceKinds = ['courier_form', 'patient_id', 'stamped_receipt', 'doorstep', 'return_form'] as const;
 const Evidence = z.object({
     ...Where,
     fileId: z.number().int().positive(),
@@ -240,6 +240,11 @@ interface OrderRow extends OrderStateRow {
     refrigerated: number;
     controlled: number;
     recipient_name: string;
+    /** When undelivered packages went back over a counter. A custody fact
+     *  and never an outcome, so it is independent of `status`: see
+     *  modules/uh/returns.ts. Read here only to refuse a return form on a
+     *  delivery that never came back. */
+    returned_at: string | null;
 }
 
 export function createStopRouter({ client, storage }: { client: Client; storage: FileStorage }): Router {
@@ -838,6 +843,32 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             return;
         }
 
+        /* A RETURN FORM ONLY WHERE SOMETHING WAS RETURNED.
+         *
+         * The sheet says a pharmacy signed for medication coming back over
+         * its counter. On an order with no `returned_at` that is not a
+         * blurred picture of a true fact, it is a picture of a handover
+         * nobody has recorded -- and because returnFormStatus reads
+         * `returned_at` first, the document would not even show it. A file
+         * stored, bound and then invisible is the worst of the three
+         * outcomes: the uploader is told it worked.
+         *
+         * `returned_at` rather than the status, deliberately. A return is a
+         * custody fact and never an outcome, so a failed delivery still in
+         * a van and one already back on a counter share `status = 'failed'`
+         * and are not the same thing. Record the hand-back on the return
+         * screen; the photograph goes with it, and this route is for
+         * afterwards. */
+        if (body.kind === 'return_form' && !order.returned_at) {
+            res.status(409).json({
+                error: 'Nothing has been recorded as coming back on this delivery. '
+                    + 'Record the hand-back first; the signed form goes with it.',
+                code: 'evidence.notReturned',
+                status: order.status,
+            });
+            return;
+        }
+
         /* The same check the delivery makes, and for the same reason: a row
            that claims a photograph which never finished uploading is worse
            than one that claims none. */
@@ -864,7 +895,9 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
            than quietly showing a different picture than it did yesterday. */
         const what = body.kind === 'courier_form' ? 'the signed form'
             : body.kind === 'patient_id' ? 'the identification'
-                : 'the doorstep photograph';
+                : body.kind === 'stamped_receipt' ? 'the stamped receipt'
+                    : body.kind === 'return_form' ? 'the signed return form'
+                        : 'the doorstep photograph';
         await recordOrderEvent(client, {
             projectId,
             order,
@@ -876,9 +909,14 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
                 fileId: body.fileId,
                 ...(body.lat !== undefined ? { lat: body.lat } : {}),
                 ...(body.lng !== undefined ? { lng: body.lng } : {}),
-                reason: body.note === ''
-                    ? `A new photograph of ${what} was added after the delivery was recorded.`
-                    : `A new photograph of ${what} was added after the delivery was recorded: ${body.note}`,
+                /* "the hand-back" for a return form, because "after the
+                   delivery was recorded" would be describing the wrong
+                   event on the one kind that is not about the door. */
+                reason: (() => {
+                    const after = body.kind === 'return_form' ? 'the hand-back' : 'the delivery';
+                    const head = `A new photograph of ${what} was added after ${after} was recorded`;
+                    return body.note === '' ? `${head}.` : `${head}: ${body.note}`;
+                })(),
             },
         });
 

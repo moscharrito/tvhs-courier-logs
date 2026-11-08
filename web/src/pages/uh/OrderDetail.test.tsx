@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { OrderDetail } from './OrderDetail';
 import { AuthProvider } from '../../app/auth';
@@ -54,12 +54,13 @@ const detail = (over = {}) => ({
  * and this one is about a row being ABSENT. */
 const rowLabels = () => [...document.querySelectorAll('.izy-table th')].map((th) => th.textContent);
 
-function renderAs(projects: unknown, over = {}) {
-    mockFetch({
+function renderAs(projects: unknown, over = {}, extra: Record<string, unknown> = {}) {
+    const mocked = mockFetch({
         'GET /api/session': session,
         'GET /api/me/projects': projects,
         'GET /api/projects/uh/uh/orders/4182': detail(over),
         'GET /api/projects/uh/uh/orders/4182/messages': { messages: [] },
+        ...extra,
     });
     render(
         <MemoryRouter initialEntries={['/projects/uh/orders/4182']}>
@@ -68,6 +69,7 @@ function renderAs(projects: unknown, over = {}) {
             </AuthProvider>
         </MemoryRouter>,
     );
+    return mocked;
 }
 
 describe('a courier looking one up', () => {
@@ -202,5 +204,114 @@ describe('the return form on our own copy', () => {
            an assertion that moves with the layout tells you nothing about
            the field this test is actually about. */
         expect(screen.getByText('Proof of delivery (PDF)')).toBeInTheDocument();
+    });
+});
+
+/* ───────────────────────── AND A WAY TO FIX A MISSING ONE
+ *
+ * Saying "no photograph of the signed return form was recorded" and
+ * offering nothing to do about it described a hole rather than closing one,
+ * and there was no other route to it: setting `returned_at` is exactly what
+ * takes an order out of the "still in the van" query the return screen is
+ * built from, so the moment a hand-back was recorded without its
+ * photograph -- the upload failed at the counter and the courier was
+ * offered the choice to carry on rather than stand there holding
+ * medication -- no screen in the system could ever supply one.
+ */
+describe('attaching a return form that was never taken', () => {
+    const cameBack = (over = {}) => ({
+        status: 'failed', deliveredAt: null, receivedBy: '', failureReason: 'nobody_home',
+        returnedAt: '2026-10-31T20:10:00.000Z', ...over,
+    });
+    const missing = {
+        available: false,
+        reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
+    };
+
+    /** The three steps the uploader takes, so a test can reach a bucket. */
+    const fileRoutes = {
+        'POST /api/projects/uh/uh/files': { id: 91, upload: { url: 'https://bucket.test/put', method: 'PUT', headers: {} } },
+        'PUT https://bucket.test/put': { ok: true },
+        'POST /api/projects/uh/uh/files/91/stored': { ok: true },
+        'POST /api/projects/uh/uh/orders/4182/evidence': { status: 201, body: { id: 4182, fileId: 91, kind: 'return_form' } },
+    };
+
+    const choose = () => {
+        const input = screen.getByLabelText(/Photo of the signed form/) as HTMLInputElement;
+        fireEvent.change(input, {
+            target: { files: [new File([new Uint8Array([9, 9, 9])], 'part3.jpg', { type: 'image/jpeg' })] },
+        });
+    };
+
+    it('offers the slot where the sheet is missing', async () => {
+        renderAs(asLead, cameBack({ returnForm: missing }));
+        await screen.findByRole('heading', { name: 'Order #4182' });
+        expect(screen.getByLabelText(/Photo of the signed form/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Attach the signed form/ })).toBeDisabled();
+    });
+
+    it('does not offer it where the sheet is already there', async () => {
+        renderAs(asLead, cameBack({ returnForm: { available: true, reason: '' } }));
+        await screen.findByRole('heading', { name: 'Order #4182' });
+        expect(screen.queryByLabelText(/Photo of the signed form/)).toBeNull();
+    });
+
+    it('does not offer it on a delivery that never came back', async () => {
+        /* The sheet is a pharmacy signing for medication crossing a
+           counter. On a delivery with no `returned_at` there is no such
+           handover to photograph, and the server refuses one
+           (evidence.notReturned) -- so the screen must not ask for it. */
+        renderAs(asLead, { returnForm: { available: false, reason: '' } });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+        expect(screen.queryByLabelText(/Photo of the signed form/)).toBeNull();
+    });
+
+    it('uploads the picture first and then puts it on the delivery', async () => {
+        const mocked = renderAs(asLead, cameBack({ returnForm: missing }), fileRoutes);
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        choose();
+        const button = screen.getByRole('button', { name: /Attach the signed form/ });
+        await waitFor(() => expect(button).toBeEnabled());
+        fireEvent.click(button);
+
+        await waitFor(() => expect(mocked.calls).toContain('POST /api/projects/uh/uh/orders/4182/evidence'));
+
+        /* THE ORDER OF THE TWO CALLS IS THE POINT. A custody note saying a
+           form arrived, pointing at a file that never finished uploading,
+           is worse than no note: the record claims evidence it cannot
+           produce. The picture goes up first and a failure records
+           nothing, which is the rule the door and the counter follow. */
+        const upload = mocked.calls.indexOf('POST /api/projects/uh/uh/files');
+        const evidence = mocked.calls.indexOf('POST /api/projects/uh/uh/orders/4182/evidence');
+        expect(upload).toBeGreaterThanOrEqual(0);
+        expect(upload).toBeLessThan(evidence);
+
+        /* ITS OWN KIND, not courier_form. The last time one kind held two
+           documents, the client's proof of delivery printed the return
+           sheet under the collection form's caption for a fortnight. */
+        expect(mocked.bodies['POST /api/projects/uh/uh/files/91/stored']).toBeTruthy();
+        expect(mocked.bodies['POST /api/projects/uh/uh/files']).toMatchObject({
+            kind: 'return_form',
+            orderId: 4182,
+        });
+        expect(mocked.bodies['POST /api/projects/uh/uh/orders/4182/evidence']).toEqual({
+            fileId: 91,
+            kind: 'return_form',
+        });
+    });
+
+    it('records nothing when the upload fails', async () => {
+        const mocked = renderAs(asLead, cameBack({ returnForm: missing }), {
+            ...fileRoutes,
+            'POST /api/projects/uh/uh/files': { status: 400, body: { error: 'That photograph is too large.' } },
+        });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        choose();
+        fireEvent.click(screen.getByRole('button', { name: /Attach the signed form/ }));
+
+        expect(await screen.findByText(/too large/)).toBeInTheDocument();
+        expect(mocked.calls).not.toContain('POST /api/projects/uh/uh/orders/4182/evidence');
     });
 });

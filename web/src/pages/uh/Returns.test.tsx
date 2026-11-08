@@ -247,3 +247,83 @@ describe('the camera beside the photo field', () => {
         expect(screen.queryByRole('button', { name: 'Take a picture' })).not.toBeInTheDocument();
     });
 });
+
+/* ────────────────────────────────── THE SCREEN STAFF COULD NOT OPEN
+ *
+ * The server has always required staff to name whose load they mean, and
+ * this screen never asked: it called GET /returns bare, got a 400, and
+ * rendered a page with no counter and therefore no slot to photograph the
+ * signed form into. Taking undelivered items off a driver is half of what
+ * the site manager role was created for.
+ *
+ * So the first thing staff see is who is carrying something. A COURIER MUST
+ * NEVER SEE IT -- their own load needs no argument, and the list would tell
+ * them what their colleagues are holding.
+ */
+describe('whose load, for staff', () => {
+    const staffProjects = (role: string) => [{ ...projects[0], role }];
+    const OUTSTANDING = `${RETURNS}/outstanding`;
+
+    const outstanding = {
+        couriers: [
+            { username: 'ada.courier', name: 'Ada Courier', orders: 2, packages: 3 },
+            { username: 'ben.courier', name: 'Ben Courier', orders: 1, packages: 1 },
+        ],
+        totals: { couriers: 2, orders: 3, packages: 4 },
+        notes: [],
+    };
+
+    function renderAs(role: string, over: Record<string, unknown> = {}) {
+        return renderReturns({
+            ...routes(),
+            'GET /api/me/projects': staffProjects(role),
+            [`GET ${OUTSTANDING}`]: outstanding,
+            ...over,
+        });
+    }
+
+    for (const role of ['admin', 'lead']) {
+        it(`opens on the couriers carrying something for ${role}`, async () => {
+            renderAs(role);
+            expect(await screen.findByRole('button', { name: /Ada Courier/ })).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /Ben Courier/ })).toBeInTheDocument();
+            /* The form is NOT on screen yet: there is no counter to hand
+               anything over until somebody's van has been chosen. */
+            expect(screen.queryByLabelText(/Photo of the signed form/)).not.toBeInTheDocument();
+        });
+    }
+
+    it('loads that courier load, named in the request, once one is chosen', async () => {
+        const scoped = `${RETURNS}?courier=ada.courier`;
+        const mocked = renderAs('admin', { [`GET ${scoped}`]: load() });
+
+        fireEvent.click(await screen.findByRole('button', { name: /Ada Courier/ }));
+
+        /* THE USERNAME IS THE KEY, not the display name: everything else in
+           the system joins on it, and the picker is where a wrong one would
+           be introduced. */
+        await waitFor(() => expect(mocked.calls).toContain(`GET ${scoped}`));
+        expect(await screen.findByLabelText(/Photo of the signed form/)).toBeInTheDocument();
+        /* Whose load it is, said on screen. "Still with you" would be a lie
+           on a dispatcher's monitor. */
+        expect(screen.getByText(/Still with Ada Courier/)).toBeInTheDocument();
+    });
+
+    it('never shows the picker to a courier, and never asks who they are', async () => {
+        const mocked = renderReturns();
+        /* Straight to the form: the courier path is untouched. */
+        expect(await screen.findByLabelText(/Photo of the signed form/)).toBeInTheDocument();
+        expect(screen.getByText(/Still with you/)).toBeInTheDocument();
+        expect(mocked.calls).toContain(`GET ${RETURNS}`);
+        expect(mocked.calls.some((c) => c.includes('outstanding'))).toBe(false);
+        expect(mocked.calls.some((c) => c.includes('courier='))).toBe(false);
+    });
+
+    it('says so plainly when nothing is out, rather than showing an empty form', async () => {
+        renderAs('admin', {
+            [`GET ${OUTSTANDING}`]: { couriers: [], totals: { couriers: 0, orders: 0, packages: 0 }, notes: [] },
+        });
+        expect(await screen.findByText(/Nothing undelivered is still out with a courier/)).toBeInTheDocument();
+        expect(screen.queryByLabelText(/Photo of the signed form/)).not.toBeInTheDocument();
+    });
+});

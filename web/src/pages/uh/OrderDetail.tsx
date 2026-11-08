@@ -20,6 +20,8 @@ import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
 import { CardAnchor, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { displayName, handleUnder } from '../../lib/people';
+import { uploadPhotoNow } from '../../lib/outbox';
+import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
 
 interface Package { id: number; description: string; quantity: number; signatureRequired: boolean; outcome: string }
 
@@ -219,6 +221,28 @@ export function OrderDetail() {
                 <div className="izy-card">
                     <h2>Proof of return</h2>
                     <p className="izy-muted">{order.returnForm.reason}</p>
+                    {/* AND A WAY TO FIX IT, which is the half that was
+                        missing. Saying "no photograph of the signed return
+                        form was recorded" and offering nothing to do about
+                        it described a hole rather than closing one.
+
+                        There was no other route to it. The return screen is
+                        built from what is still in a van, and setting
+                        `returned_at` is exactly what takes an order out of
+                        that query -- so the moment a hand-back was recorded
+                        without its photograph, for any reason, no screen in
+                        the system could ever supply one. An upload that
+                        failed at the counter while the courier was offered
+                        the choice to carry on rather than stand there
+                        holding medication is the common way in.
+
+                        Only where something actually came back: the server
+                        refuses a return form on a delivery with no
+                        `returned_at` (evidence.notReturned), because that
+                        sheet is a pharmacy's signature for medication
+                        crossing a counter and not a picture of a handover
+                        nobody has recorded. */}
+                    <AttachReturnForm code={code} orderId={order.id} onDone={() => { void load(); }} />
                 </div>
             )}
 
@@ -437,5 +461,115 @@ export function OrderDetail() {
             </p>
             {page}
         </>
+    );
+}
+/**
+ * Attach the signed return sheet to a delivery that came back without one.
+ *
+ * -------------------------------------------------------------------------
+ * THE PHOTOGRAPH GOES UP FIRST AND A FAILURE RECORDS NOTHING, which is the
+ * rule the door, the counter and the hand-back all follow. The alternative
+ * is a custody note saying a form arrived, pointing at a file that never
+ * finished uploading.
+ *
+ * NOT THROUGH THE OUTBOX. This is somebody at a desk tidying up a delivery
+ * from last week, not a courier at a door with no signal, and a queued
+ * version of this would fire later against an order whose state nobody is
+ * looking at any more. The return screen queues; this does not.
+ *
+ * It posts to the same /evidence route that replaces a bad delivery
+ * photograph, with its own kind: the status does not move, the hand-back
+ * time is not rewritten, and a `note` event dates the new picture so the
+ * proof of delivery can say the form was photographed on the Thursday
+ * rather than quietly showing something it did not show yesterday.
+ */
+function AttachReturnForm({ code, orderId, onDone }: {
+    code: string;
+    orderId: number;
+    onDone: () => void;
+}) {
+    const [photo, setPhoto] = useState<File | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+    const send = async () => {
+        if (photo === null) return;
+        setBusy(true);
+        setMsg(null);
+        try {
+            const fileId = await uploadPhotoNow({
+                module: `/api/projects/${code}/uh`,
+                /* Bound to this one delivery, unlike the courier's batch
+                   sheet: whoever is attaching it is looking at one order
+                   and cannot know what else came back in the same armful.
+                   pod-photos.ts prefers this over the batch photograph for
+                   exactly that reason -- it is the more specific claim. */
+                orderId,
+                blob: photo,
+                contentType: photoType(photo) ?? 'image/jpeg',
+                kind: 'return_form',
+                idemKey: `return-form-${orderId}-${photo.size}-${photo.lastModified}`,
+            });
+            await api(`/api/projects/${code}/uh/orders/${orderId}/evidence`, {
+                method: 'POST',
+                json: { fileId, kind: 'return_form' },
+            });
+            setPhoto(null);
+            setMsg({ kind: 'ok', text: 'The signed return form is on this delivery.' });
+            onDone();
+        } catch (err) {
+            setMsg({
+                kind: 'error',
+                text: err instanceof ApiError
+                    ? err.message
+                    : `The form could not be attached: ${err instanceof Error ? err.message : 'unknown error'}. Nothing was recorded.`,
+            });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div>
+            {msg && (
+                <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
+                    {msg.text}
+                </div>
+            )}
+            <label className="izy-field">Photo of the signed form
+                <input
+                    type="file"
+                    accept={PHOTO_ACCEPT}
+                    disabled={busy}
+                    onChange={(e) => {
+                        /* Checked here rather than by the server after the
+                           upload, same as the counter: a refusal should
+                           name the file, not arrive as a four-hundred. */
+                        const picked = e.target.files?.[0] ?? null;
+                        const problem = picked === null ? null : photoProblem(picked);
+                        if (problem !== null) {
+                            setMsg({ kind: 'error', text: problem });
+                            setPhoto(null);
+                            return;
+                        }
+                        setMsg(null);
+                        setPhoto(picked);
+                    }}
+                />
+                <span className="izy-muted izy-field-note">
+                    {photo === null
+                        ? 'Part 3 of the docket, signed by the pharmacy that took the packages back.'
+                        : `Ready to send: ${photo.name}`}
+                </span>
+            </label>
+            <button
+                type="button"
+                className="izy-btn"
+                disabled={photo === null || busy}
+                onClick={() => { void send(); }}
+            >
+                {busy ? 'Attaching...' : 'Attach the signed form'}
+            </button>
+        </div>
     );
 }

@@ -33,6 +33,10 @@ export const PROOF_KINDS = ['courier_form', 'doorstep'] as const;
 /** Identification, photographed where the pharmacy stamped the form. */
 export const ID_KIND = ['patient_id'] as const;
 
+/** The return sheet supplied AFTER the hand-back was recorded, bound to the
+ *  one order it was attached to rather than to a batch. See returnPhoto. */
+export const RETURN_KIND = ['return_form'] as const;
+
 export interface StoredPhoto {
     id: number;
     key: string;
@@ -127,6 +131,19 @@ export async function collectionPhoto(
 export async function returnPhoto(
     client: Client, projectId: number, orderId: number,
 ): Promise<StoredPhoto | null> {
+    /* THE ATTACHED SHEET WINS OVER THE BATCH ONE, and that order is the
+       point rather than an accident of which query runs first.
+
+       Nobody attaches a return form to an order that already has a good
+       one. The only reasons to reach for that path are that the batch
+       photograph is missing -- the upload failed at the counter and the
+       courier was offered the choice to carry on rather than stand there
+       holding medication -- or that it is unreadable. Either way the later
+       picture is the better evidence, which is this file's standing rule:
+       "a courier who photographed twice did so because the first one was
+       no good". Replacement by appending, same as everywhere else. */
+    const attached = await storedPhoto(client, projectId, orderId, RETURN_KIND);
+    if (attached) return attached;
     return batchPhotoOn(client, projectId, orderId, 'returned');
 }
 

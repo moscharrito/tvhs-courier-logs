@@ -8,13 +8,33 @@
  * The count is asked for and not pre-filled, the same as a pickup, and for the
  * same reason: a pre-filled number turns "confirm the count" into "tap
  * continue". A mismatch, or a load brought somewhere the rule did not expect,
- * needs a reason and is then allowed through. A courier holding medication
+ * a reason and is then allowed through. A courier holding medication
  * they cannot hand back is worse than a record with an explanation on it.
+ *
+ * -------------------------------------------------------------------------
+ * TWO READERS, AND ONLY ONE OF THEM COULD OPEN IT.
+ *
+ * A courier gets their own load with no argument. Staff have to name whose
+ * load they mean -- the server has always insisted, because the alternative
+ * is answering "what is in the van" with every undelivered package in the
+ * project -- and this screen never asked, so an administrator or a site
+ * manager clicking Returns got a 400 and a page with no counter and no slot
+ * to photograph the signed form into. Taking undelivered items off a driver
+ * is half of what the site manager role was created for (ticket 7.20).
+ *
+ * So for staff the screen opens on WHO IS STILL CARRYING SOMETHING, from
+ * GET /outstanding, and picking somebody loads their van. Not a list of
+ * every driver: thirty-seven names of which two have anything out makes
+ * somebody check the other thirty-five one at a time, and the question at
+ * the end of a shift is which medication is unaccounted for.
+ *
+ * NOTHING ABOUT THE COURIER OWN PATH CHANGES. They never see the picker.
  */
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { useAuth } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
@@ -40,6 +60,13 @@ interface Load {
     totals: { orders: number; packages: number };
     notes: string[];
 }
+/** One courier with something still in a van. GET /outstanding. */
+interface Carrying { username: string; name: string; orders: number; packages: number }
+interface Outstanding {
+    couriers: Carrying[];
+    totals: { couriers: number; orders: number; packages: number };
+    notes: string[];
+}
 interface ReturnResult {
     returned: number[];
     refused: Array<{ orderId: number; error: string }>;
@@ -61,7 +88,109 @@ async function currentPosition(): Promise<{ lat: number; lng: number } | null> {
 
 export function Returns() {
     const { code = '' } = useParams();
-    const base = `/api/projects/${code}/uh/returns`;
+    const { projects } = useAuth();
+    const role = projects.find((p) => p.code === code)?.role ?? '';
+    /* The two roles the server lets record somebody else's hand-back. A
+       pharmacy account never reaches this route at all. */
+    const staff = role === 'admin' || role === 'lead';
+    const [whose, setWhose] = useState<Carrying | null>(null);
+
+    if (staff && whose === null) return <WhoIsCarrying code={code} onPick={setWhose} />;
+    return <TakeBack code={code} forCourier={staff ? whose : null} onBack={staff ? () => setWhose(null) : null} />;
+}
+
+/**
+ * Whose van, for staff. The list is who is carrying, not who drives.
+ */
+function WhoIsCarrying({ code, onPick }: { code: string; onPick: (c: Carrying) => void }) {
+    const [out, setOut] = useState<Outstanding | null>(null);
+    const [msg, setMsg] = useState<string | null>(null);
+
+    useEffect(() => {
+        let live = true;
+        api<Outstanding>(`/api/projects/${code}/uh/returns/outstanding`)
+            .then((o) => { if (live) setOut(o); })
+            .catch((err) => {
+                if (!live) return;
+                setMsg(err instanceof ApiError ? err.message : 'Cannot reach dispatch.');
+                setOut({ couriers: [], totals: { couriers: 0, orders: 0, packages: 0 }, notes: [] });
+            });
+        return () => { live = false; };
+    }, [code]);
+
+    if (out === null) return <div className="izy-card"><Loading label="Loading what is still out" /></div>;
+
+    return (
+        <Screen>
+            <Context>
+                <ScreenHeader
+                    title="Take back"
+                    subtitle={<><Link to={`/projects/${code}`}>Contract</Link> &middot; undelivered packages still out</>}
+                />
+                <Panel>
+                    <h2 className="izy-lede-kicker">Still out</h2>
+                    <p className="izy-lede">
+                        {out.totals.orders} {out.totals.orders === 1 ? 'order' : 'orders'}
+                    </p>
+                    <p className="izy-lede-note">
+                        {out.couriers.length === 0
+                            ? 'Nothing undelivered is still out with a courier.'
+                            : 'Choose whose load you are taking back over the counter.'}
+                    </p>
+                    {out.couriers.length > 0 && (
+                        <div className="izy-chips">
+                            <Chip label={`${out.totals.packages} ${out.totals.packages === 1 ? 'package' : 'packages'}`} />
+                            <Chip
+                                label={`${out.totals.couriers} ${out.totals.couriers === 1 ? 'courier' : 'couriers'}`}
+                                tone="warn"
+                            />
+                        </div>
+                    )}
+                </Panel>
+            </Context>
+            <Sheet>
+                {msg && <div className="izy-alert error" role="alert">{msg}</div>}
+                {out.couriers.map((c) => (
+                    <CardButton
+                        key={c.username}
+                        title={c.name}
+                        Icon={ReturnIcon}
+                        tone="quiet"
+                        onClick={() => onPick(c)}
+                        detail={`${c.orders} ${c.orders === 1 ? 'order' : 'orders'} / ${c.packages} ${c.packages === 1 ? 'package' : 'packages'}`}
+                    />
+                ))}
+                {out.couriers.length === 0 && (
+                    <CardLink
+                        to={`/projects/${code}`}
+                        title="Back to the contract"
+                        Icon={RouteIcon}
+                        tone="primary"
+                        detail="Nothing is waiting to come back"
+                    />
+                )}
+            </Sheet>
+        </Screen>
+    );
+}
+
+/**
+ * The hand-back itself: the counter, the count, the name and the photograph.
+ *
+ * `forCourier` is null for a courier recording their own load, which is the
+ * shape the server reads with no argument. Staff pass the person they chose.
+ */
+function TakeBack({ code, forCourier, onBack }: {
+    code: string;
+    forCourier: Carrying | null;
+    onBack: (() => void) | null;
+}) {
+    /* The courier query is part of the URL the outbox queues, deliberately:
+       a hand-back saved on a phone with no signal has to reach the same
+       load when it fires, not whoever the screen is showing by then. */
+    const base = forCourier === null
+        ? `/api/projects/${code}/uh/returns`
+        : `/api/projects/${code}/uh/returns?courier=${encodeURIComponent(forCourier.username)}`;
 
     const [load, setLoad] = useState<Load | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
@@ -170,18 +299,32 @@ export function Returns() {
     return (
         <Screen>
             <Context>
+                {/* WHERE BACK GOES DEPENDS ON WHO IS READING. A courier
+                    came from their round; staff came from the list of who
+                    is carrying, and sending them to a courier round they do
+                    not have is a dead link on the one screen somebody opens
+                    while standing at a counter. */}
                 <ScreenHeader
                     title="Take back"
-                    subtitle={<><Link to={`/projects/${code}/my-run`}>Today</Link> · undelivered packages</>}
+                    subtitle={onBack !== null
+                        ? <>
+                            <button type="button" className="izy-linkish" onClick={onBack}>Whose load</button>
+                            {' · '}{forCourier?.name}
+                        </>
+                        : <><Link to={`/projects/${code}/my-run`}>Today</Link>{' · '}undelivered packages</>}
                 />
                 <Panel>
-                    <h2 className="izy-lede-kicker">Still with you</h2>
+                    <h2 className="izy-lede-kicker">
+                        {forCourier === null ? 'Still with you' : `Still with ${forCourier.name}`}
+                    </h2>
                     <p className="izy-lede">
                         {load.totals.orders} {load.totals.orders === 1 ? 'order' : 'orders'}
                     </p>
                     <p className="izy-lede-note">
                         {load.destinations.length === 0
-                            ? 'Nothing undelivered is still with you.'
+                            ? (forCourier === null
+                                ? 'Nothing undelivered is still with you.'
+                                : 'Nothing undelivered is still with them.')
                             : 'These still count as attempted. Taking them back does not change that.'}
                     </p>
                     {load.destinations.length > 0 && (
@@ -219,7 +362,9 @@ export function Returns() {
             )}
 
             {load.destinations.length === 0 ? (
-                <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
+                onBack !== null
+                    ? <CardButton title="Whose load" Icon={RouteIcon} tone="primary" onClick={onBack} detail="Everyone still carrying something" />
+                    : <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" detail="Your round, and the next stop on it" />
             ) : (
                 <form onSubmit={(e) => { void submit(e); }}>
                     <div className="izy-card">

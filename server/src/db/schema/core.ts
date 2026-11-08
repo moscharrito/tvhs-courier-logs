@@ -212,6 +212,20 @@ export const FILE_KINDS = [
      * this controlled delivery", which is the only question anybody asks of
      * it later. */
     'stamped_receipt',
+    /* The signed part 3 of the docket, photographed when UNDELIVERED items
+     * went back over a counter (drizzle/0065). Its own kind for the reason
+     * stamped_receipt has one: `courier_form` already means the collection
+     * sheet in one place and the return sheet in another depending on which
+     * custody event names it, and telling those apart after the fact cost
+     * pod-photos.ts two separate queries and the client a fortnight of
+     * proofs captioned backwards. A third meaning on that name is how it
+     * happens again.
+     *
+     * Written only by the attach-afterwards path. A courier handing a load
+     * back at the counter still photographs one sheet for the whole batch,
+     * stored as `courier_form` with order_id NULL and referenced from each
+     * order's `returned` event -- unchanged, and still the primary record. */
+    'return_form',
 ] as const;
 export const FILE_STATUSES = ['pending', 'stored'] as const;
 
@@ -236,8 +250,9 @@ export const files = sqliteTable(
         unique('files_key_unique').on(t.s3Key),
         index('files_order_idx').on(t.orderId),
         index('files_project_status_idx').on(t.projectId, t.status),
-        /* Kept in step with FILE_KINDS above and with drizzle/0038 and
-           drizzle/0062, which rebuilt the table to widen this. The migration is what the database
+        /* Kept in step with FILE_KINDS above and with drizzle/0038,
+           drizzle/0062 and drizzle/0065, which rebuilt the table to widen
+           this. The migration is what the database
            actually has; this is what a future generated migration would
            compare against, and the two drifting apart is how somebody later
            gets a diff that silently narrows a live constraint. */
