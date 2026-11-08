@@ -167,7 +167,38 @@ const LEADS = [
         username: 'dispatch',
         name: 'Dispatch Team',
         sites: ALL_COUNTERS,
-        note: 'the daily list, assignment, the board and what comes back, across all eight counters',
+        note: 'the daily list, assignment, the board and what comes back, across all nine counters',
+    },
+    /* AND THE OTHER TWO, 8 November 2026. There are three dispatchers.
+     *
+     * One account between three people would have cost exactly the thing the
+     * entry above was created to protect: order_messages and custody_events
+     * are append-only, so the username on an assignment is the only record
+     * of who made it and it can never be corrected afterwards. Three people
+     * sharing `dispatch` turns every one of those rows into "somebody on the
+     * desk", permanently.
+     *
+     * Named by shift position rather than by person on purpose. A dispatcher
+     * who leaves is replaced at the desk, and the address below forwards to
+     * whoever sits there -- see docs/ses-apex-domain-verification.md, which
+     * is explicit that an account gets an address on our own domain and the
+     * domain forwards it to the real person. An account named for an
+     * individual would need renaming on every staffing change, and the
+     * audit rows it had already written would keep the old name regardless.
+     *
+     * Same sites and same role as `dispatch`: this is one desk with three
+     * chairs, not three scopes. */
+    {
+        username: 'dispatch2',
+        name: 'Dispatch 2',
+        sites: ALL_COUNTERS,
+        note: 'the second dispatch chair; the same list, board and returns as dispatch',
+    },
+    {
+        username: 'dispatch3',
+        name: 'Dispatch 3',
+        sites: ALL_COUNTERS,
+        note: 'the third dispatch chair; the same list, board and returns as dispatch',
     },
 ];
 
