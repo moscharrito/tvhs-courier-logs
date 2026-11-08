@@ -35,7 +35,12 @@ const listing = (over = {}) => ({
 
 const routes = (over = {}) => ({ [`GET ${BASE}*`]: listing(), ...over });
 
-function show(r = routes(), props = {}) {
+/* `Record<string, unknown>` and not the inferred shape of routes(): a
+   default parameter makes TypeScript infer an exact object type, and any
+   caller adding a route -- the POST below, for one -- is then an excess
+   property error. It compiled under vitest, which does not typecheck, and
+   failed the production build instead. */
+function show(r: Record<string, unknown> = routes(), props: Record<string, unknown> = {}) {
     const mocked = mockFetch(r);
     render(
         <ListDrops
