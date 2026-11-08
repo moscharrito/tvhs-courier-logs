@@ -80,7 +80,7 @@ describe('set-portal-sites.mjs', () => {
 
         expect(res.code, res.out).toBe(0);
         expect(res.out).toContain('Dry run');
-        expect(res.out).toContain(`after     ${siteCodes.length} of ${siteCodes.length}`);
+        expect(res.out).toContain(`->     ${siteCodes.length} of ${siteCodes.length}`);
 
         const after = await membership();
         expect(after.settings.siteIds).toEqual(before.settings.siteIds);
@@ -102,7 +102,7 @@ describe('set-portal-sites.mjs', () => {
     it('is a no-op the second time, and says so rather than writing again', async () => {
         const res = await run(['--user', 'uh.testmanager', '--sites', 'all', '--apply']);
         expect(res.code, res.out).toBe(0);
-        expect(res.out).toContain('already the scope');
+        expect(res.out).toContain('already how this account is set up');
         expect(res.out).not.toContain('WROTE:');
     });
 
@@ -153,5 +153,124 @@ describe('set-portal-sites.mjs', () => {
         });
         expect(res.code).toBe(1);
         expect(res.out).toContain('--i-mean-production');
+    });
+});
+
+/* ───────────────────────────── THE RESET CAPABILITY
+ *
+ * mayResetPortalPasswords lets one client account reset the eight counter
+ * portals, and nothing else: never an Izy login, never a courier, never
+ * another manager. It is the only way a locked-out pharmacist is helped
+ * without an Izy administrator -- and while SES is in sandbox it is the
+ * only way at all, because a self-service reset code is generated and
+ * delivered to nobody.
+ *
+ * It was found missing from uh.manager on 8 November, a week after that
+ * account went live, by the scope tool printing "keeping (nothing else in
+ * settings)". Nothing had ever failed, because nobody had tried.
+ */
+describe('set-portal-sites.mjs and the reset capability', () => {
+    const settingsOf = async (username) => {
+        const users = (await admin.get('/api/users')).body;
+        const u = users.find((x) => x.username === username);
+        return (u.memberships ?? []).find((m) => m.code === 'uh')?.settings ?? {};
+    };
+
+    beforeAll(async () => {
+        /* A counter-shaped portal with no capability, standing in for
+           uh.manager as it was found. */
+        await admin.post('/api/users').send({
+            username: 'uh.plain', name: 'Plain Portal', password: 'portal-pass-3', role: 'staff',
+        });
+        const two = (await admin.get('/api/projects/uh/uh/sites?status=active')).body.slice(0, 2);
+        await admin.put('/api/users/uh.plain/memberships/uh').send({
+            role: 'pharmacy', settings: { siteIds: two.map((s) => s.id) },
+        });
+    });
+
+    it('grants it without being given --sites, and leaves the scope alone', async () => {
+        const before = await settingsOf('uh.plain');
+        expect(before.mayResetPortalPasswords).toBeUndefined();
+
+        const res = await run(['--user', 'uh.plain', '--grant-reset', '--apply', '--also']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('unchanged (no --sites given)');
+        expect(res.out).toContain('MAY reset');
+
+        const after = await settingsOf('uh.plain');
+        expect(after.mayResetPortalPasswords).toBe(true);
+        /* THE SCOPE IS UNTOUCHED. A capability change that silently reset
+           somebody's pharmacies to nothing would be the same class of bug
+           this file exists to prevent, pointed the other way. */
+        expect(after.siteIds).toEqual(before.siteIds);
+    });
+
+    it('refuses a second holder unless somebody says so', async () => {
+        /* uh.testmanager still carries it from the suite above. */
+        expect((await settingsOf('uh.testmanager')).mayResetPortalPasswords).toBe(true);
+
+        await admin.post('/api/users').send({
+            username: 'uh.second', name: 'Second Portal', password: 'portal-pass-4', role: 'staff',
+        });
+        const one = (await admin.get('/api/projects/uh/uh/sites?status=active')).body.slice(0, 1);
+        await admin.put('/api/users/uh.second/memberships/uh').send({
+            role: 'pharmacy', settings: { siteIds: one.map((s) => s.id) },
+        });
+
+        const refused = await run(['--user', 'uh.second', '--grant-reset', '--apply']);
+        expect(refused.code).toBe(1);
+        expect(refused.out).toContain('already may reset');
+        /* AND IT NAMES THEM, so the next decision does not need a hunt. */
+        expect(refused.out).toMatch(/uh\.(testmanager|plain)/);
+        expect((await settingsOf('uh.second')).mayResetPortalPasswords).toBeUndefined();
+
+        const allowed = await run(['--user', 'uh.second', '--grant-reset', '--apply', '--also']);
+        expect(allowed.code, allowed.out).toBe(0);
+        expect((await settingsOf('uh.second')).mayResetPortalPasswords).toBe(true);
+    });
+
+    it('revokes by deleting the key rather than writing false', async () => {
+        const res = await run(['--user', 'uh.second', '--revoke-reset', '--apply']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('may NOT reset');
+
+        const after = await settingsOf('uh.second');
+        /* ABSENT, NOT false. mayReset() tests for a literal true so both
+           read the same to the server -- but a blob is read by people too,
+           and `false` looks like a considered denial rather than a verb
+           nobody was ever given. */
+        expect('mayResetPortalPasswords' in after).toBe(false);
+        /* The scope survived the revoke as well. */
+        expect(after.siteIds.length).toBe(1);
+    });
+
+    it('is a no-op when it already holds it, and writes nothing', async () => {
+        const res = await run(['--user', 'uh.plain', '--grant-reset', '--apply']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('already how this account is set up');
+        expect(res.out).not.toContain('WROTE:');
+    });
+
+    it('refuses both flags at once rather than picking one', async () => {
+        const res = await run(['--user', 'uh.plain', '--grant-reset', '--revoke-reset', '--apply']);
+        expect(res.code).toBe(1);
+        expect(res.out).toContain('opposites');
+    });
+
+    it('needs no --sites, but still needs a user', async () => {
+        const res = await run(['--grant-reset', '--apply']);
+        expect(res.code).toBe(1);
+        expect(res.out).toContain('Usage:');
+    });
+
+    it('changes the scope and grants in one write when asked for both', async () => {
+        const res = await run([
+            '--user', 'uh.plain', '--sites', 'all', '--grant-reset', '--apply', '--also',
+        ]);
+        expect(res.code, res.out).toBe(0);
+
+        const after = await settingsOf('uh.plain');
+        expect(after.siteIds.length).toBe(siteCodes.length);
+        expect(after.mayResetPortalPasswords).toBe(true);
     });
 });

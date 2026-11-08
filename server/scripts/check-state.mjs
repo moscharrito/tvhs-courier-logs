@@ -321,7 +321,18 @@ if (dir.status !== 200 || !Array.isArray(dir.body?.users ?? dir.body)) {
         if (!m) continue;
         const raw = m.settings?.siteIds;
         const ids = Array.isArray(raw) ? raw.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
-        viewers.push({ username: u.username, name: u.name, ids: [...new Set(ids)], status: u.status });
+        /* THE RESET VERB, READ THE WAY THE SERVER READS IT.
+           modules/uh/portal-capability.ts: a literal true and nothing
+           else, because a settings blob is JSON somebody may have
+           hand-edited and the string "false" is truthy. Spelled from the
+           same constant would be better; this script talks to the API
+           over HTTP and imports nothing from src, so the name is repeated
+           here and in that file's own warning about repeating it. */
+        const mayReset = m.settings?.mayResetPortalPasswords === true;
+        viewers.push({
+            username: u.username, name: u.name, ids: [...new Set(ids)],
+            status: u.status, mayReset,
+        });
     }
     if (viewers.length === 0) {
         say('    nobody has a pharmacy membership on this project.');
@@ -339,6 +350,36 @@ if (dir.status !== 200 || !Array.isArray(dir.body?.users ?? dir.body)) {
             say(`    ${String(v.name ?? '?')}  (${v.username})${disabled}`);
             say(`      ${v.ids.length} of ${siteList.length}: ${v.ids.map(codeOfSite).join(', ')}`);
         }
+        if (v.mayReset) say('      may reset the other portals');
+    }
+
+    /* ─────────────────────── AND WHETHER ANYBODY CAN DO IT AT ALL
+     *
+     * create-pharmacy-portals.mjs grants uh.manager
+     * mayResetPortalPasswords and nothing else gets it. It is the only
+     * way a locked-out pharmacist is helped without an Izy admin, and
+     * while SES is in sandbox it is the ONLY way at all: a reset code
+     * goes nowhere, so self-service is not a fallback, it is a dead end.
+     *
+     * Reported as its own line rather than left to be noticed missing
+     * from eight accounts. An account created before portal-reset.ts
+     * existed carries no capability, nothing ever fails, and the first
+     * anybody hears of it is a pharmacist who cannot get in and a
+     * manager who cannot help -- which is exactly what was found on
+     * 8 November, after uh.manager had been live for a week. */
+    const resetters = viewers.filter((v) => v.mayReset && v.status === 'active');
+    if (resetters.length === 0) {
+        say('');
+        say('    NOBODY MAY RESET A PORTAL PASSWORD. No active pharmacy membership');
+        say('    carries mayResetPortalPasswords, so a locked-out pharmacist needs an');
+        say('    Izy administrator -- and the self-service reset is not a fallback');
+        say('    while SES is in sandbox, because the code reaches nobody.');
+        say('    create-pharmacy-portals.mjs grants it to uh.manager.');
+    } else if (resetters.length > 1) {
+        say('');
+        say(`    ${resetters.length} accounts may reset the portals: `
+            + resetters.map((v) => v.username).join(', '));
+        say('    Expected one. Each of them can take over any counter portal.');
     }
 }
 say('');
