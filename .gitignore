@@ -180,3 +180,9 @@ pod-*.pdf
 salazar-login.ps1
 dispatch-login.ps1
 bc3-login.ps1
+
+# The three dispatchers' own email addresses, written into the wrapper so the
+# run is one command and not three hand-typed addresses. Personal addresses,
+# public repository: the file never goes in. An address list in a csv is
+# already covered by *.emails.csv above; this is the wrapper, which is not.
+dispatch-emails.ps1
