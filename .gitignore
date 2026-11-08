@@ -70,6 +70,13 @@ emails.txt
 # pharmacies one client account can see.
 manager-scope.txt
 
+# set-portal-sites.mjs driven by hand: one portal account's pharmacies and
+# whether it may reset the others. The wrapper carries no secret itself and
+# its output carries none either, but both name client accounts and which
+# pharmacies each can see, and this repository is public.
+portal-scope.ps1
+portal-scope.txt
+
 # One-off credential tooling and its output. Public repository.
 reset-uh-portals.py
 *.docx
