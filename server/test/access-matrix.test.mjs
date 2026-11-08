@@ -379,6 +379,18 @@ const MATRIX = [
        counter that sent the wrong file rings dispatch rather than having a
        list vanish from under whoever is part way through planning it. */
     ['DELETE', `${UH}/imports/999999`, UH_LIST_REPAIR, 'withdrawing a list is dispatch, unlike sending or reading one'],
+    /* --- the drop box (drizzle/0064). A pharmacy hands a file over and
+       nothing happens to it: no delivery, no board row, no SLA clock, so
+       nothing here is gated by listRelease.allowPortalUpload the way the
+       import above is. Which counters each caller reaches is the scope,
+       pinned in uh-list-drops.test.mjs. */
+    ['POST', `${UH}/list-drops`, UH_LIST_UPLOAD, 'hand a spreadsheet over without importing it'],
+    ['GET', `${UH}/list-drops`, UH_LIST_UPLOAD, 'what has been handed over'],
+    ['GET', `${UH}/list-drops/999999/file`, UH_LIST_UPLOAD, 'a pharmacy may re-download its own'],
+    /* Dispatch's word about our own work: a pharmacy saying "you have dealt
+       with this" would be reporting on us rather than on them. */
+    ['POST', `${UH}/list-drops/999999/handled`, UH_LIST_REPAIR, 'dispatch, done with it'],
+
     /* The saved mapping stays ours: reading or clearing it is a repair, and a
        pharmacy gets everything it needs from a preview instead. */
     ['GET', `${UH}/imports/mappings/999999`, UH_LIST_REPAIR, 'the saved mapping is a dispatch repair'],

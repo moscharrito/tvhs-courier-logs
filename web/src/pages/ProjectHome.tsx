@@ -8,6 +8,7 @@ import { useAuth } from '../app/auth';
 import { Sites } from './uh/Sites';
 import { Pricing } from './uh/Pricing';
 import { ListImport } from './uh/ListImport';
+import { ListDrops } from './uh/ListDrops';
 import { NewOrder } from './uh/NewOrder';
 import { ProjectSettings } from './ProjectSettings';
 
@@ -133,6 +134,17 @@ export function ProjectHome() {
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/deliveries`}>The client&apos;s view</Link>
                 )}
             </nav>
+
+            {/* WHAT HAS COME IN, ABOVE WHAT TO DO WITH IT. A pharmacy hands
+                a spreadsheet over here and nothing happens to it; dispatch
+                downloads it and brings it in through the panel below. The
+                order on the page is the order of the work. */}
+            <ListDrops
+                projectCode={project.code}
+                timezone={project.timezone}
+                canHandle={canDispatch}
+                canUpload={canDispatch}
+            />
 
             {/* The daily job, so it stays open. */}
             <ListImport projectCode={project.code} timezone={project.timezone} canImport={canDispatch} canWithdraw={canDispatch} />

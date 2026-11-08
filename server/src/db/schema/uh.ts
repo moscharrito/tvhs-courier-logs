@@ -1031,3 +1031,49 @@ export const reportSends = sqliteTable(
 );
 
 export type ReportSend = typeof reportSends.$inferSelect;
+
+/* -------------------------------------------------------------------------
+ * A FILE A PHARMACY HANDED US, AND NOTHING ELSE.
+ *
+ * Not an import. `daily_lists` is a sheet that has been read, mapped and
+ * turned into deliveries; this is the step before somebody decided to do
+ * that, and the step nine pharmacies actually perform -- they send a
+ * spreadsheet and let dispatch sort it out.
+ *
+ * It creates no orders, touches no board and starts no SLA clock. See
+ * drizzle/0064 for why the bytes are kept rather than a reconstruction, and
+ * why `handled` is a button rather than an inference.
+ * ------------------------------------------------------------------------- */
+
+export const listDrops = sqliteTable(
+    'list_drops',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        siteId: integer('site_id').notNull().references(() => sites.id),
+        /** The day the deliveries are for, as the pharmacy says. Not a clock. */
+        serviceDate: text('service_date').notNull(),
+        /** As it was named on their machine. Never a path. */
+        originalFilename: text('original_filename').notNull().default(''),
+        contentType: text('content_type').notNull().default(''),
+        bytes: integer('bytes').notNull().default(0),
+        /** Catches the same file sent twice, from one counter or from two. */
+        sha256: text('sha256').notNull().default(''),
+        /** Ours, opaque, never shown to a browser. */
+        s3Key: text('s3_key').notNull(),
+        /** Anything the pharmacy wants to say about it. */
+        note: text('note').notNull().default(''),
+        uploadedBy: text('uploaded_by').notNull().default(''),
+        uploadedAt: text('uploaded_at').notNull(),
+        /** NULL until dispatch presses Done. Both of these, or neither. */
+        handledAt: text('handled_at'),
+        handledBy: text('handled_by'),
+    },
+    (t) => [
+        index('list_drops_project_date_idx').on(t.projectId, t.serviceDate),
+        index('list_drops_site_date_idx').on(t.siteId, t.serviceDate),
+        index('list_drops_project_handled_idx').on(t.projectId, t.handledAt),
+    ],
+);
+
+export type ListDrop = typeof listDrops.$inferSelect;

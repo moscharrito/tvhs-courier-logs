@@ -23,6 +23,7 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { useLive, agoLabel } from '../../app/useLive';
 import { describeFilter } from '../../lib/drilldown';
 import { slaLabel, type Sla } from './Orders';
+import { ListDrops } from './ListDrops';
 
 interface Pharmacy { id: number; code: string; name: string }
 
@@ -541,6 +542,26 @@ export function ClientPortal() {
                     </>
                 )}
             </div>
+
+            {/* ───────────────────── SENDING TOMORROW'S LIST ACROSS
+            
+                The portal shows a pharmacy what happened to today's
+                deliveries, and until this the next day's list still went by
+                email -- so the one screen they open every morning could not
+                do the one thing they do every morning.
+            
+                NOT the "Send a list" link above, and not gated like it. That
+                one imports: it reads the sheet, maps the columns and creates
+                deliveries, which is a contract decision and is off. This
+                hands a file over and creates nothing, which is exactly what
+                the email attachment did, so there is nothing for the setting
+                to protect. */}
+            <ListDrops
+                projectCode={code}
+                timezone={summary.timezone}
+                canUpload
+                canHandle={false}
+            />
 
             {detail && <ProofOfDelivery code={code} order={detail} onClose={() => setOpen(null)} />}
         </>

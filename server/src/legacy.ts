@@ -53,6 +53,7 @@ import { createProjectSettingsRouter } from './core/projects/settings-routes';
 import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
 import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
+import { createListDropsRouter, MAX_DROP_BYTES } from './modules/uh/list-drops';
 import { createOrdersRouter } from './modules/uh/orders';
 import { createReattemptRouter } from './modules/uh/reattempt';
 import { createStopRouter } from './modules/uh/stop';
@@ -423,6 +424,26 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         }),
         requireProject,
         createImportsRouter({ client: database.client, storage: fileStorage }),
+    );
+    /* THE DROP BOX, and it takes a raw file body like the import above it
+       for the same reason: a browser PUTs the spreadsheet, not a form.
+       Mounted on its own path so the import route's parser and guards stay
+       exactly as they were -- this accepts files the importer would refuse,
+       which is the whole point of it. */
+    legacy.app.use(
+        '/api/projects/:pid/uh/list-drops',
+        express.raw({
+            type: [
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.ms-excel',
+                'application/octet-stream',
+                'text/csv',
+                'text/plain',
+            ],
+            limit: MAX_DROP_BYTES,
+        }),
+        requireProject,
+        createListDropsRouter({ client: database.client, storage: fileStorage }),
     );
     // Stop flow first: its /:id/arrive and friends must be matched before
     // the orders router's /:id, which would otherwise swallow them.
