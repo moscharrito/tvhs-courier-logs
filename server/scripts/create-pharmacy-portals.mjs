@@ -9,7 +9,7 @@
  * applies it to the deliveries list, the summary, the reports, the proof of
  * delivery, the spreadsheet export and the daily list upload. A pharmacy
  * account is a membership naming one site. The contract manager's is a
- * membership naming all eight. There is no second code path and no flag.
+ * membership naming all of them. There is no second code path and no flag.
  *
  * Eight counters, matching create-leads.mjs, because a lead and a portal
  * account describe the same place from two sides: one is the person standing
@@ -42,7 +42,7 @@
  *
  * What replaces the old rule is the MANAGER'S RESET: uh.manager is created
  * with mayResetPortalPasswords, which lets whoever runs the contract set a
- * new password for any of the eight counters themselves, audited, without
+ * new password for any of the counters themselves, audited, without
  * telephoning us. So a credential that has gone astray is a five-minute fix
  * at their end rather than a support call at ours.
  *
@@ -57,7 +57,7 @@
  * ─────────────────────────────────────────────────────────────────────────
  * AN ADDRESS PER ACCOUNT, AND A PRODUCTION RUN WITHOUT ONE IS REFUSED.
  *
- * This script shipped without any notion of an email address, and the eight
+ * This script shipped without any notion of an email address, and the
  * counter logins it made on production therefore have none. Which means the
  * one recovery path they were told about does not work for them: password
  * reset looks an account up by address, finds nothing, and answers "if that
@@ -130,7 +130,7 @@ const projectCode = value('project', 'uh');
 
 /* ----------------------------------------------------------- the accounts */
 
-/* The eight counters, in the order the contract lists them, with the daily
+/* The counters, in the order the contract lists them, with the daily
  * volume from docs/volume-2026-h1.md so that an argument about who needs
  * their own login can be had from numbers. */
 const COUNTERS = [
@@ -142,6 +142,19 @@ const COUNTERS = [
     { code: 'pavilion', name: 'Pavilion Pharmacy', note: '114 a day' },
     { code: 'wheatley', name: 'Wheatley Pharmacy', note: '11 a day' },
     { code: 'vida', name: 'Vida Pharmacy', note: '7 a day' },
+    /* BC3 is one of these, confirmed by the owner on 7 November 2026.
+
+       It was held out on the strength of 0006_sites.sql's open item --
+       "confirm whether it is a pickup location" -- and a first version of
+       this file said in a long comment that nobody dispenses there. That
+       was a guess written as a fact. It is a pharmacy and it gets what the
+       other eight get: its own portal, its own scope, and a place in the
+       contract manager's membership by being in this list rather than by
+       being named beside it.
+
+       No volume figure: docs/volume-2026-h1.md has none for it, and a
+       number invented here would be argued from later. */
+    { code: 'bc3', name: 'University Health Business Center III', note: 'volume not in the 2026 H1 actuals' },
 ];
 
 const PORTALS = [
@@ -157,46 +170,17 @@ const PORTALS = [
      * scopeFor's whole-project branch is for OUR roles and would hand a
      * client the dispatch board. Adding a ninth counter is therefore also a
      * change to this membership, which is the right amount of friction. */
-    /* ─────────────────────────────────────────────────────────────────
-     * BC3, AND IT IS NOT A COUNTER.
-     *
-     * University Health Business Center III is a site in `sites` because it
-     * is listed in the bid table, and it has never been a pharmacy: nobody
-     * dispenses there and 0006_sites.sql still carries the open question of
-     * whether it is a pickup location at all. It is kept out of COUNTERS
-     * above so that the volumes beside those eight stay a list of counters
-     * and nothing else.
-     *
-     * It gets a portal anyway, because the thing it needs is the one thing
-     * the portal now does without parsing: BC3's sheets have no ZIP or city
-     * column, so they cannot be imported and never could be -- which under
-     * the old shape meant BC3 had no way to send us anything at all. The
-     * drop box (drizzle/0064) takes a file without reading it, and that is
-     * exactly BC3's case.
-     */
-    {
-        key: 'bc3',
-        username: 'uh.bc3',
-        name: 'University Health Business Center III (portal)',
-        sites: ['bc3'],
-        note: 'not a counter: a drop box for sheets that cannot be imported, and its own deliveries',
-    },
     {
         key: 'manager',
         username: 'uh.manager',
         name: 'UH Contract Manager (portal)',
-        /* The eight counters AND BC3. Enumerated, as the note below says,
-           and BC3 is named here for the same reason it is named above: the
-           contract manager sees every site in the contract, and an account
-           holding eight of nine is not the contract manager -- it is an
-           account somebody forgot to finish. check.ps1 says so out loud. */
-        sites: [...COUNTERS.map((c) => c.code), 'bc3'],
+        sites: COUNTERS.map((c) => c.code),
         /* THE ONE ACCOUNT THAT MAY RESET THE OTHERS. See the header, and
            modules/uh/portal-reset.ts for what the capability does and does
-           not reach: the eight counters above and nothing else, never an Izy
+           not reach: the counters above and nothing else, never an Izy
            login, never a courier, and never another manager. */
         capabilities: { mayResetPortalPasswords: true },
-        note: 'every site, the contract view, the reports, and resetting the other portals',
+        note: 'every counter, the contract view, the reports, and resetting the other portals',
     },
 ];
 
@@ -423,7 +407,7 @@ async function main() {
         }
 
         /* THE ADDRESS ON AN ACCOUNT THAT ALREADY EXISTED, which is the case
-           that matters: the eight counters on production were made before
+           that matters: the counters on production were made before
            this script knew what an email was.
 
            Not overwritten in silence. An address is where a reset code goes,
@@ -456,7 +440,7 @@ async function main() {
         insist(`scope ${portal.username}`, await call(`/api/users/${portal.username}/memberships/${projectCode}`, {
             method: 'PUT',
             /* siteIds is the scope; capabilities is the manager's reset verb and
-               is absent for the eight counters, so re-running this never grants
+               is absent for the counters, so re-running this never grants
                one of them something it did not have. */
             body: JSON.stringify({ role: 'pharmacy', settings: { siteIds, ...(portal.capabilities ?? {}) } }),
         }));
@@ -487,7 +471,7 @@ async function main() {
     say('  send each pharmacy only its own line, and delete it once they confirm.');
     say('');
     say('  Each account can change its own password under Your account at any time,');
-    say('  and uh.manager can set a new one for any of the eight counters from');
+    say('  and uh.manager can set a new one for any of the counters from');
     say('  Pharmacy logins in the portal. That is the recovery path -- a forgotten');
     say('  password does not need us.');
     say('');

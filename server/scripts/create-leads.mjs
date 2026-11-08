@@ -137,7 +137,11 @@ const projectCode = value('project', 'uh');
  * of reports already sent to University Health. They run the operation
  * without the commercials.
  */
-const ALL_COUNTERS = ['green', 'discharge', 'southeast', 'southwest', 'tdi', 'pavilion', 'wheatley', 'vida'];
+/* NINE, including bc3 since 7 November 2026. BC3 is a pharmacy like the
+   rest of them, and a dispatcher scoped to eight of nine cannot see or
+   assign the ninth's deliveries -- an account that looks complete and
+   silently drops a counter's work. */
+const ALL_COUNTERS = ['green', 'discharge', 'southeast', 'southwest', 'tdi', 'pavilion', 'wheatley', 'vida', 'bc3'];
 
 const LEADS = [
     {
