@@ -758,3 +758,72 @@ describe('a controlled-substance proof of delivery', () => {
         expect(() => renderPod(data)).not.toThrow();
     });
 });
+
+/* ───────────────────── A PHOTOGRAPH THE DOCUMENT COULD NOT PRINT
+ *
+ * Seen on production on 8 November: page 2 of a real proof of delivery,
+ * under "The pharmacy's collection form", reading "The photograph could not
+ * be read from storage." One sentence stood for four different faults, and
+ * only two of them are about storage.
+ *
+ * The one that matters is the third. The upload path takes JPEG, PNG, WebP
+ * and HEIC -- core/files/storage.ts and web/src/lib/photos.ts agree on that
+ * list on purpose, because a camera hands back what it hands back -- and
+ * this writer embeds JPEG and nothing else. So a photograph can be taken,
+ * stored, bound to the order, shown on every screen, and be absent from the
+ * one document that goes to University Health, with the document blaming a
+ * bucket that did its job.
+ */
+describe('a photograph that cannot be embedded', () => {
+    const withCollection = (bytes, contentType) => ({
+        orderId: 902, reference: '', serviceType: 'stat', serviceDate: '2026-11-08',
+        timezone: 'America/Chicago', pickupLocation: 'Discharge', pickupAddress: '',
+        deliveryName: 'Someone', deliveryAddress: '', status: 'delivered',
+        receivedAt: '2026-11-08T17:00:00.000Z', dueAt: null, pickedUpAt: null, arrivedAt: null,
+        deliveredAt: '2026-11-08T18:00:00.000Z', returnedAt: null, returnedTo: '',
+        courier: 'Ada', receivedBy: '', noSignatureReason: '', failureReason: '',
+        packages: [], events: [], pickupSignature: null, deliverySignature: null,
+        photo: { available: false, note: '' },
+        collectionPhoto: { bytes, contentType },
+    });
+
+    /* Not a JPEG: an 8-byte PNG signature plus nothing. jpegSize refuses it
+       exactly as it refuses a whole screenshot, which is the point -- the
+       document cannot tell the difference and does not have to. */
+    const png = () => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    it('names the format instead of blaming storage', () => {
+        const text = pdfText(renderPod(withCollection(png(), 'image/png')));
+        expect(text).toMatch(/stored as image\/png/);
+        expect(text).toMatch(/can only embed JPEG/);
+        /* THE SENTENCE THAT SENT SOMEBODY TO LOOK AT S3. The bucket served
+           this file perfectly. */
+        expect(text).not.toMatch(/could not be read from storage/);
+    });
+
+    it('says so plainly when nothing came back from the bucket', () => {
+        /* An empty body with a 200 is truthy as a Buffer, so it reached the
+           renderer rather than being skipped, and printed the same sentence
+           as a PNG did. These are not the same fault and not the same fix. */
+        const text = pdfText(renderPod(withCollection(Buffer.alloc(0), 'image/jpeg')));
+        expect(text).toMatch(/Nothing came back from storage/);
+        expect(text).not.toMatch(/can only embed JPEG/);
+    });
+
+    it('falls back to the honest answer when it is a JPEG it cannot parse', () => {
+        /* Declared image/jpeg, starts like one, truncated before the frame
+           header. Storage is not at fault and neither is the format. */
+        const text = pdfText(renderPod(withCollection(Buffer.from([0xff, 0xd8, 0xff, 0xe0]), 'image/jpeg')));
+        expect(text).toMatch(/could not be read as a JPEG/);
+    });
+
+    it('still prints the page, the heading and the delivery number', () => {
+        /* The page is the evidence that the photograph EXISTS. Dropping it
+           would turn a picture in the wrong format into a document that
+           looks complete and quietly is not -- which is the failure this
+           whole file is here to prevent. */
+        const text = pdfText(renderPod(withCollection(png(), 'image/png')));
+        expect(text).toMatch(/collection form/);
+        expect(text).toMatch(/Delivery 902/);
+    });
+});

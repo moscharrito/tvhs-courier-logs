@@ -322,17 +322,26 @@ export async function attachPhotos(
     if (!storage.available) return;
     try {
         const proof = await storedPhoto(client, projectId, orderId);
-        if (proof && data.photo.available) data.photo.bytes = await fetchPhoto(storage, proof.key);
+        if (proof && data.photo.available) {
+            data.photo.bytes = await fetchPhoto(storage, proof.key);
+            /* CARRIED THROUGH, because the renderer cannot tell a PNG from a
+               broken JPEG by looking at the bytes it failed to parse. Four
+               different faults printed one sentence blaming storage until
+               this was passed along. See photoPage in pod.ts. */
+            data.photo.contentType = proof.contentType;
+        }
 
         const ident = await storedPhoto(client, projectId, orderId, ID_KIND);
-        if (ident) data.idPhoto = { bytes: await fetchPhoto(storage, ident.key) };
+        if (ident) data.idPhoto = { bytes: await fetchPhoto(storage, ident.key), contentType: ident.contentType };
 
         /* The pharmacy's end of the chain. Not gated on data.photo.available
            -- that flag is about whether a DELIVERY photograph exists and is
            printable, and a collection form is a different fact: it can be
            the only picture on a delivery that was handed over on paper. */
         const collected = await collectionPhoto(client, projectId, orderId);
-        if (collected) data.collectionPhoto = { bytes: await fetchPhoto(storage, collected.key) };
+        if (collected) {
+            data.collectionPhoto = { bytes: await fetchPhoto(storage, collected.key), contentType: collected.contentType };
+        }
 
         /* The other end of the chain, and the only proof that undelivered
            medication got back to a counter. Until now this picture was
@@ -342,10 +351,10 @@ export async function attachPhotos(
            handover. Addendum 1 bills every item on an attempted delivery,
            so this is the picture an invoice line is defended with. */
         const why = await attemptPhoto(client, projectId, orderId);
-        if (why) data.attemptPhoto = { bytes: await fetchPhoto(storage, why.key) };
+        if (why) data.attemptPhoto = { bytes: await fetchPhoto(storage, why.key), contentType: why.contentType };
 
         const back = await returnPhoto(client, projectId, orderId);
-        if (back) data.returnPhoto = { bytes: await fetchPhoto(storage, back.key) };
+        if (back) data.returnPhoto = { bytes: await fetchPhoto(storage, back.key), contentType: back.contentType };
     } catch {
         /* See the header. The record is worth more than the pictures. */
     }

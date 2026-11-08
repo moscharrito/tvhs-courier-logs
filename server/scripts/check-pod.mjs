@@ -193,6 +193,30 @@ if (bound.length === 0) {
     for (const f of bound) {
         console.log(`  #${f.id}  ${String(f.kind).padEnd(13)} ${String(f.status).padEnd(8)} ${f.contentType ?? ''}`);
     }
+    /* ───────── THE FOURTH WAY A PHOTOGRAPH GOES MISSING.
+     *
+     * The three in the header are about storage and binding. This one is
+     * about FORMAT, and it is the only one where every part of the system
+     * worked: the upload path accepts image/jpeg, image/png, image/webp,
+     * image/heic and application/pdf (core/files/storage.ts), and the proof
+     * of delivery embeds JPEG alone. A PNG scan is stored, bound, served to
+     * every screen, and absent from the one document that goes to the
+     * client -- which on 8 November printed "could not be read from
+     * storage" against a bucket that had served the file correctly.
+     *
+     * Said here as well as in the document because this is where somebody
+     * looks when a picture is missing, and because the rendered PDF below
+     * counts only the photographs it managed to embed. */
+    const unprintable = bound.filter((f) => String(f.status) === 'stored'
+        && String(f.contentType ?? '').toLowerCase() !== 'image/jpeg');
+    if (unprintable.length > 0) {
+        console.log('');
+        for (const f of unprintable) {
+            console.log(`  #${f.id} is ${f.contentType ?? 'of no declared type'}, and the proof of delivery can`);
+            console.log('       only embed JPEG. It is stored and bound correctly; the document');
+            console.log('       prints a line saying what it is instead of the picture.');
+        }
+    }
 }
 
 /* Batch photographs: real, uploaded, and invisible to every proof of

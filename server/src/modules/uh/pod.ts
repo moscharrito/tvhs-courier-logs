@@ -108,22 +108,22 @@ export interface PodData {
     /** A doorstep or courier-form photo, when there is one and the file
      *  service can serve it. `bytes` is the JPEG itself, fetched by the
      *  caller: this module renders, it does not reach for a bucket. */
-    photo: { available: boolean; note: string; bytes?: Buffer | undefined };
+    photo: { available: boolean; note: string; bytes?: Buffer | undefined; contentType?: string | undefined };
     /** Identification, where the pharmacy stamped the form ID Required. */
-    idPhoto?: { bytes?: Buffer | undefined } | undefined;
+    idPhoto?: { bytes?: Buffer | undefined; contentType?: string | undefined } | undefined;
     /** The form the PHARMACY signed, photographed at the counter. It covers
      *  a whole collection rather than this one delivery, which is why it is
      *  found through the custody chain instead of by order id -- see
      *  collectionPhoto in pod-photos.ts. */
-    collectionPhoto?: { bytes?: Buffer | undefined } | undefined;
+    collectionPhoto?: { bytes?: Buffer | undefined; contentType?: string | undefined } | undefined;
     /** The form the pharmacy signed when undelivered packages came BACK over
      *  the counter. Like collectionPhoto it covers a batch, and like it, it
      *  is reached through the custody events rather than by order_id. See
      *  returnPhoto in pod-photos.ts. */
-    returnPhoto?: { bytes?: Buffer | undefined } | undefined;
+    returnPhoto?: { bytes?: Buffer | undefined; contentType?: string | undefined } | undefined;
     /** Why the stop could not be completed, photographed at the door. The
      *  one picture that defends a billed dry run. */
-    attemptPhoto?: { bytes?: Buffer | undefined } | undefined;
+    attemptPhoto?: { bytes?: Buffer | undefined; contentType?: string | undefined } | undefined;
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -451,7 +451,7 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
     const pages = [page];
     const images: EmbeddedImage[] = [];
 
-    const photoPage = (bytes: Buffer, name: string, heading: string, note: string) => {
+    const photoPage = (bytes: Buffer, name: string, heading: string, note: string, contentType?: string) => {
         const sheet = new Page();
         let top = PAGE.height - MARGIN;
         sheet.text(heading, MARGIN, top, { font: 'Helvetica-Bold', size: 14 });
@@ -462,9 +462,35 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         top -= 16;
 
         const size = jpegSize(bytes);
-        /* Unreadable is said out loud rather than left as an empty page. */
+        /* ───────── SAID OUT LOUD, AND SAID ACCURATELY.
+         *
+         * One sentence covered four different faults: a bucket that returned
+         * nothing, an object that is not there, a picture stored in a format
+         * this document cannot embed, and a truncated JPEG. "Could not be
+         * read from storage" is true of the first two and FALSE of the
+         * third -- the file was read perfectly well; it is a PNG, and a
+         * reader shown that sentence goes looking for a storage fault that
+         * does not exist.
+         *
+         * The distinction is not cosmetic. The upload path accepts JPEG,
+         * PNG, WebP and HEIC (core/files/storage.ts, lib/photos.ts) and
+         * this writer embeds JPEG alone, so a perfectly good photograph can
+         * be stored, shown on every screen, and silently absent from the
+         * one document that goes to the client. Naming the format is what
+         * makes that visible instead of looking like a bucket problem. */
         if (!size || size.width <= 0 || size.height <= 0) {
-            sheet.text('The photograph could not be read from storage.', MARGIN, top, { size: 10 });
+            const type = (contentType ?? '').trim().toLowerCase();
+            const why = bytes.length === 0
+                ? 'Nothing came back from storage for this photograph. The file is recorded '
+                    + 'against this delivery and its contents are not in the bucket.'
+                : type !== '' && type !== 'image/jpeg'
+                    ? `This photograph is stored as ${type}, and this document can only embed JPEG. `
+                        + 'It is not missing: it is on the delivery in the portal.'
+                    : 'The photograph is stored but could not be read as a JPEG.';
+            for (const bit of wrap(why, 'Helvetica', 10, PAGE.width - MARGIN * 2)) {
+                sheet.text(bit, MARGIN, top, { size: 10 });
+                top -= 13;
+            }
             pages.push(sheet);
             return;
         }
@@ -482,12 +508,14 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         photoPage(
             data.photo.bytes, 'Ph0', 'Photograph taken at the delivery',
             'Taken by the courier at the address, at the time of the handover recorded overleaf.',
+            data.photo.contentType,
         );
     }
     if (data.idPhoto?.bytes) {
         photoPage(
             data.idPhoto.bytes, 'Ph1', 'Identification',
             'This delivery was marked ID Required by the pharmacy. The recipient presented identification, photographed at the door.',
+            data.idPhoto.contentType,
         );
     }
     /* LAST, BECAUSE IT IS THE EARLIEST THING THAT HAPPENED, and the two
@@ -510,6 +538,7 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
             data.collectionPhoto.bytes, 'Ph2', 'The pharmacy’s collection form',
             'The form the pharmacy signed when it handed the packages over, photographed by the courier at the '
             + 'counter. One form covers the whole collection, so it may list other deliveries made on the same run.',
+            data.collectionPhoto.contentType,
         );
     }
     /* AFTER THE COLLECTION FORM, because it is the last thing that happened
@@ -545,6 +574,7 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
                each one belongs to. */
             'Uploaded by the courier when the delivery was recorded as attempted. '
             + 'It belongs to this delivery alone.',
+            data.attemptPhoto.contentType,
         );
     }
     if (data.returnPhoto?.bytes) {
@@ -553,6 +583,7 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
             'Part 3 of the docket, signed by the pharmacy when the undelivered packages were handed back, '
             + 'photographed by the courier at the counter. One form covers everything returned together, so it '
             + 'may list other deliveries brought back at the same time.',
+            data.returnPhoto.contentType,
         );
     }
 
