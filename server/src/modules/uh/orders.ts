@@ -33,7 +33,8 @@ import { SIGNATURE_RULES, SERVICE_TYPES } from '../../db/schema/uh';
 import { dateIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
-import { zipZoneMap, scheduleOn } from './zones';
+import { zipZoneMap, scheduleOn, siteZipMileMap, payKey } from './zones';
+import { payZoneForMiles } from './driver-pay';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { searchFragment, ORDER_SEARCH_COLUMNS } from './search';
@@ -447,6 +448,22 @@ export function createOrdersRouter(
 
         const zip = normalizeZip(body.zip);
         const zone = resolveZone(zip, await zipZoneMap(client, project.id, serviceDate));
+        /* AND THE OTHER ZONE, WHICH IS A DIFFERENT NUMBER ON PURPOSE.
+         *
+         * `zone` above is what University Health are invoiced on: the
+         * destination ZIP's band in Bid Table BT-89AO. `payZone` is what the
+         * courier is paid on: the offer letter's mile band, measured from
+         * the counter they collect from. The same stop can be zone 1 to UH
+         * and zone 2 to the driver and both are correct -- 78247 is zone 1
+         * on the bid table and fourteen road miles from Medical Drive.
+         *
+         * Frozen here for the same reason `zone` is: a correction to the
+         * distance table must never move pay that has already been settled.
+         * Null when the pair has not been measured, which driver-pay.ts
+         * reports as unmeasured rather than paying the bottom band. */
+        const pay = (await siteZipMileMap(client, project.id, serviceDate))
+            .get(payKey(Number(site['id']), zip));
+        const payZone = payZoneForMiles(pay?.miles ?? null);
         const dedupeKey = dedupeKeyFor({
             externalRef: body.externalRef, recipientName: body.recipientName,
             addressLine: body.addressLine, zip,
@@ -456,11 +473,11 @@ export function createOrdersRouter(
             sql: `INSERT INTO orders
                     (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                      recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                     delivery_notes, zone, signature_required, id_required,
+                     delivery_notes, zone, pay_zone, pay_miles, pay_basis, signature_required, id_required,
                      signature_rule, authorised_signers, refrigerated, controlled,
                      received_at, due_at, dedupe_key,
                      delivery_kind, destination_site_id, ready_at, status)
-                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
+                  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING *`,
             args: [
                 project.id, Number(site['id']), body.externalRef, body.serviceType, serviceDate,
                 /* FROM THE SITE when there is one. See the resolution above:
@@ -469,7 +486,13 @@ export function createOrdersRouter(
                 normalizePhone(body.recipientPhone),
                 destination ? destination.addressLine : body.addressLine, body.addressLine2,
                 body.city, body.state.toUpperCase(), zip, body.deliveryNotes,
-                                zone as InValue, body.signatureRequired ? 1 : 0,
+                                zone as InValue,
+                /* The courier's band, its measured distance and which kind of
+                   mile it is. The distance travels with the band because a band
+                   on its own cannot be argued with, and this is the first
+                   number on the order somebody gets paid from. */
+                payZone as InValue, (pay?.miles ?? null) as InValue, (pay?.basis ?? null) as InValue,
+                body.signatureRequired ? 1 : 0,
                 /* NOBODY AT A GOODS-IN DESK CAN PRODUCE A PATIENT'S ID.
                    Forced off for a transfer rather than refused, because the
                    flag arrives from a pharmacy's own list and rejecting their

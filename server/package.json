@@ -36,7 +36,9 @@
     "make:docket": "tsx scripts/make-docket.mjs",
     "portal-upload": "node scripts/portal-upload.mjs",
     "driver-rates": "node scripts/driver-rates.mjs",
-    "settings:show": "node scripts/settings-show.mjs"
+    "settings:show": "node scripts/settings-show.mjs",
+    "measure:zones": "tsx scripts/measure-pay-zones.mjs",
+    "backfill:zones": "tsx scripts/backfill-pay-zones.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

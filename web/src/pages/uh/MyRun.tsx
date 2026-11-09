@@ -71,6 +71,17 @@ interface Stop {
     city: string;
     zip: string;
     zone: number | null;
+    /** The offer letter's band, which is what this stop pays. NOT `zone`.
+     *
+     *  OPTIONAL, AND THAT IS NOT TIDINESS. A phone holds this screen's
+     *  JavaScript in cache and a courier may be running yesterday's bundle
+     *  against today's server, or today's against a payload from before
+     *  these fields existed. Typed `| null` and read as if it could not be
+     *  undefined, `.toFixed()` threw and took the whole run screen white --
+     *  on the one screen somebody is standing in a car park looking at. */
+    payZone?: number | null;
+    /** One-way miles from the counter, so the band can be checked. */
+    payMiles?: number | null;
     status: string;
     dueAt: string | null;
     sla: Sla;
@@ -322,9 +333,25 @@ export function MyRun() {
                             <Chip label={current.serviceType.toUpperCase()} />
                             <SlaChip sla={current.sla} />
                             {current.dueAt !== null && <Chip label={`due ${clock(current.dueAt)}`} />}
-                            {current.zone === null
-                                ? <Chip label="out of area" tone="warn" />
-                                : <Chip label={`zone ${current.zone}`} />}
+                            {/* THE COURIER'S BAND, NOT UNIVERSITY HEALTH'S.
+                                This chip showed `zone` -- the destination
+                                ZIP's band on UH's bid table, which prices
+                                their invoice and has nothing to do with
+                                what the person reading it earns. A stop
+                                fourteen road miles out said "zone 1",
+                                which on their offer letter is 5.00, while
+                                the letter bands it at 7.25. A driver
+                                checked it against a map on 9 November.
+
+                                The miles are on the chip because that is
+                                what makes it checkable, and a band nobody
+                                can check is how this went unnoticed since
+                                go-live. */}
+                            {/* `== null`, which catches undefined too: see the
+                                note on the field. */}
+                            {current.payZone == null
+                                ? <Chip label={current.zone == null ? 'out of area' : 'zone not measured'} tone="warn" />
+                                : <Chip label={`zone ${current.payZone}${current.payMiles == null ? '' : ` · ${current.payMiles.toFixed(1)} mi`}`} />}
                         </div>
                     </Panel>
                 ) : stops.length === 0 ? (
@@ -413,7 +440,11 @@ export function MyRun() {
                                         {/* The chip above already carries the
                                             status on a finished stop. */}
                                         {!DONE.includes(s.status) && <> · {s.status}</>}
-                                        {s.zone === null ? ' · out of area' : ` · zone ${s.zone}`}
+                                        {/* The courier's band here too, for the
+                                            same reason as the panel above. */}
+                                        {s.payZone == null
+                                            ? (s.zone == null ? ' · out of area' : ' · zone not measured')
+                                            : ` · zone ${s.payZone}`}
                                     </div>
                                     <div className="izy-run-stop-actions">
                                         <Directions code={code} orderId={s.orderId} embed={embed} className="izy-btn secondary" mapsUrl={mapsUrl(s)} />

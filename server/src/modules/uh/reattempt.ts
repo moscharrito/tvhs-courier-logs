@@ -184,12 +184,12 @@ async function createSecondAttempt(client: Client, opts: {
         sql: `INSERT INTO orders
                 (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                  recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                 delivery_notes, zone, signature_required, id_required,
+                 delivery_notes, zone, pay_zone, pay_miles, pay_basis, signature_required, id_required,
                  signature_rule, authorised_signers, refrigerated, controlled,
                  delivery_kind, destination_site_id,
                  received_at, due_at, dedupe_key,
                  reattempt_of_order_id, status)
-              VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
+              VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
               RETURNING *`,
         args: [
             projectId, Number(original['site_id']), externalRef, serviceType, serviceDate,
@@ -197,6 +197,13 @@ async function createSecondAttempt(client: Client, opts: {
             original['address_line'] as InValue, original['address_line2'] as InValue,
             original['city'] as InValue, original['state'] as InValue, original['zip'] as InValue,
             original['delivery_notes'] as InValue, original['zone'] as InValue,
+            /* CARRIED FROM THE FIRST ATTEMPT, not re-measured. Same address,
+               same counter, so the distance cannot have changed -- and
+               re-reading it would let a correction to the distance table
+               pay the second attempt at a different band from the first,
+               for the identical drive. */
+            original['pay_zone'] as InValue, original['pay_miles'] as InValue,
+            original['pay_basis'] as InValue,
             original['signature_required'] as InValue, original['id_required'] as InValue,
             original['signature_rule'] as InValue, original['authorised_signers'] as InValue,
             original['refrigerated'] as InValue, original['controlled'] as InValue,

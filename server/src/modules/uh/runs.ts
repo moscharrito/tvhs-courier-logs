@@ -252,6 +252,20 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             ),
             handlingFlags: handlingFlags(presentHandling(o as unknown as HandlingRow)),
             zone: o['zone'] === null ? null : Number(o['zone']),
+            /* ── WHAT THE COURIER IS ACTUALLY PAID FOR THIS STOP ──────────
+             *
+             * `zone` above is University Health's band and prices their
+             * invoice. It was the only zone on this payload until
+             * 9 November, which meant the courier's own manifest showed
+             * them a number that looked like their pay band and was not:
+             * a stop fourteen road miles out read "zone 1", which on their
+             * offer letter means 5.00, while the letter bands it at 7.25.
+             * One of them checked it against a map and said so.
+             *
+             * The miles travel with the band because the band alone cannot
+             * be argued with, and this is the number the dispute was about. */
+            payZone: o['pay_zone'] === null || o['pay_zone'] === undefined ? null : Number(o['pay_zone']),
+            payMiles: o['pay_miles'] === null || o['pay_miles'] === undefined ? null : Number(o['pay_miles']),
             status: String(o['status']),
             dueAt: o['due_at'] === null ? null : String(o['due_at']),
             sla: evaluateSla({

@@ -59,7 +59,12 @@ interface StopRow {
     assigned_to_username: string | null;
     service_date: string;
     service_type: string;
+    /** University Health's billing band. Read for the out-of-area test
+     *  below and NEVER for what the courier is paid. */
     zone: number | null;
+    /** The offer letter's mile band from the pickup, which is what pay
+     *  runs on. Null when the pair was never measured. */
+    pay_zone: number | null;
     status: string;
     site_name: string | null;
     delivered_at: string | null;
@@ -171,7 +176,8 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         let where = '';
         if (siteId !== null) { where = 'AND o.site_id = ?'; args.push(siteId); }
         const rs = await client.execute({
-            sql: `SELECT o.assigned_to_username, o.service_date, o.service_type, o.zone, o.status,
+            sql: `SELECT o.assigned_to_username, o.service_date, o.service_type,
+                         o.zone, o.pay_zone, o.status,
                          o.delivered_at, s.name AS site_name
                     FROM orders o
                     LEFT JOIN sites s ON s.id = o.site_id
@@ -248,14 +254,41 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
     /* The database column names and the pay module's field names are not the
        same, and the adapter is here rather than in driver-pay.ts so that the
        arithmetic stays testable without a database. */
+    /* ── WHICH ZONE REACHES THE ARITHMETIC, AND WHY IT IS NOT `zone`.
+     *
+     * `o.zone` is University Health's band for the destination ZIP and
+     * prices their invoice. `o.pay_zone` is the offer letter's band --
+     * "Distance from pickup" -- and prices the courier. For one stop they
+     * are routinely different numbers, which is the whole repair of
+     * 9 November: 78247 is zone 1 to UH and fourteen road miles from the
+     * Medical Drive counter, so the courier is owed zone 2.
+     *
+     * TWO KINDS OF NULL, KEPT APART HERE RATHER THAN IN THE ARITHMETIC.
+     *
+     *   Outside the contracted area -- `zone` is null too. That is what
+     *   `outOfZoneCents` exists to price, and it reaches payFor as a null
+     *   zone exactly as it always did.
+     *
+     *   Inside the area but never measured -- `zone` has a band and
+     *   `pay_zone` does not. University Health's band stands in and the
+     *   stop PAYS, at exactly the rate it paid before 9 November. It must:
+     *   an empty distance table would otherwise take every courier's pay to
+     *   nothing the moment this deployed, which is a far worse failure than
+     *   paying the old band for another day. `measured: false` puts it on
+     *   its own line so it can be counted and closed -- these are the stops
+     *   most likely to be underpaid, since the stand-in band is drawn
+     *   around the city rather than measured from the counter. */
     const payable = (rows: readonly StopRow[]) =>
-        rows.map((r) => ({
-            serviceType: r.service_type,
-            status: r.status,
-            /* Null stays null rather than becoming 0. A ZIP off the zone map
-               has no rate, and zone 0 would quietly borrow one. */
-            zone: r.zone === null || r.zone === undefined ? null : Number(r.zone),
-        }));
+        rows.map((r) => {
+            const billing = r.zone === null || r.zone === undefined ? null : Number(r.zone);
+            const paid = r.pay_zone === null || r.pay_zone === undefined ? null : Number(r.pay_zone);
+            return {
+                serviceType: r.service_type,
+                status: r.status,
+                zone: paid !== null ? paid : billing,
+                measured: paid !== null,
+            };
+        });
 
     /** A pharmacy's name, for a workbook that has to say which one it is. */
     async function nameOfSite(projectId: number, siteId: number): Promise<string | null> {

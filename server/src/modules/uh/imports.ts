@@ -71,7 +71,8 @@ import { todayIn } from '../../core/dates';
 import { custodyEventStatement, recordOrderEvent, type OrderStateRow } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
 import { resolveZone } from './pricing';
-import { zipZoneMap } from './zones';
+import { zipZoneMap, siteZipMileMap, payKey } from './zones';
+import { payZoneForMiles } from './driver-pay';
 import { handlingFlags } from './handling';
 import {
     readSheet, autoMap, parseRows, headerFingerprint, missingRequiredMappings,
@@ -149,6 +150,13 @@ export interface PreviewRow {
     idRequired: boolean;
     handlingFlags: string[];
     zone: number | null;
+    /* THE COURIER'S BAND, which is not `zone` above. That one is the
+       destination ZIP's band in University Health's bid table and prices
+       the invoice; this is the offer letter's mile band from THIS counter
+       and pays the driver. The same row can be 1 and 2. */
+    payZone: number | null;
+    payMiles: number | null;
+    payBasis: string | null;
     dueAt: string | null;
     issues: Issue[];
     /** Other sheet rows folded in as boxes of this same delivery. */
@@ -411,6 +419,11 @@ export function createImportsRouter(
 
         const parsed: RowResult[] = missing.length > 0 ? [] : parseRows(sheet, mapping, site.state);
         const zipToZone = await zipZoneMap(client, project.id, serviceDate);
+        /* Distances from THIS pharmacy, for the courier's band. Read once
+           for the whole sheet like the zone map beside it: a three hundred
+           row list would otherwise be three hundred lookups of a table that
+           does not change while it is being read. */
+        const payMiles = await siteZipMileMap(client, project.id, serviceDate);
 
         // Duplicates against orders already imported for this site and day.
         const existing = new Map<string, number>();
@@ -428,6 +441,8 @@ export function createImportsRouter(
         const rows: PreviewRow[] = parsed.map((p) => {
             const issues = [...p.issues];
             const zone = resolveZone(p.row.zip, zipToZone);
+            const pay = payMiles.get(payKey(options.siteId, p.row.zip));
+            const payZone = payZoneForMiles(pay?.miles ?? null);
             if (!zone && /^\d{5}$/.test(p.row.zip)) {
                 issues.push({
                     row: p.row.row, field: 'zip', code: 'zone.outOfArea', severity: 'warning',
@@ -482,6 +497,9 @@ export function createImportsRouter(
                     idRequired: p.row.idRequired,
                 }),
                 zone,
+                payZone,
+                payMiles: pay?.miles ?? null,
+                payBasis: pay?.basis ?? null,
                 dueAt: due.dueAt ? due.dueAt.toISOString() : null,
                 issues,
                 mergedRows: p.mergedRows ?? [],
@@ -659,15 +677,20 @@ export function createImportsRouter(
                 sql: `INSERT INTO orders
                         (project_id, site_id, daily_list_id, external_ref, service_type, service_date,
                          recipient_name, recipient_phone, address_line, address_line2, city, state, zip,
-                         delivery_notes, zone, signature_required, id_required,
+                         delivery_notes, zone, pay_zone, pay_miles, pay_basis, signature_required, id_required,
                          signature_rule, authorised_signers, refrigerated, controlled,
                          received_at, due_at, dedupe_key, status)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING id`,
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready') RETURNING id`,
                 args: [
                     project.id, a.site.id, listId, source.externalRef, source.serviceType, a.serviceDate,
                     source.recipientName, source.recipientPhone, source.addressLine, source.addressLine2,
                     source.city, source.state, source.zip, source.deliveryNotes,
-                    r.zone as InValue, source.signatureRequired ? 1 : 0, source.idRequired ? 1 : 0,
+                    r.zone as InValue,
+                    /* The courier's band and the distance behind it. Taken
+                       from the previewed row rather than recomputed, so what
+                       was confirmed on screen is what reaches the order. */
+                    r.payZone as InValue, r.payMiles as InValue, r.payBasis as InValue,
+                    source.signatureRequired ? 1 : 0, source.idRequired ? 1 : 0,
                     source.signatureRule, source.authorisedSigners, source.refrigerated ? 1 : 0,
                     source.controlled ? 1 : 0, receivedIso,
                     due.dueAt ? due.dueAt.toISOString() : null, source.dedupeKey,

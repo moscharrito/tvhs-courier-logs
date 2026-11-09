@@ -216,7 +216,11 @@ describe('when a project pays by zone', () => {
         /* A column headed "Service level" with zones in it is a payslip
            nobody can check. */
         const got = payFor([stop('delivered', 'scheduled', 2)], zoneRates({ 2: 725 }));
-        expect(got.lines['zone-2'].label).toBe('Zone 2');
+        /* THE BAND IS PART OF THE LABEL since 9 November. "Zone 1" meant a
+           ZIP's band on UH's table and a distance band on the courier's
+           offer letter, the two disagreed for a week, and nothing on a
+           payslip said which one you were reading. */
+        expect(got.lines['zone-2'].label).toBe('Zone 2 (11-25 mi)');
 
         const byLevel = payFor([stop('delivered', 'stat', 2)], rates({ stat: 700 }));
         expect(byLevel.lines['stat'].label).toBe('stat');

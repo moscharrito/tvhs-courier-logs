@@ -57,6 +57,47 @@ export async function scheduleOn(client: Client, projectId: number, on: string):
     };
 }
 
+/** What one stop is worth to the courier who drives it: the measured
+ *  distance from the pharmacy and the band it falls in. */
+export interface PayDistance {
+    miles: number;
+    basis: 'road' | 'straight-line';
+}
+
+/**
+ * How far each pharmacy is from each ZIP, on a date.
+ *
+ * SAME SHAPE AND SAME REASON AS zipZoneMap ABOVE, with one difference that
+ * is the whole point: the key is a PAIR. University Health price by
+ * destination ZIP and the pickup does not enter into it, so their map is one
+ * list. The offer letter pays by "Distance from pickup", so the same ZIP is
+ * two different bands depending on which counter the courier collected from,
+ * and a bare ZIP lookup cannot answer it.
+ *
+ * Keyed `siteId:zip` so a caller cannot accidentally ask the ZIP alone and
+ * get a plausible answer about the wrong counter.
+ */
+export async function siteZipMileMap(
+    client: Client, projectId: number, on: string,
+): Promise<Map<string, PayDistance>> {
+    const rs = await client.execute({
+        sql: `SELECT site_id, zip, miles, basis FROM site_zip_miles m
+               WHERE project_id = ? AND effective_from <= ?
+                 AND effective_from = (
+                   SELECT MAX(effective_from) FROM site_zip_miles m2
+                    WHERE m2.project_id = m.project_id AND m2.site_id = m.site_id
+                      AND m2.zip = m.zip AND m2.effective_from <= ?)`,
+        args: [projectId, on, on],
+    });
+    return new Map(rs.rows.map((r) => [
+        `${Number(r['site_id'])}:${String(r['zip'])}`,
+        { miles: Number(r['miles']), basis: String(r['basis']) as PayDistance['basis'] },
+    ]));
+}
+
+/** The pair key, in one place so the two sides cannot drift apart. */
+export const payKey = (siteId: number, zip: string): string => `${siteId}:${String(zip).trim().slice(0, 5)}`;
+
 /**
  * Where each ZIP is, for the planner.
  *

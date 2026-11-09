@@ -175,7 +175,10 @@ describe('check-state.mjs on a driver who cannot see their pay', () => {
         expect(mine).toMatch(/No zone\s+1 delivered.*NOT SET/);
         /* The priced lines are printed with their money, so a reader can see
            the total is not short, it is absent. */
-        expect(mine).toMatch(/Zone 1\s+2 delivered/);
+        /* NOT "Zone 1 (0-10 mi)". Nothing in this fixture has a measured
+           distance, so University Health's band is standing in and the line
+           says so -- which is the fallback working, not a fault. */
+        expect(mine).toMatch(/Zone 1 \(distance not measured\)\s+2 delivered/);
         expect(mine).toContain('USD 12.00');
         /* And the sentence that stops somebody hunting for a missing band. */
         expect(mine).toContain('WITHHOLDS THE WHOLE RANGE');
@@ -214,7 +217,7 @@ describe('check-state.mjs on a driver who cannot see their pay', () => {
            so in those words. */
         expect(res.out).toContain('UNSET ON THE BASIS IN USE: zone 1');
         const mine = theirSection(res.out);
-        expect(mine).toMatch(/Zone 1\s+2 delivered.*NOT SET/);
+        expect(mine).toMatch(/Zone 1 \(distance not measured\)\s+2 delivered.*NOT SET/);
         expect(mine).toContain('RATE NOT SET');
 
         await patchPay({ perZoneCents: { 1: 1200, 2: 1500, 3: 1800, 4: 2200, 5: 2800 } });

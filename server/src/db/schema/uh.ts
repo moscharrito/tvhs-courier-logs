@@ -114,6 +114,54 @@ export const zipPoints = sqliteTable(
     ],
 );
 
+/* How far each pharmacy is from each ZIP, which is what the couriers are
+ * paid on.
+ *
+ * NOT A SECOND ZONE MAP. zoneZips above is one list for the whole contract
+ * because University Health price by destination ZIP and the pickup does not
+ * enter into it. The offer letter pays by "Distance from pickup", and that
+ * cannot be a list of ZIPs: the same ZIP is eight miles from one counter and
+ * twenty-six from another. So the unit here is a PAIR, and nine counters
+ * across the priced ZIPs is a few hundred rows computed once.
+ *
+ * NOT PHI AND NOT GEOCODING. The destination is the centre of a postal area
+ * -- the same public reference data zipPoints already holds for the planner,
+ * identical for every delivery in the ZIP. No patient address is read and
+ * none is sent anywhere; core/geo/provider.ts still refuses to.
+ *
+ * Effective-dated like everything else in this group: a re-measure loads
+ * beside the old figures rather than over them, so what a past day was worth
+ * stays reconstructible. drizzle/0066 argues it. */
+export const siteZipMiles = sqliteTable(
+    'site_zip_miles',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        siteId: integer('site_id').notNull().references(() => sites.id),
+        zip: text('zip').notNull(),
+        /** One-way miles from the pharmacy to the centre of the ZIP. */
+        miles: real('miles').notNull(),
+        /** 'road' when a provider answered, 'straight-line' when none could.
+         *  Per row, because a mixed table is the normal case and a dispute
+         *  about one stop needs to know which kind of mile it was paid on. */
+        basis: text('basis', { enum: ['road', 'straight-line'] }).notNull(),
+        effectiveFrom: text('effective_from').notNull(),
+        createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+    },
+    (t) => [
+        unique('site_zip_miles_unique').on(t.projectId, t.siteId, t.zip, t.effectiveFrom),
+        index('site_zip_miles_lookup_idx').on(t.projectId, t.siteId, t.zip),
+        check('site_zip_miles_basis_check', sql`${t.basis} IN ('road', 'straight-line')`),
+        /* Loose on purpose, like zipPoints' coordinate guards: not a map, a
+           trap for a transposed pair or a units mix-up. Nothing on this
+           contract is 800 miles from a San Antonio counter, and a row saying
+           so would quietly pay the top band for ever. */
+        check('site_zip_miles_range_check', sql`${t.miles} > 0 AND ${t.miles} < 800`),
+    ],
+);
+
+export type SiteZipMiles = typeof siteZipMiles.$inferSelect;
+
 /* One complete price list, effective from a date. A contract price schedule
  * changes as a whole, so a row is the whole schedule rather than one rate.
  * Rates are the Izy BAFO figures; they are firm for the base term and the
@@ -327,8 +375,42 @@ export const orders = sqliteTable(
         lng: real('lng'),
         geocodeStatus: text('geocode_status', { enum: GEOCODE_STATUSES }).notNull().default('pending'),
 
-        /** Billing zone resolved from the ZIP map. Null means out of area. */
+        /** Billing zone resolved from the ZIP map. Null means out of area.
+         *
+         *  WHAT UNIVERSITY HEALTH IS INVOICED ON, and nothing else. It is
+         *  Bid Table BT-89AO's band for the destination ZIP, it is binding
+         *  under Addendum 2 clause 3, and it is NOT what a courier is paid
+         *  on -- see `payZone` below, which is a distance from the pickup
+         *  and can differ for the very same stop. */
         zone: integer('zone'),
+
+        /* ── WHAT THE COURIER IS PAID ON ──────────────────────────────────
+         *
+         * The offer letter's mile band -- "Distance from pickup", 0-10,
+         * 11-25, 26-50, 51+ -- measured from the collecting pharmacy to the
+         * centre of the destination ZIP and frozen here when the order is
+         * created, exactly as `zone` is, so that a later re-measure cannot
+         * move pay that has already been settled.
+         *
+         * NULL IS NOT ZONE 1. It means no distance was available for this
+         * pharmacy and ZIP, and driver-pay.ts reports that as unmeasured
+         * rather than paying the bottom band by default.
+         *
+         * Why this exists at all: 78247 is zone 1 to University Health and
+         * fourteen road miles from the Medical Drive counter, so one stop
+         * is zone 1 on an invoice and zone 2 on a payslip. Both are right.
+         * drizzle/0066 tells the whole story. */
+        /* No index on this, deliberately: see drizzle/0066. One on
+           (project_id, service_date, pay_zone) became a covering index for a
+           query the noon wave leans on and displaced the index that query
+           was built for, to serve no query of its own. */
+        payZone: integer('pay_zone'),
+        /** The measured distance, so a band can be argued with rather than
+         *  only asserted. Miles, one way. */
+        payMiles: real('pay_miles'),
+        /** 'road' or 'straight-line': which kind of mile was paid on. */
+        payBasis: text('pay_basis'),
+
         outOfAreaMiles: real('out_of_area_miles'),
         /* HOW those miles were arrived at, because an invoice line that bills
          * a distance has to be able to say where the distance came from when

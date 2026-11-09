@@ -39,11 +39,38 @@
  * carries its own label -- a reader must never be shown a column headed
  * "Service level" with zones in it.
  *
- * A ZONE IS THE DESTINATION ZIP'S BAND, NOT A DISTANCE. The mile ranges
- * printed in the offer letter describe the zones; they do not define them.
- * Addendum 2 clause 2 prices by destination ZIP, so a delivery twelve miles
- * out can be zone 1. Paying on measured distance would disagree with the
- * invoice for the same stop.
+ * A PAY ZONE IS A DISTANCE FROM THE PICKUP. A BILLING ZONE IS A ZIP'S BAND.
+ * THEY ARE TWO DIFFERENT NUMBERS AND THIS FILE USES THE FIRST.
+ *
+ * This said the opposite until 9 November -- that the mile ranges in the
+ * offer letter "describe the zones; they do not define them", so a delivery
+ * twelve miles out could be paid as zone 1. That reading is correct about
+ * UH's zones and wrong about the couriers':
+ *
+ *   BILLING. Addendum 2 clause 2 prices by destination ZIP, published as a
+ *   ZIP list per zone in Bid Table BT-89AO, and clause 3 says ZIP-specific
+ *   pricing "will not be accepted" in zones 1 to 3. That list is binding and
+ *   `orders.zone` holds it. Nothing here touches it.
+ *
+ *   PAY. The independent contractor offer letter, section 3, heads its
+ *   column "Distance from pickup" and bands it 0-10, 11-25, 26-50 and 51+
+ *   miles. That is the document the couriers signed. It is not a gloss on
+ *   UH's table; it is a different table, measured from a different place,
+ *   that happens to use the same word.
+ *
+ * What went wrong was taking the DOLLAR AMOUNTS from the offer letter --
+ * 5.00, 7.25, 12.00, 22.00, 28.00, which is exactly the live rate card --
+ * and applying them to the ZONE NUMBERS from UH's ZIP list. A courier
+ * delivering fourteen road miles out to 78247 was paid 5.00 because UH call
+ * that ZIP zone 1; the letter they signed says 7.25. One of them reported
+ * it, which is the only reason anybody knew.
+ *
+ * SO THE TWO NUMBERS DISAGREE ON PURPOSE, and the margin on a stop now
+ * varies with the distance rather than being fixed per band. That is a real
+ * commercial consequence and it was accepted knowingly: UH's zone 1 reaches
+ * 78248 and 78249, so a stop inside it can be far enough out to pay zone 3
+ * against a zone 1 invoice. Dispatching from the nearest counter is what
+ * keeps that rare; nothing here enforces it.
  *
  * AN UNZONED STOP HAS ITS OWN RATE, and until one is set it has no rate at
  * all -- which is the missing-rate rule again rather than a new one: a ZIP
@@ -87,12 +114,116 @@ export type PaidServiceType = (typeof PAID_SERVICE_TYPES)[number];
 export const PAID_ZONES = [1, 2, 3, 4, 5] as const;
 export type PaidZone = (typeof PAID_ZONES)[number];
 
+/* ── THE OFFER LETTER'S MILE BANDS ───────────────────────────────────────
+ *
+ * Section 3, "Payment per Completed Delivery", as the couriers received it:
+ *
+ *     Zone 1     0 - 10 miles        5.00
+ *     Zone 2     11 - 25 miles       7.25
+ *     Zone 3     26 - 50 miles      12.00
+ *     Zones 4-5  51+ miles         22.00 - 28.00  (special-assignment runs,
+ *                                                  offered separately)
+ *
+ * THE RATES ARE NOT HERE. They are on the project's rate card, where an
+ * owner can change them without a deploy, and the figures above are the
+ * ones that card currently holds. What is here is only where one band ends
+ * and the next begins, which is a term of the letter rather than a setting:
+ * moving it would change what a signed document means.
+ *
+ * A GAP BETWEEN 10 AND 11 IS NOT A GAP IN THE BANDS. The letter prints
+ * whole miles, and a measured distance is not a whole number. Anything over
+ * 10.0 pays zone 2, over 25.0 pays zone 3, over 50.0 pays zone 4 -- so a
+ * stop measuring 10.4 miles is zone 2, not zone 1. That direction is
+ * deliberate: the measurement is a straight line or a routed distance to the
+ * centre of a ZIP rather than to the door, so it is approximate, and an
+ * approximation in a pay band should fall the courier's way. The alternative
+ * is rounding a driver's money down with a number they cannot check.
+ *
+ * ZONE 5 IS NOT REACHED BY DISTANCE. The letter gives 51+ miles a single
+ * band and two rates, and calls that work "special-assignment runs, offered
+ * separately" -- so there is no mileage at which 28.00 becomes automatic.
+ * Everything past 50 miles bands as zone 4 and the zone 5 rate is applied by
+ * arrangement. Inventing a cut here (76 miles? 80?) would be inventing a
+ * term of somebody's contract.
+ */
+export interface PayBand {
+    zone: PaidZone;
+    /** Miles above which this band starts. Exclusive: see the note above. */
+    over: number;
+    /** Miles up to and including which it runs. Null for the last band. */
+    upTo: number | null;
+    /** As the letter prints it, for a payslip somebody can check. */
+    label: string;
+}
+
+export const PAY_BANDS: readonly PayBand[] = [
+    { zone: 1, over: 0, upTo: 10, label: '0-10 mi' },
+    { zone: 2, over: 10, upTo: 25, label: '11-25 mi' },
+    { zone: 3, over: 25, upTo: 50, label: '26-50 mi' },
+    { zone: 4, over: 50, upTo: null, label: '51+ mi' },
+];
+
+/**
+ * The band a measured distance falls in, or null when there is no distance.
+ *
+ * NULL IS NOT ZONE 1. A stop we could not measure has no band, and the
+ * caller has to say so rather than paying the cheapest rate by default --
+ * which is the same rule as the rest of this file: a missing number is
+ * reported as missing, never resolved to the smallest plausible one.
+ */
+export function payZoneForMiles(miles: number | null | undefined): PaidZone | null {
+    if (miles === null || miles === undefined) return null;
+    if (!Number.isFinite(miles) || miles < 0) return null;
+    for (const band of PAY_BANDS) {
+        if (band.upTo === null || miles <= band.upTo) return band.zone;
+    }
+    /* Unreachable: the last band has no upper bound. Here so that adding a
+       band with one cannot silently fall through to no answer at all. */
+    return null;
+}
+
+/** How a band is written on a payslip: "Zone 2 (11-25 mi)". */
+export function payZoneLabel(zone: number): string {
+    const band = PAY_BANDS.find((b) => b.zone === zone);
+    return band ? `Zone ${zone} (${band.label})` : `Zone ${zone}`;
+}
+
 /** One delivered or failed stop, reduced to what pay cares about. */
 export interface PayableStop {
     serviceType: string;
     status: string;
-    /** The destination ZIP's band. Null when the ZIP is not on the map. */
+    /**
+     * THE ZONE THIS STOP IS PAID ON, which is the offer letter's mile band
+     * from the pickup pharmacy and NOT `orders.zone`.
+     *
+     * The caller supplies it -- driver-records.ts reads `orders.pay_zone`,
+     * frozen onto the order when it was created, for the same reason the
+     * billing zone is frozen: a later re-measure must not move what somebody
+     * has already been paid.
+     *
+     * Null means the destination is outside the contracted area
+     * altogether -- `orders.zone` is null too -- which `outOfZoneCents`
+     * prices, exactly as it always has.
+     */
     zone: number | null;
+    /**
+     * Whether `zone` came from a measured distance.
+     *
+     * FALSE MEANS UNIVERSITY HEALTH'S BILLING BAND IS STANDING IN, which is
+     * what this paid on for everybody until 9 November. It is not an error
+     * and it must not withhold: an empty distance table would otherwise
+     * take every courier's pay to nothing the moment it deployed, which is
+     * a far worse failure than paying the old band for another day.
+     *
+     * So it pays, and it says so. The line gets its own key and a label
+     * that names the stand-in, because a fallback nobody can see is a
+     * fallback nobody ever closes -- and this one systematically underpays
+     * the long stops, which is the whole fault being repaired.
+     *
+     * Undefined is treated as measured, so a caller that predates this --
+     * and every pure test of the arithmetic -- is unaffected.
+     */
+    measured?: boolean;
 }
 
 export interface PayLine {
@@ -158,7 +289,24 @@ export function lineOf(stop: PayableStop, rates: DriverPaySettings): { key: stri
     if (stop.zone === null || !(PAID_ZONES as readonly number[]).includes(stop.zone)) {
         return { key: 'unzoned', label: 'No zone' };
     }
-    return { key: `zone-${stop.zone}`, label: `Zone ${stop.zone}` };
+    /* THE STAND-IN, ON ITS OWN LINE AND PAID. No distance was available for
+       this pharmacy and ZIP, so University Health's billing band is being
+       used instead -- which is what every stop paid on before 9 November.
+       It pays at that band's rate rather than withholding, because an empty
+       distance table must not zero anybody's wages.
+
+       It is a separate line so that it is COUNTABLE. These are the stops
+       most likely to be underpaid: the fallback band comes from a table
+       drawn around the city rather than measured from the counter, and the
+       error it makes is the one that started this. */
+    if (stop.measured === false) {
+        return { key: `zone-${stop.zone}-estimated`, label: `Zone ${stop.zone} (distance not measured)` };
+    }
+    /* THE BAND IS PRINTED BESIDE THE NUMBER, and that is not decoration.
+       "Zone 1" meant two different things on two different documents for a
+       week and nobody could see it from a payslip. "Zone 2 (11-25 mi)" can
+       be checked against the offer letter by the person being paid. */
+    return { key: `zone-${stop.zone}`, label: payZoneLabel(stop.zone) };
 }
 
 /** The rate for a stop, or 0 for one we hold no rate for. */
