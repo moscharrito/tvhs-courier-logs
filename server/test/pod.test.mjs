@@ -776,6 +776,10 @@ describe('a controlled-substance proof of delivery', () => {
  * bucket that did its job.
  */
 describe('a photograph that cannot be embedded', () => {
+    /* ON THE ATTEMPT PAGE, which is the one a failed delivery actually
+       carries. These cases were written against the collection form, which
+       left the document on 9 November; the branch they exercise is
+       photoPage and is the same for every picture in it. */
     const withCollection = (bytes, contentType) => ({
         orderId: 902, reference: '', serviceType: 'stat', serviceDate: '2026-11-08',
         timezone: 'America/Chicago', pickupLocation: 'Discharge', pickupAddress: '',
@@ -785,7 +789,7 @@ describe('a photograph that cannot be embedded', () => {
         courier: 'Ada', receivedBy: '', noSignatureReason: '', failureReason: '',
         packages: [], events: [], pickupSignature: null, deliverySignature: null,
         photo: { available: false, note: '' },
-        collectionPhoto: { bytes, contentType },
+        attemptPhoto: { bytes, contentType },
     });
 
     /* A WebP, as far as this writer is concerned: accepted by the upload
@@ -836,7 +840,7 @@ describe('a photograph that cannot be embedded', () => {
            looks complete and quietly is not -- which is the failure this
            whole file is here to prevent. */
         const text = pdfText(renderPod(withCollection(unprintable(), 'image/webp')));
-        expect(text).toMatch(/collection form/);
+        expect(text).toMatch(/The signed sheet for the attempt/);
         expect(text).toMatch(/Delivery 902/);
     });
 });

@@ -160,8 +160,8 @@ describe('the return form on our own copy', () => {
         renderAs(asLead, cameBack({ returnForm: { available: true, reason: '' } }));
         await screen.findByRole('heading', { name: 'Order #4182' });
 
-        expect(screen.getByRole('heading', { name: 'Proof of return' })).toBeInTheDocument();
-        expect(screen.getByAltText(/signed return form/i))
+        expect(screen.getByRole('heading', { name: 'The signed sheet for the return attempt' })).toBeInTheDocument();
+        expect(screen.getByAltText(/sheet for the return attempt/i))
             .toHaveAttribute('src', '/api/projects/uh/uh/orders/4182/return-form');
     });
 
@@ -181,9 +181,9 @@ describe('the return form on our own copy', () => {
         }));
         await screen.findByRole('heading', { name: 'Order #4182' });
 
-        expect(screen.getByRole('heading', { name: 'Proof of return' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'The signed sheet for the return attempt' })).toBeInTheDocument();
         expect(screen.getByText(/no photograph of the signed return form/i)).toBeInTheDocument();
-        expect(screen.queryByAltText(/signed return form/i)).toBeNull();
+        expect(screen.queryByAltText(/sheet for the return attempt/i)).toBeNull();
     });
 
     it('says nothing at all about a delivery that never came back', async () => {
@@ -191,13 +191,13 @@ describe('the return form on our own copy', () => {
            imply a missing sheet on a delivery that arrived. */
         renderAs(asLead, { returnForm: { available: false, reason: '' } });
         await screen.findByRole('heading', { name: 'Order #4182' });
-        expect(screen.queryByRole('heading', { name: 'Proof of return' })).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'The signed sheet for the return attempt' })).toBeNull();
     });
 
     it('renders against a server too old to send the field', async () => {
         renderAs(asLead, cameBack());
         await screen.findByRole('heading', { name: 'Order #4182' });
-        expect(screen.queryByRole('heading', { name: 'Proof of return' })).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'The signed sheet for the return attempt' })).toBeNull();
         /* That the rest of the page is still there. Asserted on the proof
            of delivery link rather than the patient's name: the name is
            drawn in different places for different roles and outcomes, and
@@ -207,111 +207,20 @@ describe('the return form on our own copy', () => {
     });
 });
 
-/* ───────────────────────── AND A WAY TO FIX A MISSING ONE
+/* ──────────────────────── AND NO WAY TO FIX A MISSING ONE
  *
- * Saying "no photograph of the signed return form was recorded" and
- * offering nothing to do about it described a hole rather than closing one,
- * and there was no other route to it: setting `returned_at` is exactly what
- * takes an order out of the "still in the van" query the return screen is
- * built from, so the moment a hand-back was recorded without its
- * photograph -- the upload failed at the counter and the courier was
- * offered the choice to carry on rather than stand there holding
- * medication -- no screen in the system could ever supply one.
+ * There was a describe here covering an upload on this page: a return
+ * recorded without its photograph could be given one from the order, which
+ * was the only route to it. Setting `returned_at` is exactly what takes an
+ * order out of the "still in the van" query the return screen is built
+ * from, so once a hand-back is recorded there is no other screen that can
+ * supply the picture.
+ *
+ * It came off on 9 November at the operator's instruction -- photographs
+ * are taken by the courier, on the courier's screen, and this page reports.
+ * The consequence is above and is deliberate; the server route still exists
+ * and still refuses a return form on a delivery that never came back.
+ *
+ * The tests below are what remains: this page SAYS the photograph is
+ * missing, and offers nothing to do about it.
  */
-describe('attaching a return form that was never taken', () => {
-    const cameBack = (over = {}) => ({
-        status: 'failed', deliveredAt: null, receivedBy: '', failureReason: 'nobody_home',
-        returnedAt: '2026-10-31T20:10:00.000Z', ...over,
-    });
-    const missing = {
-        available: false,
-        reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
-    };
-
-    /** The three steps the uploader takes, so a test can reach a bucket. */
-    const fileRoutes = {
-        'POST /api/projects/uh/uh/files': { id: 91, upload: { url: 'https://bucket.test/put', method: 'PUT', headers: {} } },
-        'PUT https://bucket.test/put': { ok: true },
-        'POST /api/projects/uh/uh/files/91/stored': { ok: true },
-        'POST /api/projects/uh/uh/orders/4182/evidence': { status: 201, body: { id: 4182, fileId: 91, kind: 'return_form' } },
-    };
-
-    const choose = () => {
-        const input = screen.getByLabelText(/Photo of the signed form/) as HTMLInputElement;
-        fireEvent.change(input, {
-            target: { files: [new File([new Uint8Array([9, 9, 9])], 'part3.jpg', { type: 'image/jpeg' })] },
-        });
-    };
-
-    it('offers the slot where the sheet is missing', async () => {
-        renderAs(asLead, cameBack({ returnForm: missing }));
-        await screen.findByRole('heading', { name: 'Order #4182' });
-        expect(screen.getByLabelText(/Photo of the signed form/)).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: /Attach the signed form/ })).toBeDisabled();
-    });
-
-    it('does not offer it where the sheet is already there', async () => {
-        renderAs(asLead, cameBack({ returnForm: { available: true, reason: '' } }));
-        await screen.findByRole('heading', { name: 'Order #4182' });
-        expect(screen.queryByLabelText(/Photo of the signed form/)).toBeNull();
-    });
-
-    it('does not offer it on a delivery that never came back', async () => {
-        /* The sheet is a pharmacy signing for medication crossing a
-           counter. On a delivery with no `returned_at` there is no such
-           handover to photograph, and the server refuses one
-           (evidence.notReturned) -- so the screen must not ask for it. */
-        renderAs(asLead, { returnForm: { available: false, reason: '' } });
-        await screen.findByRole('heading', { name: 'Order #4182' });
-        expect(screen.queryByLabelText(/Photo of the signed form/)).toBeNull();
-    });
-
-    it('uploads the picture first and then puts it on the delivery', async () => {
-        const mocked = renderAs(asLead, cameBack({ returnForm: missing }), fileRoutes);
-        await screen.findByRole('heading', { name: 'Order #4182' });
-
-        choose();
-        const button = screen.getByRole('button', { name: /Attach the signed form/ });
-        await waitFor(() => expect(button).toBeEnabled());
-        fireEvent.click(button);
-
-        await waitFor(() => expect(mocked.calls).toContain('POST /api/projects/uh/uh/orders/4182/evidence'));
-
-        /* THE ORDER OF THE TWO CALLS IS THE POINT. A custody note saying a
-           form arrived, pointing at a file that never finished uploading,
-           is worse than no note: the record claims evidence it cannot
-           produce. The picture goes up first and a failure records
-           nothing, which is the rule the door and the counter follow. */
-        const upload = mocked.calls.indexOf('POST /api/projects/uh/uh/files');
-        const evidence = mocked.calls.indexOf('POST /api/projects/uh/uh/orders/4182/evidence');
-        expect(upload).toBeGreaterThanOrEqual(0);
-        expect(upload).toBeLessThan(evidence);
-
-        /* ITS OWN KIND, not courier_form. The last time one kind held two
-           documents, the client's proof of delivery printed the return
-           sheet under the collection form's caption for a fortnight. */
-        expect(mocked.bodies['POST /api/projects/uh/uh/files/91/stored']).toBeTruthy();
-        expect(mocked.bodies['POST /api/projects/uh/uh/files']).toMatchObject({
-            kind: 'return_form',
-            orderId: 4182,
-        });
-        expect(mocked.bodies['POST /api/projects/uh/uh/orders/4182/evidence']).toEqual({
-            fileId: 91,
-            kind: 'return_form',
-        });
-    });
-
-    it('records nothing when the upload fails', async () => {
-        const mocked = renderAs(asLead, cameBack({ returnForm: missing }), {
-            ...fileRoutes,
-            'POST /api/projects/uh/uh/files': { status: 400, body: { error: 'That photograph is too large.' } },
-        });
-        await screen.findByRole('heading', { name: 'Order #4182' });
-
-        choose();
-        fireEvent.click(screen.getByRole('button', { name: /Attach the signed form/ }));
-
-        expect(await screen.findByText(/too large/)).toBeInTheDocument();
-        expect(mocked.calls).not.toContain('POST /api/projects/uh/uh/orders/4182/evidence');
-    });
-});

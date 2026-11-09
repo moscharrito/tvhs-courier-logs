@@ -623,7 +623,7 @@ describe('the proof of return', () => {
 
     it('shows the signed sheet when there is one', async () => {
         const proof = await openProof({ returnForm: { available: true, reason: '' } });
-        expect(proof).toHaveTextContent('Proof of return');
+        expect(proof).toHaveTextContent('The signed sheet for the return attempt');
         const img = screen.getByAltText(/signed return form for Ines Vargas/i);
         expect(img).toHaveAttribute('src', '/api/projects/uh/uh/client/orders/21/return-form');
     });
@@ -643,7 +643,7 @@ describe('the proof of return', () => {
                 reason: 'This came back to a pharmacy, but no photograph of the signed return form was recorded.',
             },
         });
-        expect(proof).toHaveTextContent('Proof of return');
+        expect(proof).toHaveTextContent('The signed sheet for the return attempt');
         expect(proof).toHaveTextContent(/no photograph of the signed return form/i);
         expect(screen.queryByAltText(/signed return form/i)).toBeNull();
     });
@@ -653,12 +653,12 @@ describe('the proof of return', () => {
            arrived has no return form, and the panel must not imply one is
            missing. */
         const proof = await openProof({ returnForm: { available: false, reason: '' } });
-        expect(proof).not.toHaveTextContent('Proof of return');
+        expect(proof).not.toHaveTextContent('The signed sheet for the return attempt');
     });
 
     it('renders against a server too old to send the field', async () => {
         const proof = await openProof({});
-        expect(proof).not.toHaveTextContent('Proof of return');
+        expect(proof).not.toHaveTextContent('The signed sheet for the return attempt');
         expect(proof).toHaveTextContent('Ines Vargas');
     });
 });

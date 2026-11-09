@@ -913,7 +913,7 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
 
             {detail?.returnForm?.available && (
                 <>
-                    <h3>Proof of return</h3>
+                    <h3>The signed sheet for the return attempt</h3>
                     <figure className="izy-pod-photo">
                         <img
                             src={`/api/projects/${code}/uh/client/orders/${order.id}/return-form`}
@@ -930,7 +930,7 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
             )}
             {detail?.returnForm && !detail.returnForm.available && detail.returnForm.reason && (
                 <>
-                    <h3>Proof of return</h3>
+                    <h3>The signed sheet for the return attempt</h3>
                     <p className="izy-muted">{detail.returnForm.reason}</p>
                 </>
             )}

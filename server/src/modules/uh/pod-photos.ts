@@ -334,14 +334,13 @@ export async function attachPhotos(
         const ident = await storedPhoto(client, projectId, orderId, ID_KIND);
         if (ident) data.idPhoto = { bytes: await fetchPhoto(storage, ident.key), contentType: ident.contentType };
 
-        /* The pharmacy's end of the chain. Not gated on data.photo.available
-           -- that flag is about whether a DELIVERY photograph exists and is
-           printable, and a collection form is a different fact: it can be
-           the only picture on a delivery that was handed over on paper. */
-        const collected = await collectionPhoto(client, projectId, orderId);
-        if (collected) {
-            data.collectionPhoto = { bytes: await fetchPhoto(storage, collected.key), contentType: collected.contentType };
-        }
+        /* THE COLLECTION FORM IS NOT FETCHED, because it is not printed.
+           It left the proof of delivery on 9 November: one form covers a
+           whole trolley, so it names other patients' prescriptions, and
+           this document goes to the patient and the pharmacy on THIS
+           delivery. The resolver below it stays -- finding a batch file
+           through the custody chain is the knowledge, and check-pod.mjs
+           reasons about the same lookup. */
 
         /* The other end of the chain, and the only proof that undelivered
            medication got back to a counter. Until now this picture was

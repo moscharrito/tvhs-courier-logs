@@ -111,11 +111,10 @@ export interface PodData {
     photo: { available: boolean; note: string; bytes?: Buffer | undefined; contentType?: string | undefined };
     /** Identification, where the pharmacy stamped the form ID Required. */
     idPhoto?: { bytes?: Buffer | undefined; contentType?: string | undefined } | undefined;
-    /** The form the PHARMACY signed, photographed at the counter. It covers
-     *  a whole collection rather than this one delivery, which is why it is
-     *  found through the custody chain instead of by order id -- see
-     *  collectionPhoto in pod-photos.ts. */
-    collectionPhoto?: { bytes?: Buffer | undefined; contentType?: string | undefined } | undefined;
+    /* collectionPhoto WAS HERE. The form the pharmacy signed at the
+     * counter, dropped from this document on 9 November because one form
+     * covers a trolley and names other patients' prescriptions. See the
+     * long note where its page used to be rendered. */
     /** The form the pharmacy signed when undelivered packages came BACK over
      *  the counter. Like collectionPhoto it covers a batch, and like it, it
      *  is reached through the custody events rather than by order_id. See
@@ -524,44 +523,34 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
             data.idPhoto.contentType,
         );
     }
-    /* LAST, BECAUSE IT IS THE EARLIEST THING THAT HAPPENED, and the two
-       facts are different ones. The pages above are the handover to the
-       patient; this is the handover FROM the pharmacy, which is where the
-       chain of custody starts. A reader looking for "did the right person
-       receive it" should not meet a picture of a counter first.
-       It says plainly that the form covers a collection rather than this
-       delivery alone, because a reader who assumes otherwise is reading it
-       as evidence about this patient and it is not. */
-    if (data.collectionPhoto?.bytes) {
-        photoPage(
-            /* NOT "Collected from the pharmacy": that exact phrase is
-               already the timeline's label for the picked_up event, two
-               pages earlier. Two identical headings meaning different
-               things -- one an event, one a photograph -- is a document
-               that makes a reader work out which is which. It also made a
-               test pass against the wrong text, which is how it was
-               found. */
-            data.collectionPhoto.bytes, 'Ph2', 'The pharmacy’s collection form',
-            'The form the pharmacy signed when it handed the packages over, photographed by the courier at the '
-            + 'counter. One form covers the whole collection, so it may list other deliveries made on the same run.',
-            data.collectionPhoto.contentType,
-        );
-    }
-    /* AFTER THE COLLECTION FORM, because it is the last thing that happened
-       and that one is the first. A delivery that went out and came back has
-       both, and the order of the pages is the order of the handovers.
-
-       This picture has been taken on every return since the signature came
-       off glass and was printed by nothing -- or printed as the collection
-       form, which said the pharmacy signed it handing the packages OVER. It
-       is the proof the medication got back to a counter, which is the one
-       question a pharmacy asks about a delivery that failed. */
-    /* ───────── BEFORE THE RETURN FORM, because the door came first.
+    /* ───────── THE COLLECTION FORM IS NOT IN THIS DOCUMENT.
      *
-     * The pages of this document are the order of the handovers, which is
-     * the sentence written over the return form below. A delivery that was
-     * collected, attempted and brought back has three pictures and they
-     * read in that order: the counter, the door, the counter again.
+     * It was, from the day the courier form came off glass until 9 November,
+     * on the reasoning that the chain of custody starts at the counter and
+     * the document that prints the chain should show where it started.
+     *
+     * TWO THINGS WERE WRONG WITH THAT. The first is whose document this is:
+     * one form covers a whole trolley, so it names OTHER PATIENTS' RX
+     * numbers, names and addresses, and this file is handed to the patient
+     * on this delivery and to the pharmacy that asked about this delivery.
+     * A page carrying other people's prescriptions is the wrong page to put
+     * in it, and the old caption admitted as much -- it told the reader the
+     * form listed other deliveries and left them holding it.
+     *
+     * The second is what it proves. The collection is already in the
+     * timeline, with the time, the courier, the name the counter signed and
+     * the count received. The photograph adds a picture of a docket to a
+     * fact nobody disputes, and on a blank pre-printed form it adds
+     * nothing at all.
+     *
+     * collectionPhoto() in pod-photos.ts survives, with its tests: finding
+     * a batch file through the custody chain is knowledge worth keeping and
+     * the reason it is not printed is above.
+     *
+     * ───────── THE DOOR, THEN THE COUNTER AGAIN.
+     *
+     * The pages are the order of the handovers. A delivery attempted and
+     * brought back has two pictures and they read in that order.
      *
      * Addendum 1 charges a flat fee for every item on an attempted
      * delivery. That makes the dry run the line on an invoice most likely
@@ -585,10 +574,15 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
     }
     if (data.returnPhoto?.bytes) {
         photoPage(
-            data.returnPhoto.bytes, 'Ph4', 'The pharmacy’s return form',
-            'Part 3 of the docket, signed by the pharmacy when the undelivered packages were handed back, '
-            + 'photographed by the courier at the counter. One form covers everything returned together, so it '
-            + 'may list other deliveries brought back at the same time.',
+            data.returnPhoto.bytes, 'Ph4', 'The signed sheet for the return attempt',
+            /* NAMED TO MATCH THE ATTEMPT PAGE, 9 November. The two pictures
+               a failed delivery produces are the sheet at the door and the
+               sheet at the counter it went back to, and a reader meeting
+               "The signed sheet for the attempt" and "The pharmacy's return
+               form" has to work out that they are the same kind of thing. */
+            'Signed by the pharmacy when the undelivered packages were handed back, photographed by the '
+            + 'courier at the counter. One form covers everything returned together, so it may list other '
+            + 'deliveries brought back at the same time.',
             data.returnPhoto.contentType,
         );
     }
