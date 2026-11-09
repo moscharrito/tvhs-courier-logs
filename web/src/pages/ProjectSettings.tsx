@@ -261,10 +261,17 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                         Let the pharmacies upload their daily list on the portal
                     </label>
                     <p className="izy-muted">
-                        Off means they email it to dispatch and we import it, which is how this contract
-                        runs today. Switching it on shows a Send a list page to every pharmacy account on
-                        this project, and the server accepts uploads from them for their own counters
-                        only. It changes nothing about how dispatch imports a list.
+                        <b>Off</b> means a pharmacy hands the spreadsheet over instead. It lands under
+                        Lists handed over, creates no deliveries, and dispatch imports it — which is how
+                        this contract runs today.
+                    </p>
+                    <p className="izy-muted">
+                        <b>On</b> shows a Send a list page to every pharmacy account on this project and
+                        their upload creates the deliveries itself, for their own counters only. Those
+                        deliveries arrive unassigned on the board exactly as dispatch's own import does,
+                        so this switch decides whether a counter can put work on the board without anyone
+                        here reading the sheet first. It changes nothing about how dispatch imports a
+                        list: an administrator and a site lead are never gated by it.
                     </p>
 
                     <fieldset className="izy-fieldset">

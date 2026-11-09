@@ -246,9 +246,19 @@ export function createImportsRouter(
     function uploadNotOffered(req: Request, res: Response): boolean {
         if (isOurs(req)) return false;
         if (resolveSettings(req.project!.settings).listRelease.allowPortalUpload) return false;
+        /* IT SAID "EMAIL IT TO IZY DISPATCH AS USUAL" until 9 November,
+           which was true when this route was the only way to send a list
+           through the portal and stopped being true when the drop box
+           arrived. The drop box is on the same page the pharmacy is already
+           looking at, is not gated by this setting -- see list-drops.ts --
+           and is the answer this refusal exists to point at. Telling
+           somebody to go back to email, past a working route one section
+           down the screen, is the kind of stale sentence that makes a
+           feature look missing. */
         res.status(403).json({
-            error: 'Sending a list through the portal is not switched on for this contract. '
-                + 'Email it to Izy dispatch as usual.',
+            error: 'Importing a list through the portal is not switched on for this contract. '
+                + 'Hand the file over instead, under "Lists handed over" on your deliveries page: '
+                + 'it reaches dispatch exactly as it is and they bring it in.',
             code: 'import.portalUploadOff',
         });
         return true;

@@ -86,9 +86,16 @@ export function ClientListUpload() {
         return (
             <>
                 <h1>Send a list</h1>
+                {/* NOT "email it to us". The deliveries page carries the
+                    drop box, which takes the spreadsheet as it is, creates
+                    no deliveries and is not gated by this setting. Sending
+                    a pharmacy back to email past a working route on the
+                    screen they came from is how a feature nobody uses gets
+                    built twice. */}
                 <div className="izy-alert warn" role="status">
-                    This contract sends its daily lists to Izy dispatch by email rather than through the
-                    portal. Nothing uploaded here would reach us.
+                    Lists are not imported through the portal on this contract, so nothing uploaded on
+                    this page would reach us. Send tomorrow's spreadsheet with <b>Hand a list over</b> on
+                    your deliveries page instead: it arrives exactly as it is and dispatch brings it in.
                 </div>
                 <p>
                     <Link className="izy-btn secondary" to={`/projects/${code}/deliveries`}>

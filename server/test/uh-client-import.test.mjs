@@ -438,7 +438,16 @@ describe('the portal upload is off until a contract switches it on', () => {
         await setUpload(false);
         const them = await agentFor('uh.uploader', 'upload-pass-1');
         const res = await upload(them, BASE, { siteId: discharge.id, serviceDate: ownDay() });
-        expect(res.body.error).toMatch(/email/i);
+        /* IT SAID EMAIL until 9 November, and that was the right answer
+           while this route was the only way to send a list through the
+           portal. The drop box is on the same page they are already
+           looking at and is not gated by this setting, so the refusal
+           points there now. The negative matters as much as the positive:
+           sending a pharmacy back to email past a working route one
+           section down the screen is how a feature gets built twice. */
+        expect(res.body.error).toMatch(/hand the file over/i);
+        expect(res.body.error).toMatch(/Lists handed over/i);
+        expect(res.body.error).not.toMatch(/email/i);
     });
 
     it('never gates dispatch, because importing a list is how the contract runs today', async () => {

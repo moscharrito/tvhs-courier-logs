@@ -114,7 +114,7 @@ describe('the pharmacy upload page', () => {
 describe('a contract that has not switched it on', () => {
     it('says so instead of offering the form', async () => {
         renderUpload({ [`GET ${BASE}/client/summary`]: summary({ canUploadList: false }) });
-        expect(await screen.findByText(/by email rather than through the portal/i)).toBeInTheDocument();
+        expect(await screen.findByText(/not imported through the portal/i)).toBeInTheDocument();
         expect(screen.queryByLabelText(/Pharmacy/)).toBeNull();
         expect(screen.queryByRole('button', { name: /Review the file/i })).toBeNull();
     });
@@ -123,7 +123,7 @@ describe('a contract that has not switched it on', () => {
         /* The safe direction. An older server that does not send the field
            has not had the setting turned on. */
         renderUpload({ [`GET ${BASE}/client/summary`]: summary({ canUploadList: undefined }) });
-        expect(await screen.findByText(/by email rather than through the portal/i)).toBeInTheDocument();
+        expect(await screen.findByText(/not imported through the portal/i)).toBeInTheDocument();
     });
 
     it('still lets them back to their deliveries', async () => {
