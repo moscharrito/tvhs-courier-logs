@@ -550,5 +550,148 @@ if (payFrom && payTo) {
     say('');
 }
 
+/* ------------------------------- what one driver's own screen actually says */
+
+/* WHY THE TWO SECTIONS ABOVE ARE NOT ENOUGH.
+ *
+ * They answer "what is a zone worth" and "which ZIPs have no zone", which
+ * are the two ways a figure comes out as "rate not set". Neither can answer
+ * the third thing a driver means by "I cannot see my pay", which is that
+ * there is no figure at all: a day only appears on a driver's record once
+ * its stops are delivered or attempted, so a round that was driven and
+ * never marked off is not a withheld number, it is a missing day. One
+ * sentence, three causes, and only this section tells them apart:
+ *
+ *   a rate on the basis in use is zero        -> RATE CARD above
+ *   a stop went to a ZIP on no zone           -> UNZONED DELIVERIES above
+ *   the stops were never finished at all      -> here, and only here
+ *
+ * It asks the endpoint the driver's own screen asks -- /uh/drivers/:username,
+ * the same route DriverRecord.tsx renders -- so what prints is what they are
+ * looking at rather than a reconstruction of it. GET, like everything else
+ * in this file.
+ *
+ * NO PATIENT ANYTHING. That endpoint returns counts, pharmacy names and
+ * money, and no patient name or address: see recordOf in driver-records.ts,
+ * which says so and is why this can be written to a file. The ASSIGNED
+ * tally below is built from the orders list and deliberately keeps nothing
+ * but the date, the status and whether a zone resolved.
+ */
+if (who !== '' && payFrom && payTo) {
+    say("  WHAT THAT DRIVER'S OWN SCREEN SAYS");
+    say('  ----------------------------------');
+    say(`  ${who}, ${payFrom} to ${payTo}, grouped by day`);
+    say('');
+
+    const rec = await get(
+        `/api/projects/${project}/uh/drivers/${encodeURIComponent(who)}`
+        + `?from=${payFrom}&to=${payTo}&groupBy=day`,
+    );
+    if (rec.status === 404) {
+        say('    NO RECORD FOR THAT USERNAME on this project. Nothing is wrong with');
+        say('    their pay because the name asked about is not one this project');
+        say('    knows -- on this contract a username is usually the email address,');
+        say('    so check it against the ROSTER section above.');
+    } else if (rec.status !== 200 || !rec.body) {
+        say(`    could not be read (HTTP ${rec.status}). This is NOT "they earned nothing".`);
+    } else {
+        const cur = String(rec.body.currency ?? 'USD');
+        /* Null is the whole point of this script and must not format as
+           0.00: driver-pay.ts returns null for "we cannot tell you", and a
+           nought here would read as "you are owed nothing". */
+        const amount = (c) => (c === null || c === undefined
+            ? 'RATE NOT SET -- they are shown no figure'
+            : `${cur} ${(Number(c) / 100).toFixed(2)}`);
+        const t = rec.body.totals ?? {};
+        say(`    Paid by        ${t.basis === 'zone' ? 'ZONE of the destination ZIP' : 'service level'}`);
+        say(`    Range total    ${amount(t.payCents)}`);
+        say(`    Delivered      ${Number(t.delivered ?? 0)}`);
+        say(`    Not delivered  ${Number(t.failed ?? 0)}   (paid at the same rate since 5 November)`);
+        if (Number(t.bonusDays ?? 0) > 0) {
+            say(`    Days finished  ${Number(t.bonusDays)}   ${amount(t.bonusCents)}   (included in the total above)`);
+        }
+        say('');
+
+        const periods = Array.isArray(rec.body.periods) ? rec.body.periods : [];
+        if (periods.length === 0) {
+            say('    NO DAYS AT ALL in this range. Nothing of theirs is delivered or');
+            say('    attempted on these dates, so there is no pay being withheld --');
+            say('    their stops are still open, or they belong to somebody else.');
+            say('    The tally below says which.');
+        }
+        for (const p of periods) {
+            say(`    ${String(p.period)}   ${Number(p.delivered ?? 0)} delivered,`
+                + ` ${Number(p.failed ?? 0)} not   ${amount(p.payCents)}`);
+            for (const [key, l] of Object.entries(p.lines ?? {})) {
+                const rate = Number(l.rateCents ?? 0) > 0
+                    ? `${cur} ${(Number(l.rateCents) / 100).toFixed(2)}`
+                    : 'NOT SET';
+                say(`      ${String(l.label ?? key).padEnd(10)} ${Number(l.delivered ?? 0)} delivered,`
+                    + ` ${Number(l.failed ?? 0)} not   at ${rate}   ${amount(l.payCents)}`);
+            }
+        }
+        if (periods.length > 0 && t.rateSet !== true) {
+            say('');
+            say('    ONE LINE READING "NOT SET" WITHHOLDS THE WHOLE RANGE, which is why');
+            say('    they see nothing rather than a short number. The rate card above');
+            say('    says whether that line can be priced or is a gap in the zone map.');
+        }
+    }
+    say('');
+
+    /* AND WHAT THEY WERE GIVEN, which is the other half of a missing day.
+     *
+     * Every status, not only the paid ones. A stop left on 'picked_up' is
+     * the commonest reason a day never appears above at all, and it is also
+     * what costs that day its completion bonus -- completedDays() in
+     * driver-records.ts counts assigned against finished, so one unfinished
+     * stop takes the bonus for the day as well as its own rate. */
+    say('    WHAT WAS ASSIGNED TO THEM, BY DAY AND STATUS');
+    const theirs = new Map();
+    let dayCursor = null;
+    let dayPages = 0;
+    let dayFailed = '';
+    while (dayPages < 25) {
+        const qs = `assignedTo=${encodeURIComponent(who)}&from=${payFrom}&to=${payTo}&limit=1000`
+            + (dayCursor ? `&cursor=${encodeURIComponent(dayCursor)}` : '');
+        const page = await get(`/api/projects/${project}/uh/orders?${qs}`);
+        if (page.status !== 200 || !Array.isArray(page.body?.orders)) {
+            dayFailed = `could not be read (HTTP ${page.status}). This is NOT "they had none".`;
+            break;
+        }
+        for (const o of page.body.orders) {
+            const day = String(o.serviceDate ?? '(no service date)');
+            const at = theirs.get(day) ?? new Map();
+            /* The zone is on the key rather than counted separately: "4
+               delivered, 1 delivered (no zone)" is the line that explains a
+               withheld day in one glance. */
+            const k = `${String(o.status)}${o.zone === null || o.zone === undefined ? ' (NO ZONE)' : ''}`;
+            at.set(k, (at.get(k) ?? 0) + 1);
+            theirs.set(day, at);
+        }
+        dayPages += 1;
+        dayCursor = page.body.nextCursor ?? null;
+        if (!dayCursor) break;
+    }
+    if (dayFailed) {
+        say(`      ${dayFailed}`);
+    } else if (theirs.size === 0) {
+        say('      nothing was assigned to them in this range at all. If they worked');
+        say('      these days, the stops are on another username -- or were recorded');
+        say('      against nobody, which the board shows as unassigned.');
+    }
+    for (const [day, at] of [...theirs.entries()].sort()) {
+        say(`      ${day}   `
+            + [...at.entries()].sort().map(([k, n]) => `${n} ${k}`).join(',   '));
+    }
+    say('');
+} else if (who !== '') {
+    say("  WHAT THAT DRIVER'S OWN SCREEN SAYS");
+    say('  ----------------------------------');
+    say('    Not checked. Pass --from and --to as well as --driver to read the pay');
+    say('    record that driver is actually looking at for those dates.');
+    say('');
+}
+
 say('  Nothing was changed: this script only sends GET.');
 say('');
