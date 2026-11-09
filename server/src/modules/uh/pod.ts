@@ -31,7 +31,7 @@
 
 import type { Client } from '@libsql/client';
 import {
-    buildPdf, jpegSize, Page, PAGE, textWidth, toLatin, wrap,
+    buildPdf, imageSize, Page, PAGE, textWidth, toLatin, wrap,
     type EmbeddedImage, type Point,
 } from '../../core/pdf/writer';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
@@ -461,7 +461,7 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
         sheet.text(note, MARGIN, top, { size: 9, grey: 0.35 });
         top -= 16;
 
-        const size = jpegSize(bytes);
+        const size = imageSize(bytes);
         /* ───────── SAID OUT LOUD, AND SAID ACCURATELY.
          *
          * One sentence covered four different faults: a bucket that returned
@@ -472,21 +472,27 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
          * reader shown that sentence goes looking for a storage fault that
          * does not exist.
          *
-         * The distinction is not cosmetic. The upload path accepts JPEG,
-         * PNG, WebP and HEIC (core/files/storage.ts, lib/photos.ts) and
-         * this writer embeds JPEG alone, so a perfectly good photograph can
-         * be stored, shown on every screen, and silently absent from the
-         * one document that goes to the client. Naming the format is what
-         * makes that visible instead of looking like a bucket problem. */
+         * The distinction is not cosmetic, and it is what found the real
+         * fault: order 902's collection form was a PNG. The upload path
+         * accepts JPEG, PNG, WebP, HEIC and PDF (core/files/storage.ts),
+         * and this writer embedded JPEG alone, so a perfectly good
+         * photograph was stored, shown on every screen, and silently absent
+         * from the one document that goes to the client.
+         *
+         * PNG IS CARRIED NOW (core/pdf/png.ts), so this branch is reached
+         * by WebP, HEIC, a PDF uploaded as a photograph, an empty object
+         * and a truncated file -- the cases that genuinely cannot be drawn.
+         * Naming the format is still what keeps them from looking like a
+         * bucket problem. */
         if (!size || size.width <= 0 || size.height <= 0) {
             const type = (contentType ?? '').trim().toLowerCase();
             const why = bytes.length === 0
                 ? 'Nothing came back from storage for this photograph. The file is recorded '
                     + 'against this delivery and its contents are not in the bucket.'
-                : type !== '' && type !== 'image/jpeg'
-                    ? `This photograph is stored as ${type}, and this document can only embed JPEG. `
-                        + 'It is not missing: it is on the delivery in the portal.'
-                    : 'The photograph is stored but could not be read as a JPEG.';
+                : type !== '' && type !== 'image/jpeg' && type !== 'image/png'
+                    ? `This photograph is stored as ${type}, and this document can embed JPEG and PNG `
+                        + 'only. It is not missing: it is on the delivery in the portal.'
+                    : 'The photograph is stored but could not be read.';
             for (const bit of wrap(why, 'Helvetica', 10, PAGE.width - MARGIN * 2)) {
                 sheet.text(bit, MARGIN, top, { size: 10 });
                 top -= 13;

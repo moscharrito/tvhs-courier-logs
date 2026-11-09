@@ -1,3 +1,6 @@
+import { deflateSync } from 'node:zlib';
+import { decodePng, pngSize } from './png';
+
 /* A very small PDF writer.
  *
  * Enough to lay out a proof of delivery: Helvetica text, rules, boxes, and
@@ -251,22 +254,46 @@ export class Page {
 }
 
 /**
- * A photograph to embed.
+ * A photograph to embed. JPEG or PNG.
  *
- * JPEG ONLY, AND THE BYTES GO IN UNTOUCHED. PDF understands JPEG natively
- * through the DCTDecode filter, so the file is copied in as it came off the
- * camera: no decoding, no re-encoding, no image library, and no second copy
- * of a patient's doorstep passing through a transform on the way. It is also
- * why this is a contained change rather than a dependency.
+ * A JPEG GOES IN UNTOUCHED. PDF understands it natively through DCTDecode,
+ * so the file is copied in as it came off the camera: no decoding, no
+ * re-encoding, no second copy of a patient's doorstep passing through a
+ * transform on the way.
+ *
+ * A PNG CANNOT BE, and for eighteen months that meant it was not carried at
+ * all. On 8 November a real collection form turned out to be a PNG: stored,
+ * bound to its order, shown on every screen, and missing from the document
+ * that goes to University Health. core/pdf/png.ts now decodes it here --
+ * still no image library, still a contained change, and the only picture
+ * that passes through a transform is one that could not otherwise be in the
+ * record at all.
+ *
+ * WebP, HEIC and PDF are accepted by the upload path and are still not
+ * embeddable. The caller is expected to say so on the page rather than drop
+ * the photograph silently; see photoPage in modules/uh/pod.ts.
  */
 export interface EmbeddedImage {
     /** The name the page refers to, without the slash. */
     name: string;
-    /** The JPEG exactly as stored. */
+    /** The file exactly as stored. */
     bytes: Buffer;
 }
 
 export interface JpegSize { width: number; height: number }
+
+/**
+ * The pixel size of anything this writer can embed.
+ *
+ * One call, because every caller asking "how big is it" is really asking
+ * "can you print it, and in what proportions". Asking jpegSize alone was
+ * how a PNG came to be reported as a storage fault: the only code that knew
+ * the difference between "not a picture" and "not a JPEG" was the code that
+ * could not say so.
+ */
+export function imageSize(bytes: Buffer): JpegSize | null {
+    return jpegSize(bytes) ?? pngSize(bytes);
+}
 
 /**
  * The pixel size of a JPEG, read from its start-of-frame marker.
@@ -384,14 +411,31 @@ export function buildPdf(
      * that will not open. */
     const imageIds = new Map<string, number>();
     for (const image of images) {
-        const size = jpegSize(image.bytes);
-        /* Unreadable means left out. See jpegSize: a photograph a reader
-           refuses to open is worse than a document saying there is one. */
-        if (!size) continue;
+        const jpeg = jpegSize(image.bytes);
+        if (jpeg) {
+            imageIds.set(image.name, add(
+                `<< /Type /XObject /Subtype /Image /Width ${jpeg.width} /Height ${jpeg.height} `
+                + '/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode '
+                + `/Length ${image.bytes.length} >>\nstream\n${image.bytes.toString('latin1')}\nendstream`,
+            ));
+            continue;
+        }
+
+        /* DECODED AND RE-COMPRESSED, which the JPEG above is deliberately
+           not. PDF has no PNG filter: FlateDecode carries the pixels and
+           the palette, alpha and interlacing PNG allows have to be resolved
+           before they get here. See core/pdf/png.ts. */
+        const png = decodePng(image.bytes);
+        /* Unreadable means left out. A photograph a reader refuses to open
+           is worse than a document saying there is one -- and the caller
+           prints that sentence, naming the format, on the page where the
+           picture should have been. */
+        if (!png) continue;
+        const flate = deflateSync(png.data);
         imageIds.set(image.name, add(
-            `<< /Type /XObject /Subtype /Image /Width ${size.width} /Height ${size.height} `
-            + '/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode '
-            + `/Length ${image.bytes.length} >>\nstream\n${image.bytes.toString('latin1')}\nendstream`,
+            `<< /Type /XObject /Subtype /Image /Width ${png.width} /Height ${png.height} `
+            + `/ColorSpace ${png.components === 1 ? '/DeviceGray' : '/DeviceRGB'} /BitsPerComponent 8 `
+            + `/Filter /FlateDecode /Length ${flate.length} >>\nstream\n${flate.toString('latin1')}\nendstream`,
         ));
     }
 

@@ -16,6 +16,7 @@ import { startServer, tempDb, removeDir, storedForm } from './helpers/server.mjs
 import { buildPdf, Page, PAGE, toLatin, wrap, textWidth } from '../src/core/pdf/writer.ts';
 import { renderPod, fitStrokes, stamp, podFilename } from '../src/modules/uh/pod.ts';
 import { collectionPhoto, returnPhoto } from '../src/modules/uh/pod-photos.ts';
+import { solidPng } from './helpers/png.mjs';
 
 const ORDERS = '/api/projects/uh/uh/orders';
 const RUNS = '/api/projects/uh/uh/runs';
@@ -787,18 +788,30 @@ describe('a photograph that cannot be embedded', () => {
         collectionPhoto: { bytes, contentType },
     });
 
-    /* Not a JPEG: an 8-byte PNG signature plus nothing. jpegSize refuses it
-       exactly as it refuses a whole screenshot, which is the point -- the
-       document cannot tell the difference and does not have to. */
-    const png = () => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    /* A WebP, as far as this writer is concerned: accepted by the upload
+       path, understood by every browser, and not embeddable in a PDF
+       without a decoder nothing here has. HEIC and an uploaded PDF land in
+       the same branch. */
+    const unprintable = () => Buffer.from('RIFF....WEBPVP8 ', 'latin1');
 
     it('names the format instead of blaming storage', () => {
-        const text = pdfText(renderPod(withCollection(png(), 'image/png')));
-        expect(text).toMatch(/stored as image\/png/);
-        expect(text).toMatch(/can only embed JPEG/);
+        const text = pdfText(renderPod(withCollection(unprintable(), 'image/webp')));
+        expect(text).toMatch(/stored as image\/webp/);
+        expect(text).toMatch(/can embed JPEG and PNG/);
         /* THE SENTENCE THAT SENT SOMEBODY TO LOOK AT S3. The bucket served
            this file perfectly. */
         expect(text).not.toMatch(/could not be read from storage/);
+    });
+
+    it('prints the PNG that started this, rather than a line about it', () => {
+        /* Order 902's collection form, which is what the whole of this
+           describe exists because of. It must be a PICTURE in the document
+           now, not a better-worded apology for its absence. */
+        const pdf = renderPod(withCollection(solidPng(6, 4, [12, 34, 56]), 'image/png'));
+        const body = pdf.toString('latin1');
+        expect(body).toMatch(/\/Subtype \/Image/);
+        expect(body).toMatch(/\/Width 6 \/Height 4/);
+        expect(pdfText(pdf)).not.toMatch(/could not be read|stored as|Nothing came back/);
     });
 
     it('says so plainly when nothing came back from the bucket', () => {
@@ -807,14 +820,14 @@ describe('a photograph that cannot be embedded', () => {
            as a PNG did. These are not the same fault and not the same fix. */
         const text = pdfText(renderPod(withCollection(Buffer.alloc(0), 'image/jpeg')));
         expect(text).toMatch(/Nothing came back from storage/);
-        expect(text).not.toMatch(/can only embed JPEG/);
+        expect(text).not.toMatch(/can embed JPEG and PNG/);
     });
 
     it('falls back to the honest answer when it is a JPEG it cannot parse', () => {
         /* Declared image/jpeg, starts like one, truncated before the frame
            header. Storage is not at fault and neither is the format. */
         const text = pdfText(renderPod(withCollection(Buffer.from([0xff, 0xd8, 0xff, 0xe0]), 'image/jpeg')));
-        expect(text).toMatch(/could not be read as a JPEG/);
+        expect(text).toMatch(/stored but could not be read/);
     });
 
     it('still prints the page, the heading and the delivery number', () => {
@@ -822,7 +835,7 @@ describe('a photograph that cannot be embedded', () => {
            would turn a picture in the wrong format into a document that
            looks complete and quietly is not -- which is the failure this
            whole file is here to prevent. */
-        const text = pdfText(renderPod(withCollection(png(), 'image/png')));
+        const text = pdfText(renderPod(withCollection(unprintable(), 'image/webp')));
         expect(text).toMatch(/collection form/);
         expect(text).toMatch(/Delivery 902/);
     });
