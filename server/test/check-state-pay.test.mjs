@@ -115,7 +115,8 @@ beforeAll(async () => {
     }).format(new Date());
 
     await admin.post('/api/users').send({
-        username: DRIVER, name: 'Doc Driver', password: 'doc-pass-11', role: 'driver',
+        username: DRIVER, name: 'Doc Driver', email: 'doc.driver@example.test',
+        password: 'doc-pass-11', role: 'driver',
     });
     await admin.put(`/api/users/${DRIVER}/memberships/uh`).send({ role: 'courier', settings: {} });
 
@@ -225,9 +226,57 @@ describe('check-state.mjs on a driver who cannot see their pay', () => {
     it('says so plainly when the username is not one the project holds', async () => {
         const res = await run(['--driver', 'nobody@example.test', '--from', day, '--to', day]);
         expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('NO ACCOUNT');
+        expect(res.out).not.toContain('RATE NOT SET');
+        /* And it does not then report about somebody else by accident. */
+        expect(res.out).not.toContain("WHAT THAT DRIVER'S OWN SCREEN SAYS");
+    });
+
+    /* ── THE NAME AND THE EMAIL ARE WHAT SOMEBODY HAS, and on this contract
+     * neither is the username: a courier's username is a first name or a
+     * handle, and the question arrives as a full name and an email address
+     * read off a message. Resolving only the username answered "no such
+     * driver" about a live account -- a confident wrong answer, which is
+     * the worst kind a diagnostic can give. */
+    it('finds the account from the email address', async () => {
+        const res = await run(['--driver', 'doc.driver@example.test', '--from', day, '--to', day]);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('WHO WAS ASKED ABOUT');
+        expect(res.out).toContain(`username ${DRIVER}`);
+        /* And the record that follows is theirs, not an empty one. */
         const mine = theirSection(res.out);
-        expect(mine).toContain('NO RECORD FOR THAT USERNAME');
-        expect(mine).not.toContain('RATE NOT SET');
+        expect(mine).toContain(DRIVER);
+        expect(mine).not.toContain('NO RECORD FOR THAT USERNAME');
+    });
+
+    it('finds the account from the display name', async () => {
+        const res = await run(['--driver', 'Doc Driver', '--from', day, '--to', day]);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain(`username ${DRIVER}`);
+        expect(theirSection(res.out)).not.toContain('NO RECORD FOR THAT USERNAME');
+        /* The resolved username reaches the carrying section too, which is
+           an exact match and would otherwise have been given a display
+           name it can never match. */
+        expect(res.out).toContain(`WHAT ${DRIVER} IS CARRYING`);
+    });
+
+    /* ── AND WHEN TWO PEOPLE MATCH, IT REFUSES. A figure that is right
+     * about the wrong courier cannot be told from a wrong one. */
+    it('refuses to guess between two accounts', async () => {
+        await admin.post('/api/users').send({
+            username: 'pay.doc2', name: 'Doc Driver Two', password: 'doc-pass-11', role: 'driver',
+        });
+        await admin.put('/api/users/pay.doc2/memberships/uh').send({ role: 'courier', settings: {} });
+
+        /* 'doc dri' matches neither name exactly, so both come back loose.
+           'doc driver' would have matched one of them exactly and that is
+           deliberately NOT ambiguous: an exact hit is an answer. */
+        const res = await run(['--driver', 'doc dri', '--from', day, '--to', day]);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('is NOT being guessed at');
+        expect(res.out).toContain('pay.doc2');
+        /* Nothing below it claims to be about anybody. */
+        expect(res.out).not.toContain("WHAT THAT DRIVER'S OWN SCREEN SAYS");
     });
 
     /* ── THE FOURTH CAUSE, WHICH IS NOT A WITHHELD FIGURE AT ALL.

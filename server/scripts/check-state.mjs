@@ -65,6 +65,72 @@ if (!login.ok) {
 }
 cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
 
+/* ------------------------------------------- who --driver actually means */
+
+/* AN EMAIL, A FULL NAME OR A USERNAME -- all three get typed, and on this
+ * contract they are three different strings for the same person.
+ *
+ * A UH courier's username is a first name or a handle; their email sits on
+ * the account beside it; and whoever is asking is usually reading a name and
+ * an address off a message. Taking --driver as the username meant that
+ * asking about somebody by the only two things you had printed "No driver on
+ * this project matches" and "NO RECORD FOR THAT USERNAME" -- which reads as
+ * "this person does not exist" about an account that is live, on shift and
+ * delivering. That is worse than an error, because it is a confident answer
+ * and it is wrong.
+ *
+ * So the directory resolves it first, on username, name OR email, exact
+ * before substring, and every section below works from the username it
+ * found -- including what they are carrying, which is otherwise an exact
+ * match against a string nobody has to hand.
+ *
+ * AN AMBIGUOUS MATCH RESOLVES TO NOBODY and says so with the candidates.
+ * Guessing which of two couriers somebody meant is the one mistake a pay
+ * report must never make: the figure would be right about the wrong person,
+ * which is indistinguishable from being wrong. */
+const asked = value('driver', '').trim().toLowerCase();
+let who = asked;
+let whoNote = '';
+if (asked !== '') {
+    const dirAll = await get('/api/users');
+    const people = Array.isArray(dirAll.body?.users ?? dirAll.body)
+        ? (dirAll.body.users ?? dirAll.body)
+        : [];
+    const norm = (v) => String(v ?? '').trim().toLowerCase();
+    const fields = (u) => [norm(u.username), norm(u.name), norm(u.email)];
+    const exact = people.filter((u) => fields(u).includes(asked));
+    const loose = people.filter((u) => fields(u).some((f) => f !== '' && f.includes(asked)));
+    const hits = exact.length > 0 ? exact : loose;
+
+    if (people.length === 0) {
+        whoNote = `The account directory could not be read (HTTP ${dirAll.status}), so`
+            + ` "${asked}" is being taken as a username exactly as it stands.`;
+    } else if (hits.length === 1) {
+        who = norm(hits[0].username);
+        const found = `"${asked}" is ${String(hits[0].name ?? '?')} — username ${who}`
+            + `${hits[0].email ? `, email ${norm(hits[0].email)}` : ', no email on the account'}.`;
+        /* Said even when the username was what was typed: a report about a
+           person should name the person, and a payment question gets asked
+           about a human being rather than a handle. */
+        whoNote = found;
+    } else if (hits.length > 1) {
+        whoNote = `"${asked}" matches ${hits.length} accounts and is NOT being guessed at: `
+            + hits.map((u) => norm(u.username)).join(', ')
+            + '. Nothing below is about any of them. Ask again with one username.';
+        who = '';
+    } else {
+        whoNote = `NO ACCOUNT on this server matches "${asked}" by username, name or`
+            + ' email. Nothing below is about them, because there is no them to be about.';
+        who = '';
+    }
+}
+if (whoNote !== '') {
+    say('  WHO WAS ASKED ABOUT');
+    say('  -------------------');
+    for (const bit of whoNote.match(/.{1,72}(\s|$)/g) ?? [whoNote]) say(`    ${bit.trim()}`);
+    say('');
+}
+
 /* ---------------------------------------------------------------- orders */
 
 if (orderIds.length > 0) {
@@ -104,7 +170,15 @@ if (orderIds.length > 0) {
 /* The same rule as carrying() in modules/uh/shifts.ts, which is what decides
    whether a shift may end: picked up, or attempted and never handed back.
    Asked through the orders list so this stays a GET. */
-const carryingWho = value('carrying', '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+/* THE RESOLVED --driver IS ON THIS LIST WITHOUT BEING ASKED FOR. What
+   somebody is still holding is the other half of a lost completion bonus,
+   and it needs the exact username the orders are assigned to -- which is
+   the thing the caller did not have, or they would not have typed a name.
+   Deduped, so naming them in --carrying as well costs nothing. */
+const carryingWho = [...new Set([
+    ...value('carrying', '').split(',').map((x) => x.trim()).filter((x) => x !== ''),
+    ...(who === '' ? [] : [who]),
+])];
 /* Site ids mean nothing to a reader deciding whether 22 orders are real
    work or leftovers. "site 3" sent that question back for another round. */
 const siteCode = new Map();
@@ -243,7 +317,6 @@ say('');
  * it), AND not already carrying a run today. A floater -- nobody's home,
  * no cover list -- matches no pharmacy at all and is correctly invisible
  * once a pharmacy is chosen. That is the usual answer. */
-const who = value('driver', '').trim().toLowerCase();
 if (who !== '') {
     say('  DRIVER');
     say('  ------');
