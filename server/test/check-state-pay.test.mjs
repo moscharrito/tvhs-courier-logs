@@ -230,6 +230,52 @@ describe('check-state.mjs on a driver who cannot see their pay', () => {
         expect(mine).not.toContain('RATE NOT SET');
     });
 
+    /* ── THE FOURTH CAUSE, WHICH IS NOT A WITHHELD FIGURE AT ALL.
+     *
+     * The rate card can be complete, nothing unzoned, every stop assigned
+     * -- and a driver still reads a number a third of what they expected,
+     * because one unfinished stop took the day's USD 150. That is the
+     * production shape on 9 November and the reason this section exists:
+     * every other section in the file would have said "nothing is wrong".
+     */
+    it('flags the day that lost its bonus, with the money', async () => {
+        await patchPay({ completionBonusCents: 15000, completionBonusFrom: day });
+
+        /* One stop left standing against the four finished above it:
+           assigned 5, finished 4. One is enough -- that is the point. */
+        const standing = await openStop();
+
+        const res = await run(['--from', day, '--to', day]);
+        expect(res.code, res.out).toBe(0);
+
+        expect(res.out).toContain('DRIVER-DAYS LOST THE BONUS');
+        expect(res.out).toContain('USD 150.00 a day');
+        expect(res.out).toMatch(new RegExp(`${day}\\s+${DRIVER}\\s+4 of 5 finished\\s+still 1 picked_up`));
+        /* And it is explicit that this is not a missing rate, because the
+           rate card above will say every rate is set. */
+        expect(res.out).toContain('Every rate on the basis in use is set');
+
+        /* Finish it and the day qualifies: the flag has to clear, or it is
+           noise that gets ignored. */
+        await finish(standing);
+        const after = await run(['--from', day, '--to', day]);
+        expect(after.code, after.out).toBe(0);
+        expect(after.out).toContain('No bonus is missing');
+        expect(after.out).not.toContain('DRIVER-DAYS LOST THE BONUS');
+
+        await patchPay({ completionBonusCents: 0, completionBonusFrom: null });
+    });
+
+    /* ── A FINISHED STOP THAT BELONGS TO NOBODY PAYS NOBODY, and the count
+     * is printed even when it is nought: a zero is the answer to the
+     * question, and an absent line is not. */
+    it('counts the finished stops that are on no driver record', async () => {
+        const res = await run(['--from', day, '--to', day]);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('Finished stops assigned to nobody:  0');
+        expect(res.out).not.toContain('These pay NOBODY');
+    });
+
     /* ── AND IT NEVER PRINTS A PATIENT. check.txt is written to disk and
      * pasted around; the endpoint behind this section returns pharmacies
      * and counts, and this is the assertion that keeps it that way. */

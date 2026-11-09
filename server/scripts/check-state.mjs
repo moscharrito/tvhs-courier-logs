@@ -81,9 +81,19 @@ if (orderIds.length > 0) {
             /* The recipient name is printed because it is how somebody
                confirms these were the test rows and not three real
                deliveries that happen to share an id range. */
+            /* `assignedTo`, NOT `assignedToUsername`. The order view calls
+               it assignedTo (modules/uh/orders.ts), so the old name read
+               undefined on every order and this line printed "assigned to
+               nobody" about all of them, always. On 9 November that false
+               reading was within one step of being believed as evidence
+               that deliveries were being recorded against no courier --
+               which would have been a real pay hole, and was not. A
+               diagnostic that invents a fault is worse than one that is
+               silent, because it is the thing people look at instead of
+               the system. */
             say(`    #${id}  STILL THERE — ${String(o.status ?? '?')}`
                 + `, ${String(o.recipientName ?? '?')}`
-                + `, assigned to ${o.assignedToUsername ? String(o.assignedToUsername) : 'nobody'}`);
+                + `, assigned to ${o.assignedTo ? String(o.assignedTo) : 'nobody'}`);
         }
     }
     say('');
@@ -547,6 +557,156 @@ if (payFrom && payTo) {
     say('  ------------------');
     say('    Not checked. Pass --from and --to to count the stops whose ZIP has no');
     say('    zone, which is the half of "rate not set" that no rate can fix.');
+    say('');
+}
+
+/* ------------------------- everybody's pay in the range, and what is short */
+
+/* WHY A WHOLE-ROSTER SECTION, WHEN THE RATE CARD SAYS NOTHING IS WITHHELD.
+ *
+ * Because "I cannot see my pay" survives a complete rate card. On
+ * 9 November the card was complete, the out-of-zone rate was priced, the
+ * single unzoned stop in the range was paid -- and drivers were still
+ * reporting a missing figure for two named days. Nothing was withheld.
+ * Something was ABSENT, which is a different fault and lives in the work
+ * rather than the settings:
+ *
+ *   A DAY WITH AN UNFINISHED STOP LOSES THE COMPLETION BONUS. completedDays
+ *   in driver-records.ts counts assigned against finished and qualifies the
+ *   day only when they are equal. One stop left on picked_up takes the
+ *   whole day's bonus -- and on this contract the bonus is USD 150 against
+ *   zone rates of USD 5 to USD 28, so it is most of the day's money. A
+ *   driver who delivered nineteen of twenty stops sees a figure a third of
+ *   what they expected, and "I cannot see my pay" is a fair description of
+ *   it. This is the reading the per-delivery breakdown cannot give them,
+ *   because nothing on it is missing.
+ *
+ *   A STOP THAT IS NOT ASSIGNED TO THEM IS ON NOBODY'S RECORD. stopsIn
+ *   requires assigned_to_username, and pay follows the assignment rather
+ *   than who pressed the button. A delivery recorded against nobody pays
+ *   nobody and appears on no screen, including the summary that is supposed
+ *   to add up.
+ *
+ * So this prints what the office's own drivers list prints, flags every day
+ * that lost its bonus WITH the money, and counts the finished stops that
+ * belong to no courier. Only the rows with something wrong: 83 drivers over
+ * a payment period is a page nobody reads. Still GET. */
+if (payFrom && payTo) {
+    say('  THE RANGE, DRIVER BY DRIVER');
+    say('  ---------------------------');
+    say(`  ${payFrom} to ${payTo}`);
+    say('');
+
+    const bonusCents = Number(pay?.completionBonusCents ?? 0);
+    const bonusFrom = pay?.completionBonusFrom ? String(pay.completionBonusFrom) : null;
+    const cur = String(pay?.currency ?? 'USD');
+    const asMoney = (c) => `${cur} ${(Number(c) / 100).toFixed(2)}`;
+
+    /* ── what the office sees, which is the figure being disbursed */
+    const all = await get(`/api/projects/${project}/uh/drivers?from=${payFrom}&to=${payTo}`);
+    const roster = Array.isArray(all.body?.drivers) ? all.body.drivers : null;
+    if (all.status !== 200 || roster === null) {
+        say(`    could not be read (HTTP ${all.status}). This is NOT "nobody is short".`);
+    } else {
+        const worked = roster.filter((d) => Number(d.delivered ?? 0) + Number(d.failed ?? 0) > 0);
+        const withheld = worked.filter((d) => d.payCents === null || d.payCents === undefined);
+        say(`    ${worked.length} of ${roster.length} on the contract have a paid stop in this range.`);
+        if (withheld.length === 0) {
+            say('    None of them has a withheld figure: every rate that was worked is set.');
+            say('    So a driver who says they cannot see their pay is NOT being told');
+            say('    "rate not set" -- look at the bonus below, or at the day itself.');
+        } else {
+            say(`    ${withheld.length} SHOW NO FIGURE AT ALL (a rate or a zone is missing):`);
+            for (const d of withheld) say(`      ${String(d.username)}`);
+        }
+    }
+    say('');
+
+    /* ── and what each day actually looked like, which is where the bonus
+     *    goes missing. Every status, because the unfinished ones are the
+     *    point. One page of a thousand covers a payment period on this
+     *    contract; the guard stops a wrong range walking the year. */
+    const byDay = new Map();
+    let orphanFinished = 0;
+    let auditCursor = null;
+    let auditPages = 0;
+    let auditFailed = '';
+    while (auditPages < 25) {
+        const qs = `from=${payFrom}&to=${payTo}&limit=1000`
+            + (auditCursor ? `&cursor=${encodeURIComponent(auditCursor)}` : '');
+        const page = await get(`/api/projects/${project}/uh/orders?${qs}`);
+        if (page.status !== 200 || !Array.isArray(page.body?.orders)) {
+            auditFailed = `could not be read (HTTP ${page.status}). This is NOT "nothing is short".`;
+            break;
+        }
+        for (const o of page.body.orders) {
+            const finishedStop = o.status === 'delivered' || o.status === 'failed';
+            /* Cancelled is not work and must not block a bonus: the same
+               exclusion completedDays makes, for the same reason. */
+            if (o.status === 'cancelled') continue;
+            const whose = o.assignedTo ? String(o.assignedTo) : '';
+            if (whose === '') {
+                if (finishedStop) orphanFinished += 1;
+                continue;
+            }
+            const key = `${String(o.serviceDate ?? '?')}\u0000${whose}`;
+            const at = byDay.get(key) ?? { assigned: 0, finished: 0, open: new Map() };
+            at.assigned += 1;
+            if (finishedStop) at.finished += 1;
+            else at.open.set(String(o.status), (at.open.get(String(o.status)) ?? 0) + 1);
+            byDay.set(key, at);
+        }
+        auditPages += 1;
+        auditCursor = page.body.nextCursor ?? null;
+        if (!auditCursor) break;
+    }
+
+    if (auditFailed) {
+        say(`    ${auditFailed}`);
+    } else {
+        /* THE STOPS THAT PAY NOBODY. Reported even when it is nought,
+           because a zero here is the answer to a question somebody asked
+           and an absent line is not. */
+        say(`    Finished stops assigned to nobody:  ${orphanFinished}`);
+        if (orphanFinished > 0) {
+            say('      These pay NOBODY and appear on NO driver record, however the');
+            say('      delivery was recorded. Assigning them is the repair; pay follows');
+            say('      the assignment, never who pressed the button.');
+        }
+        say('');
+
+        if (bonusCents <= 0) {
+            say('    The completion bonus is off, so no day can lose one.');
+        } else {
+            say(`    Completion bonus  ${asMoney(bonusCents)} a day`
+                + (bonusFrom ? `, from ${bonusFrom}` : '')
+                + ' -- lost in full by ONE unfinished stop.');
+            say('');
+            const lost = [];
+            for (const [key, at] of byDay.entries()) {
+                const [day = '?', whose = '?'] = key.split('\u0000');
+                if (bonusFrom !== null && day < bonusFrom) continue;
+                if (at.assigned === at.finished) continue;
+                lost.push({ day, whose, ...at });
+            }
+            if (lost.length === 0) {
+                say('    Every driver finished everything they were given on every day in');
+                say('    this range. No bonus is missing.');
+            } else {
+                const total = lost.length * bonusCents;
+                say(`    ${lost.length} DRIVER-DAYS LOST THE BONUS: ${asMoney(total)} in total.`);
+                say('    Each of these is a driver who was paid per stop and nothing for');
+                say('    the day, which is most of the money and is why the figure looks');
+                say('    wrong to them rather than missing.');
+                say('');
+                for (const l of lost.sort((a, b) => (a.day === b.day ? a.whose.localeCompare(b.whose) : (a.day < b.day ? -1 : 1)))) {
+                    const open = [...l.open.entries()].sort().map(([s, n]) => `${n} ${s}`).join(', ');
+                    say(`      ${l.day}  ${l.whose.padEnd(26)} ${l.finished} of ${l.assigned} finished`
+                        + `   still ${open}`);
+                }
+            }
+        }
+    }
     say('');
 }
 
