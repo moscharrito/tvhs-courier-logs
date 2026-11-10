@@ -61,9 +61,17 @@ export interface OrderRow {
     sla: Sla;
 }
 
+/** What the Courier box resolved to. Staff identifiers only: this exists so
+ *  an empty table can explain itself, and nothing of a patient's is in it. */
+export interface CourierMatch {
+    typed: string;
+    matched: { username: string; name: string | null }[];
+}
+
 /** One page of the list, and how much of the whole it is. */
 interface OrderPage {
     orders: OrderRow[];
+    courierMatch?: CourierMatch;
     total: number;
     returned: number;
     nextCursor: string | null;
@@ -111,6 +119,9 @@ export function Orders() {
        request 200, page through them client-side, and give a dispatcher no
        way to tell that was not the day. */
     const [total, setTotal] = useState(0);
+    /* What the Courier box resolved to on the server, so an empty table can
+       say whether the name found nobody or found somebody with nothing on. */
+    const [courierMatch, setCourierMatch] = useState<CourierMatch | null>(null);
     const [cursor, setCursor] = useState<string | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
 
@@ -151,6 +162,7 @@ export function Orders() {
                 setTotal(page.total);
                 setCursor(page.nextCursor);
                 setSummary(page.summary);
+                setCourierMatch(page.courierMatch ?? null);
                 return;
             }
             const [page, sum] = await Promise.all([
@@ -161,6 +173,7 @@ export function Orders() {
             setTotal(page.total);
             setCursor(page.nextCursor);
             setSummary(sum);
+            setCourierMatch(page.courierMatch ?? null);
         } catch {
             setError('Could not load orders.');
             setOrders([]);
@@ -398,7 +411,28 @@ export function Orders() {
             <div className="izy-card">
                 {error && <div className="izy-alert error" role="alert">{error}</div>}
                 {orders === null ? <Loading label="Loading orders" /> : orders.length === 0 ? (
-                    <div className="izy-muted">No orders match these filters.</div>
+                    /* ── WHICH KIND OF EMPTY ───────────────────────────────
+                       "No orders match these filters" is true when nobody is
+                       called that AND when somebody is and has nothing on.
+                       The first is a typo to correct, the second is an
+                       answer, and reading one as the other is what made the
+                       Courier box look broken three times over. The server
+                       sends back what the text resolved to; this says it. */
+                    <div className="izy-muted">
+                        {courierMatch && courierMatch.matched.length === 0 ? (
+                            <>
+                                No courier here matches “{courierMatch.typed}”, so nothing can be
+                                listed. Check the spelling against the Courier column, or clear the box.
+                            </>
+                        ) : courierMatch && courierMatch.matched.length > 0 ? (
+                            <>
+                                {courierMatch.matched.map((m) => m.name ?? m.username).join(', ')}
+                                {courierMatch.matched.length === 1 ? ' matches' : ' match'} “{courierMatch.typed}”,
+                                but {courierMatch.matched.length === 1 ? 'has' : 'have'} no orders matching the
+                                other filters — try clearing the date or the status.
+                            </>
+                        ) : 'No orders match these filters.'}
+                    </div>
                 ) : (
                     <table className="izy-table">
                         <thead>

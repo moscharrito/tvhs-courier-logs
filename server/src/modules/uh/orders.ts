@@ -674,6 +674,10 @@ export function createOrdersRouter(
      * empty list rather than every order on the contract: silently dropping
      * an unmatched filter is how a dispatcher reads "2962 orders" as the
      * answer to "what has Rosa got". */
+    /** What the Courier box resolved to, so an empty table can say which
+     *  kind of empty it is. Staff identifiers only. */
+    interface CourierMatch { typed: string; exact: boolean; usernames: string[] }
+
     /* A literal somebody typed, as a LIKE pattern. The escape matters: a
        name with an underscore in it would otherwise match any character. */
     const likePattern = (text: string) => `%${text.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
@@ -713,9 +717,21 @@ export function createOrdersRouter(
     async function filterFor(
         req: Request,
         source?: Record<string, unknown>,
-    ): Promise<{ where: string[]; args: InValue[]; applied: string[] }> {
+    ): Promise<{ where: string[]; args: InValue[]; applied: string[]; courierMatch?: CourierMatch }> {
         const fromBody = source !== undefined;
         const q = (source ?? req.query) as Record<string, string | undefined>;
+        /* ── WHY THE TABLE IS EMPTY, WHICH IS NOT THE SAME QUESTION ────────
+         *
+         * "No orders match these filters" is true of two completely
+         * different situations and a dispatcher cannot tell them apart:
+         * nobody is called that, or somebody is and has nothing on. The
+         * first is a typo to correct, the second is an answer. Three people
+         * in a row read the first as a broken filter, which is fair -- the
+         * screen gave them nothing to read it any other way.
+         *
+         * So the resolution travels back with the page. Usernames and the
+         * names of staff, never anything of a patient's. */
+        let courierMatch: CourierMatch | undefined;
         const where: string[] = ['o.project_id = ?'];
         const args: InValue[] = [req.project!.id];
         const applied: string[] = [];
@@ -752,6 +768,7 @@ export function createOrdersRouter(
         else if (q['assignedTo']) {
             const typed = String(q['assignedTo']).trim();
             const { exact, usernames } = await couriersMatching(typed);
+            courierMatch = { typed, exact, usernames: [...usernames] };
             if (exact) {
                 /* A username typed in full means that one account and nothing
                    else. Widening it to everybody it is a substring of would
@@ -861,7 +878,7 @@ export function createOrdersRouter(
         const scope = leadScope(req);
         if (scope) { where.push(scope.sql); args.push(...scope.args); }
 
-        return { where, args, applied };
+        return { where, args, applied, ...(courierMatch ? { courierMatch } : {}) };
     }
 
     /* ───────────────────────────────────────────── the same list, as a file
@@ -957,7 +974,7 @@ export function createOrdersRouter(
      * list that nobody maintains -- so there is one function and the routes
      * are three lines each. */
     async function orderPage(req: Request, source?: Record<string, unknown>) {
-        const { where, args, applied } = await filterFor(req, source);
+        const { where, args, applied, courierMatch } = await filterFor(req, source);
         const q = (source ?? req.query) as Record<string, string | undefined>;
         const limit = Math.min(PAGE_MAX, Math.max(1, Number(q['limit'] ?? PAGE_DEFAULT) || PAGE_DEFAULT));
 
@@ -1016,11 +1033,23 @@ export function createOrdersRouter(
         await req.audit('order.list', 'order', null, {
             returned: rows.length, total, filters: applied, paged: after !== null,
         });
+        /* The NAMES of whoever matched, because the screen says them back:
+           "Rosa Delacroix has no orders matching the other filters" is an
+           answer, and a username is a thing a dispatcher has to decode. */
+        const matchNames = courierMatch ? await namesFor(client, courierMatch.usernames) : new Map();
         return {
             where,
             args,
             body: {
                 orders: rows,
+                ...(courierMatch ? {
+                    courierMatch: {
+                        typed: courierMatch.typed,
+                        matched: courierMatch.usernames.map((u) => ({
+                            username: u, name: displayName(u, matchNames),
+                        })),
+                    },
+                } : {}),
                 /* How many there are, against how many are in this response. A
                    caller that ignores both is at least no longer being told a
                    short list is the whole list. */

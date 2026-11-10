@@ -156,6 +156,38 @@ describe('the Courier box, filtering a list that prints names', () => {
         expect(idsOf(res.body)).toEqual(['Nina Simone']);
     });
 
+    /* ── WHICH KIND OF EMPTY ──────────────────────────────────────────
+     *
+     * An empty table answers two different questions and the screen could
+     * not tell them apart: nobody is called that, or somebody is and has
+     * nothing on. The first is a typo, the second is an answer, and reading
+     * one as the other is what made this filter look broken three times
+     * over. So the resolution comes back with the page. */
+    it('says it matched nobody, so an empty table is not a mystery', async () => {
+        const res = await admin.get(`${ORDERS}?assignedTo=${encodeURIComponent('Nobody At All')}`);
+        expect(res.body.orders).toEqual([]);
+        expect(res.body.courierMatch.typed).toBe('Nobody At All');
+        expect(res.body.courierMatch.matched).toEqual([]);
+    });
+
+    it('names who it matched when they simply have nothing on', async () => {
+        await admin.post('/api/users').send({
+            username: 'idle.courier', name: 'Idle Courier', password: 'courier-pass-123', role: 'driver',
+        });
+        await admin.put('/api/users/idle.courier/memberships/uh').send({ role: 'courier', settings: {} });
+
+        const res = await admin.get(`${ORDERS}?assignedTo=${encodeURIComponent('Idle Courier')}`);
+        expect(res.body.orders).toEqual([]);
+        /* The NAME, because that is what the screen says back -- a username
+           is a thing a dispatcher has to decode. */
+        expect(res.body.courierMatch.matched).toEqual([{ username: 'idle.courier', name: 'Idle Courier' }]);
+    });
+
+    it('carries no resolution when the box was not used', async () => {
+        const res = await admin.get(ORDERS);
+        expect(res.body.courierMatch).toBeUndefined();
+    });
+
     it('still understands unassigned', async () => {
         const res = await admin.get(`${ORDERS}?assignedTo=unassigned`);
         expect(idsOf(res.body)).toEqual(['Mary Lou Williams']);
