@@ -1,0 +1,25 @@
+-- Who opened this shift, when it was not the courier.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHY A COLUMN AND NOT JUST THE AUDIT TRAIL.
+--
+-- Dispatch can now put a driver on shift from the roster screen, which is a
+-- real need -- a driver whose phone is flat, a backlog being worked through
+-- by the office, a round somebody started before they were switched on. It
+-- is also a way for hours to appear on a timesheet that nobody on the road
+-- put there.
+--
+-- `ended_by` already exists for exactly this, and the shift sweep leans on
+-- it: rows it closes are stamped 'system' so a timesheet can tell a courier
+-- who signed off from one that was guessed at. The comment on that reads
+-- "nobody should be paid from a guess without knowing it is a guess", and a
+-- shift that STARTED by somebody else's hand is the same guess at the other
+-- end of the day.
+--
+-- The audit trail records it too, and the audit trail is not what anybody
+-- reconciles hours from. The export is, so the fact belongs on the row.
+--
+-- EMPTY MEANS THE COURIER THEMSELVES, which is every row written before
+-- today and the overwhelming majority of rows after it. The same spelling
+-- `ended_by` uses for a shift nobody has ended.
+ALTER TABLE `shifts` ADD `started_by` text DEFAULT '' NOT NULL;

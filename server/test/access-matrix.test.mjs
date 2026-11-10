@@ -478,6 +478,12 @@ const MATRIX = [
     ['GET', `${UH}/shifts`, UH_STAFF, 'who is out there'],
     ['GET', `${UH}/shifts/export.xlsx`, UH_STAFF, 'hours, beside the drivers record'],
     ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
+    /* The roster screen's switch (10 November 2026). The same two acts named
+       by driver rather than by shift id, because a dispatcher looking at the
+       roster has a name in front of them and not a shift number. Dispatch
+       only: a courier switching THEMSELVES on has its own route above. */
+    ['POST', `${UH}/shifts/for/nobody/start`, UH_STAFF, 'put a driver on shift from the roster'],
+    ['POST', `${UH}/shifts/for/nobody/end`, UH_STAFF, 'take a driver off shift from the roster'],
 
     /* --- the standing roster (28 October 2026). Which pharmacy each driver
        works from, which is what lets the board staff a proposed wave with

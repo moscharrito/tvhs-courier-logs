@@ -510,6 +510,16 @@ export const shifts = sqliteTable(
         projectId: integer('project_id').notNull().references(() => projects.id),
         courierUsername: text('courier_username').notNull(),
         startedAt: text('started_at').notNull(),
+        /** Who opened it, when it was not the courier.
+         *
+         *  EMPTY MEANS THEY STARTED IT THEMSELVES, which is every row
+         *  written before 10 November 2026 and most rows since. A
+         *  dispatcher's username means the office put them on shift from
+         *  the roster screen -- a driver with a flat phone, a backlog being
+         *  worked through from a desk -- and whoever reconciles hours needs
+         *  to be able to tell those apart. Same reasoning as `endedBy`
+         *  below, and the same reasoning the sweep stamps 'system' with. */
+        startedBy: text('started_by').notNull().default(''),
         /** Null while they are on it. This column IS the question everything
          *  else asks, which is why it is not a status string. */
         endedAt: text('ended_at'),

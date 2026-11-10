@@ -5,6 +5,8 @@
  *   GET    /api/projects/:pid/uh/shifts/mine         courier, am I on one
  *   GET    /api/projects/:pid/uh/shifts              staff, who is out there
  *   POST   /api/projects/:pid/uh/shifts/:id/end      staff, end somebody else's
+ *   POST   /api/projects/:pid/uh/shifts/for/:u/start staff, put a driver on shift
+ *   POST   /api/projects/:pid/uh/shifts/for/:u/end   staff, take a driver off shift
  *
  * WHY THIS EXISTS BEFORE ANYTHING ELSE IN PHASE 6. Three later tickets are
  * the same question in different clothes: who may be handed an unclaimed STAT
@@ -64,6 +66,36 @@
  * can end anybody's shift with a reason, and that is recorded against a named
  * person. A refusal a driver can wave away themselves is not a rule, and a
  * rule with no way out at all traps somebody at a locked door.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * AND SINCE 10 NOVEMBER 2026, DISPATCH CAN SWITCH ONE ON AS WELL AS OFF.
+ *
+ * Ending somebody else's shift has been here since the file was written;
+ * starting one had not, and the asymmetry was costing real mornings. A
+ * driver with a flat phone, a driver who forgot before leaving the counter,
+ * an afternoon of backlog being worked through from a desk: in every one of
+ * those the office knows the person is out there and the only account that
+ * could say so was the one in a van. Being on shift is what decides who may
+ * be given a delivery, so a driver nobody could switch on is a driver
+ * nobody could give work to.
+ *
+ * TWO THINGS KEEP IT HONEST.
+ *
+ * The SAME GATE as the driver's own route. A courier with no home pharmacy
+ * cannot be put on shift by dispatch either -- the rule exists because
+ * being on shift means "may be handed work", and there is no less reason
+ * for that to hold when somebody else pressed it. The refusal names the
+ * roster screen they are already looking at, which is where it is fixed.
+ *
+ * And it is WRITTEN ON THE ROW, not only in the audit trail. `started_by`
+ * carries the dispatcher's username; empty still means the courier did it
+ * themselves. Hours are reconciled from the export, and an hour somebody at
+ * a desk opened is a different kind of hour from one a driver opened at a
+ * counter. The sweep already takes this care at the other end of the day.
+ *
+ * WHAT IT IS NOT. It is not a check-in and it is not attendance. It says
+ * "this person is available for work now", which is the only thing anything
+ * downstream reads it as.
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -97,6 +129,7 @@ interface ShiftRow {
     id: number;
     courier_username: string;
     started_at: string;
+    started_by: string;
     ended_at: string | null;
     ended_by: string;
     ended_reason: string;
@@ -106,6 +139,9 @@ const present = (r: Record<string, unknown>) => ({
     id: Number(r['id']),
     courierUsername: String(r['courier_username']),
     startedAt: String(r['started_at']),
+    /* Empty when the courier started it themselves, which is the normal
+       case and every row written before the column existed. */
+    startedBy: String(r['started_by'] ?? ''),
     endedAt: r['ended_at'] === null ? null : String(r['ended_at']),
     endedBy: String(r['ended_by']),
     endedReason: String(r['ended_reason']),
@@ -307,6 +343,11 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
                 ? ''
                 : Math.round(((Date.parse(v.endedAt) - Date.parse(v.startedAt)) / 3_600_000) * 100) / 100,
             open: v.open ? 'yes' : 'no',
+            /* Blank for the ordinary case -- the courier opened it -- so a
+               column of forty blanks and three names reads as "these three
+               were switched on from a desk", which is the question it is
+               here to answer. */
+            startedBy: v.startedBy,
             endedBy: v.endedBy,
             endedReason: v.endedReason,
         }));
@@ -319,6 +360,7 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
                 { header: 'Ended', key: 'endedAt', width: 22 },
                 { header: 'Hours', key: 'hours', width: 9 },
                 { header: 'Still open', key: 'open', width: 11 },
+                { header: 'Started by', key: 'startedBy', width: 18 },
                 { header: 'Ended by', key: 'endedBy', width: 18 },
                 { header: 'Ended because', key: 'endedReason', width: 30 },
             ],
@@ -327,6 +369,7 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
             about: [
                 ['What this is', 'When each courier was on shift.'],
                 ['Hours', 'Blank while a shift is still open, because a figure that changes on every download cannot be reconciled against.'],
+                ['Started by', 'Blank when the courier started it themselves. A name means dispatch put them on shift from the roster screen.'],
                 ['Times', req.project!.timezone],
             ],
             containsPatientData: false,
@@ -382,6 +425,133 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
             courier: String(row['courier_username']), endedBy: 'dispatch', carrying: held.length,
         });
         res.json({ ok: true, carrying: held });
+    }));
+
+    /* ───────────────────────── the roster screen's switch ──────────────────
+     *
+     * The same two acts as above, named by DRIVER rather than by shift id,
+     * because that is what the person pressing them has in front of them.
+     * A dispatcher looking at the roster knows a name; they do not know
+     * that the name has shift 4,122 open, and making the screen fetch the
+     * list of open shifts to find out would be a second request that can
+     * disagree with the first.
+     *
+     * `/for/` rather than `/:username/`, so nothing here can ever be read
+     * as the `/:id/end` route above with a word where a number should be.
+     */
+
+    /** Who this is, on this project: role and whether the account still works. */
+    async function driverOn(projectId: number, username: string) {
+        const rs = await run(
+            `SELECT u.name, u.status, m.role,
+                    json_extract(m.settings, '$.homeSiteId') AS home_site_id
+               FROM users u JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
+              WHERE u.username = ?`,
+            [projectId, username],
+        );
+        const r = rs.rows[0];
+        if (!r) return null;
+        const home = r['home_site_id'];
+        return {
+            name: String(r['name']),
+            status: String(r['status']),
+            role: String(r['role']),
+            homeSiteId: home === null || home === undefined ? null : Number(home),
+        };
+    }
+
+    router.post('/for/:username/start', staff, wrap(async (req, res) => {
+        const project = req.project!;
+        const username = String(req.params['username'] ?? '').trim().toLowerCase();
+        const who = await driverOn(project.id, username);
+        if (who === null) {
+            res.status(404).json({ error: 'That person is not on this project.' });
+            return;
+        }
+        if (who.role !== 'courier' && who.role !== 'lead') {
+            res.status(409).json({
+                error: `${username} is on this project as ${who.role}, not as a driver.`,
+                code: 'shift.notADriver',
+            });
+            return;
+        }
+        /* A DISABLED ACCOUNT CANNOT BE PUT ON SHIFT. They cannot sign in, so
+           they cannot record a stop, and an open shift would offer them to
+           the board as somebody who could take the work. Said in the words
+           the roster row itself uses. */
+        if (who.status !== 'active') {
+            res.status(409).json({
+                error: `${who.name}'s account is disabled, so they cannot be given work. Switch the account back on first.`,
+                code: 'shift.accountDisabled',
+            });
+            return;
+        }
+
+        /* IDEMPOTENT, for the reason the courier's own route is: a
+           dispatcher who clicks twice on a slow page has not done anything
+           wrong, and a second shift is not a thing the table allows anyway.
+           The answer says they were already on. */
+        const already = await openShiftFor(project.id, username);
+        if (already) {
+            res.json({ ...present(already as unknown as Record<string, unknown>), alreadyOn: true });
+            return;
+        }
+
+        /* THE SAME GATE AS THE DRIVER'S OWN ROUTE, and deliberately not
+           softer because an administrator is asking. Being on shift means
+           "may be handed a delivery", and a driver with no counter cannot
+           be given one sensibly. Couriers only: a lead holding a shift is
+           covering a round and has no home counter to check. */
+        if (who.role === 'courier' && who.homeSiteId === null) {
+            await req.audit('shift.start_refused', 'membership', username, { reason: 'no home pharmacy', by: 'dispatch' });
+            res.status(409).json({
+                error: `${who.name} has no home pharmacy, so they cannot go on shift. `
+                    + 'Give them one on this screen first.',
+                code: 'shift.noHomeSite',
+            });
+            return;
+        }
+
+        const by = actorOf(req);
+        const ins = await run(
+            'INSERT INTO shifts (project_id, courier_username, started_at, started_by) VALUES (?, ?, ?, ?) RETURNING *',
+            [project.id, username, new Date().toISOString(), by],
+        );
+        const row = ins.rows[0]!;
+        await req.audit('shift.started', 'shift', String(row['id']), { courier: username, startedBy: 'dispatch' });
+        res.status(201).json({ ...present(row), alreadyOn: false });
+    }));
+
+    router.post('/for/:username/end', staff, wrap(async (req, res) => {
+        const project = req.project!;
+        const username = String(req.params['username'] ?? '').trim().toLowerCase();
+        /* THE REASON IS REQUIRED HERE TOO. Somebody else decided this
+           driver's day was over, and the question "why" has one answer on
+           the row or no answer at all. Same schema as the by-id route. */
+        const body = parse(EndSomebodyElses, req.body ?? {}, res);
+        if (!body) return;
+
+        const open = await openShiftFor(project.id, username);
+        if (!open) {
+            /* 409 and not 404: the person exists, the shift does not. A
+               screen that said "not found" would send a dispatcher looking
+               for a spelling mistake. */
+            res.status(409).json({ error: 'They are not on shift.', code: 'shift.notOn' });
+            return;
+        }
+
+        const held = await carrying(project.id, username);
+        await run(
+            'UPDATE shifts SET ended_at = ?, ended_by = ?, ended_reason = ? WHERE id = ?',
+            [new Date().toISOString(), actorOf(req), body.reason, open.id],
+        );
+        await req.audit('shift.ended', 'shift', String(open.id), {
+            courier: username, endedBy: 'dispatch', carrying: held.length,
+        });
+        /* The count comes back so the screen can say it. Ending a shift over
+           a loaded van is allowed -- see the by-id route -- and the person
+           who did it should be told what was still out. */
+        res.json({ ok: true, carrying: held.length });
     }));
 
     return router;

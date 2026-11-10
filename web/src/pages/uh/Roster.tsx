@@ -272,6 +272,66 @@ export function Roster() {
         }
     };
 
+    /* ── ON SHIFT AND OFF SHIFT, FROM HERE ─────────────────────────────────
+     *
+     * WHY THIS BUTTON EXISTS. Being on shift is what decides who may be
+     * handed a delivery -- the board draws the available drivers from it and
+     * the unclaimed-work sweep reads it. Until now the only account that
+     * could open one was the driver's own, on their own phone. A flat
+     * battery, a driver who forgot before pulling out of the counter, an
+     * afternoon of backlog being worked through from a desk: in all three
+     * the office knows perfectly well the person is out there, and could not
+     * say so. Dispatch could already end a shift and not start one, which is
+     * an asymmetry nobody chose.
+     *
+     * IT IS NOT A TIMECLOCK. It says "this person is available for work
+     * now", which is the only thing anything downstream reads it as.
+     *
+     * The shift carries the name of whoever pressed it, so hours opened from
+     * a desk can be told apart from hours a driver opened at a counter. See
+     * `started_by` in modules/uh/shifts.ts.
+     *
+     * THE REASON IS ASKED FOR ON THE WAY OFF AND NOT ON THE WAY ON, which is
+     * the server's rule and not this screen's invention: ending somebody
+     * else's day is a decision about a person and the question "why" has one
+     * answer on the record or no answer at all. Starting one needs no excuse.
+     */
+    const setShift = async (driver: RosterDriver, on: boolean, reason = '') => {
+        setSaving(driver.username);
+        setMsg(null);
+        try {
+            const res = await api<{ carrying?: number; alreadyOn?: boolean }>(
+                `/api/projects/${code}/uh/shifts/for/${encodeURIComponent(driver.username)}/${on ? 'start' : 'end'}`,
+                { method: 'POST', json: on ? {} : { reason } },
+            );
+            setMsg({
+                kind: 'ok',
+                text: on
+                    ? (res.alreadyOn === true
+                        ? `${driver.name} was already on shift`
+                        : `${driver.name} is on shift and can be given work`)
+                    /* WHAT WAS STILL OUT, SAID OUT LOUD. The server allows a
+                       shift to end over a loaded van -- a courier at a
+                       pharmacy that has shut cannot hand anything back -- and
+                       the person who just ended it is the person who should
+                       hear about the packages. */
+                    : `${driver.name} is off shift`
+                        + ((res.carrying ?? 0) > 0
+                            ? ` · ${res.carrying} ${res.carrying === 1 ? 'delivery is' : 'deliveries are'} still recorded as with them`
+                            : ''),
+            });
+            await load();
+        } catch (err) {
+            setMsg({
+                kind: 'error',
+                text: err instanceof ApiError ? err.message : `Could not change the shift for ${driver.name}`,
+            });
+            await load();
+        } finally {
+            setSaving(null);
+        }
+    };
+
     /* Same shape as setHome, and deliberately a second function rather than
        one with a flag: they are two routes, two audit entries and two
        sentences on screen, and the only thing they share is the spinner. */
@@ -410,6 +470,29 @@ export function Roster() {
                         onSet={(d, v) => { void setHome(d, v); }}
                         onPhone={(d, v) => { void setPhone(d, v); }}
                         onCover={(d, siteId, on) => { void setCovers(d, siteId, on); }}
+                        onShiftChange={(d, on) => {
+                            if (on) { void setShift(d, true); return; }
+                            /* PRE-FILLED AND STILL EDITABLE. A free box that
+                               has to be typed forty-three times gets "x"
+                               typed into it, which is a reason in the same
+                               way an empty field is. A default that says
+                               what happened, which somebody can replace with
+                               what actually happened, keeps the record
+                               worth reading. */
+                            const reason = window.prompt(
+                                `Take ${d.name} off shift?\n\n`
+                                + 'They stop being offered work straight away. Say why: it goes on the '
+                                + 'shift record under your name, and it is what anybody reading their '
+                                + 'hours later will see.',
+                                'Taken off shift by dispatch',
+                            );
+                            if (reason === null) return;
+                            if (reason.trim().length < 5) {
+                                setMsg({ kind: 'error', text: 'Say why in a few words. Nothing was changed.' });
+                                return;
+                            }
+                            void setShift(d, false, reason.trim());
+                        }}
                         onReset={(d) => {
                             /* Confirmed because it signs them out. A driver
                                mid-round loses the app until somebody reads
@@ -452,7 +535,7 @@ export function Roster() {
  * default because the thing this page is read to find -- a counter with
  * nobody on it -- has to be visible without opening anything.
  */
-function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCover, onReset, onRemove }: {
+function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCover, onShiftChange, onReset, onRemove }: {
     id: string;
     group: { key: string; title: string; drivers: RosterDriver[]; site: RosterSite | null };
     code: string;
@@ -462,6 +545,7 @@ function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCove
     onSet: (d: RosterDriver, value: string) => void;
     onPhone: (d: RosterDriver, value: string) => void;
     onCover: (d: RosterDriver, siteId: number, on: boolean) => void;
+    onShiftChange: (d: RosterDriver, on: boolean) => void;
     onReset: (d: RosterDriver) => void;
     onRemove: (d: RosterDriver) => void;
 }) {
@@ -544,6 +628,22 @@ function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCove
                     </div>
                     {isAdmin && (
                         <div className="izy-roster-admin">
+                            {/* FIRST, because it is the one that gets pressed
+                                daily and the other two are rare and heavy.
+
+                                IT SAYS WHAT IT WILL DO, not what is true: the
+                                state is already on the row as a pill, and a
+                                button labelled with the current state is the
+                                oldest way to make somebody click the opposite
+                                of what they meant. */}
+                            <button
+                                type="button"
+                                className="izy-btn secondary small"
+                                disabled={saving === d.username}
+                                onClick={() => onShiftChange(d, !d.onShift)}
+                            >
+                                {d.onShift ? 'Take off shift' : 'Put on shift'}
+                            </button>
                             <button
                                 type="button"
                                 className="izy-btn secondary small"

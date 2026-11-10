@@ -514,3 +514,132 @@ describe('resetting and removing', () => {
         expect(confirm.mock.calls[0]?.[0]).toMatch(/past deliveries and their signatures all stay/);
     });
 });
+
+/* ── ON SHIFT AND OFF SHIFT, FROM THE ROSTER (10 November 2026) ────────────
+ *
+ * Being on shift decides who may be handed a delivery. Until now the only
+ * account that could open one was the driver's own phone, so a flat battery
+ * or a driver who pulled away from the counter without tapping was a driver
+ * dispatch could not give work to. Ending somebody else's shift had been
+ * possible since the file was written; starting one had not.
+ */
+describe('putting a driver on shift from here', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    const START = 'POST /api/projects/uh/uh/shifts/for/dana.whitfield/start';
+    const END = 'POST /api/projects/uh/uh/shifts/for/dana.whitfield/end';
+
+    it('offers to put an off-shift driver on, and says what it will do', async () => {
+        /* THE LABEL IS THE ACTION, not the state. The state is already on
+           the row as a pill, and a button labelled with the current state
+           is the oldest way to make somebody click the opposite of what
+           they meant. */
+        renderAsAdmin();
+        await screen.findByText('Dana Whitfield');
+        expect(screen.getByRole('button', { name: 'Put on shift' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Take off shift' })).not.toBeInTheDocument();
+    });
+
+    it('offers the opposite to somebody already out there', async () => {
+        renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ onShift: true })] }),
+        });
+        await screen.findByText('Dana Whitfield');
+        expect(screen.getByRole('button', { name: 'Take off shift' })).toBeInTheDocument();
+    });
+
+    it('opens the shift without asking anything, because starting one needs no excuse', async () => {
+        const mocked = renderAsAdmin({
+            [START]: { status: 201, body: { id: 7, open: true, alreadyOn: false, courierUsername: 'dana.whitfield' } },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Put on shift' }));
+
+        await waitFor(() => { expect(mocked.calls).toContain(START); });
+        expect(await screen.findByRole('status')).toHaveTextContent(/is on shift and can be given work/);
+    });
+
+    it('relays the server’s refusal rather than inventing a success', async () => {
+        /* The gate is NOT softer because an administrator is asking: a
+           driver with no counter cannot be handed work, which is why the
+           courier's own route refuses it too. The dispatcher is looking at
+           the screen where that is fixed. */
+        const mocked = renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({
+                drivers: [driver({ homeSiteId: null, homeSiteCode: null, homeSiteName: null })],
+            }),
+            [START]: {
+                status: 409,
+                body: { error: 'Dana Whitfield has no home pharmacy, so they cannot go on shift. Give them one on this screen first.', code: 'shift.noHomeSite' },
+            },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Put on shift' }));
+
+        await waitFor(() => { expect(mocked.calls).toContain(START); });
+        expect(await screen.findByRole('status')).toHaveTextContent(/no home pharmacy/);
+    });
+
+    it('asks why before taking somebody off, and sends what was typed', async () => {
+        vi.spyOn(window, 'prompt').mockReturnValue('Went home without tapping off; confirmed by telephone.');
+        const mocked = renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ onShift: true })] }),
+            [END]: { ok: true, carrying: 0 },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Take off shift' }));
+
+        await waitFor(() => { expect(mocked.calls).toContain(END); });
+        expect((mocked.bodies[END] as { reason: string }).reason)
+            .toBe('Went home without tapping off; confirmed by telephone.');
+    });
+
+    it('changes nothing when the dispatcher backs out of the question', async () => {
+        vi.spyOn(window, 'prompt').mockReturnValue(null);
+        const mocked = renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ onShift: true })] }),
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Take off shift' }));
+
+        await waitFor(() => { expect(mocked.calls.some((c) => c.includes('/shifts/'))).toBe(false); });
+    });
+
+    it('refuses a reason that is not one, without troubling the server', async () => {
+        /* The server demands five characters. Catching it here means the
+           dispatcher is told on the screen they are looking at rather than
+           by a 400 relayed out of context. */
+        vi.spyOn(window, 'prompt').mockReturnValue('  x  ');
+        const mocked = renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ onShift: true })] }),
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Take off shift' }));
+
+        expect(await screen.findByRole('status')).toHaveTextContent(/Say why in a few words/);
+        expect(mocked.calls.some((c) => c.includes('/shifts/'))).toBe(false);
+    });
+
+    it('says what was still in the van when a loaded shift is ended', async () => {
+        /* The server allows it -- a courier at a pharmacy that has shut
+           cannot hand anything back -- and the person who just ended it is
+           the person who should hear about the packages. */
+        vi.spyOn(window, 'prompt').mockReturnValue('Pharmacy shut; packages stay in the van overnight.');
+        renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: [driver({ onShift: true })] }),
+            [END]: { ok: true, carrying: 3 },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Take off shift' }));
+
+        expect(await screen.findByRole('status')).toHaveTextContent(/3 deliveries are still recorded as with them/);
+    });
+
+    it('is not offered to a site manager, who cannot call the endpoint', async () => {
+        /* The same rule as New password and Off the roster above: showing a
+           button that 403s is worse than not showing it. */
+        renderRoster();
+        await screen.findByText('Dana Whitfield');
+        expect(screen.queryByRole('button', { name: 'Put on shift' })).not.toBeInTheDocument();
+    });
+});

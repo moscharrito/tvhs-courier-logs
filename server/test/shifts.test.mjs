@@ -285,3 +285,137 @@ describe('the escape hatch', () => {
         expect(res.body.code).toBe('shift.alreadyEnded');
     });
 });
+
+/* ── THE ROSTER SCREEN'S SWITCH (10 November 2026) ─────────────────────────
+ *
+ * Dispatch could end somebody else's shift and could not start one, which
+ * is an asymmetry nobody chose and which cost real mornings: a flat battery,
+ * a driver who pulled out of the counter without tapping, an afternoon of
+ * backlog worked through from a desk. Being on shift is what decides who may
+ * be handed a delivery, so a driver nobody could switch on was a driver
+ * nobody could give work to.
+ *
+ * The tests worth reading are the two refusals. The gate is deliberately NOT
+ * softer because an administrator is asking.
+ */
+describe('dispatch putting a driver on shift', () => {
+    const FOR = (u) => `${SHIFTS}/for/${u}`;
+
+    /** A driver of this block's own, so the ordering of the file's other
+     *  tests -- which share one courier and leave shifts open on purpose --
+     *  cannot decide what these ones see. */
+    async function makeDriver(username, { home = true, active = true } = {}) {
+        await admin.post('/api/users').send({ username, name: `Test ${username}`, password: 'shift-pass-1', role: 'driver' });
+        await admin.put(`/api/users/${username}/memberships/uh`).send({
+            role: 'courier', settings: home ? { homeSiteId: siteId } : {},
+        });
+        if (!active) await admin.patch(`/api/users/${username}`).send({ status: 'disabled' });
+        return username;
+    }
+
+    it('opens a shift for somebody who never touched a phone, and signs the row', async () => {
+        const u = await makeDriver('bo.shift');
+        const res = await admin.post(`${FOR(u)}/start`).send({});
+        expect(res.status, res.text).toBe(201);
+        expect(res.body.open).toBe(true);
+        expect(res.body.alreadyOn).toBe(false);
+        expect(res.body.courierUsername).toBe(u);
+
+        /* THE PART THAT MATTERS LATER. Hours are reconciled from the export,
+           and an hour somebody at a desk opened is a different kind of hour
+           from one a driver opened at a counter. `ended_by` has always taken
+           this care at the other end of the day. */
+        expect(res.body.startedBy).toBe('admin');
+
+        // And the driver's own phone agrees, because it is one row.
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === u && s.open)).toBe(true);
+    });
+
+    it('leaves a courier who started their own unsigned, which is how they are told apart', async () => {
+        const mine = (await ana.get(`${SHIFTS}/mine`)).body.shift
+            ?? (await ana.post(`${SHIFTS}/start`).send({})).body;
+        expect(mine.startedBy).toBe('');
+    });
+
+    it('answers a second click with the shift that is already open', async () => {
+        /* The same reasoning as the courier's own route: a dispatcher who
+           clicks twice on a slow page has not done anything wrong, and the
+           partial unique index would not allow a second row anyway. */
+        const first = (await admin.get(SHIFTS)).body.shifts.find((s) => s.courierUsername === 'bo.shift');
+        const again = await admin.post(`${FOR('bo.shift')}/start`).send({});
+        expect(again.status).toBe(200);
+        expect(again.body.alreadyOn).toBe(true);
+        expect(again.body.id).toBe(first.id);
+    });
+
+    it('refuses a driver with no pharmacy, and names the screen that fixes it', async () => {
+        /* NOT SOFTER BECAUSE AN ADMINISTRATOR IS ASKING. Being on shift
+           means "may be handed a delivery" and a driver with no counter
+           cannot be given one sensibly -- which is the whole reason the
+           courier's own route has this gate. */
+        const u = await makeDriver('nohome.roster', { home: false });
+        const res = await admin.post(`${FOR(u)}/start`).send({});
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('shift.noHomeSite');
+        expect(res.body.error).toMatch(/home pharmacy/i);
+
+        // And nothing was opened, which the status alone does not prove.
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === u)).toBe(false);
+    });
+
+    it('refuses a disabled account, because they cannot record a stop either', async () => {
+        /* An open shift offers them to the board as somebody who could take
+           the work, and they cannot sign in to do it. */
+        const u = await makeDriver('gone.roster', { active: false });
+        const res = await admin.post(`${FOR(u)}/start`).send({});
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('shift.accountDisabled');
+    });
+
+    it('refuses somebody who is not on the project at all', async () => {
+        const res = await admin.post(`${FOR('nobody.here')}/start`).send({});
+        expect(res.status).toBe(404);
+    });
+
+    it('is not open to a courier, who has their own route for their own shift', async () => {
+        const res = await ana.post(`${FOR('bo.shift')}/start`).send({});
+        expect(res.status).toBe(403);
+    });
+});
+
+describe('dispatch taking a driver off shift', () => {
+    const FOR = (u) => `${SHIFTS}/for/${u}`;
+
+    it('closes it under the dispatcher name, with the reason they gave', async () => {
+        const res = await admin.post(`${FOR('bo.shift')}/end`).send({
+            reason: 'Went home without tapping off; confirmed by telephone.',
+        });
+        expect(res.status, res.text).toBe(200);
+
+        const rows = await srv.core.client.execute({
+            sql: 'SELECT ended_by, ended_reason FROM shifts WHERE courier_username = ? ORDER BY id DESC LIMIT 1',
+            args: ['bo.shift'],
+        });
+        expect(String(rows.rows[0].ended_by)).toBe('admin');
+        expect(String(rows.rows[0].ended_reason)).toMatch(/confirmed by telephone/);
+
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === 'bo.shift' && s.open)).toBe(false);
+    });
+
+    it('will not take a reason that is not one', async () => {
+        await admin.post(`${FOR('bo.shift')}/start`).send({});
+        expect((await admin.post(`${FOR('bo.shift')}/end`).send({ reason: '' })).status).toBe(400);
+        /* Still on shift. A rejected reason must not half-close a day. */
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === 'bo.shift' && s.open)).toBe(true);
+    });
+
+    it('says plainly when they are not on shift, rather than reporting them missing', async () => {
+        /* 409 and not 404: the person exists, the shift does not, and a
+           screen saying "not found" would send a dispatcher looking for a
+           spelling mistake in a name they picked off a list. */
+        await admin.post(`${FOR('bo.shift')}/end`).send({ reason: 'Clearing the board for the day.' });
+        const res = await admin.post(`${FOR('bo.shift')}/end`).send({ reason: 'Clearing the board again.' });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('shift.notOn');
+    });
+});
