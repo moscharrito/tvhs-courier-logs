@@ -654,8 +654,62 @@ export function createOrdersRouter(
     /* The filters the staff screen offers, in one place so the list and the
      * summary count exactly the same set. A courier's clause is added last
      * and cannot be widened by a query parameter. */
-    function filterFor(req: Request): { where: string[]; args: InValue[]; applied: string[] } {
-        const q = req.query as Record<string, string | undefined>;
+    /* ── WHO THE DISPATCHER MEANT ─────────────────────────────────────────
+     *
+     * The Courier box matched `assigned_to_username = ?`, exactly and case
+     * sensitively, against a column holding usernames -- while the list
+     * beside it printed NAMES. So a dispatcher reading "Rosa Delacroix" off
+     * a row and typing it into the box filtering that same list got an empty
+     * table, and so did "Rosa", because the username is `rosa`. The
+     * filter was answering a question nobody had asked.
+     *
+     * Resolved against `users` instead: an exact username first, so typing a
+     * username still means that one account and nothing else, and only when
+     * there is no such account does it fall back to a substring of either
+     * the username or the name. Several matches are all included -- this is
+     * a filter, not a login, and narrowing "mar" to one of two Marias by
+     * guessing would be worse than showing both.
+     *
+     * NOBODY MATCHING IS NOT NO FILTER. A name with no account returns an
+     * empty list rather than every order on the contract: silently dropping
+     * an unmatched filter is how a dispatcher reads "2962 orders" as the
+     * answer to "what has Rosa got". */
+    async function couriersMatching(text: string): Promise<string[]> {
+        const wanted = text.trim();
+        if (wanted === '') return [];
+
+        const exact = await client.execute({
+            /* COLLATE NOCASE because `=` is case sensitive in SQLite and a
+               dispatcher types Rosa as often as rosa. */
+            sql: 'SELECT username FROM users WHERE username = ? COLLATE NOCASE',
+            args: [wanted],
+        });
+        if (exact.rows.length > 0) return exact.rows.map((r) => String(r['username']));
+
+        /* LIKE is already case insensitive for ASCII in SQLite, so no
+           COLLATE here. The escape matters: a name with an underscore in it
+           would otherwise match any single character. */
+        const like = `%${wanted.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+        const rs = await client.execute({
+            sql: `SELECT username FROM users
+                  WHERE username LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'
+                  LIMIT 50`,
+            args: [like, like],
+        });
+        return rs.rows.map((r) => String(r['username']));
+    }
+
+    /* The filters, read from somewhere that is NOT always the query string.
+     *
+     * `source` exists for one reason: a patient's name may be searched for
+     * and may not appear in a URL. See the POST /search route below. Every
+     * other filter behaves identically whichever way it arrived. */
+    async function filterFor(
+        req: Request,
+        source?: Record<string, unknown>,
+    ): Promise<{ where: string[]; args: InValue[]; applied: string[] }> {
+        const fromBody = source !== undefined;
+        const q = (source ?? req.query) as Record<string, string | undefined>;
         const where: string[] = ['o.project_id = ?'];
         const args: InValue[] = [req.project!.id];
         const applied: string[] = [];
@@ -689,7 +743,40 @@ export function createOrdersRouter(
             }
         }
         if (q['assignedTo'] === 'unassigned') { where.push('o.assigned_to_username IS NULL'); applied.push('assignedTo'); }
-        else if (q['assignedTo']) { where.push('o.assigned_to_username = ?'); args.push(String(q['assignedTo'])); applied.push('assignedTo'); }
+        else if (q['assignedTo']) {
+            const couriers = await couriersMatching(String(q['assignedTo']));
+            if (couriers.length === 0) {
+                /* Matched nobody. See couriersMatching: an empty table is the
+                   honest answer and the whole contract is not. */
+                where.push('1 = 0');
+            } else {
+                where.push(`o.assigned_to_username IN (${couriers.map(() => '?').join(',')})`);
+                args.push(...couriers);
+            }
+            applied.push('assignedTo');
+        }
+        /* ── A PATIENT'S NAME, AND ONLY FROM A REQUEST BODY ────────────────
+         *
+         * Asked for on 10 November: dispatch take calls from patients who
+         * give a name and not a prescription number. The reason this screen
+         * refused it is still true and is printed on the screen -- a name
+         * typed into a filter ends up in a URL, and URLs reach browser
+         * history, proxies, referrers and every access log on the way.
+         *
+         * So the capability is here and the URL is not: honoured only when
+         * it arrived in a body, never from req.query. A ?recipientName= on
+         * the GET is ignored rather than served, so no link, bookmark or
+         * pasted address can ever carry one.
+         *
+         * The audit trail records that the filter was USED, never its value:
+         * `applied` holds names of filters, and the search term is not one
+         * of the things written down. */
+        if (fromBody && typeof q['recipientName'] === 'string' && q['recipientName'].trim() !== '') {
+            const wanted = q['recipientName'].trim().replace(/[%_\\]/g, (c) => `\\${c}`);
+            where.push("o.recipient_name LIKE ? ESCAPE '\\'");
+            args.push(`%${wanted}%`);
+            applied.push('recipientName');
+        }
         if (q['zone'] === 'out_of_area') { where.push('o.zone IS NULL'); applied.push('zone'); }
         else if (q['zone']) { where.push('o.zone = ?'); args.push(Number(q['zone'])); applied.push('zone'); }
 
@@ -759,7 +846,7 @@ export function createOrdersRouter(
      * Declared before '/:id' or Express reads the filename as an order id.
      */
     router.get('/export.xlsx', readers, wrap(async (req, res) => {
-        const { where, args, applied } = filterFor(req);
+        const { where, args, applied } = await filterFor(req);
         const rs = await client.execute({
             sql: `SELECT o.*, s.name AS site_name FROM orders o
                   LEFT JOIN sites s ON s.id = o.site_id
@@ -827,9 +914,17 @@ export function createOrdersRouter(
         });
     }));
 
-    router.get('/', readers, wrap(async (req, res) => {
-        const { where, args, applied } = filterFor(req);
-        const q = req.query as Record<string, string | undefined>;
+    /* ONE PAGING IMPLEMENTATION, TWO WAYS IN.
+     *
+     * GET / is the list every screen has always used. POST /search is the
+     * same list reached with a body, which exists so that a patient's name
+     * can be a filter without becoming a URL. They must return the same
+     * shape from the same query or the second one is a subtly different
+     * list that nobody maintains -- so there is one function and the routes
+     * are three lines each. */
+    async function orderPage(req: Request, source?: Record<string, unknown>) {
+        const { where, args, applied } = await filterFor(req, source);
+        const q = (source ?? req.query) as Record<string, string | undefined>;
         const limit = Math.min(PAGE_MAX, Math.max(1, Number(q['limit'] ?? PAGE_DEFAULT) || PAGE_DEFAULT));
 
         /* The total over the same filters, on every page, so a caller always
@@ -887,22 +982,52 @@ export function createOrdersRouter(
         await req.audit('order.list', 'order', null, {
             returned: rows.length, total, filters: applied, paged: after !== null,
         });
-        res.json({
-            orders: rows,
-            /* How many there are, against how many are in this response. A
-               caller that ignores both is at least no longer being told a
-               short list is the whole list. */
-            total,
-            returned: rows.length,
-            nextCursor: hasMore && last ? encodeCursor(last) : null,
-        });
+        return {
+            where,
+            args,
+            body: {
+                orders: rows,
+                /* How many there are, against how many are in this response. A
+                   caller that ignores both is at least no longer being told a
+                   short list is the whole list. */
+                total,
+                returned: rows.length,
+                nextCursor: hasMore && last ? encodeCursor(last) : null,
+            },
+        };
+    }
+
+    router.get('/', readers, wrap(async (req, res) => {
+        res.json((await orderPage(req)).body);
+    }));
+
+    /* ── SEARCHING BY A PATIENT'S NAME ────────────────────────────────────
+     *
+     * A POST that reads rather than writes, which is unusual enough to say
+     * why: the filter it exists for is a person's name, and a GET puts its
+     * filters in the URL. This screen has refused the feature since it was
+     * built for exactly that reason, and the refusal is still printed above
+     * the box. A body keeps the name out of browser history, out of the
+     * referrer sent to anything the page loads, and out of every access log
+     * between here and the laptop.
+     *
+     * The counts come back WITH the page rather than from a second request,
+     * because the summary route is a GET and cannot be told the name. A
+     * header reading "2962 orders" above a table of three is the disagreement
+     * modules/uh/orders.ts already warns about; this makes it impossible
+     * rather than merely unlikely. */
+    router.post('/search', readers, wrap(async (req, res) => {
+        const source = (req.body ?? {}) as Record<string, unknown>;
+        const { where, args, body } = await orderPage(req, source);
+        res.json({ ...body, summary: await summaryOf(where, args) });
     }));
 
     /* Counts over the same filtered set, so the screen's header cannot
      * disagree with its own table. Declared before /:id so that "summary" is
      * not read as an order id. */
-    router.get('/summary', readers, wrap(async (req, res) => {
-        const { where, args } = filterFor(req);
+    /* The counts, over whatever filter it is handed. Shared with POST
+       /search so a name-filtered table and its header cannot disagree. */
+    async function summaryOf(where: string[], args: InValue[]) {
         const rs = await client.execute({
             sql: `SELECT o.status, o.due_at, o.arrived_at, o.delivered_at FROM orders o WHERE ${where.join(' AND ')}`,
             args,
@@ -927,7 +1052,7 @@ export function createOrdersRouter(
             if (sla.state === 'missed') missed += 1;
         }
         const measured = met + missed;
-        res.json({
+        return {
             total: rs.rows.length,
             byStatus,
             overdue,
@@ -936,7 +1061,12 @@ export function createOrdersRouter(
              * completion rate, which is a different figure and whose formula
              * in Scope 1.2.5 is written inverted; reporting is ticket 3.3. */
             onTime: { met, missed, measured, rate: measured === 0 ? null : Math.round((met / measured) * 1000) / 10 },
-        });
+        };
+    }
+
+    router.get('/summary', readers, wrap(async (req, res) => {
+        const { where, args } = await filterFor(req);
+        res.json(await summaryOf(where, args));
     }));
 
     /* ---------------------------------------- out-of-area authorisation

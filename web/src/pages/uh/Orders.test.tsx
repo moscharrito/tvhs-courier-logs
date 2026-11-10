@@ -36,8 +36,11 @@ const summary = {
 };
 
 function renderOrders(routes: Record<string, unknown>, initial = '/projects/uh/orders') {
-    mockFetch(routes);
-    return render(
+    /* The mock handle comes back as well as the render, so a test can ask
+       what was actually sent -- which is the only way to prove a patient's
+       name travelled in a body and not in a URL. */
+    const mocked = mockFetch(routes);
+    render(
         <MemoryRouter initialEntries={[initial]}>
             <AuthProvider>
                 <Routes>
@@ -47,6 +50,7 @@ function renderOrders(routes: Record<string, unknown>, initial = '/projects/uh/o
             </AuthProvider>
         </MemoryRouter>,
     );
+    return mocked;
 }
 
 /* The list is paged: it answers with the rows plus how many exist in total,
@@ -61,6 +65,18 @@ const baseRoutes = {
     'GET /api/projects/uh/uh/sites': sites,
     'GET /api/projects/uh/uh/orders': page([row(), row({ id: 13, status: 'delivered', sla: sla({ state: 'overdue', minutesToDue: -22 }) })]),
     'GET /api/projects/uh/uh/orders/summary': summary,
+};
+
+/* The POST the name search uses, answering with one row and its own counts
+   -- the counts ride with the page because the summary route is a GET and
+   cannot be told the name. */
+const withSearch = {
+    ...baseRoutes,
+    'POST /api/projects/uh/uh/orders/search': {
+        orders: [row({ id: 21, recipientName: 'Dorothy Ashby' })],
+        total: 1, returned: 1, nextCursor: null,
+        summary: { ...summary, total: 1 },
+    },
 };
 
 describe('slaLabel', () => {
@@ -118,9 +134,62 @@ describe('Orders', () => {
         expect(screen.getByRole('checkbox')).toBeChecked();
     });
 
-    it('says plainly why it will not search by patient name', async () => {
-        renderOrders(baseRoutes);
-        expect(await screen.findByText(/would put a name in a URL/)).toBeInTheDocument();
+    /* ── SEARCHING BY PATIENT NAME, WITHOUT PUTTING ONE IN THE URL ────────
+     *
+     * This screen refused the feature outright until 10 November, and the
+     * test here asserted the refusal. Dispatch take calls from patients who
+     * give a name and not a prescription number, so the filter was built --
+     * but the reason for the refusal did not stop being true, so the name
+     * goes in a POST body and never into the address bar.
+     *
+     * What follows is that fence, which is the part worth testing: the
+     * other filters are in the URL by design and this one may never join
+     * them. The server has the matching test (uh-orders-search.test.mjs),
+     * where a ?recipientName= on the GET is ignored outright. */
+    it('keeps a patient name out of the address bar', async () => {
+        const mocked = renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Dorothy Ashby' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+
+        await waitFor(() => {
+            expect(mocked.calls.some((c) => c.startsWith('POST') && c.includes('/orders/search'))).toBe(true);
+        });
+        /* Not in the address bar, and not in any URL that was requested. */
+        expect(window.location.search).not.toContain('Dorothy');
+        for (const call of mocked.calls) expect(call).not.toContain('Dorothy');
+    });
+
+    it('sends the name in the body of the POST instead', async () => {
+        const mocked = renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Dorothy' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+
+        await waitFor(() => {
+            const sent = mocked.bodies['POST /api/projects/uh/uh/orders/search'] as { recipientName?: string };
+            expect(sent?.recipientName).toBe('Dorothy');
+        });
+    });
+
+    /* The export is a plain link carrying the query string, which is what
+       lets it claim to be the list on screen. A name is deliberately not in
+       that query string, so during a name search the link would hand
+       somebody the whole day under the wrong label. */
+    it('turns the export off while searching by name', async () => {
+        renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+        expect(screen.getByRole('link', { name: 'Export to Excel' })).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Dorothy' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+
+        await waitFor(() => {
+            expect(screen.queryByRole('link', { name: 'Export to Excel' })).toBeNull();
+        });
+        expect(screen.getByText(/Export is off while searching by name/)).toBeInTheDocument();
     });
 
     it('says so when nothing matches', async () => {

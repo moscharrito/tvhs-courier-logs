@@ -407,6 +407,12 @@ const MATRIX = [
        a courier exports their own work and a lead their own pharmacies. */
     ['GET', `${UH}/orders/export.xlsx`, UH_LEAD_READ, 'the list on screen, as a file, scoped the same way'],
     ['GET', `${UH}/orders/summary`, UH_LEAD_READ, ''],
+    /* The same list reached with a body, so that a patient's name can be a
+       filter without becoming a URL. A POST that reads: scoped identically
+       to GET /orders because it runs the same filterFor, and it must be --
+       a search route that saw more than the list it mirrors would be a way
+       round the courier and pharmacy scoping rather than a convenience. */
+    ['POST', `${UH}/orders/search`, UH_LEAD_READ, 'by recipient name, kept out of the query string'],
     ['GET', `${UH}/orders/999999`, UH_LEAD_READ, ''],
     /* Deleting one order, permanently, the same way a whole list goes.
        UH_STAFF and not UH_DISPATCH: a lead may raise an order and read

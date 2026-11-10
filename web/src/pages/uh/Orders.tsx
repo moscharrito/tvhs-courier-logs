@@ -114,12 +114,42 @@ export function Orders() {
     const [cursor, setCursor] = useState<string | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
 
+    /* ── THE ONE FILTER THAT IS NOT IN THE URL ────────────────────────────
+     *
+     * Every other filter lives in the query string, which is what makes a
+     * dispatcher's view shareable and survivable across a refresh. A
+     * patient's name may not: an address bar reaches browser history, the
+     * referrer header sent to anything this page loads, proxies and access
+     * logs, and the warning printed above these boxes has said so since the
+     * screen was built.
+     *
+     * So this one is component state and goes to the server in a POST body.
+     * It is lost on a refresh, which is a cost and is the right way round --
+     * a name that survives a reload is a name written down somewhere. */
+    const [recipientName, setRecipientName] = useState('');
+    const [searchingFor, setSearchingFor] = useState('');
+
     const query = params.toString();
     const base = `/api/projects/${code}/uh/orders`;
 
     const load = useCallback(async () => {
         setError(null);
         try {
+            if (searchingFor !== '') {
+                /* One request, carrying its own counts: the summary route is
+                   a GET and cannot be told the name, and a header reading
+                   "2962 orders" over a table of three is worse than no
+                   header at all. */
+                const page = await api<OrderPage & { summary: Summary }>(`${base}/search`, {
+                    method: 'POST',
+                    json: Object.fromEntries([...params, ['recipientName', searchingFor]]),
+                });
+                setOrders(page.orders);
+                setTotal(page.total);
+                setCursor(page.nextCursor);
+                setSummary(page.summary);
+                return;
+            }
             const [page, sum] = await Promise.all([
                 api<OrderPage>(`${base}${query ? `?${query}` : ''}`),
                 api<Summary>(`${base}/summary${query ? `?${query}` : ''}`),
@@ -134,7 +164,7 @@ export function Orders() {
             setTotal(0);
             setCursor(null);
         }
-    }, [base, query]);
+    }, [base, query, params, searchingFor]);
 
     /* Appends rather than replaces, so the rows already on screen keep their
        place while a dispatcher is reading them. */
@@ -142,7 +172,15 @@ export function Orders() {
         if (!cursor || loadingMore) return;
         setLoadingMore(true);
         try {
-            const page = await api<OrderPage>(`${base}?${query ? `${query}&` : ''}cursor=${encodeURIComponent(cursor)}`);
+            /* THE SECOND PAGE OF A NAME SEARCH IS STILL A NAME SEARCH. A
+               GET here would quietly page through the unfiltered day and
+               append it under the three rows somebody was reading. */
+            const page = searchingFor !== ''
+                ? await api<OrderPage>(`${base}/search`, {
+                    method: 'POST',
+                    json: Object.fromEntries([...params, ['recipientName', searchingFor], ['cursor', cursor]]),
+                })
+                : await api<OrderPage>(`${base}?${query ? `${query}&` : ''}cursor=${encodeURIComponent(cursor)}`);
             setOrders((prev) => [...(prev ?? []), ...page.orders]);
             setTotal(page.total);
             setCursor(page.nextCursor);
@@ -151,7 +189,7 @@ export function Orders() {
         } finally {
             setLoadingMore(false);
         }
-    }, [base, query, cursor, loadingMore]);
+    }, [base, query, params, searchingFor, cursor, loadingMore]);
 
     useEffect(() => { void load(); }, [load]);
     useEffect(() => {
@@ -229,8 +267,13 @@ export function Orders() {
                             <option value="adhoc">ad hoc</option>
                         </select>
                     </label>
+                    {/* The placeholder says what it now accepts. It matched a
+                        username exactly and case sensitively while the table
+                        beside it printed names, so the one word a dispatcher
+                        could read off a row was the one word that returned
+                        nothing. See couriersMatching in modules/uh/orders.ts. */}
                     <label className="izy-field">Courier
-                        <input value={get('assignedTo')} onChange={(e) => set('assignedTo', e.target.value)} placeholder="username, or unassigned" />
+                        <input value={get('assignedTo')} onChange={(e) => set('assignedTo', e.target.value)} placeholder="name or username, or unassigned" />
                     </label>
                     <label className="izy-field">Reference
                         <input value={get('ref')} onChange={(e) => set('ref', e.target.value)} placeholder="Rx number" />
@@ -238,20 +281,66 @@ export function Orders() {
                     <label className="izy-field" style={{ minWidth: 150 }}>Late only
                         <span><input type="checkbox" checked={get('overdue') === 'true'} onChange={(e) => set('overdue', e.target.checked ? 'true' : '')} /> past due</span>
                     </label>
-                    <button className="izy-btn secondary" type="button" onClick={() => setParams(new URLSearchParams(), { replace: true })}>Clear</button>
+                    <button
+                        className="izy-btn secondary"
+                        type="button"
+                        onClick={() => {
+                            setParams(new URLSearchParams(), { replace: true });
+                            setRecipientName('');
+                            setSearchingFor('');
+                        }}
+                    >Clear</button>
                     {/* Carries the same query the list was built from, so the
                         file is what is on screen. A plain link rather than a
                         fetch and a blob: a blob URL would keep a copy of a
                         spreadsheet full of patient names alive in the tab
                         until it was closed. */}
-                    <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/export.xlsx${query ? `?${query}` : ''}`}>
-                        Export to Excel
-                    </a>
+                    {/* OFF WHILE A NAME SEARCH IS RUNNING. The export is a
+                        plain link carrying the query string, which is the
+                        whole reason it can claim to be "what is on screen" --
+                        and a name is deliberately not in that query string.
+                        Left enabled it would hand somebody a spreadsheet of
+                        the whole day labelled as their search. */}
+                    {searchingFor === '' ? (
+                        <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/export.xlsx${query ? `?${query}` : ''}`}>
+                            Export to Excel
+                        </a>
+                    ) : (
+                        <span className="izy-muted">Export is off while searching by name</span>
+                    )}
                     <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>Refresh</button>
                 </div>
+                {/* ── BY PATIENT NAME, AND NOT IN THE ADDRESS BAR ───────────
+                    Its own row with its own button, because it does not
+                    behave like the filters above it: those update the URL as
+                    you type and survive a reload, and this one deliberately
+                    does neither. Typing into it changes nothing until it is
+                    submitted, and a refresh forgets it. */}
+                <form
+                    className="izy-row"
+                    style={{ marginTop: 8 }}
+                    onSubmit={(e) => { e.preventDefault(); setSearchingFor(recipientName.trim()); }}
+                >
+                    <label className="izy-field" style={{ minWidth: 260 }}>Recipient name
+                        <input
+                            value={recipientName}
+                            onChange={(e) => setRecipientName(e.target.value)}
+                            placeholder="a name a caller read out"
+                        />
+                    </label>
+                    <button className="izy-btn secondary" type="submit">Find</button>
+                    {searchingFor !== '' && (
+                        <button
+                            className="izy-btn secondary"
+                            type="button"
+                            onClick={() => { setRecipientName(''); setSearchingFor(''); }}
+                        >Stop searching by name</button>
+                    )}
+                </form>
                 <p className="izy-muted" style={{ marginTop: 8 }}>
-                    Searching by patient name is deliberately not offered: it would put a name in a URL.
-                    Use the pharmacy reference a caller reads out.
+                    A name is sent in the request rather than put in the address bar, so it does not
+                    reach browser history, proxies or logs — and it is forgotten when this page
+                    reloads. The pharmacy reference a caller reads out is still the surer match.
                 </p>
             </div>
 
