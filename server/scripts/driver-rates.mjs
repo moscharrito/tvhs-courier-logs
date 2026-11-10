@@ -33,6 +33,12 @@
  */
 
 import { adminPassword } from './lib/secret.mjs';
+/* THE BANDS COME FROM THE MODULE THAT DEFINES THEM, which is why this runs
+   under tsx like the other two pay scripts rather than under plain node. A
+   card that printed its own copy of "11-25 mi" would be a second place for a
+   term of somebody's contract to live, and the first one to go stale is
+   always the one on the screen. */
+import { PAY_BANDS } from '../src/modules/uh/driver-pay.ts';
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(`--${flag}`);
@@ -180,13 +186,34 @@ const money = (c, currency) => (typeof c === 'number' && c > 0
     : 'not set');
 
 function print(pay) {
-    console.log(`  paying on: ${pay.basis === 'zone' ? 'ZONE of the destination ZIP' : 'SERVICE LEVEL'}`);
+    /* NOT "the zone of the destination ZIP", which is what this said until
+       10 November and is the BILLING zone's definition -- the one thing pay
+       stopped using on 9 November. A courier delivering fourteen road miles
+       out was paid zone 1 because University Health's ZIP list calls that
+       ZIP zone 1, and this card was the tool somebody would have checked it
+       against. A label that describes the wrong zone on the screen built for
+       auditing pay is worse than no label. */
+    console.log(`  paying on: ${pay.basis === 'zone'
+        ? 'DISTANCE from the pickup pharmacy, banded as the offer letter bands it'
+        : 'SERVICE LEVEL'}`);
     console.log('');
     const star = (active) => (active ? ' <-- in use' : '');
     console.log(`  By zone${star(pay.basis === 'zone')}`);
+    /* The mile range beside the money, so the figure can be checked against
+       the signed letter rather than against a number the reader has to trust.
+       Imported from the module that bands it, so the two cannot drift. */
     for (const z of [1, 2, 3, 4, 5]) {
-        console.log(`    zone ${z}   ${money(pay.perZoneCents?.[z], pay.currency)}`);
+        const band = PAY_BANDS.find((b) => b.zone === z);
+        const range = band ? band.label.padEnd(9) : 'by arrangement';
+        console.log(`    zone ${z}  ${range}  ${money(pay.perZoneCents?.[z], pay.currency)}`);
     }
+    /* ZONE 5 HAS NO MILEAGE AND CANNOT BE REACHED BY ONE. The letter gives
+       51+ miles a single band and two rates, calling the second
+       special-assignment work offered separately, so everything past 50
+       miles bands as zone 4 and this rate is applied by arrangement --
+       except that nothing in the system can apply it. Said here because
+       this card is where somebody would otherwise assume it was live. */
+    console.log('             zone 5 is not reached by any distance: see below');
     /* Read back like the others, and said plainly when it is off: "not set"
        here is the state in which a single out-of-area stop withholds a
        driver's whole range, which is worth being able to see. */

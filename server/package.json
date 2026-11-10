@@ -35,7 +35,7 @@
     "create:portals": "node scripts/create-pharmacy-portals.mjs",
     "make:docket": "tsx scripts/make-docket.mjs",
     "portal-upload": "node scripts/portal-upload.mjs",
-    "driver-rates": "node scripts/driver-rates.mjs",
+    "driver-rates": "tsx scripts/driver-rates.mjs",
     "settings:show": "node scripts/settings-show.mjs",
     "measure:zones": "tsx scripts/measure-pay-zones.mjs",
     "backfill:zones": "tsx scripts/backfill-pay-zones.mjs"

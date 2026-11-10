@@ -193,3 +193,5 @@ dispatch-emails.ps1
 settings-check.ps1
 geocode-sites.ps1
 geocode-sites.txt
+rates.ps1
+rates.txt
