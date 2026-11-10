@@ -142,7 +142,10 @@ export function Orders() {
                    header at all. */
                 const page = await api<OrderPage & { summary: Summary }>(`${base}/search`, {
                     method: 'POST',
-                    json: Object.fromEntries([...params, ['recipientName', searchingFor]]),
+                    /* Rebuilt from the query STRING, not from the params object:
+                       a fresh object identity in the dependency list below is
+                       a refetch on every render. */
+                    json: Object.fromEntries([...new URLSearchParams(query), ['recipientName', searchingFor]]),
                 });
                 setOrders(page.orders);
                 setTotal(page.total);
@@ -164,7 +167,7 @@ export function Orders() {
             setTotal(0);
             setCursor(null);
         }
-    }, [base, query, params, searchingFor]);
+    }, [base, query, searchingFor]);
 
     /* Appends rather than replaces, so the rows already on screen keep their
        place while a dispatcher is reading them. */
@@ -178,7 +181,7 @@ export function Orders() {
             const page = searchingFor !== ''
                 ? await api<OrderPage>(`${base}/search`, {
                     method: 'POST',
-                    json: Object.fromEntries([...params, ['recipientName', searchingFor], ['cursor', cursor]]),
+                    json: Object.fromEntries([...new URLSearchParams(query), ['recipientName', searchingFor], ['cursor', cursor]]),
                 })
                 : await api<OrderPage>(`${base}?${query ? `${query}&` : ''}cursor=${encodeURIComponent(cursor)}`);
             setOrders((prev) => [...(prev ?? []), ...page.orders]);
@@ -189,7 +192,7 @@ export function Orders() {
         } finally {
             setLoadingMore(false);
         }
-    }, [base, query, params, searchingFor, cursor, loadingMore]);
+    }, [base, query, searchingFor, cursor, loadingMore]);
 
     useEffect(() => { void load(); }, [load]);
     useEffect(() => {

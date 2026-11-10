@@ -674,9 +674,13 @@ export function createOrdersRouter(
      * empty list rather than every order on the contract: silently dropping
      * an unmatched filter is how a dispatcher reads "2962 orders" as the
      * answer to "what has Rosa got". */
-    async function couriersMatching(text: string): Promise<string[]> {
+    /* A literal somebody typed, as a LIKE pattern. The escape matters: a
+       name with an underscore in it would otherwise match any character. */
+    const likePattern = (text: string) => `%${text.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+
+    async function couriersMatching(text: string): Promise<{ exact: boolean; usernames: string[] }> {
         const wanted = text.trim();
-        if (wanted === '') return [];
+        if (wanted === '') return { exact: false, usernames: [] };
 
         const exact = await client.execute({
             /* COLLATE NOCASE because `=` is case sensitive in SQLite and a
@@ -684,19 +688,21 @@ export function createOrdersRouter(
             sql: 'SELECT username FROM users WHERE username = ? COLLATE NOCASE',
             args: [wanted],
         });
-        if (exact.rows.length > 0) return exact.rows.map((r) => String(r['username']));
+        if (exact.rows.length > 0) {
+            return { exact: true, usernames: exact.rows.map((r) => String(r['username'])) };
+        }
 
         /* LIKE is already case insensitive for ASCII in SQLite, so no
            COLLATE here. The escape matters: a name with an underscore in it
            would otherwise match any single character. */
-        const like = `%${wanted.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+        const like = likePattern(wanted);
         const rs = await client.execute({
             sql: `SELECT username FROM users
                   WHERE username LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'
-                  LIMIT 50`,
+                  LIMIT 200`,
             args: [like, like],
         });
-        return rs.rows.map((r) => String(r['username']));
+        return { exact: false, usernames: rs.rows.map((r) => String(r['username'])) };
     }
 
     /* The filters, read from somewhere that is NOT always the query string.
@@ -744,14 +750,42 @@ export function createOrdersRouter(
         }
         if (q['assignedTo'] === 'unassigned') { where.push('o.assigned_to_username IS NULL'); applied.push('assignedTo'); }
         else if (q['assignedTo']) {
-            const couriers = await couriersMatching(String(q['assignedTo']));
-            if (couriers.length === 0) {
-                /* Matched nobody. See couriersMatching: an empty table is the
-                   honest answer and the whole contract is not. */
-                where.push('1 = 0');
+            const typed = String(q['assignedTo']).trim();
+            const { exact, usernames } = await couriersMatching(typed);
+            if (exact) {
+                /* A username typed in full means that one account and nothing
+                   else. Widening it to everybody it is a substring of would
+                   quietly change the answer to a pay question. */
+                where.push(`o.assigned_to_username IN (${usernames.map(() => '?').join(',')})`);
+                args.push(...usernames);
             } else {
-                where.push(`o.assigned_to_username IN (${couriers.map(() => '?').join(',')})`);
-                args.push(...couriers);
+                /* ── AND THE COLUMN THE LIST ACTUALLY PRINTS FROM ──────────
+                 *
+                 * Everything above goes through `users`, which is right when
+                 * a courier has a name on file and useless when they do not:
+                 * displayName falls back to the raw username, so the Courier
+                 * column can be showing a string the users lookup never
+                 * returns -- an account with no name, a renamed one, an
+                 * assignment left on an order after the account went. Typing
+                 * exactly what the row shows then found nothing, which is
+                 * what was reported from production on 10 November after the
+                 * first fix had already deployed.
+                 *
+                 * So the order's own column is matched as well. The filter
+                 * now answers for the text a dispatcher can SEE, with no
+                 * join standing between the two.
+                 *
+                 * Still not "no filter" when nothing matches: both clauses
+                 * are real conditions, so an unknown name returns an empty
+                 * list rather than the whole contract. */
+                const clauses = ["o.assigned_to_username LIKE ? ESCAPE '\\'"];
+                const theseArgs: InValue[] = [likePattern(typed)];
+                if (usernames.length > 0) {
+                    clauses.push(`o.assigned_to_username IN (${usernames.map(() => '?').join(',')})`);
+                    theseArgs.push(...usernames);
+                }
+                where.push(`(${clauses.join(' OR ')})`);
+                args.push(...theseArgs);
             }
             applied.push('assignedTo');
         }
