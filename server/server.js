@@ -245,7 +245,39 @@ app.get('/api/me/projects', requireAuth, async (req, res) => {
         SELECT p.id, p.code, p.name, p.timezone, m.role,
                si.code AS home_site_code, si.name AS home_site_name,
                si.address_line AS home_site_address, si.city AS home_site_city,
-               si.state AS home_site_state, si.zip AS home_site_zip
+               si.state AS home_site_state, si.zip AS home_site_zip,
+               /* HAS DISPATCH EVER GIVEN THIS PERSON WORK HERE.
+                *
+                * Not a count and not today's: the question it answers is
+                * whether they are in the rotation at all. See the note on
+                * hasAssignedWork below.
+                *
+                * Couriers only, so the subquery is not run for an
+                * administrator or a pharmacy account -- neither of which
+                * has work assigned to them and neither of which is asking.
+                * orders.assigned_to_username is a username, as everywhere
+                * else in the platform.
+                *
+                * NO INDEX WAS ADDED FOR IT, and that is a decision rather
+                * than an oversight. Nothing indexes assigned_to_username
+                * today, so this seeks on project_id through
+                * orders_project_date_idx and then reads. A courier who has
+                * work stops at the first row that matches; one who has none
+                * reads the contract's orders once, at sign-in, on one
+                * request a phone makes per session. A few thousand rows is
+                * not worth a migration and it is not worth the risk an
+                * index on (project_id, assigned_to_username) carries of
+                * moving the plan of a query the noon wave leans on -- see
+                * the note at the foot of drizzle/0066_pay_zones.sql, which
+                * is exactly that mistake caught by test/query-plans.
+                * Revisit if this ever runs anywhere but sign-in, or if the
+                * orders table reaches a size where a scan per session
+                * shows up. */
+               CASE WHEN m.role = 'courier' AND EXISTS (
+                        SELECT 1 FROM orders o
+                         WHERE o.project_id = p.id
+                           AND o.assigned_to_username = u.username
+                    ) THEN 1 ELSE 0 END AS has_assigned_work
         FROM memberships m
         JOIN users u ON u.id = m.user_id
         JOIN projects p ON p.id = m.project_id
@@ -260,6 +292,30 @@ app.get('/api/me/projects', requireAuth, async (req, res) => {
         name: r.name,
         timezone: r.timezone,
         role: r.role,
+        /* WHETHER DISPATCH HAS EVER GIVEN THEM A DELIVERY ON THIS CONTRACT.
+         *
+         * WHAT IT IS FOR. The phone's "You drive from" panel was gated on
+         * the roster alone, so every account with a home pharmacy on it saw
+         * a counter and an address -- including the thirty-five University
+         * Health drivers loaded onto the roster before any of them had been
+         * given a single stop. A screen that tells somebody where to drive
+         * is read as an instruction to drive there, and several of them did
+         * exactly that. A standing roster entry is a plan; work assigned to
+         * them is the thing that makes the plan true today.
+         *
+         * EVER, NOT TODAY, and that is a deliberate choice rather than the
+         * easy query. A per-day test would take the panel away again on a
+         * day off, on a morning before the wave is assigned, and on every
+         * weekend -- so the one screen a driver checks to find out where
+         * they are based would answer differently depending on when they
+         * looked. This is a gate on "are you in the rotation", which is a
+         * thing that happens once and then stays true.
+         *
+         * IT IS NOT A PERMISSION. Nothing is protected by it: the roster
+         * says the same thing, the board says it, and a driver can ring
+         * their site manager. It decides what one panel is confident enough
+         * to assert, and that is all it should ever be asked to decide. */
+        hasAssignedWork: Number(r.has_assigned_work) === 1,
         homeSite: r.home_site_code == null ? null : {
             code: r.home_site_code,
             name: r.home_site_name,

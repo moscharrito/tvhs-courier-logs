@@ -97,6 +97,27 @@ export function Devices() {
         const driving = projects.filter((p) => p.role === 'courier');
         if (driving.length !== 1) return null;
         const mine = driving[0]!;
+        /* NOT UNTIL DISPATCH HAS GIVEN THEM WORK HERE.
+         *
+         * The roster was loaded before anybody drove: thirty-five accounts
+         * with a home pharmacy on them, and this panel told every one of
+         * them to drive to a counter. A name and a street address on the
+         * screen somebody opens to check who they are signed in as is not
+         * read as "where you will be based"; it is read as "be here". Some
+         * of them were.
+         *
+         * So the roster entry is the ANSWER and an assigned delivery is the
+         * PERMISSION TO GIVE IT. Admin or dispatch puts work on their name
+         * and the counter appears; until then this screen says nothing
+         * about it, which is the honest state -- their day has not been
+         * arranged yet, and the person who can tell them when it will be is
+         * not a panel.
+         *
+         * ABSENT IS TREATED AS NOT YET, which is the same rule as
+         * `homeSite === undefined` below and for the same reason: a bundle
+         * can outlive the server that answered it, and a panel that puts
+         * somebody in a car park waits to be told rather than guessing. */
+        if (mine.hasAssignedWork !== true) return null;
         /* THREE ANSWERS, NOT TWO, and collapsing them would be a lie.
              a site      -> this is your counter
              null        -> the server says you have none: a floater

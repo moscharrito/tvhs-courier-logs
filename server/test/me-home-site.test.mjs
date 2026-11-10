@@ -165,3 +165,112 @@ describe('a driver asking where they are based', () => {
         expect(uhSiteIds.has(wheatley.id)).toBe(true);
     });
 });
+
+/* ── AND WHETHER TO SAY IT AT ALL (10 November 2026) ───────────────────────
+ *
+ * The roster was loaded before anybody drove. Thirty-five accounts had a
+ * home pharmacy on them, so thirty-five phones showed a pharmacy name and a
+ * street address on the screen somebody opens to check who they are signed
+ * in as -- while not one of those drivers had been given a stop.
+ *
+ * That screen is not read as "where you will be based". It is read as "be
+ * here", and some of them went.
+ *
+ * So the roster entry stays the ANSWER and work assigned to them becomes the
+ * PERMISSION TO GIVE IT. `hasAssignedWork` is that permission, and the
+ * client gates the whole panel on it.
+ *
+ * EVER, NOT TODAY, which is a choice and not the easy query: a per-day test
+ * would take the counter away again on a day off, on a morning before the
+ * wave is assigned, and every weekend -- so the one screen a driver checks
+ * to find out where they are based would answer differently depending on
+ * when they looked. The question is "are you in the rotation", which happens
+ * once and then stays true.
+ */
+describe('whether the phone may name the counter yet', () => {
+    /** An ad hoc delivery, assigned to this courier. The phone-call route,
+     *  because a scheduled one arrives on a pharmacy's list. */
+    async function assignOne(username) {
+        const created = await admin.post(`${UH}/orders`).send({
+            siteId: wheatley.id, serviceType: 'adhoc', recipientName: 'Ines Vargas',
+            addressLine: '1100 Broadway St', zip: '78215', description: 'Cold pack', quantity: 1,
+        });
+        expect(created.status, created.text).toBe(201);
+        const ev = await admin.post(`${UH}/orders/${created.body.id}/events`).send({ type: 'assigned', courierUsername: username });
+        expect(ev.status, ev.text).toBe(201);
+        return created.body.id;
+    }
+
+    it('says no while a driver is on the roster and has never been given work', async () => {
+        const agent = await driver('rota.waiting', { homeSiteId: wheatley.id });
+        const row = await uhRow(agent);
+
+        expect(row.hasAssignedWork).toBe(false);
+        /* THE COUNTER IS STILL THERE AND STILL CORRECT. The gate decides
+           what the screen asserts, not what the roster says -- conflating
+           the two would have meant telling a rostered driver they were a
+           floater, which is a worse lie than the one being fixed. */
+        expect(row.homeSite.name).toBe(wheatley.name);
+    });
+
+    it('says yes the moment dispatch assigns them a delivery', async () => {
+        const agent = await driver('rota.working', { homeSiteId: wheatley.id });
+        expect((await uhRow(agent)).hasAssignedWork).toBe(false);
+
+        await assignOne('rota.working');
+
+        expect((await uhRow(agent)).hasAssignedWork).toBe(true);
+    });
+
+    it('stays yes once the work is no longer open, because the question is the rotation', async () => {
+        /* Not "do you have something outstanding". A driver who finished
+           everything by two o'clock has not stopped knowing which counter
+           they drive from, and a panel that vanished at two would be worse
+           than one that never appeared.
+
+           Cancelled rather than delivered because it is the harsher case:
+           the delivery dispatch gave them went away entirely, and they are
+           still in the rotation. */
+        const agent = await driver('rota.finished', { homeSiteId: wheatley.id });
+        const id = await assignOne('rota.finished');
+
+        const off = await admin.post(`${UH}/orders/${id}/events`).send({ type: 'cancelled', reason: 'Patient collected in person.' });
+        expect(off.status, off.text).toBe(201);
+
+        expect((await uhRow(agent)).hasAssignedWork).toBe(true);
+    });
+
+    it('does not count another driver’s work as this one’s', async () => {
+        /* The subquery is correlated on the username, and a join written
+           carelessly here would turn the gate into "has anybody been given
+           anything on this contract" -- which is true from the first
+           morning and gates nothing at all. */
+        const agent = await driver('rota.neighbour', { homeSiteId: wheatley.id });
+        await assignOne('rota.working');
+
+        expect((await uhRow(agent)).hasAssignedWork).toBe(false);
+    });
+
+    it('is false for an administrator, who drives from nowhere', async () => {
+        const row = (await admin.get('/api/me/projects')).body.find((p) => p.code === 'uh');
+        expect(row.hasAssignedWork).toBe(false);
+    });
+
+    it('does not leak across contracts', async () => {
+        /* Scoped to the project the membership is on, like the home-site
+           join above it. Work on one contract must not unlock the counter
+           panel on another. */
+        const username = 'rota.twocontracts';
+        await admin.post('/api/users').send({ username, name: 'Two Contracts', password: `${username}-pass-1`, role: 'driver' });
+        await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'courier', settings: { homeSiteId: wheatley.id } });
+        await admin.put(`/api/users/${username}/memberships/tvhs`).send({ role: 'courier', settings: { route: 'northbound' } });
+        const agent = srv.agent();
+        expect((await agent.post('/api/login').send({ username, password: `${username}-pass-1` })).status).toBe(200);
+
+        await assignOne(username);
+
+        const rows = (await agent.get('/api/me/projects')).body;
+        expect(rows.find((p) => p.code === 'uh').hasAssignedWork).toBe(true);
+        expect(rows.find((p) => p.code === 'tvhs').hasAssignedWork).toBe(false);
+    });
+});

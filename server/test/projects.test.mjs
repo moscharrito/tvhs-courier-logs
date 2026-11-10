@@ -66,11 +66,18 @@ describe('membership bootstrap', () => {
 
            Still a bare `null` for an administrator after the address was
            added on 1 November: the whole homeSite object is null when there
-           is no counter, so there is no address half to be absent. */
+           is no counter, so there is no address half to be absent.
+
+           hasAssignedWork joined it on 10 November, and false is the right
+           answer for an administrator for the same reason null is: they
+           drive from nowhere and nothing is assigned to them. It is what
+           the phone's "You drive from" panel waits for -- a roster entry
+           is a plan and an assigned delivery is what makes the plan
+           today's. See me-home-site.test.mjs. */
         expect((await admin.get('/api/me/projects')).body).toEqual([
-            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin', homeSite: null },
-            { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null },
-            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null },
+            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false },
+            { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false },
+            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false },
         ]);
         const north = await srv.login('north');
         expect((await north.get('/api/me/projects')).body[0]).toMatchObject({ code: 'tvhs', role: 'courier' });

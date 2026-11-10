@@ -158,6 +158,20 @@ export interface ProjectMembership {
          *  way: one address, one spelling of it. */
         fullAddress?: string;
     } | null;
+    /** Whether dispatch has ever assigned this courier a delivery here.
+     *
+     *  THE GATE ON "YOU DRIVE FROM". A home pharmacy on the roster is a
+     *  plan; an assigned stop is what makes the plan today's. The panel
+     *  waits for the second, because a screen naming a pharmacy is read as
+     *  an instruction to drive to it.
+     *
+     *  OPTIONAL, FOR THE REASON `homeSite` IS: a phone holds its bundle
+     *  across a deploy. Absent means the server did not say, and a panel
+     *  that asserts where somebody should be standing at noon waits to be
+     *  told rather than assuming. False for everybody who is not a courier
+     *  on the project, which is also correct -- an administrator drives
+     *  from nowhere. */
+    hasAssignedWork?: boolean;
 }
 
 export interface DriverPick {

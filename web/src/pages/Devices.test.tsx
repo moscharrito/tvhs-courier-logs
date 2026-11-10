@@ -329,9 +329,22 @@ describe('where a driver is based', () => {
        screen that said which was the dispatcher's roster. On 1 November
        thirty-five people start at once, and "which pharmacy am I at" was a
        question only a supervisor on the phone could answer. */
-    const uh = (homeSite: unknown) => ({
+    /* `hasAssignedWork` defaults to true here because every test below is
+       about WHAT the panel says once it is allowed to speak. The gate that
+       decides whether it speaks at all has its own describe block under
+       this one, and that is where the false and absent cases live. */
+    /* ABSENT is a sentinel string and not `undefined`, because a default
+       parameter swallows an explicit undefined and the test for "the
+       server did not say" would quietly become the test for "it said
+       yes" -- which it did, and passed, and proved nothing. */
+    const ABSENT = Symbol('absent');
+    const uh = (homeSite: unknown, hasAssignedWork: unknown = true) => ({
         'GET /api/me/projects': [
-            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier', ...(homeSite === undefined ? {} : { homeSite }) },
+            {
+                id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier',
+                ...(homeSite === undefined ? {} : { homeSite }),
+                ...(hasAssignedWork === ABSENT ? {} : { hasAssignedWork }),
+            },
         ],
     });
 
@@ -430,6 +443,58 @@ describe('where a driver is based', () => {
             ],
         });
         await screen.findByRole('heading', { name: 'Devices and sign-in' });
+
+        expect(screen.queryByRole('heading', { name: 'You drive from' })).not.toBeInTheDocument();
+    });
+
+    /* ── THE GATE (10 November 2026) ──────────────────────────────────────
+     *
+     * A roster entry is a plan. Work assigned to them is what makes the
+     * plan today's, and this panel waits for the second one.
+     *
+     * The roster was loaded before anybody drove, so thirty-five accounts
+     * had a home pharmacy and a street address on this screen while not one
+     * of them had been given a stop. A pharmacy name with an address under
+     * it, on the screen somebody opens to check who they are signed in as,
+     * is not read as "where you will be based". It is read as "be here".
+     */
+
+    it('says nothing about a counter until dispatch has given them work', async () => {
+        renderDevices(uh({ code: 'wheatley', name: 'University Health Wheatley Pharmacy', fullAddress: '3860 Interstate Highway 10 East, San Antonio, TX 78220' }, false));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.queryByRole('heading', { name: 'You drive from' })).not.toBeInTheDocument();
+        /* The address in particular. The name alone could be a label; the
+           address is the thing somebody puts into a satnav. */
+        expect(screen.queryByText(/3860 Interstate Highway 10 East/)).not.toBeInTheDocument();
+    });
+
+    it('names the counter the moment they are in the rotation', async () => {
+        /* The other half, so the test above cannot pass by the panel being
+           broken outright. */
+        renderDevices(uh({ code: 'wheatley', name: 'University Health Wheatley Pharmacy' }, true));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.getByRole('heading', { name: 'You drive from' })).toBeInTheDocument();
+    });
+
+    it('holds a floater back too, rather than offering them the round', async () => {
+        /* "Wherever the day needs you. Dispatch gives you the round" is
+           also a statement about today, and it is also untrue of somebody
+           dispatch has not started giving work to. The gate is on the
+           panel, not on one branch of it. */
+        renderDevices(uh(null, false));
+        await screen.findByRole('heading', { name: 'Your account' });
+
+        expect(screen.queryByText('Wherever the day needs you')).not.toBeInTheDocument();
+    });
+
+    it('waits when the server did not say, rather than assuming it has', async () => {
+        /* Same rule as the absent homeSite above: a phone keeps its bundle
+           across a deploy, and a panel that sends somebody to a car park
+           waits to be told. */
+        renderDevices(uh({ code: 'wheatley', name: 'University Health Wheatley Pharmacy' }, ABSENT));
+        await screen.findByRole('heading', { name: 'Your account' });
 
         expect(screen.queryByRole('heading', { name: 'You drive from' })).not.toBeInTheDocument();
     });
