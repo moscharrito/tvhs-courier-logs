@@ -126,6 +126,22 @@ export function Roster() {
        project role would show a site manager buttons that 403. */
     const isAdmin = user?.role === 'admin';
 
+    /* ON SHIFT AND OFF SHIFT IS A DIFFERENT TEST, AND IT IS THE PROJECT ROLE.
+     *
+     * The three controls above it go to /api/users and are guarded by
+     * requireAdmin on the SESSION role. The shift switch goes to the UH
+     * shifts module and is guarded by requireProjectRole('admin', 'lead'),
+     * which is a different question about a different person: `lead` is the
+     * dispatch role on this contract -- one person, all eight counters, the
+     * one actually at the board at noon -- and they are who asked for it.
+     *
+     * So it is read off THIS project's membership rather than off the
+     * platform role, which is the only reading that matches what the server
+     * will do. Gating it on `isAdmin` would hide it from exactly the person
+     * it is for; gating it on nothing would show a site manager a button
+     * that 403s. */
+    const canSetShift = project?.role === 'admin' || project?.role === 'lead';
+
     /* Shown once, never stored, never logged. The server has only the hash
        and this component is the one place the plaintext ever exists. */
     const [issued, setIssued] = useState<{ name: string; username: string; password: string } | null>(null);
@@ -467,6 +483,7 @@ export function Roster() {
                         sites={data.sites}
                         saving={saving}
                         isAdmin={isAdmin}
+                        canSetShift={canSetShift}
                         onSet={(d, v) => { void setHome(d, v); }}
                         onPhone={(d, v) => { void setPhone(d, v); }}
                         onCover={(d, siteId, on) => { void setCovers(d, siteId, on); }}
@@ -535,13 +552,16 @@ export function Roster() {
  * default because the thing this page is read to find -- a counter with
  * nobody on it -- has to be visible without opening anything.
  */
-function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCover, onShiftChange, onReset, onRemove }: {
+function Group({ id, group, code, sites, saving, isAdmin, canSetShift, onSet, onPhone, onCover, onShiftChange, onReset, onRemove }: {
     id: string;
     group: { key: string; title: string; drivers: RosterDriver[]; site: RosterSite | null };
     code: string;
     sites: RosterSite[];
     saving: string | null;
     isAdmin: boolean;
+    /** Dispatch, read off the project membership. See the note on the
+     *  constant in Roster, and the one over the button it draws. */
+    canSetShift: boolean;
     onSet: (d: RosterDriver, value: string) => void;
     onPhone: (d: RosterDriver, value: string) => void;
     onCover: (d: RosterDriver, siteId: number, on: boolean) => void;
@@ -626,7 +646,17 @@ function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCove
                         ))}
                         {sites.length <= 1 && <span className="izy-muted">nowhere else to cover</span>}
                     </div>
-                    {isAdmin && (
+                    {/* TWO AUDIENCES IN ONE ROW OF BUTTONS, which is why the
+                        tests are on each button and not on the row.
+
+                        The shift switch is dispatch's: it goes to the UH
+                        shifts module, which admits a project `lead`, and the
+                        lead is the person at the board at noon. The other
+                        two go to /api/users behind the platform admin role.
+                        A site manager therefore sees one button here and not
+                        three, which is exactly what the server will let them
+                        do. */}
+                    {(canSetShift || isAdmin) && (
                         <div className="izy-roster-admin">
                             {/* FIRST, because it is the one that gets pressed
                                 daily and the other two are rare and heavy.
@@ -636,6 +666,7 @@ function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCove
                                 button labelled with the current state is the
                                 oldest way to make somebody click the opposite
                                 of what they meant. */}
+                            {canSetShift && (
                             <button
                                 type="button"
                                 className="izy-btn secondary small"
@@ -644,6 +675,8 @@ function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCove
                             >
                                 {d.onShift ? 'Take off shift' : 'Put on shift'}
                             </button>
+                            )}
+                            {isAdmin && (<>
                             <button
                                 type="button"
                                 className="izy-btn secondary small"
@@ -660,6 +693,7 @@ function Group({ id, group, code, sites, saving, isAdmin, onSet, onPhone, onCove
                             >
                                 Off the roster
                             </button>
+                            </>)}
                         </div>
                     )}
                 </div>

@@ -96,6 +96,12 @@
  * WHAT IT IS NOT. It is not a check-in and it is not attendance. It says
  * "this person is available for work now", which is the only thing anything
  * downstream reads it as.
+ *
+ * AND IT IS DISPATCH'S, which it was not for its first day. It shipped on
+ * the `staff` guard -- project administrators -- and `lead` is the dispatch
+ * role on this contract: one person, on all eight counters, who works the
+ * board and talks to drivers on site. They are the reason it was asked for
+ * and the only person at the board at noon. See `dispatch` below.
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -156,6 +162,30 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
        on `operate` in modules/uh/stop.ts for why one person cannot have a
        second login for it. */
     const couriers = requireProjectRole('admin', 'lead', 'courier');
+    /* THE ROSTER SCREEN'S SWITCH IS DISPATCH'S, NOT ONLY AN ADMINISTRATOR'S.
+     *
+     * It went in as admin-only on 10 November, matching `staff` above, and
+     * that was the wrong audience by a day: `lead` IS the dispatch role on
+     * this contract -- one person, on all eight counters, who works the
+     * board, talks to drivers on site and is the reason the switch was
+     * asked for. An administrator is not sitting at the board at noon. A
+     * control whose whole purpose is to put a driver into the pool, held by
+     * somebody who is not the person staffing the pool, is a control that
+     * gets used by ringing somebody.
+     *
+     * It is narrower than `couriers` and wider than `staff`: dispatch, and
+     * nobody driving. A courier switching THEMSELVES on has its own route,
+     * and a courier must not be able to switch anybody else.
+     *
+     * The rest of the shifts module is unmoved. Reading who is out there
+     * and the hours export stay on `staff`, because the export is a pay
+     * document and `lead` is deliberately kept away from the commercials
+     * -- the same line modules/uh/driver-records.ts draws when it hands a
+     * site manager the record with the money stripped out.
+     *
+     * The same set of people as the roster module's own `dispatch`, which
+     * is the point: this is the button on that screen. */
+    const dispatch = requireProjectRole('admin', 'lead');
 
     const actorOf = (req: Request) => req.session.user?.username ?? '';
 
@@ -460,7 +490,7 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
         };
     }
 
-    router.post('/for/:username/start', staff, wrap(async (req, res) => {
+    router.post('/for/:username/start', dispatch, wrap(async (req, res) => {
         const project = req.project!;
         const username = String(req.params['username'] ?? '').trim().toLowerCase();
         const who = await driverOn(project.id, username);
@@ -522,7 +552,7 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
         res.status(201).json({ ...present(row), alreadyOn: false });
     }));
 
-    router.post('/for/:username/end', staff, wrap(async (req, res) => {
+    router.post('/for/:username/end', dispatch, wrap(async (req, res) => {
         const project = req.project!;
         const username = String(req.params['username'] ?? '').trim().toLowerCase();
         /* THE REASON IS REQUIRED HERE TOO. Somebody else decided this

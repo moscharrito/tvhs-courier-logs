@@ -381,6 +381,37 @@ describe('dispatch putting a driver on shift', () => {
         const res = await ana.post(`${FOR('bo.shift')}/start`).send({});
         expect(res.status).toBe(403);
     });
+
+    it('IS open to dispatch, who is the person at the board at noon', async () => {
+        /* It shipped on the admin-only guard and was widened the next day.
+           `lead` is the dispatch role on this contract -- one person, all
+           eight counters, working the board and talking to drivers on site
+           -- and a control for staffing the pool held by somebody who is
+           not staffing the pool gets used by ringing somebody.
+
+           PROVED BY THE SHIFT IT OPENS, not by the status code. A 201 from
+           a route that then wrote nothing would pass a status assertion. */
+        await admin.post('/api/users').send({ username: 'dee.shift', name: 'Dee Dispatch', password: 'shift-pass-1', role: 'staff' });
+        await admin.put('/api/users/dee.shift/memberships/uh').send({ role: 'lead', settings: {} });
+        const dee = srv.agent();
+        expect((await dee.post('/api/login').send({ username: 'dee.shift', password: 'shift-pass-1' })).status).toBe(200);
+
+        const u = await makeDriver('cy.shift');
+        const res = await dee.post(`${FOR(u)}/start`).send({});
+        expect(res.status, res.text).toBe(201);
+        expect(res.body.startedBy).toBe('dee.shift');
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === u && s.open)).toBe(true);
+
+        /* And off again, under their own name and with their own reason. */
+        const off = await dee.post(`${FOR(u)}/end`).send({ reason: 'Round finished; driver confirmed by radio.' });
+        expect(off.status, off.text).toBe(200);
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === u && s.open)).toBe(false);
+
+        /* THE LINE THAT DID NOT MOVE. The hours export is a pay document and
+           a lead sees the operation, not the commercials. Widening the
+           switch must not have widened that. */
+        expect((await dee.get(`${SHIFTS}/export.xlsx`)).status).toBe(403);
+    });
 });
 
 describe('dispatch taking a driver off shift', () => {

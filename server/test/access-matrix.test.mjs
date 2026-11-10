@@ -480,10 +480,22 @@ const MATRIX = [
     ['POST', `${UH}/shifts/999999/end`, UH_STAFF, "end somebody else's shift"],
     /* The roster screen's switch (10 November 2026). The same two acts named
        by driver rather than by shift id, because a dispatcher looking at the
-       roster has a name in front of them and not a shift number. Dispatch
-       only: a courier switching THEMSELVES on has its own route above. */
-    ['POST', `${UH}/shifts/for/nobody/start`, UH_STAFF, 'put a driver on shift from the roster'],
-    ['POST', `${UH}/shifts/for/nobody/end`, UH_STAFF, 'take a driver off shift from the roster'],
+       roster has a name in front of them and not a shift number. A courier
+       switching THEMSELVES on has its own route above and must not be able
+       to switch anybody else.
+
+       UH_DISPATCH, and it shipped on UH_STAFF the day before. `lead` is the
+       dispatch role here -- one person, all eight counters, the person
+       actually at the board at noon -- and a control for staffing the pool
+       held by somebody who is not staffing the pool gets used by ringing
+       somebody. It is the same set as the roster rows below, which is the
+       point: this button lives on that screen.
+
+       WHAT DID NOT MOVE WITH IT: `GET /shifts` and the hours export above
+       stay on UH_STAFF. That export is a pay document, and the line these
+       rows draw is that a lead sees the operation and not the commercials. */
+    ['POST', `${UH}/shifts/for/nobody/start`, UH_DISPATCH, 'put a driver on shift from the roster'],
+    ['POST', `${UH}/shifts/for/nobody/end`, UH_DISPATCH, 'take a driver off shift from the roster'],
 
     /* --- the standing roster (28 October 2026). Which pharmacy each driver
        works from, which is what lets the board staff a proposed wave with

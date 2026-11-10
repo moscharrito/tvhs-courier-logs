@@ -18,6 +18,9 @@ import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
 
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
+/* The dispatch membership. `lead` reaches this screen and reaches the shift
+   switch on it, and reaches nothing that goes to /api/users. */
+const leadProjects = [{ ...projects[0]!, role: 'lead' }];
 const session = { id: 9, username: 'dispatch', name: 'Dispatcher One', role: 'staff', route: null };
 /* The create/reset/remove controls go to /api/users, which is guarded by
    requireAdmin on the SESSION role -- not the project role. A dispatcher
@@ -635,10 +638,38 @@ describe('putting a driver on shift from here', () => {
         expect(await screen.findByRole('status')).toHaveTextContent(/3 deliveries are still recorded as with them/);
     });
 
-    it('is not offered to a site manager, who cannot call the endpoint', async () => {
-        /* The same rule as New password and Off the roster above: showing a
-           button that 403s is worse than not showing it. */
-        renderRoster();
+    it('IS offered to dispatch, who is the person it was built for', async () => {
+        /* `lead` is the dispatch role on this contract: one person, all
+           eight counters, the one actually at the board at noon. It shipped
+           admin-only and was widened the next day, because a control for
+           staffing the pool held by somebody who is not staffing the pool
+           gets used by ringing somebody.
+
+           Rendered with the ORDINARY session, not the administrator one, so
+           this cannot pass on the platform role by accident. */
+        renderRoster(routes({ 'GET /api/me/projects': leadProjects }));
+        await screen.findByText('Dana Whitfield');
+        expect(screen.getByRole('button', { name: 'Put on shift' })).toBeInTheDocument();
+    });
+
+    it('still gives a site manager nothing that goes to /api/users', async () => {
+        /* The row now holds two audiences. The shift switch is guarded by
+           the project role and the other two by the platform admin role, so
+           dispatch sees one button and not three -- which is exactly what
+           the server will let them do. Showing a button that 403s is worse
+           than not showing it. */
+        renderRoster(routes({ 'GET /api/me/projects': leadProjects }));
+        await screen.findByText('Dana Whitfield');
+        expect(screen.queryByRole('button', { name: 'New password' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Off the roster' })).not.toBeInTheDocument();
+    });
+
+    it('is offered to nobody who only drives', async () => {
+        /* A courier switching THEMSELVES on has their own route on their own
+           phone. Nobody on a courier membership may switch anybody. */
+        renderRoster(routes({
+            'GET /api/me/projects': [{ ...projects[0]!, role: 'courier' }],
+        }));
         await screen.findByText('Dana Whitfield');
         expect(screen.queryByRole('button', { name: 'Put on shift' })).not.toBeInTheDocument();
     });
