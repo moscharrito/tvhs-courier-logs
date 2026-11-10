@@ -191,3 +191,5 @@ dispatch-emails.ps1
 # terminal tab the desktop app opened. Reads the live project and writes
 # nothing; ignored for the habit, not for its contents.
 settings-check.ps1
+geocode-sites.ps1
+geocode-sites.txt
