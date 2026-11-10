@@ -88,10 +88,12 @@
 
 import dotenv from 'dotenv';
 import { loadConfig } from '../src/config.ts';
+import { checkTarget } from './lib/target.mjs';
 import { createDatabase } from '../src/db/client.ts';
 import { runMigrations } from '../src/db/migrate.ts';
 import { haversineMiles } from '../src/modules/uh/sequencing.ts';
 import { payZoneForMiles, payZoneLabel } from '../src/modules/uh/driver-pay.ts';
+import { dateIn } from '../src/core/dates.ts';
 import { createGoogleProvider } from '../src/core/geo/google.ts';
 import { createAwsLocationProvider } from '../src/core/geo/aws-location.ts';
 import { unavailableProvider } from '../src/core/geo/provider.ts';
@@ -106,7 +108,11 @@ const arg = (name, fallback = '') => {
 };
 
 const projectCode = arg('project', 'uh');
-const effectiveFrom = arg('effective-from', new Date().toISOString().slice(0, 10));
+/* RESOLVED AFTER THE PROJECT IS LOADED, because "today" is a question
+   about a timezone. toISOString() gave 2026-11-10 at six in the evening in
+   San Antonio, which is tomorrow -- and rows dated tomorrow are invisible
+   to every order written today. */
+const effectiveFromArg = arg('effective-from', '');
 const minCoverage = Number(arg('min-coverage', '0.8'));
 /* Nothing this contract serves is further than this from a counter. A row
    past it is a transposed coordinate or the wrong county's file, not a long
@@ -118,11 +124,12 @@ const straightOnly = has('straight-line-only');
 const say = (s = '') => console.log(s);
 
 const config = loadConfig();
-const isLocal = !String(config.databaseUrl ?? '').startsWith('libsql://');
-if (!isLocal && !has('i-mean-production')) {
-    console.error('This points at a Turso database. Add --i-mean-production if that is what you meant.');
-    process.exit(1);
-}
+/* One check, in one place, tested on its own: scripts/lib/target.mjs says
+   why. --i-mean-production is both a permission and an assertion, and only
+   the first half existed until 9 November. */
+const target = checkTarget({ databaseUrl: config.databaseUrl, wantsProduction: has('i-mean-production') });
+if (!target.ok) { console.error(target.message); process.exit(1); }
+const isLocal = !target.live;
 
 const database = createDatabase(config);
 await runMigrations(database);
@@ -134,13 +141,15 @@ say('  MEASURING WHAT THE COURIERS ARE PAID ON');
 say('  ---------------------------------------');
 say(`  Database        ${isLocal ? 'this laptop' : '** PRODUCTION **'}`);
 say(`  Project         ${projectCode}`);
-say(`  Effective from  ${effectiveFrom}`);
 say(`  Mode            ${apply ? 'APPLY -- rows will be written' : 'dry run -- nothing is written'}`);
 say('');
 
-const project = (await rows('SELECT id FROM projects WHERE code = ?', [projectCode]))[0];
+const project = (await rows('SELECT id, timezone FROM projects WHERE code = ?', [projectCode]))[0];
 if (!project) { console.error(`No project with code ${projectCode}.`); process.exit(1); }
 const pid = Number(project.id);
+const effectiveFrom = effectiveFromArg || dateIn(new Date(), String(project.timezone ?? 'America/Chicago'));
+say(`  Effective from  ${effectiveFrom}${effectiveFromArg ? '' : `  (today in ${project.timezone})`}`);
+say('');
 
 /* ── the two ends of every measurement ──────────────────────────────────── */
 
@@ -351,4 +360,14 @@ say('');
 say('  THIS CHANGES NOTHING ON ITS OWN. A band is frozen onto an order when the');
 say('  order is created, so these rows price orders made from now on. For days');
 say('  already worked, run:  npm run backfill:zones -w server');
+say('');
+say(`  AND THESE ROWS ARE DATED ${effectiveFrom}, so they apply to work from that`);
+say('  day onwards and are INVISIBLE to anything earlier. To re-band days already');
+say('  worked, they have to be dated on or before the first of them:');
+say('');
+say('    npm run measure:zones -w server -- --effective-from 2026-11-01 --apply');
+say('');
+say('  That is a deliberate choice about which days move, not a detail: dating');
+say('  them today and then backfilling November would report that nobody is owed');
+say('  anything, because no measurement would be in force on any of those days.');
 say('');

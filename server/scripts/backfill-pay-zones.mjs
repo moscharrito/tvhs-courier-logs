@@ -45,6 +45,7 @@
 
 import dotenv from 'dotenv';
 import { loadConfig } from '../src/config.ts';
+import { checkTarget } from './lib/target.mjs';
 import { createDatabase } from '../src/db/client.ts';
 import { runMigrations } from '../src/db/migrate.ts';
 import { payZoneForMiles, payZoneLabel } from '../src/modules/uh/driver-pay.ts';
@@ -66,11 +67,12 @@ const apply = has('apply');
 const say = (s = '') => console.log(s);
 
 const config = loadConfig();
-const isLocal = !String(config.databaseUrl ?? '').startsWith('libsql://');
-if (!isLocal && !has('i-mean-production')) {
-    console.error('This points at a Turso database. Add --i-mean-production if that is what you meant.');
-    process.exit(1);
-}
+/* One check, in one place, tested on its own: scripts/lib/target.mjs says
+   why. --i-mean-production is both a permission and an assertion, and only
+   the first half existed until 9 November. */
+const target = checkTarget({ databaseUrl: config.databaseUrl, wantsProduction: has('i-mean-production') });
+if (!target.ok) { console.error(target.message); process.exit(1); }
+const isLocal = !target.live;
 
 const database = createDatabase(config);
 await runMigrations(database);
@@ -168,9 +170,37 @@ say(`    not measured      ${String(unmeasured).padStart(5)}   no distance for t
 say('');
 
 if (unmeasured > 0) {
-    say('    THE UNMEASURED ONES STAY UNPAID-BANDED and will show as "Distance not');
-    say('    measured" on a driver record, withholding rather than guessing. Run');
-    say('    measure-pay-zones.mjs first if that count is large.');
+    /* ── WHY THEY ARE UNMEASURED, WHICH IS TWO DIFFERENT ANSWERS.
+     *
+     * Either the pair was never measured at all, or it was measured with a
+     * date LATER than the day being re-banded -- and the second is invisible
+     * without this. The distance table is effective-dated, so rows written
+     * today are not in force on 5 November, and a backfill of November against
+     * measurements dated today reports every stop unmeasured and nobody owed
+     * anything. That reads exactly like "the couriers were paid correctly".
+     *
+     * It is the shape of answer this whole exercise exists to stop giving. */
+    const earliest = (await rows(
+        'SELECT MIN(effective_from) AS first FROM site_zip_miles WHERE project_id = ?', [pid],
+    ))[0]?.first ?? null;
+
+    say('    THE UNMEASURED ONES KEEP NO BAND and will show on a driver record as');
+    say('    "distance not measured" -- paid at the University Health band, as they');
+    say('    are today, and counted so the gap can be closed.');
+    if (earliest === null) {
+        say('');
+        say('    NOTHING HAS BEEN MEASURED AT ALL on this project. Run:');
+        say('      npm run measure:zones -w server -- --apply');
+    } else if (String(earliest) > from) {
+        say('');
+        say(`    AND THIS IS PROBABLY WHY: the earliest measurement is dated ${earliest},`);
+        say(`    which is AFTER ${from}. The distance table is effective-dated, so none of`);
+        say('    those rows is in force on the days being re-banded and every stop here');
+        say('    reads as unmeasured. Re-run the measuring script dated on or before the');
+        say('    first day you mean to cover:');
+        say('');
+        say(`      npm run measure:zones -w server -- --effective-from ${from} --apply`);
+    }
     say('');
 }
 
