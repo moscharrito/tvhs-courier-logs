@@ -201,6 +201,12 @@ interface OrderRow {
     city: string; state: string; zip: string; delivery_notes: string;
     lat: number | null; lng: number | null; geocode_status: string;
     zone: number | null; out_of_area_miles: number | null; signature_required: number;
+    /** THE COURIER'S BAND, which is not `zone` above. `zone` is University
+     *  Health's bid-table band for the destination ZIP and is what they are
+     *  invoiced on; this is the offer letter's distance from the pickup
+     *  pharmacy and is what somebody is paid on. 78247 is zone 1 to the
+     *  first and fourteen road miles to the second (drizzle/0066). */
+    pay_zone: number | null; pay_miles: number | null; pay_basis: string | null;
     /** The pharmacy stamped the form ID Required (drizzle/0038). */
     id_required: number;
     /** How it was handed over (drizzle/0051). See modules/uh/handling.ts. */
@@ -237,6 +243,15 @@ const present = (o: OrderRow) => ({
     zip: o.zip,
     deliveryNotes: o.delivery_notes,
     zone: o.zone === null ? null : Number(o.zone),
+    /* SENT BESIDE `zone` AND NEVER INSTEAD OF IT. A screen showing one
+       unlabelled "Zone 1" is how a fourteen-mile stop was paid the bottom
+       rate for a week, and the order page is where somebody goes to argue
+       about exactly that. Null means the pharmacy-and-ZIP pair has no
+       measured distance yet, which the screen has to say rather than
+       falling back to the billing band in silence. */
+    payZone: o.pay_zone === null || o.pay_zone === undefined ? null : Number(o.pay_zone),
+    payMiles: o.pay_miles === null || o.pay_miles === undefined ? null : Number(o.pay_miles),
+    payBasis: o.pay_basis ?? null,
     outOfAreaMiles: o.out_of_area_miles === null ? null : Number(o.out_of_area_miles),
     geocodeStatus: o.geocode_status,
     /* Through the shared presenter, which also carries signatureRequired

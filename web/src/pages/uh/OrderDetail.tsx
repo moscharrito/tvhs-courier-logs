@@ -34,6 +34,9 @@ interface Pricing {
     reason?: string;
     zone?: number | null;
     base?: number; statSurcharge?: number; afterHoursSurcharge?: number; dryRunFee?: number;
+    /* Pricing's `zone` is the BILLING band, and stays that way: this block
+       is the invoice to University Health. The courier's band is payZone on
+       the order itself. */
     outOfArea?: { miles: number; perMile: number; amount: number };
     total?: number; effectiveFrom?: string; notes?: string[];
     afterHours?: boolean; measuredAt?: string; measuredFrom?: string; provisional?: boolean;
@@ -297,9 +300,50 @@ export function OrderDetail() {
                                 <tr><th>Recipient</th><td>{order.recipientName}{order.recipientPhone && <> · {order.recipientPhone}</>}</td></tr>
                                 <tr><th>Address</th><td>{order.address}<br />{order.city} {order.state} {order.zip}</td></tr>
                             </>}
+                        {/* ── TWO ZONES, BOTH NAMED ────────────────────────────
+                            This row said "Zone" and showed the billing band,
+                            which is the ambiguity that underpaid a fourteen-mile
+                            stop as zone 1 for a week: 78247 is zone 1 on
+                            University Health's bid table and fourteen road miles
+                            from the counter it left. This is the page somebody
+                            opens when a courier disputes their pay, so an
+                            unlabelled "Zone 1" here reads as the answer to a
+                            question it is not about.
+
+                            Both now say whose zone they are, and the pay row
+                            carries the miles, because a band nobody can check
+                            against their offer letter is how this went unseen
+                            since go-live. */}
                         <tr>
-                            <th>Zone</th>
-                            <td>{order.zone === null ? <span className="izy-pill warn">out of area, needs a distance</span> : `Zone ${order.zone}`}</td>
+                            <th>Zone (billing)</th>
+                            <td>
+                                {order.zone === null ? <span className="izy-pill warn">out of area, needs a distance</span> : `Zone ${order.zone}`}
+                                <div className="izy-muted izy-field-note">University Health's band for this ZIP. Not what the courier is paid on.</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Zone (pay)</th>
+                            <td>
+                                {/* `== null` catches undefined, for an older
+                                    server that does not send the field at all. */}
+                                {order.payZone == null
+                                    ? <>
+                                        <span className="izy-pill warn">not measured</span>
+                                        <div className="izy-muted izy-field-note">
+                                            {order.zone === null
+                                                ? 'Outside every zone, so there is no distance to band.'
+                                                : `Paying the billing band (Zone ${order.zone}) until the distance from the pharmacy is measured.`}
+                                        </div>
+                                      </>
+                                    : <>
+                                        {`Zone ${order.payZone}`}
+                                        {order.payMiles != null && ` · ${order.payMiles.toFixed(1)} mi`}
+                                        <div className="izy-muted izy-field-note">
+                                            Distance from the pickup pharmacy, banded as the offer letter bands it
+                                            {order.payBasis === 'straight-line' && ' (straight line, not a road route)'}.
+                                        </div>
+                                      </>}
+                            </td>
                         </tr>
                         <tr><th>Status</th><td>{order.status}{order.failureReason && <> · {order.failureReason}</>}</td></tr>
                         {/* The person, not the key. `assignedTo` is a username, which on this

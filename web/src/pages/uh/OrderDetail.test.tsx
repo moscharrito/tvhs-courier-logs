@@ -224,3 +224,80 @@ describe('the return form on our own copy', () => {
  * The tests below are what remains: this page SAYS the photograph is
  * missing, and offers nothing to do about it.
  */
+
+/* ── THE TWO ZONES ────────────────────────────────────────────────────────
+ *
+ * This screen showed one row labelled "Zone" holding University Health's
+ * billing band. A courier delivering fourteen road miles out to 78247 was
+ * paid the bottom rate because that ZIP is zone 1 on the bid table, and this
+ * is the page somebody opens to argue about exactly that -- where it showed
+ * them "Zone 1" with nothing to say which zone it meant.
+ *
+ * The fixture's numbers are the real shape of the fault: billing zone 1,
+ * pay zone 2, fourteen miles.
+ */
+describe('billing zone and pay zone, which are different numbers', () => {
+    const fourteenMiles = { zone: 1, payZone: 2, payMiles: 14.2, payBasis: 'road' };
+
+    it('labels each row with whose zone it is', async () => {
+        renderAs(asLead, fourteenMiles);
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        /* Neither row may be labelled the bare word that caused this. */
+        expect(rowLabels()).toContain('Zone (billing)');
+        expect(rowLabels()).toContain('Zone (pay)');
+        expect(rowLabels()).not.toContain('Zone');
+    });
+
+    it('shows the pay band with the miles, so it can be checked', async () => {
+        renderAs(asLead, fourteenMiles);
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        /* The miles are the point: a band on its own cannot be argued with
+           by the person being paid. */
+        expect(screen.getByText(/Zone 2/)).toBeInTheDocument();
+        expect(screen.getByText(/14\.2 mi/)).toBeInTheDocument();
+        expect(screen.getByText(/Distance from the pickup pharmacy/)).toBeInTheDocument();
+    });
+
+    it('says a straight line is not a road route', async () => {
+        renderAs(asLead, { ...fourteenMiles, payBasis: 'straight-line' });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        /* A straight line understates a drive, so it understates the band.
+           Quoting the miles without saying which kind invites an argument
+           nobody can settle. */
+        expect(screen.getByText(/straight line, not a road route/)).toBeInTheDocument();
+    });
+
+    /* ── AND THE STATE EVERY ORDER IS IN TODAY. No pharmacy has coordinates,
+     * so nothing is measured and the billing band is standing in. That must
+     * read as a stand-in rather than as the courier's band, or the screen
+     * repeats the original mistake in a new place. */
+    it('says plainly when the distance has not been measured', async () => {
+        renderAs(asLead, { zone: 1, payZone: null, payMiles: null, payBasis: null });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.getByText('not measured')).toBeInTheDocument();
+        expect(screen.getByText(/Paying the billing band \(Zone 1\)/)).toBeInTheDocument();
+        /* It must NOT claim a pay zone it does not have. */
+        expect(screen.queryByText(/Distance from the pickup pharmacy/)).toBeNull();
+    });
+
+    it('does not invent a band for a stop outside every zone', async () => {
+        renderAs(asLead, { zone: null, payZone: null, payMiles: null, payBasis: null });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.getByText(/Outside every zone, so there is no distance to band/)).toBeInTheDocument();
+    });
+
+    /* A server older than this build sends no pay fields at all. The screen
+       must degrade to "not measured", never to zone 1. */
+    it('treats a missing field as unmeasured, never as the bottom band', async () => {
+        renderAs(asLead, { zone: 3 });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.getByText('not measured')).toBeInTheDocument();
+        expect(screen.getByText(/Paying the billing band \(Zone 3\)/)).toBeInTheDocument();
+    });
+});

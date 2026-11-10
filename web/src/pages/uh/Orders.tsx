@@ -37,7 +37,21 @@ export interface OrderRow {
     address: string;
     city: string;
     zip: string;
+    /** UNIVERSITY HEALTH'S BAND for the destination ZIP, which is what they
+     *  are invoiced on. Not what the courier is paid on: see payZone. */
     zone: number | null;
+    /** THE COURIER'S BAND -- the offer letter's distance from the pickup
+     *  pharmacy, in miles, banded 0-10 / 11-25 / 26-50 / 51+.
+     *
+     *  Optional because a server older than this build does not send it, and
+     *  null when the pharmacy-and-ZIP pair has no measured distance. Neither
+     *  may be rendered as zone 1: paying the bottom band for an unmeasured
+     *  stop is the fault this field exists to end. */
+    payZone?: number | null;
+    payMiles?: number | null;
+    /** 'road' or 'straight-line'. A straight line understates a drive, so a
+     *  screen quoting the miles should say which kind they are. */
+    payBasis?: string | null;
     status: string;
     dueAt: string | null;
     assignedTo: string | null;
