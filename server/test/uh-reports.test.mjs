@@ -93,7 +93,20 @@ describe('grouping a range', () => {
 /* ------------------------------------------------------------------ rates */
 
 describe('what goes into a rate', () => {
-    it('counts delivered over attempted, not over everything', () => {
+    it('counts delivered over the deliveries we were given, not over the ones we got to', () => {
+        /* THE CHANGE OF 11 NOVEMBER 2026, and the test that used to say the
+           opposite. It read "3 of 4 attempts, not 3 of 6 deliveries" and
+           asserted 75 per cent.
+
+           The old basis had a hole in it: a delivery nobody had been to was
+           not an attempt, so it sat in neither half of the fraction and cost
+           nothing. On 10 November the screen read 97.4 per cent with 125 of
+           239 deliveries still open. A completion rate that improves when
+           less work is recorded is not measuring completion.
+
+           So: three delivered, one failed, one still open, one cancelled.
+           The cancelled one leaves altogether; the open one counts against
+           us. 3 of 5. */
         const totals = fold([
             fact(), fact(), fact(),
             fact({ status: 'failed', deliveredAt: null }),
@@ -101,16 +114,29 @@ describe('what goes into a rate', () => {
             fact({ status: 'picked_up', arrivedAt: null, deliveredAt: null }),
         ]);
         expect(totals).toMatchObject({ orders: 6, delivered: 3, notDelivered: 1, cancelled: 1, stillOpen: 1, attempts: 4 });
-        // 3 of 4 attempts, not 3 of 6 deliveries.
-        expect(ratesFor(totals).completionRate).toBe(75);
-        expect(ratesFor(totals).dryRunRate).toBe(25);
+        expect(ratesFor(totals).completionRate).toBe(60);
     });
 
-    it('leaves a cancelled delivery out of every rate', () => {
-        // Called off before a courier took custody is not a performance
-        // outcome either way.
+    it('does not let an unfinished delivery improve the figure by staying unfinished', () => {
+        /* The property the change is FOR, stated as a property rather than
+           as an arithmetic example: adding work nobody has done must never
+           move the rate up. Under the old basis this pair was 100 and 100. */
+        const done = fold([fact(), fact()]);
+        const andOneLeftOpen = fold([fact(), fact(), fact({ status: 'picked_up', arrivedAt: null, deliveredAt: null })]);
+
+        expect(ratesFor(done).completionRate).toBe(100);
+        expect(ratesFor(andOneLeftOpen).completionRate).toBeLessThan(100);
+    });
+
+    it('leaves a cancelled delivery out of both halves, not just the top', () => {
+        /* A delivery University Health called off, or one where the patient
+           came in and collected it, is not a job we failed to complete.
+           Holding it against us would make our figure depend on their
+           decisions, which is the one thing a performance measure must not
+           do. */
         const totals = fold([fact(), fact({ status: 'cancelled' })]);
-        expect(totals.attempts).toBe(1);
+        expect(totals.orders).toBe(2);
+        expect(totals.cancelled).toBe(1);
         expect(ratesFor(totals).completionRate).toBe(100);
     });
 
@@ -147,6 +173,9 @@ describe('what goes into a rate', () => {
            both numbers and labels them rather than choosing quietly. */
         const totals = fold([fact(), fact(), fact(), fact({ status: 'failed' })]);
         const rates = ratesFor(totals);
+        /* Nothing open and nothing cancelled here, so the two bases agree
+           and this stays 75 -- which is the point of using a closed set to
+           test the literal ratio. */
         expect(rates.completionRate).toBe(75);
         expect(rates.literalScopeRatio).toBeCloseTo(4 / 3, 3);
         expect(rates.literalScopeRatio).toBeGreaterThan(1);
@@ -300,7 +329,11 @@ describe('the report endpoint', () => {
         const res = await admin.get(`${REPORTS}/sla?from=${today}&to=${today}`);
         expect(res.status).toBe(200);
         expect(res.body.totals).toMatchObject({ delivered: 3, notDelivered: 1, attempts: 4, stillOpen: 1 });
-        expect(res.body.rates.completionRate).toBe(75);
+        /* 3 of 5, end to end, and not 3 of 4: the one left ready counts
+           against us until somebody delivers it. This fixture is the whole
+           change in miniature -- five deliveries went in, three came out
+           the other end, and before 11 November 2026 this line said 75. */
+        expect(res.body.rates.completionRate).toBe(60);
         expect(res.body.byServiceType.length).toBeGreaterThan(0);
         expect(res.body.bySite.length).toBeGreaterThan(0);
         expect(res.body.byZone.length).toBeGreaterThan(0);
@@ -396,8 +429,8 @@ describe('the workbook', () => {
         });
         expect(completion).not.toBeNull();
         expect(typeof completion.value).toBe('number');
-        // 0.75 formatted as a percentage, not the string "75%".
-        expect(completion.value).toBeCloseTo(0.75, 3);
+        // 0.60 formatted as a percentage, not the string "60%".
+        expect(completion.value).toBeCloseTo(0.60, 3);
         expect(completion.numFmt).toBe('0.0%');
     });
 

@@ -23,7 +23,7 @@ interface Totals {
 }
 interface Rates {
     completionRate: number | null; onTimeRate: number | null;
-    dryRunRate: number | null; literalScopeRatio: number | null;
+    literalScopeRatio: number | null;
 }
 interface Slice { key: string; label: string; totals: Totals; rates: Rates }
 
@@ -216,18 +216,39 @@ export function Reports() {
                     <div><b>{report.target.completion}%</b><span>contract requires</span></div>
                     <div><b>{report.target.internalGoal}%</b><span>internal goal</span></div>
                     <div><b>{pct(report.rates.onTimeRate)}</b><span>arrived on time</span></div>
-                    <div><b>{pct(report.rates.dryRunRate)}</b><span>dry runs</span></div>
                 </div>
+                {/* THE SENTENCE UNDER THE RATE HAS TO NAME ITS DENOMINATOR,
+                    and this one used to name the wrong one. It read "out of
+                    N attempted ... still open and left out of every rate",
+                    which was true of the old basis and is now exactly
+                    backwards: an unfinished delivery is the thing the rate
+                    is counted against. A figure whose caption describes a
+                    different sum is worse than a figure with no caption. */}
                 <p className="izy-muted">
-                    {report.totals.delivered} delivered and {report.totals.notDelivered} not delivered,
-                    out of {report.totals.attempts} attempted.
-                    {report.totals.stillOpen > 0 && <> {report.totals.stillOpen} still open and left out of every rate.</>}
-                    {report.totals.cancelled > 0 && <> {report.totals.cancelled} cancelled and excluded.</>}
+                    {report.totals.delivered} delivered out of {report.totals.orders - report.totals.cancelled}{' '}
+                    {report.totals.orders - report.totals.cancelled === 1 ? 'delivery' : 'deliveries'} given to us.
+                    {report.totals.notDelivered > 0 && <> {report.totals.notDelivered} not delivered.</>}
+                    {report.totals.stillOpen > 0 && <> {report.totals.stillOpen} still open, counting against the rate until they are filed.</>}
+                    {report.totals.cancelled > 0 && <> {report.totals.cancelled} cancelled and left out of the sum altogether.</>}
                     {report.totals.notMeasured > 0 && <> {report.totals.notMeasured} could not be timed.</>}
                 </p>
                 {report.meetsContract === false && (
                     <div className="izy-alert warn" role="status">
                         Below the {report.target.completion} per cent the contract requires for this range.
+                        {/* WHY IT IS BELOW, when the answer is unfiled work
+                            rather than failed work. Since 11 November the
+                            rate counts open deliveries against us, so this
+                            banner fires on any range that is still being
+                            worked -- including today, every day, until the
+                            last stop is recorded. Naming the cause is what
+                            keeps it from being read as a failure rate and
+                            then ignored. It changes no number. */}
+                        {report.totals.stillOpen > 0 && <>
+                            {' '}
+                            <b>{report.totals.stillOpen}</b> of these{' '}
+                            {report.totals.stillOpen === 1 ? 'is' : 'are'} still open. Filing{' '}
+                            {report.totals.stillOpen === 1 ? 'it' : 'them'} is what moves this figure.
+                        </>}
                     </div>
                 )}
             </div>

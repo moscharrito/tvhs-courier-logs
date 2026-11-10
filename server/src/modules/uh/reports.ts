@@ -21,6 +21,21 @@
  * success even when the recipient is unavailable, which is why evaluateSla in
  * lifecycle.ts is the only place that decides and why this module calls it
  * rather than writing its own comparison.
+ *
+ * THE COMPLETION RATE IS COUNTED OVER THE WORK WE WERE GIVEN, not over the
+ * work we got to, and that changed on 11 November 2026. It was delivered
+ * over attempts, which left a delivery nobody had been to out of both halves
+ * of the fraction: on 10 November the screen read 97.4 per cent with 125 of
+ * 239 deliveries still open, and it would have read higher had the three
+ * failures gone unfiled as well. A figure that improves when less work is
+ * recorded measures filing, not completion. Cancelled deliveries are out of
+ * it entirely -- a job the pharmacy called off is not one we failed. See
+ * `Rates.completionRate`, which carries the full argument.
+ *
+ * THE DRY-RUN RATE WENT WITH IT. Dry runs are still counted on every screen
+ * as "not delivered" and still billed per item under Addendum 1; what was
+ * removed is the percentage, which was a second denominator on a card whose
+ * whole purpose is to make one denominator unarguable.
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -285,7 +300,29 @@ export interface Totals {
 }
 
 export interface Rates {
-    /** Successful deliveries over attempts. The sensible reading of 1.2.5. */
+    /** Successful deliveries over the deliveries we were given.
+     *
+     *  THE DENOMINATOR CHANGED ON 11 NOVEMBER 2026, from attempts to the
+     *  delivery count, and it is the most consequential line in this file.
+     *
+     *  It was `delivered / attempts`, where an attempt is a delivery that
+     *  reached an outcome. That has a hole in it big enough to drive a van
+     *  through: a delivery nobody ever went to is not an attempt, so it is
+     *  in neither half of the fraction and costs nothing. On 10 November
+     *  the screen read 97.4 per cent with 125 of 239 deliveries still open
+     *  -- a rate that would have been unmoved if all 125 were never done at
+     *  all, and would have read 100 per cent if the three failures had also
+     *  been left unfiled. A completion rate that improves when less work is
+     *  recorded is not measuring completion.
+     *
+     *  So the denominator is now the work we were GIVEN rather than the
+     *  work we got to, and an unfinished delivery counts against us until
+     *  it is finished. That is what the word means to the client.
+     *
+     *  CANCELLED DELIVERIES ARE OUT OF IT ENTIRELY, in neither half. A
+     *  delivery University Health called off, or one where the patient came
+     *  in and collected, is not a job we failed to complete, and holding it
+     *  against us would make our figure depend on their decisions. */
     completionRate: number | null;
     /** The same, with the pharmacy's own mistakes taken out of the
      *  denominator. This is the number University Health said they would hold
@@ -293,10 +330,14 @@ export interface Rates {
      *  because one of them is the truth about the day and the other is the
      *  truth about us, and a single figure cannot be both. */
     completionRateAdjusted: number | null;
-    /** On-time arrivals over arrivals that could be measured (Addendum 1). */
+    /** On-time arrivals over arrivals that could be measured (Addendum 1).
+     *
+     *  IT KEEPS ITS OWN DENOMINATOR and did not move with completion above.
+     *  Addendum 1 measures an arrival against a deadline; a delivery nobody
+     *  has been to has no arrival, so there is nothing to be late. Counting
+     *  it as a miss would make this a measure of how much of the day is
+     *  filed, which is what the completion rate is now for. */
     onTimeRate: number | null;
-    /** Attempts that ended as a dry run. */
-    dryRunRate: number | null;
     /** Scope 1.2.5 exactly as written: attempts over successful deliveries.
      *  Reported because it is what the contract says, labelled because it
      *  cannot be a percentage. */
@@ -339,11 +380,18 @@ export function addFact(totals: Totals, fact: OrderFact, now: Date): Totals {
 
 export function ratesFor(totals: Totals): Rates {
     const measured = totals.onTimeMet + totals.onTimeMissed;
+    /* THE WORK WE WERE GIVEN. Delivered, not delivered, and still open --
+       everything that was put in front of us and not called off again.
+       Derived here rather than stored on Totals because it is the two
+       fields either side of it and nothing else, and a stored copy is a
+       third number that can disagree with them. */
+    const given = totals.orders - totals.cancelled;
     return {
-        completionRate: rate(totals.delivered, totals.attempts),
-        completionRateAdjusted: rate(totals.delivered, totals.attempts - totals.notDeliveredPharmacyFault),
+        completionRate: rate(totals.delivered, given),
+        /* Pharmacy-caused failures come out of the same denominator they
+           always did; only what that denominator counts has changed. */
+        completionRateAdjusted: rate(totals.delivered, given - totals.notDeliveredPharmacyFault),
         onTimeRate: rate(totals.onTimeMet, measured),
-        dryRunRate: rate(totals.notDelivered, totals.attempts),
         literalScopeRatio: totals.delivered === 0
             ? null
             : Math.round((totals.attempts / totals.delivered) * 1000) / 1000,
@@ -600,18 +648,13 @@ export const DEFINITIONS: Array<{ measure: string; definition: string; note: str
     },
     {
         measure: 'Completion rate',
-        definition: 'Successful deliveries divided by attempted deliveries, as a percentage. An attempt is a delivery that reached an outcome: delivered or not delivered.',
-        note: `University Health asked on 29 September 2026 for ${COMPLETION_TARGET} per cent, up from the 85 per cent minimum in Scope 1.2.5. This report holds us to the higher figure; the two disagree until the contract is amended. Separately, 1.2.5 defines the rate as "attempts divided by successful deliveries", which is at or above 1 and cannot be a percentage; this report uses it the other way up and shows the literal ratio alongside. Both remain open items for clarification.`,
+        definition: 'Successful deliveries divided by the deliveries we were given, as a percentage. The denominator is every delivery in the range except the cancelled ones, so a delivery still open counts against it until it is finished.',
+        note: `Until 11 November 2026 the denominator was attempted deliveries, which left a delivery nobody had been to out of both halves of the fraction: on 10 November the rate read 97.4 per cent with 125 of 239 deliveries still open, and would have read higher still had the three failures also gone unfiled. Cancelled deliveries are out of it entirely, in neither half, because a delivery the pharmacy called off is not one we failed to complete. University Health asked on 29 September 2026 for ${COMPLETION_TARGET} per cent, up from the 85 per cent minimum in Scope 1.2.5; this report holds us to the higher figure and the two disagree until the contract is amended. Separately, 1.2.5 defines the rate as "attempts divided by successful deliveries", which is at or above 1 and cannot be a percentage; this report uses it the other way up and shows the literal ratio alongside. Both remain open items for clarification.`,
     },
     {
         measure: 'On-time rate',
         definition: 'Arrivals at or before the deadline divided by attempts whose timing could be measured, as a percentage.',
-        note: 'Addendum 1 counts an on-time arrival as a success even when the recipient is unavailable, so the arrival time is used, not the delivery time. Where no arrival was recorded the delivery time is the fallback.',
-    },
-    {
-        measure: 'Dry run rate',
-        definition: 'Attempted deliveries that ended without a handover, divided by attempts, as a percentage.',
-        note: 'Addendum 1 bills a dry run per item; this rate counts deliveries, not items, so it will not match an invoice line for line.',
+        note: 'Addendum 1 counts an on-time arrival as a success even when the recipient is unavailable, so the arrival time is used, not the delivery time. Where no arrival was recorded the delivery time is the fallback. This one kept the attempted denominator when the completion rate changed on 11 November 2026: a delivery nobody has been to has no arrival, so there is nothing for it to be late for.',
     },
     {
         measure: 'Not measured',
@@ -919,12 +962,11 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             ['Deliveries in range', report.totals.orders, 'Every delivery with a service date in the range'],
             ['Attempted', report.totals.attempts, 'Delivered plus not delivered'],
             ['Delivered', report.totals.delivered, ''],
-            ['Not delivered', report.totals.notDelivered, 'Dry runs'],
-            ['Cancelled', report.totals.cancelled, 'Excluded from every rate'],
-            ['Still open', report.totals.stillOpen, 'Excluded from every rate'],
-            ['Completion rate', rateCell(report.rates.completionRate), `Delivered / attempted. Contract requires ${COMPLETION_TARGET}%`],
+            ['Not delivered', report.totals.notDelivered, 'Attempted and ended without a handover'],
+            ['Cancelled', report.totals.cancelled, 'Called off: in neither half of the completion rate'],
+            ['Still open', report.totals.stillOpen, 'Not finished: counts against the completion rate'],
+            ['Completion rate', rateCell(report.rates.completionRate), `Delivered / deliveries less cancelled. Contract requires ${COMPLETION_TARGET}%`],
             ['On-time rate', rateCell(report.rates.onTimeRate), 'On-time arrivals / measured attempts (Addendum 1)'],
-            ['Dry run rate', rateCell(report.rates.dryRunRate), 'Not delivered / attempted'],
             ['Not measured', report.totals.notMeasured, 'Closed with no deadline or no arrival time'],
             ['Scope 1.2.5 as literally written', report.rates.literalScopeRatio ?? 'n/a', 'Attempts / successful deliveries. Not a percentage; see Definitions'],
             ['Turnaround, in our hands (median min)', report.turnaround.inOurHands.medianMinutes ?? 'n/a', `Pickup to handover, over ${report.turnaround.inOurHands.count} delivered`],
@@ -946,16 +988,17 @@ export function createReportsRouter({ client }: { client: Client }): Router {
                 { header: first, width: 30 }, { header: 'Deliveries', width: 12 },
                 { header: 'Attempted', width: 12 }, { header: 'Delivered', width: 12 },
                 { header: 'Not delivered', width: 14 }, { header: 'Still open', width: 12 },
-                { header: 'Completion', width: 12 }, { header: 'On time', width: 12 }, { header: 'Dry run', width: 12 },
+                { header: 'Cancelled', width: 12 },
+                { header: 'Completion', width: 12 }, { header: 'On time', width: 12 },
             ];
             sheet.getRow(1).font = { bold: true };
             for (const s of slices) {
                 const row = sheet.addRow([
                     s.label, s.totals.orders, s.totals.attempts, s.totals.delivered,
-                    s.totals.notDelivered, s.totals.stillOpen,
-                    rateCell(s.rates.completionRate), rateCell(s.rates.onTimeRate), rateCell(s.rates.dryRunRate),
+                    s.totals.notDelivered, s.totals.stillOpen, s.totals.cancelled,
+                    rateCell(s.rates.completionRate), rateCell(s.rates.onTimeRate),
                 ]);
-                for (const col of [7, 8, 9]) if (typeof row.getCell(col).value === 'number') row.getCell(col).numFmt = '0.0%';
+                for (const col of [8, 9]) if (typeof row.getCell(col).value === 'number') row.getCell(col).numFmt = '0.0%';
             }
         };
         sliceSheet('By period', grouping === 'day' ? 'Service date' : 'Period', report.byPeriod);

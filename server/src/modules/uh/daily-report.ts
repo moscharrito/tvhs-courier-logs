@@ -51,7 +51,7 @@ const mins = (value: number | null): string => (value === null ? 'n/a' : `${n(va
 
 export interface DailyFigures {
     totals: { orders: number; delivered: number; notDelivered: number; cancelled: number; stillOpen: number; attempts: number };
-    rates: { completionRate: number | null; onTimeRate: number | null; dryRunRate: number | null };
+    rates: { completionRate: number | null; onTimeRate: number | null };
     turnaround: { inOurHands: { medianMinutes: number | null; p90Minutes: number | null } };
     followUp: { reattempts: number; returned: number; awaitingReturn: number };
     failureReasons: Array<{ label: string; packages: number }>;

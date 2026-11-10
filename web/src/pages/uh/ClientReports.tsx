@@ -60,7 +60,7 @@ interface Slice {
     key: string;
     label: string;
     totals: { orders: number; delivered: number; notDelivered: number; stillOpen: number; attempts: number };
-    rates: { completionRate: number | null; completionRateAdjusted: number | null; onTimeRate: number | null; dryRunRate: number | null };
+    rates: { completionRate: number | null; completionRateAdjusted: number | null; onTimeRate: number | null };
 }
 
 interface Report {
@@ -71,7 +71,7 @@ interface Report {
         orders: number; delivered: number; notDelivered: number; cancelled: number;
         stillOpen: number; attempts: number; onTimeMet: number; onTimeMissed: number; notMeasured: number; notDeliveredPharmacyFault: number;
     };
-    rates: { completionRate: number | null; completionRateAdjusted: number | null; onTimeRate: number | null; dryRunRate: number | null };
+    rates: { completionRate: number | null; completionRateAdjusted: number | null; onTimeRate: number | null };
     turnaround: {
         inOurHands: { count: number; medianMinutes: number | null; p90Minutes: number | null };
         endToEnd: { count: number; medianMinutes: number | null; p90Minutes: number | null };
@@ -236,10 +236,23 @@ export function ClientReports() {
                         </div>
                         <table className="izy-table">
                             <tbody>
+                                {/* THE BASIS CELL IS NOT DECORATION. It read
+                                    "everything attempted" until 11 November
+                                    2026, which described the old denominator
+                                    and would now describe the wrong sum on
+                                    the one screen University Health reads
+                                    for themselves. A rate on a client portal
+                                    with a caption that does not match it is
+                                    the kind of thing found in a quarterly
+                                    review rather than here. */}
                                 <tr>
                                     <td>Completion rate</td>
                                     <td><b>{pct(report.rates.completionRate)}</b></td>
-                                    <td className="izy-muted">everything attempted</td>
+                                    <td className="izy-muted">
+                                        every delivery given to us
+                                        {report.totals.cancelled > 0 && <>, less the {report.totals.cancelled} cancelled</>}
+                                        {report.totals.stillOpen > 0 && <> &middot; {report.totals.stillOpen} still out, counted against it</>}
+                                    </td>
                                 </tr>
                                 {/* SHOWN BESIDE IT, NOT INSTEAD OF IT. One of
                                     these is the truth about the day and the

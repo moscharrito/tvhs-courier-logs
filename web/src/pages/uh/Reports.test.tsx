@@ -20,7 +20,7 @@ const totals = (over = {}) => ({
     attempts: 112, onTimeMet: 95, onTimeMissed: 15, notMeasured: 2, ...over,
 });
 const rates = (over = {}) => ({
-    completionRate: 89.3, onTimeRate: 86.4, dryRunRate: 10.7, literalScopeRatio: 1.12, ...over,
+    completionRate: 89.3, onTimeRate: 86.4, literalScopeRatio: 1.12, ...over,
 });
 const slice = (key: string, label: string, over = {}) => ({ key, label, totals: totals(), rates: rates(), ...over });
 
@@ -88,13 +88,45 @@ describe('Reports', () => {
         expect(screen.getByText(/Below the 85 per cent the contract requires/)).toBeInTheDocument();
     });
 
-    it('says what was left out of the rates, not only what went in', async () => {
-        // The argument in a contract meeting is always about the denominator.
+    it('names the denominator it actually used, which is the whole argument', async () => {
+        /* The argument in a contract meeting is always about the
+           denominator, and until 11 November 2026 this caption named the
+           wrong one -- "out of 112 attempted ... 5 still open and left out
+           of every rate". Both halves of that are now false: the sum is
+           over 117 (120 less the 3 cancelled), and the 5 still open are IN
+           it rather than left out. A rate whose caption describes a
+           different sum is worse than a rate with no caption. */
         renderReports();
         await screen.findByRole('heading', { name: 'Performance' });
-        expect(screen.getByText(/5 still open and left out of every rate/)).toBeInTheDocument();
-        expect(screen.getByText(/3 cancelled and excluded/)).toBeInTheDocument();
+        expect(screen.getByText(/100 delivered out of 117 deliveries given to us/)).toBeInTheDocument();
+        expect(screen.getByText(/5 still open, counting against the rate until they are filed/)).toBeInTheDocument();
+        expect(screen.getByText(/3 cancelled and left out of the sum altogether/)).toBeInTheDocument();
         expect(screen.getByText(/2 could not be timed/)).toBeInTheDocument();
+        /* The sentence it replaced, pinned so nobody restores it. */
+        expect(screen.queryByText(/left out of every rate/)).not.toBeInTheDocument();
+    });
+
+    it('does not show a dry-run rate, which was taken off the screen', async () => {
+        /* Removed on 11 November 2026. Dry runs are still counted -- the
+           Not delivered column is right there -- and still billed per item
+           under Addendum 1. What went is the percentage. */
+        renderReports();
+        await screen.findByRole('heading', { name: 'Performance' });
+        expect(screen.queryByText('dry runs')).not.toBeInTheDocument();
+    });
+
+    it('tells somebody under the contract figure that unfiled work is why', async () => {
+        /* The rate now counts open deliveries against us, so this banner
+           fires on any range still being worked -- today, every day, until
+           the last stop is recorded. Naming the cause is what stops it
+           being read as a failure rate and then ignored. */
+        renderReports(routes({
+            'GET /api/projects/uh/uh/reports/sla*': report({
+                rates: rates({ completionRate: 46.4 }), meetsContract: false,
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Performance' });
+        expect(screen.getByText(/Filing them is what moves this figure/)).toBeInTheDocument();
     });
 
     it('breaks the range down every way the contract asks about', async () => {
