@@ -15,8 +15,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
-import { clockFor } from '../../lib/when';
-import { useProjectTimezone } from '../../app/auth';
+import { clockFor, instantIn } from '../../lib/when';
+import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
 import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
@@ -89,7 +89,31 @@ export function Stop() {
     const base = `/api/projects/${code}/uh/orders/${orderId}`;
     /* The deadline this stop is measured against is a wall-clock time in the
        project's zone, so it is shown in that zone and not the phone's. */
-    const clock = clockFor(useProjectTimezone(code));
+    const zone = useProjectTimezone(code);
+    const clock = clockFor(zone);
+
+    /* ── FILING SOMETHING THAT HAPPENED DAYS AGO ──────────────────────────
+     *
+     * Dispatch and site managers record stops on a courier's behalf -- a
+     * phone that died, a backlog nobody had time to enter. Without this the
+     * server stamps the moment the form was submitted, so Monday's round
+     * reads as completed on Thursday: every one of those stops is then
+     * hours late on a report University Health are sent, and the daily
+     * figures for both days are wrong.
+     *
+     * STAFF ONLY, AND NOT BECAUSE A COURIER CANNOT BE TRUSTED. A courier is
+     * at the door when they press the button, so the time is already right
+     * and a box asking them to confirm it is a box to get wrong in the rain.
+     * It also must never become a way to make a late delivery look on time,
+     * and the people who can reach it are the ones whose own work it is not.
+     *
+     * Empty means now, which is what nearly every use of this screen wants.
+     * The server refuses a future time whatever is typed here. */
+    const { projects } = useAuth();
+    const projectRole = projects.find((p) => p.code === code)?.role ?? '';
+    const canBackdate = projectRole === 'admin' || projectRole === 'lead';
+    const [happenedAt, setHappenedAt] = useState('');
+    const backdated = canBackdate && happenedAt !== '' ? instantIn(zone, happenedAt) : null;
 
     const [order, setOrder] = useState<OrderDetail | null>(null);
     const [filesAvailable, setFilesAvailable] = useState<boolean | null>(null);
@@ -240,7 +264,11 @@ export function Stop() {
         try {
             const result = await sendOrQueue({
                 url: `${base}/${path}`,
-                body: { ...body, ...(position ?? {}) },
+                /* `at` last, so an explicit time always wins over anything a
+                   caller happened to put in the body. Absent when the box is
+                   empty, which leaves the server stamping now exactly as it
+                   did before this existed. */
+                body: { ...body, ...(position ?? {}), ...(backdated ? { at: backdated.toISOString() } : {}) },
                 label: `${LABELS[path] ?? path} for ${order!.recipientName}`,
                 orderId: order!.id,
                 ...(photo ? { photo: { blob: photo, contentType: photoType(photo) ?? "image/jpeg", kind: 'doorstep', bodyKey: 'fileId' } } : {}),
@@ -511,6 +539,45 @@ export function Stop() {
             </Context>
 
             <Sheet>
+            {/* ── WHEN IT ACTUALLY HAPPENED ────────────────────────────────
+                Above everything, because it changes what every button below
+                it records. Staff only: see canBackdate.
+
+                It reads as a correction rather than a setting -- empty is
+                "now" and that is the normal case -- so the label says what
+                it is for rather than naming a field. A dispatcher filing
+                Monday's round on Thursday has to be told, once, that the
+                time is the thing the screen will otherwise get wrong. */}
+            {canBackdate && (
+                <div className="izy-card">
+                    <h2>When did this happen?</h2>
+                    <p className="izy-lede-note">
+                        Leave this empty for now. Fill it in when you are recording something that
+                        already happened, so the delivery is not stamped with today — the report
+                        University Health see is built from these times.
+                    </p>
+                    <label className="izy-field">Time at the door, {zone.replace('_', ' ')}
+                        <input
+                            type="datetime-local"
+                            value={happenedAt}
+                            /* The server refuses a future time outright; this
+                               stops somebody reaching one by accident, in the
+                               project's zone rather than the laptop's.
+                               'sv-SE' formats as YYYY-MM-DD HH:mm:ss, which is
+                               what datetime-local wants once the space is a T. */
+                            max={new Date().toLocaleString('sv-SE', { timeZone: zone }).replace(' ', 'T').slice(0, 16)}
+                            onChange={(e) => setHappenedAt(e.target.value)}
+                        />
+                    </label>
+                    {happenedAt !== '' && (
+                        <p className="izy-lede-note">
+                            {backdated === null
+                                ? 'That is not a complete date and time, so now will be recorded.'
+                                : `Recording as ${clock(backdated.toISOString())}. This applies to every button below.`}
+                        </p>
+                    )}
+                </div>
+            )}
             {msg && (
                 <div className={`izy-alert ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>
                     {msg.text}

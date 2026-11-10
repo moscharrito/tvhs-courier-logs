@@ -147,3 +147,53 @@ export function daysBeforeIn(timeZone: string, days: number, at: Date = new Date
     const [y, m, d] = todayIn(timeZone, at).split('-').map(Number);
     return new Date(Date.UTC(y!, m! - 1, d! - days)).toISOString().slice(0, 10);
 }
+
+/* ───────────────────────── A WALL CLOCK SOMEBODY TYPED, AS AN INSTANT.
+ *
+ * Dispatch file a backlog days after the round happened, so the stop screen
+ * asks them when it actually did. What they type is a wall clock -- "9
+ * November, 14:05" -- and what the server stores is an instant. Turning one
+ * into the other needs a zone, and the only correct zone is the PROJECT's:
+ * the round happened in San Antonio whatever the clock on the laptop filing
+ * it says. A dispatcher working from another city, or a laptop whose zone was
+ * never set, would otherwise file every stop hours out.
+ *
+ * `new Date("2026-11-09T14:05")` resolves in the DEVICE's zone, which is the
+ * bug this exists to avoid, and there is no constructor that takes a named
+ * one.
+ *
+ * So: guess that the wall clock is UTC, ask what that instant looks like in
+ * the project's zone, and shift by the difference. Twice, because the first
+ * shift can cross a DST boundary into a different offset -- 1 November is
+ * twenty-five hours long in America/Chicago, and a single pass lands an hour
+ * out for the stops either side of 2am. The second pass measures the offset
+ * at the corrected instant, which is the one that actually applies.
+ *
+ * Returns null for anything that is not a complete wall clock, so a half
+ * typed box is "not given" rather than a date in the year 202.
+ */
+function wallClockAsUtc(at: Date, timeZone: string): number {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: safeZone(timeZone), hour12: false,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(at);
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+    /* hour12:false still prints midnight as 24 in some engines. */
+    const hour = get('hour') % 24;
+    return Date.UTC(get('year'), get('month') - 1, get('day'), hour, get('minute'), get('second'));
+}
+
+export function instantIn(timeZone: string, wallClock: string): Date | null {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(wallClock.trim());
+    if (!m) return null;
+    const [y, mo, d, h, mi, se] = m.slice(1).map((v) => Number(v ?? 0));
+    const wanted = Date.UTC(y!, mo! - 1, d!, h!, mi!, se ?? 0);
+
+    let guess = wanted;
+    for (let pass = 0; pass < 2; pass += 1) {
+        guess = wanted + (guess - wallClockAsUtc(new Date(guess), timeZone));
+    }
+    const out = new Date(guess);
+    return Number.isNaN(out.getTime()) ? null : out;
+}

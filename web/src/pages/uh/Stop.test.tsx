@@ -835,3 +835,79 @@ describe('the stop that could not be completed', () => {
         expect(screen.queryByRole('button', { name: 'Add or replace the photo' })).not.toBeInTheDocument();
     });
 });
+
+/* ── RECORDING SOMETHING THAT ALREADY HAPPENED ────────────────────────────
+ *
+ * Dispatch file stops on a courier's behalf: a phone that died, or a backlog
+ * nobody had time to enter. Without a time the server stamps the moment the
+ * form was submitted, so Monday's round reads as completed on Thursday --
+ * every stop hours late on the report University Health are sent, and the
+ * daily figures wrong for both days.
+ *
+ * STAFF ONLY, and not because a courier cannot be trusted. A courier is at
+ * the door when they press the button, so the time is already right and a
+ * box asking them to confirm it is a box to get wrong in the rain. It also
+ * must never become a way to make a late delivery look on time, so the
+ * people who can reach it are the ones whose own work it is not.
+ */
+describe('a time for a stop filed late', () => {
+    const asLead = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'lead' }];
+    const leadRoutes = (over: Record<string, unknown> = {}) =>
+        routes({ 'GET /api/me/projects': asLead, ...over });
+
+    it('is not offered to a courier at all', async () => {
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+        expect(screen.queryByText('When did this happen?')).toBeNull();
+    });
+
+    it('is offered to a lead', async () => {
+        renderStop(leadRoutes());
+        expect(await screen.findByText('When did this happen?')).toBeInTheDocument();
+        /* Named in the project's zone, because that is the zone it is read
+           in -- a dispatcher in another city would otherwise file every
+           stop hours out without anything on screen saying so. */
+        expect(screen.getByLabelText(/Time at the door, America\/Chicago/)).toBeInTheDocument();
+    });
+
+    /* ── THE DEFAULT IS UNCHANGED. Empty must send no time at all, or every
+     * stop a lead records starts carrying a redundant stamp and the server's
+     * own "now" stops being the thing that runs. */
+    it('sends no time when the box is left empty', async () => {
+        const mocked = renderStop(leadRoutes({ [`POST ${ORDER}/arrive`]: { ok: true } }));
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        fireEvent.click(screen.getByRole('button', { name: /I have arrived/ }));
+        await waitFor(() => {
+            const sent = mocked.bodies[`POST ${ORDER}/arrive`] as Record<string, unknown> | undefined;
+            expect(sent).toBeTruthy();
+            expect(sent).not.toHaveProperty('at');
+        });
+    });
+
+    /* ── AND THE CONVERSION, WHICH IS THE WHOLE POINT. 14:05 in San Antonio
+     * on 9 November is 20:05Z. A screen that sent the laptop's reading of
+     * that wall clock would be right only for dispatchers sitting in Texas. */
+    it('sends the typed time as an instant in the project’s zone', async () => {
+        const mocked = renderStop(leadRoutes({ [`POST ${ORDER}/arrive`]: { ok: true } }));
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        fireEvent.change(screen.getByLabelText(/Time at the door/), { target: { value: '2026-11-09T14:05' } });
+        fireEvent.click(screen.getByRole('button', { name: /I have arrived/ }));
+
+        await waitFor(() => {
+            const sent = mocked.bodies[`POST ${ORDER}/arrive`] as { at?: string } | undefined;
+            expect(sent?.at).toBe('2026-11-09T20:05:00.000Z');
+        });
+    });
+
+    it('says back what it is about to record', async () => {
+        renderStop(leadRoutes());
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        fireEvent.change(screen.getByLabelText(/Time at the door/), { target: { value: '2026-11-09T14:05' } });
+        /* In the project's zone, so a dispatcher can check it against what
+           the courier told them rather than against UTC. */
+        expect(await screen.findByText(/This applies to every button below/)).toBeInTheDocument();
+    });
+});
