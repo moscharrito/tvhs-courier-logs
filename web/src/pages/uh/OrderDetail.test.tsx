@@ -301,3 +301,48 @@ describe('billing zone and pay zone, which are different numbers', () => {
         expect(screen.getByText(/Paying the billing band \(Zone 3\)/)).toBeInTheDocument();
     });
 });
+
+/* ── DISPATCH RECORDING A DELIVERY SOMEBODY ELSE DROVE ────────────────────
+ *
+ * Asked for on 10 November as "a page that shows each driver's password, so
+ * our dispatcher can log in as them and upload the backlog of proofs".
+ * Passwords are bcrypt hashes and no such page can exist, but the thing
+ * underneath it is ordinary and was already built: a lead may operate any
+ * stop in the project, because a site manager covering a route is part of
+ * that job. It simply had no link outside a courier's own run.
+ *
+ * THE REASON TO PREFER IT IS NOT SAFETY, IT IS THE RECORD. A delivery filed
+ * here stays assigned to the courier -- their pay and their completion bonus
+ * do not move -- while the custody event names whoever pressed the button.
+ * A borrowed login makes both of those the same person and the proof then
+ * says the driver filed it from their phone.
+ */
+describe('dispatch filing a proof on a courier’s behalf', () => {
+    it('offers a lead a way into the stop screen', async () => {
+        renderAs(asLead, { status: 'assigned' });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        const link = screen.getByRole('link', { name: /Record this delivery/ });
+        expect(link).toHaveAttribute('href', '/projects/uh/orders/4182/stop');
+    });
+
+    it('says it is an amendment once the stop is already finished', async () => {
+        /* The backlog has both shapes: stops never recorded at all, and
+           stops recorded with no photograph attached. */
+        renderAs(asLead, { status: 'delivered' });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.getByRole('link', { name: /add or amend proof/ })).toBeInTheDocument();
+    });
+
+    /* ── AND NOT A SECOND ROUTE FOR THE COURIER, who reaches their own stop
+     * from their run. Two links to one screen from one person's phone is the
+     * duplication the courier frame exists to remove. */
+    it('does not add it to the courier’s own view', async () => {
+        renderAs(asCourier, { status: 'assigned' });
+        await screen.findByRole('heading', { name: 'Order #4182' });
+
+        expect(screen.queryByRole('link', { name: /Record this delivery/ })).toBeNull();
+        expect(screen.queryByRole('link', { name: /add or amend proof/ })).toBeNull();
+    });
+});

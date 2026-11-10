@@ -537,6 +537,36 @@ export function OrderDetail() {
                 {order.externalRef && <> · <code>{order.externalRef}</code></>}
                 {order.dailyListId !== null && <> · from list {order.dailyListId}</>}
             </p>
+            {/* ── DISPATCH'S WAY IN, WHICH ONLY EVER NEEDED A LINK ──────────
+                The stop screen has always accepted a lead: the server's guard
+                is requireProjectRole('admin','lead','courier') and the "not
+                your order" refusal applies to couriers alone, because a site
+                manager covering a route is a stated part of that job. The
+                route carries no guard either. The only thing missing was a
+                way to reach it without typing a URL -- MyRun was the sole
+                link, and that is a courier's own run.
+
+                THIS IS THE ALTERNATIVE TO SHARING A DRIVER'S PASSWORD, and
+                it is better than one rather than merely safer. A delivery
+                recorded here stays assigned to the courier, so their pay and
+                their completion bonus are untouched, while the custody event
+                records who actually pressed the button. Signing in as the
+                driver would collapse those into one claim that the driver
+                filed it from their own phone -- and the driver install sheet
+                promises the opposite: "every delivery is recorded against
+                whoever is signed in, and that record is what protects you in
+                a dispute".
+
+                The stop screen takes a time, so a round that happened on
+                Monday is recorded as Monday (stop.ts refuses only FUTURE
+                times). Backdating is the point of this for a backlog. */}
+            <p>
+                <Link className="izy-btn secondary" to={`/projects/${code}/orders/${order.id}/stop`}>
+                    {order.status === 'delivered' || order.status === 'failed'
+                        ? 'Open the stop screen to add or amend proof'
+                        : 'Record this delivery on the courier’s behalf'}
+                </Link>
+            </p>
             {page}
         </>
     );
