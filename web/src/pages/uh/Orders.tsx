@@ -329,14 +329,41 @@ export function Orders() {
                         />
                     </label>
                     <button className="izy-btn secondary" type="submit">Find</button>
+                    {/* ── WHAT IS ACTUALLY BEING SEARCHED FOR ──────────────
+                        The box and the live search are two different things:
+                        typing changes the box, pressing Find changes the
+                        search. Emptying the box therefore does NOT stop the
+                        search, and the first time that happened it looked
+                        like the Courier filter was broken -- a courier typed
+                        beside a forgotten name returns nothing, and nothing
+                        on screen said a name was still in play.
+
+                        So the term is printed. A filter whose value cannot
+                        be seen is a filter that gets blamed on the filter
+                        next to it. */}
                     {searchingFor !== '' && (
-                        <button
-                            className="izy-btn secondary"
-                            type="button"
-                            onClick={() => { setRecipientName(''); setSearchingFor(''); }}
-                        >Stop searching by name</button>
+                        <>
+                            <span className="izy-pill warn">
+                                also matching “{searchingFor}”
+                            </span>
+                            <button
+                                className="izy-btn secondary"
+                                type="button"
+                                onClick={() => { setRecipientName(''); setSearchingFor(''); }}
+                            >Stop searching by name</button>
+                        </>
                     )}
                 </form>
+                {/* Typed but not submitted. Without this the box reads as the
+                    live filter while the list behind it answers something
+                    else. */}
+                {recipientName.trim() !== searchingFor && (
+                    <p className="izy-muted" style={{ marginTop: 8 }}>
+                        {recipientName.trim() === ''
+                            ? 'The box is empty but a name is still being matched. Press Find to search for nothing, or Stop searching by name.'
+                            : 'Not applied yet — press Find.'}
+                    </p>
+                )}
                 <p className="izy-muted" style={{ marginTop: 8 }}>
                     A name is sent in the request rather than put in the address bar, so it does not
                     reach browser history, proxies or logs — and it is forgotten when this page

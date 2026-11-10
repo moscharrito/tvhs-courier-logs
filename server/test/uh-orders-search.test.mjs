@@ -128,6 +128,34 @@ describe('the Courier box, filtering a list that prints names', () => {
         expect(res.body.total).toBe(0);
     });
 
+    /* ── A TWO LETTER PREFIX, WHICH IS WHAT SOMEBODY ACTUALLY TYPES ─────
+     * Reported from production as "Courier produced nothing" with `Mo` in
+     * the box. The cause there was a forgotten name search ANDed with it,
+     * but the matcher itself is what got blamed, so it is pinned here: a
+     * short prefix of a name finds that courier and nothing else is needed
+     * alongside it. */
+    it('finds a courier from the first two letters of their name', async () => {
+        await admin.post('/api/users').send({
+            username: 'tdomingo', name: 'Mona Okafor', password: 'courier-pass-123', role: 'driver',
+        });
+        await admin.put('/api/users/tdomingo/memberships/uh').send({ role: 'courier', settings: {} });
+
+        const created = await admin.post(ORDERS).send({
+            siteId, serviceType: 'stat', externalRef: 'RX-FIND-MO',
+            recipientName: 'Nina Simone', addressLine: '9 Example Street', zip: '78229',
+            description: 'Prescription', quantity: 1, signatureRequired: false,
+        });
+        await admin.post(RUNS).send({
+            courierUsername: 'tdomingo', label: 'Run Mo', orderIds: [created.body.id],
+        });
+
+        /* The name begins with it; the username does not contain it at all,
+           so this can only pass through the name branch. */
+        const res = await admin.get(`${ORDERS}?assignedTo=Mo`);
+        expect(res.status).toBe(200);
+        expect(idsOf(res.body)).toEqual(['Nina Simone']);
+    });
+
     it('still understands unassigned', async () => {
         const res = await admin.get(`${ORDERS}?assignedTo=unassigned`);
         expect(idsOf(res.body)).toEqual(['Mary Lou Williams']);

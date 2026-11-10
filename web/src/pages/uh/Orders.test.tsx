@@ -178,6 +178,52 @@ describe('Orders', () => {
        lets it claim to be the list on screen. A name is deliberately not in
        that query string, so during a name search the link would hand
        somebody the whole day under the wrong label. */
+    /* ── THE BOX AND THE LIVE SEARCH ARE TWO DIFFERENT THINGS ────────────
+     *
+     * Typing changes the box; pressing Find changes the search. Emptying the
+     * box therefore does not stop the search -- and the first time that
+     * happened on production it looked like the COURIER filter was broken: a
+     * courier typed beside a forgotten name returns nothing, and nothing on
+     * screen said a name was still in play. */
+    it('says which name it is still matching', async () => {
+        renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Dorothy' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+
+        expect(await screen.findByText(/also matching/)).toHaveTextContent('Dorothy');
+    });
+
+    it('warns when the box has been emptied but a name is still applied', async () => {
+        renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Dorothy' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await screen.findByText(/also matching/);
+
+        /* The box is cleared WITHOUT pressing Find, which is exactly what
+           was done on production. */
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: '' } });
+
+        expect(await screen.findByText(/a name is still being matched/)).toBeInTheDocument();
+        /* And the term stays visible, so the empty box cannot be read as
+           "no name filter". */
+        expect(screen.getByText(/also matching/)).toHaveTextContent('Dorothy');
+    });
+
+    it('says when a typed name has not been applied yet', async () => {
+        renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Alice' } });
+        expect(await screen.findByText(/Not applied yet/)).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await waitFor(() => expect(screen.queryByText(/Not applied yet/)).toBeNull());
+    });
+
     it('turns the export off while searching by name', async () => {
         renderOrders(withSearch);
         await screen.findByRole('heading', { name: 'Orders' });
