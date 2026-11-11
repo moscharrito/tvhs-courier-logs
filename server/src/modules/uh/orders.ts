@@ -39,7 +39,7 @@ import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { searchFragment, ORDER_SEARCH_COLUMNS } from './search';
 import { recordOrderEvent, insertCustodyEvent } from './order-events';
-import { deleteOrders, emptyPlannedRuns, removeObjects } from './order-delete';
+import { deleteOrders, emptyPlannedRuns, removeObjects, WORKED_STATUSES, DELETE_REASON_MIN } from './order-delete';
 import { directionsFor, parseOrigin } from './directions';
 import { getConfig } from '../../config';
 import {
@@ -1314,6 +1314,10 @@ export function createOrdersRouter(
      */
     const Remove = z.object({ reason: z.string().trim().max(200).optional() });
 
+    /** Has a driver physically handled this one. */
+    const wasDriven = (status: string): boolean =>
+        (WORKED_STATUSES as readonly string[]).includes(status);
+
     /* `dispatch`, and the scope comes free: loadOr404 below answers 404 for
        a lead reaching outside their pharmacies, so a dispatcher can only
        ever delete an order on a counter they are named on. */
@@ -1341,6 +1345,27 @@ export function createOrdersRouter(
             status: String(order.status),
             assignedTo: String(order.assigned_to_username ?? ''),
         };
+        /* ── THE GUARD, the single-order half. ───────────────────────────
+           No typed count here: typing "1" is theatre, and the number a
+           dialog would be asking the operator to read is already the thing
+           they clicked on. What this asks for is the sentence, because the
+           two deliveries deleted one at a time during the 9 November
+           incident -- orders 3244 and 3513, both already delivered -- left
+           an audit row each with an empty `reason`, and nobody now knows
+           what either of them was for.
+
+           An untouched order deletes with no reason at all, as before. */
+        if (wasDriven(was.status) && (body.data.reason ?? '').trim().length < DELETE_REASON_MIN) {
+            res.status(409).json({
+                error: `Delivery ${id} is marked ${was.status}: a driver has already handled it. `
+                    + 'Deleting it destroys that work and it cannot be undone. Say why.',
+                code: 'order.hasDriverWork',
+                status: was.status,
+                reasonMin: DELETE_REASON_MIN,
+            });
+            return;
+        }
+
         const invoiced = await client.execute({
             sql: `SELECT i.id, i.status FROM invoice_lines l
                     JOIN invoices i ON i.id = l.invoice_id
@@ -1357,6 +1382,10 @@ export function createOrdersRouter(
            describes. */
         await req.audit('order.delete', 'order', String(id), {
             ...was,
+            /* Said the same way the list delete says it, so one query over
+               the trail answers "what driven work has been destroyed"
+               without caring which endpoint did it. */
+            driverWorkDeleted: wasDriven(was.status) ? 1 : 0,
             filesDeleted: fileKeys.length,
             runsRemoved: emptiedRuns,
             /* Named because deleting a line off an issued invoice changes a

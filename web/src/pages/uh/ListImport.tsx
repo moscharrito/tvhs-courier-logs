@@ -97,6 +97,11 @@ interface ImportSummary {
     importedBy: string;
     /** Optional: a server older than this build does not send it. */
     importedByName?: string;
+    /** Deliveries on this list a driver has picked up, delivered or failed.
+     *  Optional for the same reason: a server older than 11 November does
+     *  not send it, and `undefined` must not read as "nothing was driven" --
+     *  see the fallback on the 409 in withdraw(). */
+    driverWorkCount?: number;
 }
 
 /* Every column the importer understands, in the pharmacy's own words.
@@ -360,22 +365,83 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
      * that were collected, delivered and signed for. The old wording
      * promised the opposite -- "the deliveries stay on the record as
      * cancelled" -- and a button whose dialog describes the behaviour it
-     * used to have is worse than one with no dialog at all. */
+     * used to have is worse than one with no dialog at all.
+     *
+     * AND FROM 11 NOVEMBER THERE ARE TWO DIFFERENT ACTS BEHIND THIS BUTTON.
+     *
+     * Withdrawing a list nobody has driven is routine and stays one click:
+     * on 9 and 10 November alone, ten lists and two hundred and seventeen
+     * deliveries were correctly deleted that way, every one of them still
+     * `assigned`, `ready` or empty. Making that harder would only teach
+     * people to click through whatever we put in front of it.
+     *
+     * Deleting a list a driver has worked is the thing that went wrong.
+     * Twenty-five of those went in six minutes on 9 November -- thirteen
+     * seconds each, one `confirm()` apiece -- and took five hundred-odd
+     * deliveries across four days with them. So that path asks for the
+     * count, typed, and a reason. The server refuses it otherwise; this
+     * only makes the refusal legible.
+     */
     async function withdraw(l: ImportSummary) {
-        const ok = confirm(
-            `Delete the ${l.serviceDate} ${l.site.name} list?\n\n`
-            + `Its ${l.orderCount} ${l.orderCount === 1 ? 'delivery is' : 'deliveries are'} deleted outright, `
-            + 'including any a driver has already collected, delivered or photographed. '
-            + 'Their proof of delivery, photographs and chain of custody go with them.\n\n'
-            + 'This cannot be undone and there is nothing to restore from. Only the audit trail '
-            + 'will show the list ever existed.',
-        );
-        if (!ok) return;
+        /* `?? 0` is safe HERE and nowhere else: it only decides which
+           dialog to open. If it is wrong -- an old server that never sent
+           the field, or a driver who filed a delivery while this page sat
+           open -- the server refuses with 409 and the catch below says so
+           and reloads, which makes the next press the right one. The screen
+           is allowed to be out of date; the delete is not. */
+        const known = l.driverWorkCount ?? 0;
+
+        /** Ask for the count and the reason. Returns the body to send, or
+         *  null if the operator backed out of either question. */
+        const confirmAndSend = async (driven: number): Promise<{ confirmDeliveries: number; reason: string } | null> => {
+            const typed = prompt(
+                `${driven} ${driven === 1 ? 'delivery on this list has' : 'deliveries on this list have'} `
+                + 'already been driven.\n\n'
+                + 'Deleting them destroys the proof of delivery, the photographs and the chain of '
+                + 'custody, and takes the work off the drivers\' records. There is nothing to restore '
+                + 'from.\n\n'
+                + `Type ${driven} to confirm, or cancel to stop.`,
+            );
+            /* Cancel gives null; the empty string is somebody pressing OK on
+               an empty box, which is not a confirmation either. */
+            if (typed === null) return null;
+            if (typed.trim() !== String(driven)) {
+                setMsg({ kind: 'error', text: `That did not match. Nothing was deleted. The list has ${driven} driven ${driven === 1 ? 'delivery' : 'deliveries'}.` });
+                return null;
+            }
+            const why = prompt(
+                'Why is this being deleted? This goes in the audit trail, which is the only '
+                + 'thing that will outlive the deliveries.',
+            );
+            if (why === null) return null;
+            if (why.trim().length < 10) {
+                setMsg({ kind: 'error', text: 'Nothing was deleted: the reason needs to be a sentence, not a keystroke.' });
+                return null;
+            }
+            return { confirmDeliveries: driven, reason: why.trim() };
+        };
+
+        if (known === 0) {
+            const ok = confirm(
+                `Delete the ${l.serviceDate} ${l.site.name} list?\n\n`
+                + `Its ${l.orderCount} ${l.orderCount === 1 ? 'delivery is' : 'deliveries are'} deleted outright. `
+                + 'Nothing on it has been driven yet, so no proof of delivery goes with it.\n\n'
+                + 'This cannot be undone and there is nothing to restore from. Only the audit trail '
+                + 'will show the list ever existed.',
+            );
+            if (!ok) return;
+        }
+
         setWithdrawing(l.id);
         setMsg(null);
         try {
-            const res = await api<{ deleted: number; filesDeleted: number; filesLeftInStorage: number }>(
-                `${base}/${l.id}`, { method: 'DELETE' },
+            const body = known > 0 ? await confirmAndSend(known) : {};
+            /* null is "the operator backed out", which is not an error and
+               gets no banner. */
+            if (body === null) return;
+
+            const res = await api<{ deleted: number; filesDeleted: number; filesLeftInStorage: number; driverWorkDeleted?: number }>(
+                `${base}/${l.id}`, { method: 'DELETE', json: body },
             );
             setMsg({
                 kind: 'ok',
@@ -391,6 +457,21 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
             });
             await loadRecent();
         } catch (err) {
+            /* THE STALE-COUNT CASE, and the reason the guard lives on the
+               server and not in the dialog. This page may have been open
+               since this morning, and a driver may have filed a delivery
+               against this list since it loaded -- so the count the screen
+               used to choose a dialog was right when it rendered and wrong
+               when the button was pressed.
+
+               Nothing was deleted. The server's own message carries the real
+               number, and reloading means the next press takes the typed-
+               count path instead of the one-click one. */
+            if (err instanceof ApiError && err.code === 'list.hasDriverWork') {
+                setMsg({ kind: 'error', text: `${err.message} Nothing was deleted -- press Delete again to go through that.` });
+                await loadRecent();
+                return;
+            }
             setMsg(err instanceof ApiError
                 ? { kind: 'error', text: err.message, details: err.details }
                 : { kind: 'error', text: 'Could not delete that list.' });
@@ -914,10 +995,19 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                                 className="izy-btn danger small"
                                                 type="button"
                                                 disabled={withdrawing !== null}
-                                                aria-label={`Take the ${l.serviceDate} ${l.site.name} list off`}
+                                                /* THE COUNT ON THE BUTTON. A row that
+                                                   will cost somebody their day's work
+                                                   should not look identical to one that
+                                                   will cost a bad upload, and on
+                                                   9 November they did. */
+                                                aria-label={(l.driverWorkCount ?? 0) > 0
+                                                    ? `Delete the ${l.serviceDate} ${l.site.name} list, including ${l.driverWorkCount} deliveries drivers have already handled`
+                                                    : `Take the ${l.serviceDate} ${l.site.name} list off`}
                                                 onClick={() => { void withdraw(l); }}
                                             >
-                                                {withdrawing === l.id ? 'Removing…' : 'Delete'}
+                                                {withdrawing === l.id
+                                                    ? 'Removing…'
+                                                    : (l.driverWorkCount ?? 0) > 0 ? `Delete (${l.driverWorkCount} driven)` : 'Delete'}
                                             </button>
                                         )}
                                     </td>

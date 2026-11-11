@@ -929,7 +929,12 @@ describe('withdrawing a list', () => {
     it('deletes work a courier has already finished, which is the whole instruction', async () => {
         /* The old behaviour refused this outright: "a courier has already
            started on this list, so it cannot be taken off". That refusal
-           is gone, deliberately and with the trade accepted. */
+           is gone, deliberately and with the trade accepted.
+
+           IT IS STILL GONE. What 11 November added is a confirmation, not a
+           refusal: send the count and a reason and the delete happens, which
+           is what this test now does. The policy of 4 November is unchanged
+           and the tests below cover the asking. */
         await reset();
         const list = await uploaded();
         const [first] = await ordersOf(list.id);
@@ -943,7 +948,8 @@ describe('withdrawing a list', () => {
         await sql('INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES ((SELECT id FROM projects WHERE code = \'uh\'), ?, ?, 1)', [runId, orderId]);
         await sql("UPDATE orders SET status = 'delivered', delivered_at = '2026-09-14T18:00:00.000Z' WHERE id = ?", [orderId]);
 
-        const res = await admin.delete(`${BASE}/${list.id}`);
+        const res = await admin.delete(`${BASE}/${list.id}`)
+            .send({ confirmDeliveries: 1, reason: 'wrong file, re-importing' });
         expect(res.status, res.text).toBe(200);
         expect((await sql('SELECT id FROM orders WHERE id = ?', [orderId])).rows).toHaveLength(0);
         /* A STARTED run is a thing that happened and is not deleted, even
@@ -976,6 +982,186 @@ describe('withdrawing a list', () => {
         const survivor = Number((await ordersOf(other.id))[0].id);
         await expect(sql('DELETE FROM custody_events WHERE order_id = ?', [survivor]))
             .rejects.toThrow(/append-only/);
+    });
+
+    /* ─────────────────────────────────────────────────────────────────
+     * THE GUARD (11 November 2026).
+     *
+     * On 9 November between 12:06:41 and 12:12:12 UTC, twenty-five lists
+     * were deleted. Five hundred-odd deliveries went with them across the
+     * 5th, 6th, 7th and 8th, and the drivers found out when their finished
+     * work vanished off their phones. Getting it back took a point-in-time
+     * branch of the database and most of two days.
+     *
+     * Thirteen seconds a list. One confirm() each. The delete was never the
+     * problem -- the absence of a moment's friction in front of it was.
+     *
+     * These tests pin both halves of the answer: a list nobody has driven
+     * still goes in one call, and a list somebody HAS driven does not go
+     * without the count and a reason. The first half matters as much as the
+     * second. On the 9th and 10th, ten lists and two hundred and seventeen
+     * deliveries were deleted correctly, every one still `assigned`,
+     * `ready` or empty, and a guard that got in the way of that would have
+     * been worked around by the end of the week.
+     * ───────────────────────────────────────────────────────────────── */
+
+    /** Put one of this list's deliveries into a state a driver reached. */
+    async function driven(listId, status = 'delivered') {
+        const [first] = await ordersOf(listId);
+        await sql('UPDATE orders SET status = ? WHERE id = ?', [status, Number(first.id)]);
+        return Number(first.id);
+    }
+
+    it('refuses a list holding driven work when no count is sent', async () => {
+        await reset();
+        const list = await uploaded();
+        const orderId = await driven(list.id);
+
+        const res = await admin.delete(`${BASE}/${list.id}`).send({ reason: 'wrong file entirely' });
+        expect(res.status, res.text).toBe(409);
+        expect(res.body.code).toBe('list.hasDriverWork');
+        expect(res.body.worked).toBe(1);
+        expect(res.body.byStatus).toContain('delivered:1');
+        expect(res.body.countMatched).toBe(false);
+
+        /* NOTHING HAPPENED. The 409 is the whole point only if it is also
+           true -- a guard that refuses and deletes anyway is worse than no
+           guard, because the operator now believes the list is still there. */
+        expect((await sql('SELECT id FROM orders WHERE id = ?', [orderId])).rows).toHaveLength(1);
+        expect((await sql('SELECT id FROM daily_lists WHERE id = ?', [list.id])).rows).toHaveLength(1);
+    });
+
+    it('refuses a count that does not match, which is the whole mechanism', async () => {
+        /* A boolean would have been satisfiable by a client that never
+           looked. The number cannot be: to fill it in you have to have read
+           how much work is at stake, and that reading is the friction the
+           9 November burst did not have. */
+        await reset();
+        const list = await uploaded();
+        await driven(list.id);
+
+        const res = await admin.delete(`${BASE}/${list.id}`)
+            .send({ confirmDeliveries: 7, reason: 'wrong file entirely' });
+        expect(res.status, res.text).toBe(409);
+        expect(res.body.worked).toBe(1);
+        expect(res.body.countMatched).toBe(false);
+        expect((await sql('SELECT id FROM daily_lists WHERE id = ?', [list.id])).rows).toHaveLength(1);
+    });
+
+    it('refuses the right count with no reason, and says which half is missing', async () => {
+        await reset();
+        const list = await uploaded();
+        await driven(list.id);
+
+        const res = await admin.delete(`${BASE}/${list.id}`).send({ confirmDeliveries: 1 });
+        expect(res.status, res.text).toBe(409);
+        /* So the screen can say "the reason, not the number" rather than
+           sending somebody back to re-read a figure they got right. */
+        expect(res.body.countMatched).toBe(true);
+        expect(res.body.reasonMin).toBe(10);
+        expect((await sql('SELECT id FROM daily_lists WHERE id = ?', [list.id])).rows).toHaveLength(1);
+    });
+
+    it('refuses a reason that is a keystroke rather than a sentence', async () => {
+        await reset();
+        const list = await uploaded();
+        await driven(list.id);
+
+        const res = await admin.delete(`${BASE}/${list.id}`)
+            .send({ confirmDeliveries: 1, reason: 'x' });
+        expect(res.status, res.text).toBe(409);
+        expect((await sql('SELECT id FROM daily_lists WHERE id = ?', [list.id])).rows).toHaveLength(1);
+    });
+
+    it('deletes when the count and the reason are both right', async () => {
+        await reset();
+        const list = await uploaded();
+        const orderId = await driven(list.id);
+
+        const res = await admin.delete(`${BASE}/${list.id}`)
+            .send({ confirmDeliveries: 1, reason: 'uploaded against the wrong pharmacy' });
+        expect(res.status, res.text).toBe(200);
+        expect((await sql('SELECT id FROM orders WHERE id = ?', [orderId])).rows).toHaveLength(0);
+        expect((await sql('SELECT id FROM daily_lists WHERE id = ?', [list.id])).rows).toHaveLength(0);
+    });
+
+    it('counts picked_up as driven: a collected parcel is already in a car', async () => {
+        /* Not a completed delivery, but a custody chain that has started.
+           Deleting it is how a medication goes missing with no record of
+           who last had it. */
+        await reset();
+        const list = await uploaded();
+        await driven(list.id, 'picked_up');
+
+        const res = await admin.delete(`${BASE}/${list.id}`).send({ reason: 'wrong file entirely' });
+        expect(res.status, res.text).toBe(409);
+        expect(res.body.byStatus).toContain('picked_up:1');
+    });
+
+    it('counts failed as driven: an attempt is work somebody is paid for', async () => {
+        await reset();
+        const list = await uploaded();
+        await driven(list.id, 'failed');
+
+        const res = await admin.delete(`${BASE}/${list.id}`).send({ reason: 'wrong file entirely' });
+        expect(res.status, res.text).toBe(409);
+        expect(res.body.byStatus).toContain('failed:1');
+    });
+
+    it('does not count cancelled, pending, ready or assigned', async () => {
+        /* THE HALF THAT KEEPS THE GUARD ALIVE. Withdrawing a wrongly
+           uploaded list is routine, correct, and done several times a week.
+           It stays a single call with no arguments at all. */
+        await reset();
+        const list = await uploaded();
+        const ids = (await ordersOf(list.id)).map((o) => Number(o.id));
+        const marks = ids.map(() => '?').join(',');
+        await sql(`UPDATE orders SET status = 'assigned' WHERE id IN (${marks})`, ids);
+        await sql("UPDATE orders SET status = 'cancelled' WHERE id = ?", [ids[0]]);
+
+        const res = await admin.delete(`${BASE}/${list.id}`);
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.deleted).toBe(ids.length);
+    });
+
+    it('writes how much driven work went, as its own number in the trail', async () => {
+        /* Reading the 9 November trail, the question asked of every one of
+           those twenty-five rows was "had anybody driven it", and answering
+           it meant summing three byStatus keys and knowing which three. */
+        await reset();
+        const list = await uploaded();
+        await driven(list.id);
+        expect((await admin.delete(`${BASE}/${list.id}`)
+            .send({ confirmDeliveries: 1, reason: 'uploaded against the wrong pharmacy' })).status).toBe(200);
+
+        const audit = await admin.get('/api/audit?action=list.delete&limit=5');
+        const event = audit.body.events.find((e) => e.entity_id === String(list.id));
+        expect(event.detail.driverWorkDeleted).toBe(1);
+        expect(event.detail.reason).toBe('uploaded against the wrong pharmacy');
+    });
+
+    it('says zero driven work for the ordinary case, rather than leaving it out', async () => {
+        await reset();
+        const list = await uploaded();
+        expect((await admin.delete(`${BASE}/${list.id}`)).status).toBe(200);
+
+        const audit = await admin.get('/api/audit?action=list.delete&limit=5');
+        const event = audit.body.events.find((e) => e.entity_id === String(list.id));
+        expect(event.detail.driverWorkDeleted).toBe(0);
+    });
+
+    it('puts the driven count on the list, so the button can say it before it is pressed', async () => {
+        /* A server-side guard that the screen never mentions is still a
+           surprise. The whole lesson of 9 November is that the one dialog
+           in the way said nothing a person could weigh. */
+        await reset();
+        const list = await uploaded();
+        const quiet = (await admin.get(BASE)).body.find((r) => r.id === list.id);
+        expect(quiet.driverWorkCount).toBe(0);
+
+        await driven(list.id);
+        const loud = (await admin.get(BASE)).body.find((r) => r.id === list.id);
+        expect(loud.driverWorkCount).toBe(1);
     });
 
     it('keeps the audit row, which is all that is left to say it existed', async () => {

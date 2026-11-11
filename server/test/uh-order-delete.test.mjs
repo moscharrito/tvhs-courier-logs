@@ -12,8 +12,19 @@
  * THE POLICY IS THE ONE SET FOR LISTS ON 4 NOVEMBER, and these tests hold
  * it rather than re-argue it: this DELETES, including work a courier has
  * finished and work already on an invoice, and the audit row is what
- * survives. The interesting cases are therefore not "does it refuse" --
- * it does not -- but:
+ * survives.
+ *
+ * ONE THING WAS ADDED ON 11 NOVEMBER. An order a driver has handled needs a
+ * reason in writing before it goes -- not permission, which dispatch
+ * already has, and not a different outcome, but a sentence in the audit
+ * row. During the 9 November deletions two delivered orders went this way,
+ * one at a time, and the rows they left behind each have an empty `reason`;
+ * nobody now knows what either of them was for. An untouched order still
+ * deletes with no arguments at all. See WORKED_STATUSES in
+ * modules/uh/order-delete.ts.
+ *
+ * The other interesting cases are not "does it refuse" -- mostly it does
+ * not -- but:
  *
  *   the append-only tables really do give up their rows, and the triggers
  *   are back afterwards;
@@ -195,6 +206,71 @@ describe('deleting one order', () => {
         const order = await makeOrder();
         expect((await srv.agent().delete(`${ORDERS}/${order.id}`).send({})).status).toBe(401);
         expect((await admin.get(`${ORDERS}/${order.id}`)).status).toBe(200);
+    });
+
+    /* ───────────────────────── the reason, for work that was done ─────── */
+
+    /** Put this order into a state a driver reached. */
+    const drive = (id, status) => srv.core.client.execute({
+        sql: 'UPDATE orders SET status = ? WHERE id = ?',
+        args: [status, Number(id)],
+    });
+
+    it('wants a reason before deleting a delivery somebody drove', async () => {
+        const order = await makeOrder();
+        await drive(order.id, 'delivered');
+
+        const res = await admin.delete(`${ORDERS}/${order.id}`).send({});
+        expect(res.status, res.text).toBe(409);
+        expect(res.body.code).toBe('order.hasDriverWork');
+        expect(res.body.status).toBe('delivered');
+        /* A refusal that deleted it anyway would be the worst case. */
+        expect((await admin.get(`${ORDERS}/${order.id}`)).status).toBe(200);
+    });
+
+    it('does not accept a keystroke as a reason', async () => {
+        const order = await makeOrder();
+        await drive(order.id, 'delivered');
+        expect((await admin.delete(`${ORDERS}/${order.id}`).send({ reason: 'oops' })).status).toBe(409);
+        expect((await admin.get(`${ORDERS}/${order.id}`)).status).toBe(200);
+    });
+
+    it('deletes it once there is a reason, and keeps the reason', async () => {
+        const order = await makeOrder();
+        await drive(order.id, 'delivered');
+
+        const res = await admin.delete(`${ORDERS}/${order.id}`)
+            .send({ reason: 'duplicate of DEL-7001, confirmed with the pharmacy' });
+        expect(res.status, res.text).toBe(200);
+        expect((await admin.get(`${ORDERS}/${order.id}`)).status).toBe(404);
+
+        const audit = await admin.get('/api/audit?action=order.delete&limit=5');
+        const event = audit.body.events.find((e) => e.entity_id === String(order.id));
+        expect(event.detail.reason).toBe('duplicate of DEL-7001, confirmed with the pharmacy');
+        expect(event.detail.driverWorkDeleted).toBe(1);
+    });
+
+    it('asks nothing of an order nobody has touched', async () => {
+        /* The ordinary case, and the reason this guard is survivable: a
+           STAT typed against the wrong pharmacy still goes in one call. */
+        const order = await makeOrder();
+        expect((await admin.delete(`${ORDERS}/${order.id}`).send({})).status).toBe(200);
+
+        const audit = await admin.get('/api/audit?action=order.delete&limit=5');
+        const event = audit.body.events.find((e) => e.entity_id === String(order.id));
+        expect(event.detail.driverWorkDeleted).toBe(0);
+    });
+
+    it('counts a collected parcel as driven, not only a delivered one', async () => {
+        const order = await makeOrder();
+        await drive(order.id, 'picked_up');
+        expect((await admin.delete(`${ORDERS}/${order.id}`).send({})).status).toBe(409);
+    });
+
+    it('does not count a cancelled order, which is one everybody agreed would not happen', async () => {
+        const order = await makeOrder();
+        await drive(order.id, 'cancelled');
+        expect((await admin.delete(`${ORDERS}/${order.id}`).send({})).status).toBe(200);
     });
 
     it('clears the pointer on a reattempt rather than deleting it too', async () => {

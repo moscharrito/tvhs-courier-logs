@@ -66,7 +66,7 @@ import type { FileStorage } from '../../core/files/storage';
 /* The one signing path for a delete, shared with the retention purge
    rather than written a second time here. */
 import { deleteFromBucket } from '../../core/retention/routes';
-import { deleteOrders, emptyPlannedRuns, removeObjects } from './order-delete';
+import { deleteOrders, emptyPlannedRuns, removeObjects, workedAmong, WORKED_STATUSES, DELETE_REASON_MIN } from './order-delete';
 import { todayIn } from '../../core/dates';
 import { custodyEventStatement, recordOrderEvent, type OrderStateRow } from './order-events';
 import { resolveSettings, dueTimesFor } from '../../core/projects/settings';
@@ -935,9 +935,40 @@ export function createImportsRouter(
                   ORDER BY l.service_date DESC, l.id DESC LIMIT 100`,
             args,
         });
+        /* HOW MUCH OF EACH LIST HAS BEEN DRIVEN.
+         *
+         * A second query rather than a subquery in the one above, and
+         * bounded to the hundred ids that came back: it reads through
+         * `orders_list_idx` for those lists only, instead of scanning every
+         * worked order in the project to group it.
+         *
+         * It is here so the Delete button can say "7 deliveries drivers
+         * have already handled" BEFORE it is pressed. The whole lesson of
+         * 9 November is that the one dialog in the way said nothing a person
+         * could weigh, so it got the reflex it deserved -- and a guard the
+         * server enforces after the click is still a surprise if the screen
+         * never mentioned it. */
+        const listIds = rs.rows.map((r) => Number(r['id']));
+        const driven = new Map<number, number>();
+        if (listIds.length > 0) {
+            const marks = listIds.map(() => '?').join(',');
+            const states = WORKED_STATUSES.map(() => '?').join(',');
+            const workRs = await client.execute({
+                sql: `SELECT daily_list_id, COUNT(*) AS n FROM orders
+                       WHERE project_id = ? AND daily_list_id IN (${marks})
+                         AND status IN (${states})
+                       GROUP BY daily_list_id`,
+                args: [req.project!.id, ...listIds, ...WORKED_STATUSES],
+            });
+            for (const w of workRs.rows) driven.set(Number(w['daily_list_id']), Number(w['n']));
+        }
+
         res.json(rs.rows.map((r) => ({
             id: Number(r['id']),
             site: { id: Number(r['site_id']), code: String(r['site_code']), name: String(r['site_name']) },
+            /** Deliveries on this list a driver has picked up, delivered or
+             *  failed. Zero means it can be withdrawn in one click. */
+            driverWorkCount: driven.get(Number(r['id'])) ?? 0,
             serviceDate: String(r['service_date']),
             status: String(r['status']),
             receivedAt: String(r['received_at']),
@@ -1174,7 +1205,15 @@ export function createImportsRouter(
      * DISPATCH ONLY, unlike upload and download. A pharmacy may send a list
      * and read its own back; destroying one is not theirs to do.
      */
-    const Withdraw = z.object({ reason: z.string().trim().max(200).optional() });
+    /* `confirmDeliveries` is the guard, and it is a number rather than a
+       boolean on purpose: a boolean can be sent by a client that never
+       looked, and the whole failure of 9 November was nobody looking. To
+       fill this in, the caller has to have read how much driven work is on
+       the list. See WORKED_STATUSES in modules/uh/order-delete.ts. */
+    const Withdraw = z.object({
+        reason: z.string().trim().max(200).optional(),
+        confirmDeliveries: z.number().int().nonnegative().optional(),
+    });
 
     /* Everything that points at an order, children first.
      *
@@ -1236,6 +1275,41 @@ export function createImportsRouter(
         });
         const ids = ordersRs.rows.map((o) => Number(o['id']));
 
+        /* ── THE GUARD. Read the full note in modules/uh/order-delete.ts. ──
+           Nothing driven, nothing asked: withdrawing a list uploaded from
+           the wrong file stays one click, because that is a thing people do
+           correctly several times a week and a guard that blocked it would
+           be routed around. Work a driver has handled is a different act,
+           and this is where it stops being a button press. */
+        const at_stake = await workedAmong(client, projectId, ids);
+        if (at_stake.worked > 0) {
+            const typed = parsedBody.data.confirmDeliveries;
+            const why = (parsedBody.data.reason ?? '').trim();
+            if (typed !== at_stake.worked || why.length < DELETE_REASON_MIN) {
+                /* 409 rather than 400: the request is well formed and the
+                   caller may be allowed to do this. What is wrong is the
+                   state of the thing, and the body carries the number the
+                   caller has to send back so a second attempt can be an
+                   informed one rather than a guess. */
+                res.status(409).json({
+                    error: `This list holds ${at_stake.worked} `
+                        + `${at_stake.worked === 1 ? 'delivery a driver has' : 'deliveries drivers have'} `
+                        + 'already handled. Deleting it destroys that work and it cannot be undone. '
+                        + 'Send the count back and say why.',
+                    code: 'list.hasDriverWork',
+                    worked: at_stake.worked,
+                    byStatus: Object.entries(at_stake.byStatus).map(([k, n]) => `${k}:${n}`),
+                    files: at_stake.files,
+                    /* Which half is missing, so a caller that sent the right
+                       count and a two-word reason is told that, rather than
+                       being sent back round to re-read the number. */
+                    countMatched: typed === at_stake.worked,
+                    reasonMin: DELETE_REASON_MIN,
+                });
+                return;
+            }
+        }
+
         /* THE ROWS GO HERE, in modules/uh/order-delete.ts, which counts the
            statuses and reads the run ids and the S3 keys before anything is
            removed -- afterwards there is nothing left to count, and the
@@ -1273,6 +1347,14 @@ export function createImportsRouter(
                "what state were they in" is the part somebody will want
                from this row a year from now. */
             byStatus: Object.entries(byStatus).map(([k, n]) => `${k}:${n}`),
+            /* THE NUMBER THAT MATTERS A YEAR FROM NOW, said on its own
+               rather than left to be worked out of byStatus. Reading the
+               9 November trail, the question asked of every one of those
+               twenty-five rows was "had anybody driven it" -- and answering
+               it meant summing three of the byStatus keys and knowing which
+               three. This says it. Zero is the ordinary case: a bad import
+               withdrawn before anybody set off. */
+            driverWorkDeleted: at_stake.worked,
             filesDeleted: fileKeys.length,
             runsRemoved: emptiedRuns,
             reason: (parsedBody.data.reason ?? '').slice(0, 200),

@@ -237,3 +237,109 @@ export async function removeObjects(
     }
     return { filesRemoved, filesLeftBehind };
 }
+
+/* ───────────────────────────────── the guard, added 11 November ──────────
+ *
+ * WHAT HAPPENED. On 9 November between 12:06:41 and 12:12:12 UTC, twenty-
+ * five daily lists were deleted. Five hundred and some deliveries went with
+ * them, across the 5th, 6th, 7th and 8th, and the drivers found out when
+ * their completed work vanished from their phones. Recovering it took a
+ * point-in-time branch of the database, two scripts, and most of two days,
+ * and the proof-of-delivery photographs are still only alive because S3
+ * keeps noncurrent versions for thirty days.
+ *
+ * Twenty-five lists in three hundred and thirty-one seconds is thirteen
+ * seconds each. Nobody read anything. The dialog was one `confirm()` and
+ * `confirm()` is a reflex, not a decision.
+ *
+ * WHAT THIS DOES NOT DO. It does not make the delete reversible and it does
+ * not take it away from dispatch. Deleting a bad import is the right call
+ * and it is made constantly -- on the 9th and 10th alone, ten lists and two
+ * hundred and seventeen deliveries were deleted, every one of them still
+ * `assigned`, `ready` or empty, all of it correct housekeeping by people
+ * doing their jobs. A guard that got in the way of that would be worked
+ * around by the end of the week.
+ *
+ * So it asks for nothing at all when nothing has been driven, and it draws
+ * a hard line exactly where the damage was: a list holding work a driver has
+ * physically handled cannot be deleted by pressing a button. The caller has
+ * to send back the count -- the real one, which it has to have read -- and
+ * say why. The 9 November burst is then not thirteen seconds of work per
+ * list; it is reading a number and typing a sentence, twenty-five times,
+ * which is the point at which somebody asks what they are doing.
+ */
+
+/**
+ * The states in which a driver has physically handled the package.
+ *
+ * `picked_up` is in here deliberately. It is not a completed delivery, but
+ * it is a parcel in somebody's car and a custody chain that has started,
+ * and deleting the order is how a medication goes missing with no record of
+ * who last had it.
+ *
+ * `cancelled` is NOT in here. A cancelled delivery is one everybody agreed
+ * would not happen; `pending`, `ready` and `assigned` are ones nobody has
+ * reached yet. Deleting those destroys an import, not a day's work, which
+ * is why withdrawing a wrongly-uploaded list stays a single click.
+ */
+export const WORKED_STATUSES = ['picked_up', 'delivered', 'failed'] as const;
+
+/** What a caller has to be told before it may delete these. */
+export interface WorkedCount {
+    /** How many of them a driver has handled. Zero means delete freely. */
+    worked: number;
+    /** The breakdown, for a message that says what is at stake. */
+    byStatus: Record<string, number>;
+    /** Proof-of-delivery photographs attached to the worked ones. */
+    files: number;
+}
+
+/**
+ * How much of this is work somebody did.
+ *
+ * READ BEFORE, not after. deleteOrders returns a `byStatus` of its own, but
+ * it counts on its way past and by then the decision has been taken. This
+ * exists so the decision can be taken first.
+ */
+export async function workedAmong(
+    client: Client,
+    projectId: number,
+    ids: readonly number[],
+): Promise<WorkedCount> {
+    if (ids.length === 0) return { worked: 0, byStatus: {}, files: 0 };
+
+    const marks = ids.map(() => '?').join(',');
+    const states = WORKED_STATUSES.map(() => '?').join(',');
+    const rs = await client.execute({
+        sql: `SELECT status, COUNT(*) AS n FROM orders
+               WHERE project_id = ? AND id IN (${marks}) AND status IN (${states})
+               GROUP BY status`,
+        args: [projectId, ...ids, ...WORKED_STATUSES] as InValue[],
+    });
+
+    const byStatus: Record<string, number> = {};
+    let worked = 0;
+    for (const r of rs.rows) {
+        const n = Number(r['n']);
+        byStatus[String(r['status'])] = n;
+        worked += n;
+    }
+    if (worked === 0) return { worked: 0, byStatus: {}, files: 0 };
+
+    /* Only the photographs on the worked ones. A POD attached to an order
+       nobody drove is a scan of the pharmacy's sheet, and counting it here
+       would overstate what is being destroyed. */
+    const fileRs = await client.execute({
+        sql: `SELECT COUNT(*) AS n FROM files
+               WHERE project_id = ? AND order_id IN (
+                   SELECT id FROM orders
+                    WHERE project_id = ? AND id IN (${marks}) AND status IN (${states})
+               )`,
+        args: [projectId, projectId, ...ids, ...WORKED_STATUSES] as InValue[],
+    });
+
+    return { worked, byStatus, files: Number(fileRs.rows[0]?.['n'] ?? 0) };
+}
+
+/** The least a reason can say and still be a reason rather than a keystroke. */
+export const DELETE_REASON_MIN = 10;

@@ -302,10 +302,168 @@ describe('taking a list back off', () => {
            record as cancelled" -- and a confirmation describing behaviour
            the code used to have is worse than none. */
         expect(text).toMatch(/cannot be undone/);
-        expect(text).toMatch(/already collected, delivered or photographed/);
+        /* And it does not claim a loss this list has not got. Nothing on
+           this one has been driven, so the proof-of-delivery sentence moved
+           to the dialog for the lists that have -- see below. Saying it
+           here would be the 4 November mistake pointing the other way. */
+        expect(text).toMatch(/Nothing on it has been driven yet/);
         /* And the old promise is gone, not merely unmentioned. */
         expect(text).not.toMatch(/stay on the record/);
         expect(text).not.toMatch(/cancelled/);
+    });
+
+    /* ───────────────────────────── the driven lists (11 November) ─────────
+     *
+     * Twenty-five lists were deleted on 9 November in six minutes, taking
+     * five hundred-odd finished deliveries with them. Thirteen seconds a
+     * list, one confirm() each. These tests hold the two halves apart: a
+     * list nobody has driven still goes on one click, and a list somebody
+     * has driven asks for the number and a reason.
+     */
+
+    const driven = (n: number) => aList({ driverWorkCount: n });
+
+    /** What was actually sent on the DELETE, read off the fetch mock: the
+     *  stub helper records urls, and here the body is the assertion. */
+    const deleteBody = (fn: { mock: { calls: unknown[][] } }): unknown => {
+        const call = fn.mock.calls.find((c) => {
+            const init = c[1] as RequestInit | undefined;
+            return (init?.method ?? 'GET').toUpperCase() === 'DELETE';
+        });
+        const body = (call?.[1] as RequestInit | undefined)?.body;
+        return typeof body === 'string' ? JSON.parse(body) : undefined;
+    };
+
+    it('marks the button itself when the list holds driven work', async () => {
+        /* A row that will cost somebody their day should not look identical
+           to one that will cost a bad upload. On 9 November they did. */
+        stub(withRecent([driven(7)]));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        expect(screen.getByRole('button', { name: /including 7 deliveries drivers have already handled/ }))
+            .toHaveTextContent('Delete (7 driven)');
+    });
+
+    it('asks for the count to be typed, not merely confirmed', async () => {
+        const { calls } = stub(withRecent([driven(7)]));
+        const asked = vi.fn((_text?: string) => null);
+        vi.stubGlobal('prompt', asked);
+        vi.stubGlobal('confirm', vi.fn(() => true));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /including 7 deliveries/ }));
+        await waitFor(() => { expect(asked).toHaveBeenCalled(); });
+
+        const text = String(asked.mock.calls[0]?.[0] ?? '');
+        expect(text).toMatch(/7 deliveries on this list have already been driven/);
+        expect(text).toMatch(/proof of delivery/);
+        expect(text).toMatch(/Type 7 to confirm/);
+        /* Backing out of the question deletes nothing, and a confirm() that
+           happened to be stubbed true does not stand in for the answer. */
+        expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
+    });
+
+    it('deletes nothing when the typed count is wrong', async () => {
+        const { calls } = stub(withRecent([driven(7)]));
+        vi.stubGlobal('prompt', vi.fn(() => '1'));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /including 7 deliveries/ }));
+
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent(/did not match/);
+        expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
+    });
+
+    it('deletes nothing when the reason is a keystroke', async () => {
+        const { calls } = stub(withRecent([driven(7)]));
+        /* The count, then the reason. */
+        const answers = ['7', 'x'];
+        vi.stubGlobal('prompt', vi.fn(() => answers.shift() ?? null));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /including 7 deliveries/ }));
+
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent(/needs to be a sentence/);
+        expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
+    });
+
+    it('sends the count and the reason to the server once both are given', async () => {
+        const { calls, fn } = stub({
+            ...withRecent([driven(7)]),
+            'DELETE /api/projects/uh/uh/imports/41': { deleted: 79, filesDeleted: 4, filesLeftInStorage: 0, permanent: true },
+        });
+        const answers = ['7', 'uploaded against the wrong pharmacy'];
+        vi.stubGlobal('prompt', vi.fn(() => answers.shift() ?? null));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /including 7 deliveries/ }));
+
+        await screen.findByText(/79 deliveries removed, 4 photographs/);
+        expect(calls).toContain('DELETE /api/projects/uh/uh/imports/41');
+        expect(deleteBody(fn)).toEqual({
+            confirmDeliveries: 7,
+            reason: 'uploaded against the wrong pharmacy',
+        });
+    });
+
+    it('does not ask the questions at all when nothing has been driven', async () => {
+        /* THE HALF THAT KEEPS THE GUARD ALIVE. On 9 and 10 November ten
+           lists and two hundred and seventeen deliveries were deleted
+           correctly, every one still assigned, ready or empty. Making that
+           harder would only teach people to click through anything. */
+        const { calls, fn } = stub({
+            ...withRecent([aList()]),
+            'DELETE /api/projects/uh/uh/imports/41': { deleted: 79, filesDeleted: 0, filesLeftInStorage: 0, permanent: true },
+        });
+        const asked = vi.fn(() => '7');
+        vi.stubGlobal('prompt', asked);
+        vi.stubGlobal('confirm', vi.fn(() => true));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
+
+        await screen.findByText(/79 deliveries removed/);
+        expect(asked).not.toHaveBeenCalled();
+        expect(deleteBody(fn)).toEqual({});
+        expect(calls).toContain('DELETE /api/projects/uh/uh/imports/41');
+    });
+
+    it('survives a count that went stale while the page sat open', async () => {
+        /* A driver filed a delivery against this list at ten o'clock; the
+           operator pressed Delete at eleven with a page loaded at nine. The
+           screen was right when it rendered and wrong when it was clicked,
+           which is exactly why the guard is on the server. Nothing is
+           deleted, the server's own sentence is shown, and the table is
+           reloaded so the next press takes the other path. */
+        const { calls } = stub({
+            ...withRecent([aList()]),
+            'DELETE /api/projects/uh/uh/imports/41': {
+                status: 409,
+                body: {
+                    error: 'This list holds 7 deliveries drivers have already handled.',
+                    code: 'list.hasDriverWork',
+                    worked: 7,
+                },
+            },
+        });
+        vi.stubGlobal('confirm', vi.fn(() => true));
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
+        await screen.findByText('Courier and fedex 11.02.xlsx');
+
+        fireEvent.click(screen.getByRole('button', { name: /Take the 2026-11-02 .* list off/ }));
+
+        const alert = await screen.findByRole('alert');
+        expect(alert).toHaveTextContent(/holds 7 deliveries drivers have already handled/);
+        expect(alert).toHaveTextContent(/Nothing was deleted/);
+        expect(calls.filter((c) => c === 'GET /api/projects/uh/uh/imports').length).toBeGreaterThan(1);
     });
 
     it('sends the delete and reports what went with it', async () => {
