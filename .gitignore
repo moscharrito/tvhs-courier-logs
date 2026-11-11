@@ -206,3 +206,4 @@ rates.txt
 # database token at the prompt; neither belongs in a public repository.
 pods.ps1
 pods-*.txt
+zones.ps1

@@ -68,11 +68,55 @@ describe('checkTarget', () => {
     });
 
     it('says so even when there is no connection string at all', () => {
-        for (const databaseUrl of ['', null, undefined]) {
+        /* undefined is no longer in this list: it now means the CALLER is
+           wrong rather than the environment, and says so in its own words.
+           See the test below, which is the one that would have caught the
+           12 November bug. */
+        for (const databaseUrl of ['', null]) {
             const got = checkTarget({ databaseUrl, wantsProduction: true });
             expect(got.ok).toBe(false);
             expect(got.message).toContain('unset');
         }
+    });
+
+    /* ─────────────────────────────────────────────────────────────────
+     * A GUARD DISARMED BY A TYPO IN THE CALL (12 November 2026).
+     *
+     * measure-pay-zones.mjs and backfill-pay-zones.mjs both passed
+     * `config.databaseUrl`, which has never been a field on the config --
+     * it is `config.db.url`. So checkTarget was handed undefined on every
+     * run, and the failure was not in the safe direction:
+     *
+     *   WITH --i-mean-production   it refused always, which is what finally
+     *                              made somebody look.
+     *   WITHOUT the flag           undefined is not production and
+     *                              production was not asked for, so it
+     *                              returned ok -- and createDatabase(config)
+     *                              then went to config.db.url, which IS
+     *                              Turso. The script would have written to
+     *                              production believing it was a laptop.
+     *
+     * This module was written on 9 November precisely to stop a script
+     * answering confidently about the wrong database. It was correct and it
+     * was tested. Both callers wired it to nothing, and nothing said so.
+     * ───────────────────────────────────────────────────────────────── */
+    it('refuses undefined as a caller bug, not as an unset environment', () => {
+        const got = checkTarget({ databaseUrl: undefined, wantsProduction: true });
+        expect(got.ok).toBe(false);
+        expect(got.message).toContain('does not exist');
+        /* Names the field, because the person reading this is in a script
+           and the fix is one identifier. */
+        expect(got.message).toContain('config.db.url');
+        /* And does NOT send them off to set environment variables that are
+           already perfectly fine. */
+        expect(got.message).not.toContain('TURSO_DATABASE_URL');
+    });
+
+    it('refuses undefined in the unguarded direction too, which was the dangerous one', () => {
+        /* No flag. Before the fix this returned ok and the script ran on
+           against whatever config.db.url happened to be. */
+        const got = checkTarget({ databaseUrl: undefined, wantsProduction: false });
+        expect(got.ok).toBe(false);
     });
 
     /* A refusal must never read as a result. Nothing in either message may
@@ -86,5 +130,32 @@ describe('checkTarget', () => {
             expect(got.message).not.toMatch(/\b0 (orders|of)\b/);
             expect(got.message).not.toMatch(/Nobody is owed/);
         }
+    });
+});
+
+/* THE FIELD THE CALLERS READ HAS TO EXIST.
+ *
+ * script-target.test.mjs tested checkTarget in isolation and passed
+ * throughout, because the bug was never in checkTarget. It was in what the
+ * callers handed it. This is the cheapest assertion that would have caught
+ * it: the shape the scripts read, read the same way they read it. */
+describe('the config field the scripts pass to it', () => {
+    it('is db.url, and there is no databaseUrl', async () => {
+        /* The one value loadConfig refuses to boot without. Nothing else is
+           set, so this reads the same defaults a script picks up when
+           somebody runs it with no environment at all -- which is exactly
+           the situation the bug hid in. */
+        const had = process.env['SESSION_SECRET'];
+        process.env['SESSION_SECRET'] = 'test-session-secret-for-config-shape';
+        const { loadConfig } = await import('../src/config.ts');
+        const config = loadConfig();
+        if (had === undefined) delete process.env['SESSION_SECRET'];
+        else process.env['SESSION_SECRET'] = had;
+        expect(typeof config.db.url).toBe('string');
+        expect(config.db.url.length).toBeGreaterThan(0);
+        /* If this ever becomes defined, the comment in measure-pay-zones.mjs
+           and backfill-pay-zones.mjs is wrong and one of them is reading the
+           other field by accident again. */
+        expect(config.databaseUrl).toBeUndefined();
     });
 });

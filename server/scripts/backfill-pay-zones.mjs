@@ -70,7 +70,17 @@ const config = loadConfig();
 /* One check, in one place, tested on its own: scripts/lib/target.mjs says
    why. --i-mean-production is both a permission and an assertion, and only
    the first half existed until 9 November. */
-const target = checkTarget({ databaseUrl: config.databaseUrl, wantsProduction: has('i-mean-production') });
+/* config.db.url, NOT config.databaseUrl. There has never been a
+   `databaseUrl` on the config: this read undefined, so checkTarget was
+   told the connection string was unset on every single run. With
+   --i-mean-production it refused always. WITHOUT the flag it returned
+   ok -- not production, not asked for -- and then createDatabase(config)
+   went to config.db.url, which is Turso. The guard written on 9 November
+   to stop a script answering about the wrong database was wired to a
+   field that did not exist, and the unguarded path was the one it let
+   through. checkTarget now refuses undefined outright so a third
+   spelling of this cannot be silent. */
+const target = checkTarget({ databaseUrl: config.db.url, wantsProduction: has('i-mean-production') });
 if (!target.ok) { console.error(target.message); process.exit(1); }
 const isLocal = !target.live;
 

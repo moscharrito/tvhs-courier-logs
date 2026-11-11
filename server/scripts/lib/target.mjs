@@ -33,6 +33,32 @@ export function isProduction(databaseUrl) {
  * to do, which keeps this testable without spawning anything.
  */
 export function checkTarget({ databaseUrl, wantsProduction }) {
+    /* UNDEFINED IS A CALLER BUG, NOT AN UNSET ENVIRONMENT.
+     *
+     * An unset variable arrives as '' and is a thing the operator can fix.
+     * `undefined` means the caller read a field that does not exist, and
+     * both callers did: they passed `config.databaseUrl` for a year, which
+     * has never been a field. The consequence was not a refusal in the safe
+     * direction -- with the flag it refused always, and WITHOUT the flag it
+     * returned ok and let the script run against Turso believing it was a
+     * laptop.
+     *
+     * So this is separated out and named for what it is. A guard that can be
+     * disarmed by a typo in the call is not a guard. */
+    if (databaseUrl === undefined) {
+        return {
+            ok: false,
+            live: false,
+            message: [
+                '',
+                '  REFUSING: this script asked for a connection string that does not exist.',
+                '  That is a bug in the script, not something to set in your shell.',
+                '  The config field is `config.db.url`.',
+                '',
+            ].join('\n'),
+        };
+    }
+
     const live = isProduction(databaseUrl);
 
     /* The original guard: do not write to production by accident. */
