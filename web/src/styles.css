@@ -654,6 +654,20 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-roster-group { min-width: 0; }
 .izy-roster-group h2 { margin: 0; font-size: 16px; }
 
+/* FINDING ONE DRIVER AMONG EIGHTY.
+ *
+ * One row: label, box, and the way back to the whole list. The box takes
+ * the space that is going and then stops, because an input the width of a
+ * desktop card reads as somewhere to write a sentence, and what goes in it
+ * is a word. */
+.izy-roster-find { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.izy-roster-find label { font-weight: 600; white-space: nowrap; }
+.izy-roster-find input { flex: 1 1 220px; max-width: 420px; min-width: 0; }
+
+/* The results heading carries the count and the words searched for, so it
+   is a sentence rather than a title and wants to wrap like one. */
+.izy-roster-group h2 b { font-weight: 600; }
+
 /* THE ROW. Name and contact take the space that is going; the picker is a
    fixed column on the right so that every select on the page starts at the
    same x, which is what makes a list of forty-three scannable rather than

@@ -674,3 +674,191 @@ describe('putting a driver on shift from here', () => {
         expect(screen.queryByRole('button', { name: 'Put on shift' })).not.toBeInTheDocument();
     });
 });
+
+/* ── FINDING ONE DRIVER AMONG EIGHTY ──────────────────────────────────────
+ *
+ * The roster was twenty-three drivers when it was built, grouped by
+ * pharmacy and paged eight at a time. It is eighty now across ten groups,
+ * which is up to ten folds and ten pagers between somebody and the one name
+ * they opened the page for.
+ *
+ * The cases that matter are the ones where a search LOOKS like it worked
+ * and did not: a match sitting behind a folded group, a match on page two,
+ * and a row that found the person but cannot do anything to them.
+ */
+describe('finding a driver', () => {
+    const roster = [
+        driver({ username: 'imogen', name: 'Imogen Blackwood', email: 'blackwood.imogen@example.com', homeSiteId: null, homeSiteCode: null, homeSiteName: null }),
+        driver({ username: 'tobias', name: 'Tobias Fenwick', email: 'fenwick.tobias@example.com', homeSiteId: null, homeSiteCode: null, homeSiteName: null }),
+        driver({ username: 'dana.whitfield', name: 'Dana Whitfield', email: 'dana.whitfield@example.com', homeSiteId: 1 }),
+    ];
+    const find = () => screen.getByLabelText('Find a driver');
+
+    /* One case folds a group, and a remembered fold outlives the render.
+       Cleared here rather than in that test so a failure part-way through
+       it cannot leak the fold into everything after. */
+    afterEach(() => { window.localStorage.clear(); });
+
+    it('narrows the page to the people whose name matches', async () => {
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'tobias' } });
+
+        expect(screen.getByText('Tobias Fenwick')).toBeInTheDocument();
+        expect(screen.queryByText('Imogen Blackwood')).not.toBeInTheDocument();
+        expect(screen.queryByText('Dana Whitfield')).not.toBeInTheDocument();
+    });
+
+    it('finds somebody by the handle they sign in as', async () => {
+        /* An administrator reading "signs in as imogen" off a message should
+           not have to work back to a surname before they can search. */
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'dana.whitfield' } });
+        expect(screen.getByText('Dana Whitfield')).toBeInTheDocument();
+        expect(screen.queryByText('Imogen Blackwood')).not.toBeInTheDocument();
+    });
+
+    it('finds somebody by email address', async () => {
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'blackwood.imogen' } });
+        expect(screen.getByText('Imogen Blackwood')).toBeInTheDocument();
+        expect(screen.queryByText('Tobias Fenwick')).not.toBeInTheDocument();
+    });
+
+    it('takes the words in either order', async () => {
+        /* Every word has to appear, in any order. One substring match would
+           fail this; matching any word rather than all of them would return
+           most of the roster for it. */
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'blackwood imogen' } });
+        expect(screen.getByText('Imogen Blackwood')).toBeInTheDocument();
+        expect(screen.queryByText('Tobias Fenwick')).not.toBeInTheDocument();
+    });
+
+    it('ignores case and surrounding space', async () => {
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: '  TOBIAS  ' } });
+        expect(screen.getByText('Tobias Fenwick')).toBeInTheDocument();
+        expect(screen.queryByText('Imogen Blackwood')).not.toBeInTheDocument();
+    });
+
+    it('says how many matched, and what was searched for', async () => {
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'a' } });
+        /* All three contain an "a". The count is the assertion: a results
+           list with no count makes somebody scroll to find out whether the
+           search worked. */
+        expect(screen.getByRole('heading', { name: /3 drivers matching/ })).toBeInTheDocument();
+    });
+
+    it('says nobody matched, and what it actually reads', async () => {
+        /* Somebody who typed a telephone number and got nothing should learn
+           that the number is not one of the things searched, rather than
+           conclude the driver is not on the roster. */
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: '210 555 0142' } });
+        expect(screen.getByText(/Nobody on this roster matches/)).toBeInTheDocument();
+        expect(screen.getByText(/the name, the sign-in handle and the email address/)).toBeInTheDocument();
+    });
+
+    it('does not leave a match hidden inside a folded pharmacy', async () => {
+        /* THE ONE THAT DECIDES THE DESIGN. The groups are foldable and each
+           remembers whether it is folded, so a filtered grouped view would
+           sometimes answer "no" when the answer was "yes, in the panel you
+           closed last week". The results are flat for this reason. */
+        window.localStorage.setItem('izy.section.uh.roster.1', '0');
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+        /* Folded: the row is genuinely not rendered. */
+        expect(screen.queryByText('Dana Whitfield')).not.toBeInTheDocument();
+
+        fireEvent.change(find(), { target: { value: 'whitfield' } });
+        expect(screen.getByText('Dana Whitfield')).toBeInTheDocument();
+    });
+
+    it('does not leave a match stranded on page two', async () => {
+        /* Groups page at eight. A ninth driver whose name matches has to
+           come back on the first page of the results, not stay wherever the
+           pager had left them. */
+        const many = Array.from({ length: 12 }, (_, i) => driver({
+            username: `drv${i}`, name: `Driver Number ${i}`, email: `drv${i}@example.com`, homeSiteId: 1,
+        }));
+        many.push(driver({ username: 'zeta', name: 'Zeta Okonkwo', email: 'zeta@example.com', homeSiteId: 1 }));
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: many }) }));
+        await screen.findByText('Driver Number 0');
+        expect(screen.queryByText('Zeta Okonkwo')).not.toBeInTheDocument();
+
+        fireEvent.change(find(), { target: { value: 'okonkwo' } });
+        expect(screen.getByText('Zeta Okonkwo')).toBeInTheDocument();
+    });
+
+    it('gives a found driver the same controls as a browsed one', async () => {
+        /* Finding somebody is half an answer if the row that comes back
+           cannot do anything to them. This is why the row is one component
+           shared by both views rather than a second, thinner rendering. */
+        renderAsAdmin({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) });
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'imogen' } });
+
+        expect(screen.getByLabelText('Home pharmacy for Imogen Blackwood')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Put on shift' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'New password' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Off the roster' })).toBeInTheDocument();
+    });
+
+    it('still saves from a found row, with the same request', async () => {
+        const { calls } = renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }),
+            'PUT /api/projects/uh/uh/roster/imogen': { ok: true },
+        });
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: 'imogen' } });
+        fireEvent.change(screen.getByLabelText('Home pharmacy for Imogen Blackwood'), { target: { value: '2' } });
+
+        await waitFor(() => {
+            expect(calls).toContain('PUT /api/projects/uh/uh/roster/imogen');
+        });
+    });
+
+    it('offers the way back only once there is something to clear', async () => {
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+        expect(screen.queryByRole('button', { name: 'Show the whole roster' })).not.toBeInTheDocument();
+
+        fireEvent.change(find(), { target: { value: 'tobias' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Show the whole roster' }));
+
+        expect(screen.getByText('Imogen Blackwood')).toBeInTheDocument();
+        expect(screen.getByText('Dana Whitfield')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Show the whole roster' })).not.toBeInTheDocument();
+    });
+
+    it('leaves the roster alone when the box is empty', async () => {
+        /* Browsing is still what this page is for -- is every counter
+           covered -- so an empty box has to give back the grouped view
+           exactly, headings and all. */
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        expect(screen.getByRole('heading', { name: /No home pharmacy yet/ })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /Robert B. Green/ })).toBeInTheDocument();
+
+        fireEvent.change(find(), { target: { value: 'tobias' } });
+        expect(screen.queryByRole('heading', { name: /Robert B. Green/ })).not.toBeInTheDocument();
+    });
+});

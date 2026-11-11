@@ -109,6 +109,23 @@ interface Roster {
     unassigned: number;
 }
 
+/* WHAT COUNTS AS A MATCH.
+ *
+ * The box says "by name" and a name is what gets typed, but the row already
+ * shows two other ways to refer to the same person -- the sign-in handle
+ * under the name and the email address beside it -- and somebody reading
+ * "signs in as imogen" off a message should not have to work back to a
+ * surname before they can search for it.
+ *
+ * EVERY WORD HAS TO APPEAR, in any order, anywhere. "blackwood imogen"
+ * finds Imogen Blackwood and so does "imogen example": one substring match
+ * would fail the first, and matching any word rather than all of them would
+ * make the second return half the roster. */
+function matches(d: RosterDriver, terms: readonly string[]): boolean {
+    const hay = `${d.name} ${d.username} ${d.email}`.toLowerCase();
+    return terms.every((t) => hay.includes(t));
+}
+
 /** Null is a real value here -- "no home pharmacy" -- so it needs a key. */
 const UNASSIGNED = 'none';
 
@@ -145,6 +162,18 @@ export function Roster() {
     /* Shown once, never stored, never logged. The server has only the hash
        and this component is the one place the plaintext ever exists. */
     const [issued, setIssued] = useState<{ name: string; username: string; password: string } | null>(null);
+
+    /* ── FINDING ONE PERSON AMONG EIGHTY ──────────────────────────────
+       The roster was twenty-three drivers when it was grouped by pharmacy
+       and paged eight at a time, and browsing it was the only way in. It is
+       eighty now, across nine counters and a tenth group for the ones with
+       no counter yet, which is ten foldable panels and up to ten pagers
+       between somebody and the one name they came for.
+
+       Browsing still answers the question this page was built for -- is
+       every counter covered -- so the groups are untouched and the search
+       sits beside them rather than replacing them. */
+    const [find, setFind] = useState('');
 
     const [data, setData] = useState<Roster | null>(null);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -381,6 +410,9 @@ export function Roster() {
     const unassigned = at(null);
     const noPhone = data.drivers.filter((d) => d.phone === '').length;
 
+    const terms = find.trim().toLowerCase().split(/\s+/).filter((t) => t !== '');
+    const found = terms.length === 0 ? null : data.drivers.filter((d) => matches(d, terms));
+
     /* Unassigned first because it is the only column that is work to do.
        Then the counters in the order the server gave them, which is by
        name, so the page reads the same way twice running. */
@@ -390,6 +422,63 @@ export function Roster() {
             : []),
         ...data.sites.map((s) => ({ key: String(s.id), title: s.name, drivers: at(s.id), site: s })),
     ];
+
+    /* ONE SET OF CONTROLS, BUILT ONCE AND GIVEN TO BOTH VIEWS. The grouped
+       list and the search results are the same rows doing the same things;
+       passing them separately is how the two would quietly stop being the
+       same thing. */
+    const controls: RowControls = {
+        code: code,
+        sites: data.sites,
+        saving: saving,
+        isAdmin: isAdmin,
+        canSetShift: canSetShift,
+        onSet: (d, v) => { void setHome(d, v); },
+        onPhone: (d, v) => { void setPhone(d, v); },
+        onCover: (d, siteId, on) => { void setCovers(d, siteId, on); },
+        onShiftChange: (d, on) => {
+            if (on) { void setShift(d, true); return; }
+            /* PRE-FILLED AND STILL EDITABLE. A free box that
+               has to be typed forty-three times gets "x"
+               typed into it, which is a reason in the same
+               way an empty field is. A default that says
+               what happened, which somebody can replace with
+               what actually happened, keeps the record
+               worth reading. */
+            const reason = window.prompt(
+                `Take ${d.name} off shift?\n\n`
+                + 'They stop being offered work straight away. Say why: it goes on the '
+                + 'shift record under your name, and it is what anybody reading their '
+                + 'hours later will see.',
+                'Taken off shift by dispatch',
+            );
+            if (reason === null) return;
+            if (reason.trim().length < 5) {
+                setMsg({ kind: 'error', text: 'Say why in a few words. Nothing was changed.' });
+                return;
+            }
+            void setShift(d, false, reason.trim());
+        },
+        onReset: (d) => {
+            /* Confirmed because it signs them out. A driver
+               mid-round loses the app until somebody reads
+               them the new password. */
+            if (window.confirm(
+                `Give ${d.name} a new password?\n\n`
+                + 'They are signed out of the app everywhere immediately, '
+                + 'including mid-round, and cannot work again until you have '
+                + 'read them the new one.',
+            )) void resetPassword(d);
+        },
+        onRemove: (d) => {
+            if (window.confirm(
+                `Take ${d.name} off the ${project.name} roster?\n\n`
+                + 'They stop being offered work here. Their account, their past '
+                + 'deliveries and their signatures all stay exactly as they are, '
+                + 'and you can put them back by giving them a home pharmacy again.',
+            )) void removeFromRoster(d);
+        },
+    };
 
     return (
         <>
@@ -473,69 +562,71 @@ export function Roster() {
                 </div>
             )}
 
+            {/* ── THE SEARCH ────────────────────────────────────────────
+                Its own row above the list rather than a control on a group
+                header: it searches all eighty drivers, and a box that lived
+                inside one pharmacy's panel would read as though it searched
+                that pharmacy. */}
+            <div className="izy-card izy-roster-find">
+                <label htmlFor="roster-find">Find a driver</label>
+                <input
+                    id="roster-find"
+                    type="search"
+                    value={find}
+                    placeholder="name, sign-in or email"
+                    autoComplete="off"
+                    onChange={(e) => { setFind(e.target.value); }}
+                />
+                {/* Offered only once there is something to clear, and worded
+                    as where it goes rather than what it empties: the thing
+                    somebody wants back is the roster, not an empty box. */}
+                {found !== null && (
+                    <button type="button" className="izy-btn secondary small" onClick={() => { setFind(''); }}>
+                        Show the whole roster
+                    </button>
+                )}
+            </div>
+
+            {found !== null ? (
+                <Found drivers={found} find={find.trim()} {...controls} />
+            ) : (
             <div className="izy-roster">
                 {groups.map((g) => (
                     <Group
                         key={g.key}
                         id={`uh.roster.${g.key}`}
                         group={g}
-                        code={code}
-                        sites={data.sites}
-                        saving={saving}
-                        isAdmin={isAdmin}
-                        canSetShift={canSetShift}
-                        onSet={(d, v) => { void setHome(d, v); }}
-                        onPhone={(d, v) => { void setPhone(d, v); }}
-                        onCover={(d, siteId, on) => { void setCovers(d, siteId, on); }}
-                        onShiftChange={(d, on) => {
-                            if (on) { void setShift(d, true); return; }
-                            /* PRE-FILLED AND STILL EDITABLE. A free box that
-                               has to be typed forty-three times gets "x"
-                               typed into it, which is a reason in the same
-                               way an empty field is. A default that says
-                               what happened, which somebody can replace with
-                               what actually happened, keeps the record
-                               worth reading. */
-                            const reason = window.prompt(
-                                `Take ${d.name} off shift?\n\n`
-                                + 'They stop being offered work straight away. Say why: it goes on the '
-                                + 'shift record under your name, and it is what anybody reading their '
-                                + 'hours later will see.',
-                                'Taken off shift by dispatch',
-                            );
-                            if (reason === null) return;
-                            if (reason.trim().length < 5) {
-                                setMsg({ kind: 'error', text: 'Say why in a few words. Nothing was changed.' });
-                                return;
-                            }
-                            void setShift(d, false, reason.trim());
-                        }}
-                        onReset={(d) => {
-                            /* Confirmed because it signs them out. A driver
-                               mid-round loses the app until somebody reads
-                               them the new password. */
-                            if (window.confirm(
-                                `Give ${d.name} a new password?\n\n`
-                                + 'They are signed out of the app everywhere immediately, '
-                                + 'including mid-round, and cannot work again until you have '
-                                + 'read them the new one.',
-                            )) void resetPassword(d);
-                        }}
-                        onRemove={(d) => {
-                            if (window.confirm(
-                                `Take ${d.name} off the ${project.name} roster?\n\n`
-                                + 'They stop being offered work here. Their account, their past '
-                                + 'deliveries and their signatures all stay exactly as they are, '
-                                + 'and you can put them back by giving them a home pharmacy again.',
-                            )) void removeFromRoster(d);
-                        }}
+                        {...controls}
                     />
                 ))}
             </div>
+            )}
         </>
     );
 }
 
+
+/* WHAT A DRIVER ROW CAN DO.
+ *
+ * One interface because three places pass the identical set: the grouped
+ * view, the search results, and Group itself, which only forwards it. A
+ * control added to the row is then added in one place and reaches both
+ * views, which is the whole reason the row was lifted out. */
+interface RowControls {
+    code: string;
+    sites: RosterSite[];
+    saving: string | null;
+    isAdmin: boolean;
+    /** Dispatch, read off the project membership. See the note on the
+     *  constant in Roster, and the one over the button it draws. */
+    canSetShift: boolean;
+    onSet: (d: RosterDriver, value: string) => void;
+    onPhone: (d: RosterDriver, value: string) => void;
+    onCover: (d: RosterDriver, siteId: number, on: boolean) => void;
+    onShiftChange: (d: RosterDriver, on: boolean) => void;
+    onReset: (d: RosterDriver) => void;
+    onRemove: (d: RosterDriver) => void;
+}
 
 /* ONE PHARMACY'S DRIVERS.
  *
@@ -552,23 +643,10 @@ export function Roster() {
  * default because the thing this page is read to find -- a counter with
  * nobody on it -- has to be visible without opening anything.
  */
-function Group({ id, group, code, sites, saving, isAdmin, canSetShift, onSet, onPhone, onCover, onShiftChange, onReset, onRemove }: {
+function Group({ id, group, ...controls }: {
     id: string;
     group: { key: string; title: string; drivers: RosterDriver[]; site: RosterSite | null };
-    code: string;
-    sites: RosterSite[];
-    saving: string | null;
-    isAdmin: boolean;
-    /** Dispatch, read off the project membership. See the note on the
-     *  constant in Roster, and the one over the button it draws. */
-    canSetShift: boolean;
-    onSet: (d: RosterDriver, value: string) => void;
-    onPhone: (d: RosterDriver, value: string) => void;
-    onCover: (d: RosterDriver, siteId: number, on: boolean) => void;
-    onShiftChange: (d: RosterDriver, on: boolean) => void;
-    onReset: (d: RosterDriver) => void;
-    onRemove: (d: RosterDriver) => void;
-}) {
+} & RowControls) {
     const paged = usePaged(group.drivers, 8);
 
     return (
@@ -584,124 +662,186 @@ function Group({ id, group, code, sites, saving, isAdmin, canSetShift, onSet, on
                 <p className="izy-muted izy-stat-warn">Nobody drives from here.</p>
             )}
             {paged.rows.map((d) => (
-                <div className="izy-roster-row" key={d.username}>
-                    <div>
-                        <Link to={`/projects/${code}/drivers/${encodeURIComponent(d.username)}`}>{d.name}</Link>
-                        {/* The space belongs OUTSIDE the pill. Inside, the
-                            browser collapses it against the pill's own
-                            padding and the name runs into the badge:
-                            "Rosalind Achebeon shift". */}
-                        {d.onShift && <> <span className="izy-pill">on shift</span></>}
-                        {notes(d).length > 0 && <>
-                            <br />
-                            {/* Whatever this row needs saying about the
-                                ACCOUNT -- a handle that is not a name, a
-                                site manager, somebody switched off. The
-                                address and the number moved out of here
-                                into their own column, so this line is
-                                usually absent now and the row is one line
-                                tall, which is the point of a list. */}
-                            <span className="izy-muted">{notes(d).join(' · ')}</span>
-                        </>}
-                    </div>
-                    <Contact driver={d} saving={saving === d.username} onPhone={onPhone} />
-                    <select
-                        aria-label={`Home pharmacy for ${d.name}`}
-                        value={d.homeSiteId === null ? UNASSIGNED : String(d.homeSiteId)}
-                        disabled={saving === d.username}
-                        onChange={(e) => onSet(d, e.target.value)}
-                    >
-                        <option value={UNASSIGNED}>No home pharmacy</option>
-                        {sites.map((s) => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                    </select>
-                    {/* ── ALSO COVERS, ACROSS THE FULL ROW ────────────────
-                        One driver, several counters. The board has always
-                        supported it; this is the first screen that says so.
-
-                        A CHECKBOX EACH rather than a multi-select: a
-                        <select multiple> needs ctrl-click to add a second
-                        value and silently drops the rest when somebody
-                        clicks without it, which on this page would quietly
-                        un-cover four pharmacies. The home one is left out
-                        because the server drops it from the list anyway --
-                        covering where you already are is not a thing.
-
-                        Saved on each tick rather than behind a button: a
-                        change nobody confirmed is a change nobody can
-                        forget to confirm. */}
-                    <div className="izy-roster-covers">
-                        <span className="izy-muted">Also covers</span>
-                        {sites.filter((s) => s.id !== d.homeSiteId).map((s) => (
-                            <label key={s.id} className="izy-cover-pick">
-                                <input
-                                    type="checkbox"
-                                    checked={(d.alsoCovers ?? []).includes(s.id)}
-                                    disabled={saving === d.username}
-                                    onChange={(e) => onCover(d, s.id, e.target.checked)}
-                                />
-                                {s.name}
-                            </label>
-                        ))}
-                        {sites.length <= 1 && <span className="izy-muted">nowhere else to cover</span>}
-                    </div>
-                    {/* TWO AUDIENCES IN ONE ROW OF BUTTONS, which is why the
-                        tests are on each button and not on the row.
-
-                        The shift switch is dispatch's: it goes to the UH
-                        shifts module, which admits a project `lead`, and the
-                        lead is the person at the board at noon. The other
-                        two go to /api/users behind the platform admin role.
-                        A site manager therefore sees one button here and not
-                        three, which is exactly what the server will let them
-                        do. */}
-                    {(canSetShift || isAdmin) && (
-                        <div className="izy-roster-admin">
-                            {/* FIRST, because it is the one that gets pressed
-                                daily and the other two are rare and heavy.
-
-                                IT SAYS WHAT IT WILL DO, not what is true: the
-                                state is already on the row as a pill, and a
-                                button labelled with the current state is the
-                                oldest way to make somebody click the opposite
-                                of what they meant. */}
-                            {canSetShift && (
-                            <button
-                                type="button"
-                                className="izy-btn secondary small"
-                                disabled={saving === d.username}
-                                onClick={() => onShiftChange(d, !d.onShift)}
-                            >
-                                {d.onShift ? 'Take off shift' : 'Put on shift'}
-                            </button>
-                            )}
-                            {isAdmin && (<>
-                            <button
-                                type="button"
-                                className="izy-btn secondary small"
-                                disabled={saving === d.username}
-                                onClick={() => onReset(d)}
-                            >
-                                New password
-                            </button>
-                            <button
-                                type="button"
-                                className="izy-btn secondary small izy-danger"
-                                disabled={saving === d.username}
-                                onClick={() => onRemove(d)}
-                            >
-                                Off the roster
-                            </button>
-                            </>)}
-                        </div>
-                    )}
-                </div>
+                <DriverRow key={d.username} d={d} {...controls} />
             ))}
             <Pager of={paged} noun="drivers" />
         </Section>
     );
 }
+
+/* THE SEARCH RESULTS.
+ *
+ * A FLAT LIST, NOT THE GROUPS FILTERED DOWN. The groups are foldable and
+ * each one remembers whether it is folded, so a filtered grouped view would
+ * sometimes hide the only match behind a panel somebody closed last week --
+ * a search that answers "no" when the answer is "yes, in the one you shut".
+ *
+ * Nothing is lost by flattening, because the pharmacy is already on the row:
+ * it is the value in the dropdown, which is the control somebody searching
+ * for a driver usually came to change.
+ *
+ * ITS OWN COMPONENT for the same dull reason Group is: paging is a hook and
+ * a hook cannot be called conditionally.
+ */
+function Found({ drivers, find, ...controls }: { drivers: RosterDriver[]; find: string } & RowControls) {
+    const paged = usePaged(drivers, 8);
+
+    if (drivers.length === 0) {
+        return (
+            <div className="izy-card">
+                <p className="izy-muted">
+                    {/* What was searched, said here rather than left to be
+                        guessed: somebody who typed a phone number and got
+                        nothing should learn that the number is not one of
+                        the things this reads, not conclude the driver is
+                        not on the roster. */}
+                    Nobody on this roster matches <b>{find}</b>. The search reads the name, the
+                    sign-in handle and the email address.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="izy-card izy-roster-group">
+            <h2>
+                {drivers.length} {drivers.length === 1 ? 'driver' : 'drivers'} matching <b>{find}</b>
+            </h2>
+            {paged.rows.map((d) => (
+                <DriverRow key={d.username} d={d} {...controls} />
+            ))}
+            <Pager of={paged} noun="drivers" />
+        </div>
+    );
+}
+
+
+/* ONE DRIVER, ONE ROW.
+ *
+ * Lifted out of Group on 11 November so the search results could be the
+ * same row rather than a second, thinner rendering of the same person that
+ * would drift from this one the first time a control was added. The roster
+ * is eighty drivers now; a found driver has to be as editable as a browsed
+ * one, or finding them is only half an answer.
+ */
+function DriverRow({ d, code, sites, saving, isAdmin, canSetShift, onSet, onPhone, onCover, onShiftChange, onReset, onRemove }: { d: RosterDriver } & RowControls) {
+    return (
+        <div className="izy-roster-row" key={d.username}>
+            <div>
+                <Link to={`/projects/${code}/drivers/${encodeURIComponent(d.username)}`}>{d.name}</Link>
+                {/* The space belongs OUTSIDE the pill. Inside, the
+                    browser collapses it against the pill's own
+                    padding and the name runs into the badge:
+                    "Rosalind Achebeon shift". */}
+                {d.onShift && <> <span className="izy-pill">on shift</span></>}
+                {notes(d).length > 0 && <>
+                    <br />
+                    {/* Whatever this row needs saying about the
+                        ACCOUNT -- a handle that is not a name, a
+                        site manager, somebody switched off. The
+                        address and the number moved out of here
+                        into their own column, so this line is
+                        usually absent now and the row is one line
+                        tall, which is the point of a list. */}
+                    <span className="izy-muted">{notes(d).join(' · ')}</span>
+                </>}
+            </div>
+            <Contact driver={d} saving={saving === d.username} onPhone={onPhone} />
+            <select
+                aria-label={`Home pharmacy for ${d.name}`}
+                value={d.homeSiteId === null ? UNASSIGNED : String(d.homeSiteId)}
+                disabled={saving === d.username}
+                onChange={(e) => onSet(d, e.target.value)}
+            >
+                <option value={UNASSIGNED}>No home pharmacy</option>
+                {sites.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+            </select>
+            {/* ── ALSO COVERS, ACROSS THE FULL ROW ────────────────
+                One driver, several counters. The board has always
+                supported it; this is the first screen that says so.
+
+                A CHECKBOX EACH rather than a multi-select: a
+                <select multiple> needs ctrl-click to add a second
+                value and silently drops the rest when somebody
+                clicks without it, which on this page would quietly
+                un-cover four pharmacies. The home one is left out
+                because the server drops it from the list anyway --
+                covering where you already are is not a thing.
+
+                Saved on each tick rather than behind a button: a
+                change nobody confirmed is a change nobody can
+                forget to confirm. */}
+            <div className="izy-roster-covers">
+                <span className="izy-muted">Also covers</span>
+                {sites.filter((s) => s.id !== d.homeSiteId).map((s) => (
+                    <label key={s.id} className="izy-cover-pick">
+                        <input
+                            type="checkbox"
+                            checked={(d.alsoCovers ?? []).includes(s.id)}
+                            disabled={saving === d.username}
+                            onChange={(e) => onCover(d, s.id, e.target.checked)}
+                        />
+                        {s.name}
+                    </label>
+                ))}
+                {sites.length <= 1 && <span className="izy-muted">nowhere else to cover</span>}
+            </div>
+            {/* TWO AUDIENCES IN ONE ROW OF BUTTONS, which is why the
+                tests are on each button and not on the row.
+
+                The shift switch is dispatch's: it goes to the UH
+                shifts module, which admits a project `lead`, and the
+                lead is the person at the board at noon. The other
+                two go to /api/users behind the platform admin role.
+                A site manager therefore sees one button here and not
+                three, which is exactly what the server will let them
+                do. */}
+            {(canSetShift || isAdmin) && (
+                <div className="izy-roster-admin">
+                    {/* FIRST, because it is the one that gets pressed
+                        daily and the other two are rare and heavy.
+
+                        IT SAYS WHAT IT WILL DO, not what is true: the
+                        state is already on the row as a pill, and a
+                        button labelled with the current state is the
+                        oldest way to make somebody click the opposite
+                        of what they meant. */}
+                    {canSetShift && (
+                    <button
+                        type="button"
+                        className="izy-btn secondary small"
+                        disabled={saving === d.username}
+                        onClick={() => onShiftChange(d, !d.onShift)}
+                    >
+                        {d.onShift ? 'Take off shift' : 'Put on shift'}
+                    </button>
+                    )}
+                    {isAdmin && (<>
+                    <button
+                        type="button"
+                        className="izy-btn secondary small"
+                        disabled={saving === d.username}
+                        onClick={() => onReset(d)}
+                    >
+                        New password
+                    </button>
+                    <button
+                        type="button"
+                        className="izy-btn secondary small izy-danger"
+                        disabled={saving === d.username}
+                        onClick={() => onRemove(d)}
+                    >
+                        Off the roster
+                    </button>
+                    </>)}
+                </div>
+            )}
+        </div>
+    );
+}
+
 
 /* ── MAKING A DRIVER ───────────────────────────────────────────────────
  *
