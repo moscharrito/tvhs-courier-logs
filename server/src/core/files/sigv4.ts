@@ -179,8 +179,30 @@ export function canonicalPartsForTest(input: PresignInput) {
  * already holds for the bucket.
  */
 
+/**
+ * The canonical query string, which is also the one to put in the URL.
+ *
+ * EXPORTED BECAUSE THE CALLER MUST USE IT TOO. The signature covers this
+ * exact string, so a caller that builds its own query -- a different order,
+ * encodeURIComponent instead of uriEncode, a dropped `=` after a valueless
+ * flag like `versions` -- sends bytes AWS did not sign and gets a 403 whose
+ * body says nothing about which of those it was. One function, used on both
+ * sides, cannot drift.
+ *
+ * Sorted by name, every key and value RFC 3986 encoded, and a parameter
+ * with no value still carries its `=`.
+ */
+export function canonicalQuery(query: Record<string, string> = {}): string {
+    return Object.keys(query).sort()
+        .map((k) => `${uriEncode(k)}=${uriEncode(query[k] ?? '')}`)
+        .join('&');
+}
+
 export interface SignedRequestInput {
-    method: 'GET' | 'POST';
+    /* DELETE is here for one caller: removing an S3 delete marker to bring
+       a deleted object back, which scripts/restore-pods.mjs does and the
+       application never does. */
+    method: 'GET' | 'POST' | 'DELETE';
     /** Full host, no scheme. */
     host: string;
     /** Absolute path, already encoded. */
@@ -195,6 +217,9 @@ export interface SignedRequestInput {
     at: Date;
     /** Extra headers to send and therefore to sign. */
     headers?: Record<string, string>;
+    /** Query parameters. Put canonicalQuery() of this same object in the
+     *  URL -- see the note there. Absent means no query, as before. */
+    query?: Record<string, string>;
 }
 
 /**
@@ -224,10 +249,11 @@ export function signedHeaders(input: SignedRequestInput): Record<string, string>
     const canonicalRequest = [
         input.method,
         input.path,
-        /* No query string on any call this makes. Kept explicit rather than
-           omitted, because the canonical request has a line for it either
-           way and a missing newline is a silent 403. */
-        '',
+        /* Empty for every caller that passes no query, which is how it was
+           when this only ever signed bodies. The line exists either way:
+           the canonical request has a slot for it and a missing newline is
+           a silent 403. */
+        canonicalQuery(input.query),
         canonicalHeaders,
         signed,
         payloadHash,

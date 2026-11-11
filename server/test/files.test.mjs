@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 import {
     presign, canonicalPartsForTest, uriEncode, encodeKeyPath, bucketHost, amzDates,
+    canonicalQuery, signedHeaders,
 } from '../src/core/files/sigv4.ts';
 import {
     buildKey, createFileStorage, FilesUnavailableError,
@@ -182,5 +183,86 @@ describe('when S3 is not configured', () => {
         await admin.post(FILES).send({ kind: 'doorstep', contentType: 'image/jpeg', bytes: 1000 });
         const after = (await srv.core.client.execute('SELECT COUNT(*) AS n FROM files')).rows[0].n;
         expect(Number(after)).toBe(Number(before));
+    });
+});
+
+/* ── THE QUERY STRING (11 November 2026) ───────────────────────────────────
+ *
+ * signedHeaders signed an empty query because nothing needed one. Bringing
+ * back a proof-of-delivery photograph does: listing an object's versions is
+ * `GET /?versions&prefix=...` and removing a delete marker is
+ * `DELETE /key?versionId=...`.
+ *
+ * There is no published AWS vector for these, so these are property tests
+ * rather than a byte-for-byte reproduction. What they hold is the set of
+ * things that produce a 403 with an empty body, which is the only thing AWS
+ * says when a signature is wrong.
+ */
+describe('the canonical query string', () => {
+    it('sorts by name, whatever order it was given in', () => {
+        expect(canonicalQuery({ prefix: 'a', 'key-marker': 'b', versions: '' }))
+            .toBe('key-marker=b&prefix=a&versions=');
+    });
+
+    it('keeps the = on a valueless flag', () => {
+        /* `?versions` and `?versions=` are the same request to S3 and a
+           different string to sign. Dropping it is a silent 403. */
+        expect(canonicalQuery({ versions: '' })).toBe('versions=');
+    });
+
+    it('encodes the way AWS wants, not the way encodeURIComponent does', () => {
+        /* A space is %20 and never +, and the characters encodeURIComponent
+           leaves alone are encoded here. A version id is opaque and can
+           contain any of them. */
+        expect(canonicalQuery({ 'version-id-marker': "a b!c'd(e)" }))
+            .toBe('version-id-marker=a%20b%21c%27d%28e%29');
+    });
+
+    it('is empty for no query, which is what every older caller sends', () => {
+        expect(canonicalQuery()).toBe('');
+        expect(canonicalQuery({})).toBe('');
+    });
+
+    it('leaves the signature of a no-query request exactly as it was', () => {
+        /* THE REGRESSION THAT MATTERS. Amazon Location signs POSTs through
+           this function and has no query; if adding the parameter changed
+           the canonical request for those, geocoding would start answering
+           403 and nothing here would have said so. */
+        const base = {
+            method: 'POST', host: 'places.geo.us-east-2.amazonaws.com', path: '/places/v0/indexes/x/search/text',
+            region: 'us-east-2', service: 'geo', accessKeyId: 'AKIDEXAMPLE',
+            secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+            body: '{"Text":"somewhere"}', at: new Date('2026-11-11T00:00:00Z'),
+        };
+        expect(signedHeaders({ ...base, query: {} }).Authorization)
+            .toBe(signedHeaders(base).Authorization);
+    });
+
+    it('signs a different query differently', () => {
+        const base = {
+            method: 'GET', host: 'bucket.s3.us-east-2.amazonaws.com', path: '/',
+            region: 'us-east-2', service: 's3', accessKeyId: 'AKIDEXAMPLE',
+            secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+            body: '', at: new Date('2026-11-11T00:00:00Z'),
+        };
+        const one = signedHeaders({ ...base, query: { versions: '', prefix: 'uh/2026-11-05/' } }).Authorization;
+        const two = signedHeaders({ ...base, query: { versions: '', prefix: 'uh/2026-11-06/' } }).Authorization;
+        expect(one).not.toBe(two);
+        /* And neither is the unsigned-query one, or the query is not being
+           signed at all. */
+        expect(one).not.toBe(signedHeaders(base).Authorization);
+    });
+
+    it('signs DELETE, which the application never sends and the recovery does', () => {
+        const headers = signedHeaders({
+            method: 'DELETE', host: 'bucket.s3.us-east-2.amazonaws.com',
+            path: '/uh/2026-11-05/order-1/pod/x.jpg',
+            region: 'us-east-2', service: 's3', accessKeyId: 'AKIDEXAMPLE',
+            secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+            body: '', at: new Date('2026-11-11T00:00:00Z'),
+            query: { versionId: 'abc123' },
+        });
+        expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//);
+        expect(headers['x-amz-date']).toBe('20261111T000000Z');
     });
 });

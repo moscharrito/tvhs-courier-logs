@@ -201,3 +201,8 @@ recover-*.csv
 # Holds two database URLs and two tokens at the prompt.
 merge.ps1
 rates.txt
+
+# The S3 proof-of-delivery restore (11 November). Holds a bucket key and a
+# database token at the prompt; neither belongs in a public repository.
+pods.ps1
+pods-*.txt
