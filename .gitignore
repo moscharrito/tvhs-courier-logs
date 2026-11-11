@@ -194,4 +194,10 @@ settings-check.ps1
 geocode-sites.ps1
 geocode-sites.txt
 rates.ps1
+# Names the production host and takes an admin password at the prompt.
+recover.ps1
+recover-*.json
+recover-*.csv
+# Holds two database URLs and two tokens at the prompt.
+merge.ps1
 rates.txt
