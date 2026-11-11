@@ -654,15 +654,27 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-roster-group { min-width: 0; }
 .izy-roster-group h2 { margin: 0; font-size: 16px; }
 
-/* FINDING ONE DRIVER AMONG EIGHTY.
+/* FINDING ONE DRIVER AMONG NINETY.
  *
- * One row: label, box, and the way back to the whole list. The box takes
- * the space that is going and then stops, because an input the width of a
- * desktop card reads as somewhere to write a sentence, and what goes in it
- * is a word. */
-.izy-roster-find { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.izy-roster-find label { font-weight: 600; white-space: nowrap; }
-.izy-roster-find input { flex: 1 1 220px; max-width: 420px; min-width: 0; }
+ * The box sits in the space beside the counts, which was empty. Two
+ * columns: the sentences take what they need and the box takes a fixed
+ * share on the right, capped, because an input the width of a desktop card
+ * reads as somewhere to write a sentence and what goes in it is a word.
+ *
+ * `align-items: start` so the box lines up with the first line of text
+ * rather than floating in the middle of a two-paragraph block. */
+.izy-roster-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 320px); gap: 16px; align-items: start; }
+.izy-roster-head > div > p:first-child { margin-top: 0; }
+.izy-roster-find { width: 100%; min-width: 0; }
+
+/* ON A PHONE the two columns stack, and the box goes FIRST: a site manager
+   opening this on a phone came to find somebody, and making them scroll
+   past two paragraphs of explanation to reach the search is the same
+   mistake as burying the dispatch board under the rate card. */
+@media (max-width: 760px) {
+    .izy-roster-head { grid-template-columns: 1fr; }
+    .izy-roster-find { order: -1; }
+}
 
 /* The results heading carries the count and the words searched for, so it
    is a sentence rather than a title and wants to wrap like one. */

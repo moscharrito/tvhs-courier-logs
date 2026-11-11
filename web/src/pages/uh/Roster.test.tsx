@@ -835,17 +835,30 @@ describe('finding a driver', () => {
         });
     });
 
-    it('offers the way back only once there is something to clear', async () => {
+    it('gives the roster back when the box is emptied', async () => {
+        /* There is no clear button: a search input clears itself, and one
+           holding a word somebody just typed does not need telling how. What
+           has to hold is that emptying it is a real way back and not a state
+           the page gets stuck in. */
         renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
         await screen.findByText('Imogen Blackwood');
-        expect(screen.queryByRole('button', { name: 'Show the whole roster' })).not.toBeInTheDocument();
 
         fireEvent.change(find(), { target: { value: 'tobias' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Show the whole roster' }));
+        expect(screen.queryByText('Imogen Blackwood')).not.toBeInTheDocument();
 
+        fireEvent.change(find(), { target: { value: '' } });
         expect(screen.getByText('Imogen Blackwood')).toBeInTheDocument();
         expect(screen.getByText('Dana Whitfield')).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Show the whole roster' })).not.toBeInTheDocument();
+    });
+
+    it('treats a box holding only spaces as empty', async () => {
+        /* Otherwise a stray space is a search for nothing that matches
+           everything, or nothing at all, depending on how it is split. */
+        renderRoster(routes({ 'GET /api/projects/uh/uh/roster': rosterData({ drivers: roster }) }));
+        await screen.findByText('Imogen Blackwood');
+
+        fireEvent.change(find(), { target: { value: '   ' } });
+        expect(screen.getByRole('heading', { name: /Robert B. Green/ })).toBeInTheDocument();
     });
 
     it('leaves the roster alone when the box is empty', async () => {

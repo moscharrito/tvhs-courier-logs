@@ -525,7 +525,8 @@ export function Roster() {
                 </Section>
             )}
 
-            <div className="izy-card">
+            <div className="izy-card izy-roster-head">
+              <div>
                 <p className="izy-muted">
                     {/* What this changes, in one sentence, because a page that
                         only sets a field leaves somebody wondering whether it
@@ -551,6 +552,27 @@ export function Roster() {
                             : <span className="izy-stat-warn"><b>{noPhone}</b> with no phone number</span>}
                     </>}
                 </p>
+              </div>
+              {/* ── THE SEARCH ────────────────────────────────────────────
+                  In the space beside the counts rather than in a card of its
+                  own. It belongs with them: the counts say how big the list
+                  is and this is what you do about that.
+
+                  A BARE BOX. The label is read out but not drawn -- a
+                  placeholder says what to type, and "Find a driver" sitting
+                  above an input on a page headed "Driver roster" is a third
+                  way of saying the same thing. No clear button either: a
+                  search input clears itself, and one that holds a word
+                  somebody just typed does not need telling how. */}
+              <input
+                  className="izy-roster-find"
+                  type="search"
+                  value={find}
+                  aria-label="Find a driver"
+                  placeholder="Search by name, sign-in or email"
+                  autoComplete="off"
+                  onChange={(e) => { setFind(e.target.value); }}
+              />
             </div>
 
             {data.drivers.length === 0 && (
@@ -561,31 +583,6 @@ export function Roster() {
                     </p>
                 </div>
             )}
-
-            {/* ── THE SEARCH ────────────────────────────────────────────
-                Its own row above the list rather than a control on a group
-                header: it searches all eighty drivers, and a box that lived
-                inside one pharmacy's panel would read as though it searched
-                that pharmacy. */}
-            <div className="izy-card izy-roster-find">
-                <label htmlFor="roster-find">Find a driver</label>
-                <input
-                    id="roster-find"
-                    type="search"
-                    value={find}
-                    placeholder="name, sign-in or email"
-                    autoComplete="off"
-                    onChange={(e) => { setFind(e.target.value); }}
-                />
-                {/* Offered only once there is something to clear, and worded
-                    as where it goes rather than what it empties: the thing
-                    somebody wants back is the roster, not an empty box. */}
-                {found !== null && (
-                    <button type="button" className="izy-btn secondary small" onClick={() => { setFind(''); }}>
-                        Show the whole roster
-                    </button>
-                )}
-            </div>
 
             {found !== null ? (
                 <Found drivers={found} find={find.trim()} {...controls} />
