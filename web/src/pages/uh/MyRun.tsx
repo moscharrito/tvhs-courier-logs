@@ -82,6 +82,18 @@ interface Stop {
     payZone?: number | null;
     /** One-way miles from the counter, so the band can be checked. */
     payMiles?: number | null;
+    /** THE BAND THIS STOP IS PAID ON, which is what belongs on the chip.
+     *
+     *  Since 12 November it is the HIGHER of `payZone` and University
+     *  Health's band, so the stops where UH's map runs long did not take a
+     *  cut when the first measurement landed. Usually the same number as
+     *  `payZone`; when it is not, `payHeld` is true and the miles beside it
+     *  will not add up to the band on their own, so the chip says why.
+     *
+     *  Optional for the same cache reason as the two above. */
+    paidZone?: number | null;
+    /** True when `paidZone` is higher than the miles alone would give. */
+    payHeld?: boolean;
     status: string;
     dueAt: string | null;
     sla: Sla;
@@ -351,7 +363,7 @@ export function MyRun() {
                                 note on the field. */}
                             {current.payZone == null
                                 ? <Chip label={current.zone == null ? 'out of area' : 'zone not measured'} tone="warn" />
-                                : <Chip label={`zone ${current.payZone}${current.payMiles == null ? '' : ` · ${current.payMiles.toFixed(1)} mi`}`} />}
+                                : <Chip label={payChip(current)} />}
                         </div>
                     </Panel>
                 ) : stops.length === 0 ? (
@@ -444,7 +456,7 @@ export function MyRun() {
                                             same reason as the panel above. */}
                                         {s.payZone == null
                                             ? (s.zone == null ? ' · out of area' : ' · zone not measured')
-                                            : ` · zone ${s.payZone}`}
+                                            : <> · zone {s.paidZone ?? s.payZone}{s.payHeld === true && ' (held higher)'}</>}
                                     </div>
                                     <div className="izy-run-stop-actions">
                                         <Directions code={code} orderId={s.orderId} embed={embed} className="izy-btn secondary" mapsUrl={mapsUrl(s)} />
@@ -518,6 +530,32 @@ export function MyRun() {
             </Sheet>
         </Screen>
     );
+}
+
+/**
+ * WHAT THE COURIER IS PAID FOR THIS STOP, on the chip they can check.
+ *
+ * `paidZone` and not `payZone`: the first is the band the money is worked
+ * out on, the second is what the measured distance bands to, and since
+ * 12 November they differ on the stops where University Health's map runs
+ * longer than the road does. Those stops keep the higher band rather than
+ * taking a cut, so the chip has to show the one that is paid.
+ *
+ * FALLING BACK TO `payZone` IS DELIBERATE. A phone holds this bundle in
+ * cache; one running against a server that predates `paidZone` would
+ * otherwise show no band at all on the one screen somebody is reading in a
+ * car park. The old field is the right answer on an old payload.
+ *
+ * AND IT SAYS "HELD HIGHER" WHEN THE MILES DO NOT ADD UP TO THE BAND, which
+ * they will not on a held stop -- 8.7 miles beside "zone 3" reads like the
+ * system is wrong about their work, which is the exact complaint that began
+ * all of this, pointing the other way. Saying so turns it into a number in
+ * their favour that they can see.
+ */
+function payChip(s: { payZone?: number | null; payMiles?: number | null; paidZone?: number | null; payHeld?: boolean }): string {
+    const band = s.paidZone ?? s.payZone;
+    const miles = s.payMiles == null ? '' : ` · ${s.payMiles.toFixed(1)} mi`;
+    return `zone ${band}${miles}${s.payHeld === true ? ' · held higher' : ''}`;
 }
 
 /** How long this stop has, in the words the orders list uses. */

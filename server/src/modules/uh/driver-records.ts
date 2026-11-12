@@ -44,7 +44,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import {
-    payFor, addTotals, noPay, payBucket, PAY_GROUPINGS, bonusFor, withBonus,
+    payFor, addTotals, noPay, payBucket, PAY_GROUPINGS, bonusFor, withBonus, paidBandFor,
     type PayGrouping, type PayTotals,
 } from './driver-pay';
 import { sendSpreadsheet, tooManyRows } from '../../core/http/spreadsheet';
@@ -310,19 +310,17 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         rows.map((r) => {
             const billing = r.zone === null || r.zone === undefined ? null : Number(r.zone);
             const paid = r.pay_zone === null || r.pay_zone === undefined ? null : Number(r.pay_zone);
-            /* Out of the contracted area: `billing` is null too and
-               outOfZoneCents prices it, exactly as it always has. */
-            const zone = paid === null ? billing
-                : billing === null ? paid
-                    : Math.max(paid, billing);
+            /* THE RULE ITSELF LIVES IN driver-pay.ts, not here, because
+               runs.ts asks the same question to put a chip on the courier's
+               own manifest. Two copies of it would be a driver reading one
+               band on their phone and being paid another. */
+            const band = paidBandFor(billing, paid);
             return {
                 serviceType: r.service_type,
                 status: r.status,
-                zone,
-                measured: paid !== null,
-                /* Only when the band being paid is NOT the measured one, so
-                   the payslip prints miles the courier can check. */
-                heldAbove: paid !== null && zone !== null && zone !== paid ? paid : null,
+                zone: band.zone,
+                measured: band.measured,
+                heldAbove: band.heldAbove,
             };
         });
 

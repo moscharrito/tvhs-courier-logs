@@ -193,6 +193,52 @@ export function payBandMiles(zone: number): string {
     return PAY_BANDS.find((b) => b.zone === zone)?.label ?? '';
 }
 
+/** What one stop is paid on, and whether that is the measured band. */
+export interface PaidBand {
+    /** The band the stop is PAID on. Null only when it is out of area. */
+    zone: number | null;
+    /** Whether a distance was measured for it at all. */
+    measured: boolean;
+    /** The measured band, when the stop is paid on a HIGHER one. */
+    heldAbove: number | null;
+}
+
+/**
+ * WHICH BAND A STOP IS PAID ON. One function, because this is asked in two
+ * places and they must not drift.
+ *
+ * `driver-records.ts` asks it to work out money. `runs.ts` asks it to put a
+ * chip on the courier's own manifest. If those two ever answer differently,
+ * a driver is reading one number on their phone and being paid another --
+ * which is the fault this whole repair exists to close, wearing a new hat.
+ *
+ * THE RULE IS THE HIGHER OF THE TWO. The offer letter's band is the
+ * distance from the pickup; University Health's is drawn around their
+ * campus and is often a different number for the same stop. On 12 November
+ * the first full measurement put 208 of 648 pharmacy/ZIP pairs BELOW the
+ * band they had been paid on since go-live. Taking the letter literally
+ * would have cut a third of the routes for an error that was ours, so the
+ * higher band stands and `heldAbove` records the measured one.
+ *
+ * NULL MEASURED IS NOT ZONE 1. A stop with no distance keeps University
+ * Health's band and `measured: false` says so. It must still pay: an empty
+ * distance table would otherwise take every courier's wages to nothing.
+ */
+export function paidBandFor(
+    billingZone: number | null | undefined,
+    measuredZone: number | null | undefined,
+): PaidBand {
+    const billing = billingZone ?? null;
+    const measured = measuredZone ?? null;
+    /* No distance. UH's band stands in, and the caller is told it did. */
+    if (measured === null) return { zone: billing, measured: false, heldAbove: null };
+    /* Out of the contracted area: no UH band either, so there is nothing to
+       be higher than. outOfZoneCents prices it, as it always has. */
+    if (billing === null) return { zone: measured, measured: true, heldAbove: null };
+    const zone = Math.max(measured, billing);
+    return { zone, measured: true, heldAbove: zone === measured ? null : measured };
+}
+
 /** One delivered or failed stop, reduced to what pay cares about. */
 export interface PayableStop {
     serviceType: string;

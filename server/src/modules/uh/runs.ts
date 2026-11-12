@@ -35,6 +35,7 @@ import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/s
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
 import { proposeRuns, staffProposal, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
 import { zipPointMap } from './zones';
+import { paidBandFor } from './driver-pay';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -266,6 +267,29 @@ export function createRunsRouter({ client }: { client: Client }): Router {
              * be argued with, and this is the number the dispute was about. */
             payZone: o['pay_zone'] === null || o['pay_zone'] === undefined ? null : Number(o['pay_zone']),
             payMiles: o['pay_miles'] === null || o['pay_miles'] === undefined ? null : Number(o['pay_miles']),
+            /* ── AND THE BAND THEY ARE ACTUALLY PAID ON, WHICH SINCE
+             * 12 NOVEMBER IS NOT ALWAYS `payZone` ABOVE.
+             *
+             * `payZone` is what the measured distance bands to. The rule is
+             * the HIGHER of that and University Health's band, so that the
+             * 208 pharmacy/ZIP pairs where UH's map runs long did not take
+             * a pay cut when the first measurement landed. driver-pay.ts
+             * owns the rule; this asks it rather than repeating it.
+             *
+             * It is sent SEPARATELY rather than overwriting `payZone`
+             * because the two say different things and the manifest shows
+             * both: the band, and the miles that either justify it or do
+             * not. A chip reading "zone 3 - 8.7 mi" with nothing else on it
+             * is a courier checking eight miles against their offer letter
+             * and concluding the system is wrong about their work -- the
+             * same complaint that started this, pointing the other way. */
+            ...((): { paidZone: number | null; payHeld: boolean } => {
+                const band = paidBandFor(
+                    o['zone'] === null ? null : Number(o['zone']),
+                    o['pay_zone'] === null || o['pay_zone'] === undefined ? null : Number(o['pay_zone']),
+                );
+                return { paidZone: band.zone, payHeld: band.heldAbove !== null };
+            })(),
             status: String(o['status']),
             dueAt: o['due_at'] === null ? null : String(o['due_at']),
             sla: evaluateSla({

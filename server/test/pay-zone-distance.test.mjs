@@ -233,6 +233,47 @@ describe('what the courier is shown', () => {
         expect(shown.zone).toBe(1);
         expect(shown.payZone).toBe(2);
         expect(shown.payMiles).toBe(14);
+        /* And the band the money is worked out on, which here is the same
+           number because the measurement banded ABOVE UH's zone. */
+        expect(shown.paidZone).toBe(2);
+        expect(shown.payHeld).toBe(false);
+    });
+
+    it('shows the band they are PAID when it is higher than the miles give', async () => {
+        /* THE CHIP HAS TO FOLLOW THE MONEY. Since 12 November a stop keeps
+           the higher of the measured band and University Health's, so the
+           208 pairs where UH's map runs long did not take a cut. On those,
+           `payZone` is no longer what anybody is paid.
+
+           78256 is UH zone 3 and 8.69 road miles from the counter, so it
+           measures zone 1 and pays zone 3. A chip reading "zone 1" there
+           would be the complaint that started this, pointing the other
+           way: a courier checking the band against their letter and
+           finding the system wrong about their work -- except this time
+           they are being paid MORE than it says, which nobody would ever
+           report. */
+        const o = await order(HELD_ZIP, { deliver: false });
+        await admin.post(RUNS).send({
+            courierUsername: DRIVER, label: 'Held', orderIds: [o.id], serviceDate: DAY,
+        });
+
+        const courier = srv.agent();
+        expect((await courier.post('/api/login')
+            .send({ username: DRIVER, password: 'band-pass-11' })).status).toBe(200);
+
+        const stops = ((await courier.get(`${UH}/runs/mine?serviceDate=${DAY}`)).body.runs ?? [])
+            .flatMap((r) => r.stops ?? []);
+        const shown = stops.find((s) => Number(s.orderId) === Number(o.id));
+        expect(shown, 'the held stop should be on the manifest').toBeTruthy();
+
+        expect(shown.zone).toBe(3);
+        /* The measurement is unchanged and still sent: it is the truth. */
+        expect(shown.payZone).toBe(1);
+        expect(shown.payMiles).toBe(8.69);
+        /* What they are paid, and the flag that makes the miles make sense
+           beside it. */
+        expect(shown.paidZone).toBe(3);
+        expect(shown.payHeld).toBe(true);
     });
 });
 

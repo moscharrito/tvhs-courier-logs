@@ -548,3 +548,90 @@ describe('MyRun', () => {
         expect(screen.queryByRole('link', { name: 'Set up this phone' })).not.toBeInTheDocument();
     });
 });
+
+describe('the pay band on the chip', () => {
+    /* ── THE CHIP THAT CAUSED THE COMPLAINT, AND THE ONE THAT WOULD HAVE
+     * CAUSED THE NEXT.
+     *
+     * Until 9 November the manifest showed `zone` -- University Health's
+     * band, which prices their invoice -- to the person paid on a different
+     * table. A courier read "zone 1" against a fourteen-mile run, checked it
+     * on a map, and said so.
+     *
+     * Since 12 November there is a second way to show somebody the wrong
+     * number. A stop keeps the HIGHER of the measured band and UH's, so the
+     * 208 pharmacy/ZIP pairs where their map runs long did not take a cut.
+     * On those, the measured band is no longer what anybody is paid. */
+    const payStop = (over = {}) => stop({ payZone: 2, payMiles: 10.8, paidZone: 2, payHeld: false, ...over });
+
+    it('shows the pay band and the miles, not the billing zone', async () => {
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{
+                    id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14',
+                    label: 'Noon wave', status: 'started', startedAt: null,
+                    stops: [payStop({ zone: 1 })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        /* UH calls this ZIP zone 1 and the courier is paid zone 2. */
+        expect(await screen.findByText(/zone 2 · 10\.8 mi/)).toBeInTheDocument();
+    });
+
+    it('shows the band they are PAID when it is higher than the miles give', async () => {
+        /* 8.7 road miles is zone 1 on the offer letter, and UH call the ZIP
+           zone 3. The courier keeps zone 3. A chip reading "zone 1" here
+           would be the original complaint inverted -- and nobody reports
+           being paid too much, so it would never have surfaced. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{
+                    id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14',
+                    label: 'Noon wave', status: 'started', startedAt: null,
+                    stops: [payStop({ zone: 3, payZone: 1, payMiles: 8.69, paidZone: 3, payHeld: true })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(await screen.findByText(/zone 3 · 8\.7 mi · held higher/)).toBeInTheDocument();
+        /* And NOT the measured band on its own, which is what they would
+           have been shown before this. */
+        expect(screen.queryByText(/^zone 1 ·/)).not.toBeInTheDocument();
+    });
+
+    it('falls back to the measured band on a payload that predates paidZone', async () => {
+        /* A phone holds this bundle in cache and may be running against a
+           server older than these fields. Showing no band at all on the one
+           screen somebody reads in a car park is worse than showing the
+           number that was right yesterday. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{
+                    id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14',
+                    label: 'Noon wave', status: 'started', startedAt: null,
+                    stops: [stop({ zone: 1, payZone: 2, payMiles: 14 })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(await screen.findByText(/zone 2 · 14\.0 mi/)).toBeInTheDocument();
+        expect(screen.queryByText(/held higher/)).not.toBeInTheDocument();
+    });
+
+    it('still says so when no distance was measured at all', async () => {
+        /* Unmeasured is not zone 1 and must not be dressed as a band. These
+           are the stops most likely to be underpaid, so they stay visible. */
+        renderRun(base({
+            'GET /api/projects/uh/uh/runs/mine': mine({
+                runs: [{
+                    id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14',
+                    label: 'Noon wave', status: 'started', startedAt: null,
+                    stops: [stop({ zone: 1, payZone: null, payMiles: null, paidZone: 1, payHeld: false })],
+                }],
+            }),
+        }));
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(await screen.findAllByText(/zone not measured/)).not.toHaveLength(0);
+    });
+});
