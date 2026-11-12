@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-/* A portal login per pharmacy, and one for whoever runs the contract.
+/* A portal login per pharmacy, and one each for the people who oversee them.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * NINE ACCOUNTS: EIGHT COUNTERS AND A MANAGER.
+ * TWELVE ACCOUNTS: NINE COUNTERS, A MANAGER AND TWO IN BILLING.
  *
  * The question was one login or nine. It is both, and nothing had to be built
  * to make that true: a membership carries `settings.siteIds`, and scopeFor
@@ -11,10 +11,17 @@
  * account is a membership naming one site. The contract manager's is a
  * membership naming all of them. There is no second code path and no flag.
  *
- * Eight counters, matching create-leads.mjs, because a lead and a portal
- * account describe the same place from two sides: one is the person standing
- * there, the other is the pharmacy's own view of what we did with their
- * deliveries. If one list changes the other has to.
+ * The counters match create-leads.mjs, because a lead and a portal account
+ * describe the same place from two sides: one is the person standing there,
+ * the other is the pharmacy's own view of what we did with their deliveries.
+ * If one list changes the other has to.
+ *
+ * THE BILLING ACCOUNTS WERE ASKED FOR ON 12 NOVEMBER 2026, with the contract
+ * manager's privileges, because reconciling an invoice is a question about
+ * every counter at once. They are two more memberships over the same list of
+ * sites, and nothing had to be built for them either. See OVERSEERS -- and
+ * note that their names are supplied at run time and are NOT in this public
+ * repository.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * THE SCOPE IS THE ACCOUNT, AND THE DEFAULT IS NOTHING.
@@ -40,15 +47,21 @@
  * to the pharmacy it belongs to, by a channel you would be comfortable
  * showing University Health, and delete it afterwards.
  *
- * What replaces the old rule is the MANAGER'S RESET: uh.manager is created
- * with mayResetPortalPasswords, which lets whoever runs the contract set a
- * new password for any of the counters themselves, audited, without
- * telephoning us. So a credential that has gone astray is a five-minute fix
- * at their end rather than a support call at ours.
+ * What replaces the old rule is the MANAGER'S RESET: the overseeing accounts
+ * are created with mayResetPortalPasswords, which lets whoever runs the
+ * contract set a new password for any of the counters themselves, audited,
+ * without telephoning us. So a credential that has gone astray is a
+ * five-minute fix at their end rather than a support call at ours.
+ *
+ * It does not reach each other. portal-reset.ts skips any account that can
+ * itself reset, so the manager and the billing pair cannot take one another
+ * over; only we can reset those three.
  *
  *   node server/scripts/create-pharmacy-portals.mjs                      # local
  *   node server/scripts/create-pharmacy-portals.mjs --i-mean-production  # the live site
  *   ... --only=green,manager                                      # just these
+ *   ... --only=billing1,billing2                                  # the billing pair
+ *   ... --name billing1="Full Name"                               # whose account it is
  *   ... --reset                                                   # new password for one that exists
  *   ... --emails addresses.csv                                    # `key,email` per line
  *   ... --set green=counter@example.com                           # one, without a file
@@ -157,31 +170,85 @@ const COUNTERS = [
     { code: 'bc3', name: 'University Health Business Center III', note: 'volume not in the 2026 H1 actuals' },
 ];
 
+/* What an account that oversees the whole contract may do beyond reading it.
+ *
+ * SPELLED ONCE, because it is now held by more than one person. See the
+ * header, and modules/uh/portal-reset.ts for what it does and does not reach:
+ * the counters above and nothing else, never an Izy login, never a courier,
+ * and never another account that holds this same capability -- `resettable`
+ * skips anybody who can reset, so these people cannot take each other over.
+ */
+const CONTRACT_CAPABILITIES = { mayResetPortalPasswords: true };
+
+/* Whoever oversees the whole contract, as opposed to standing at one counter.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE NAMES ARE NOT IN THIS FILE AND MUST NOT BE.
+ *
+ * This repository is public and these are real people at a hospital. The key
+ * is what the script is told to make; who it belongs to arrives at run time:
+ *
+ *     --name billing1="Their Name" --set billing1=their.address@example.com
+ *
+ * Same rule as the addresses, and the same reason. A generic fallback name is
+ * used when none is given, which is fine on a laptop and poor on a portal
+ * logins screen somebody else has to read, so a production run says so.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY BILLING HAS THE MANAGER'S REACH AND NOT A LESSER ONE.
+ *
+ * University Health asked on 12 November 2026 for two accounts for their
+ * pharmacy billing staff with the contract manager's privileges. Reconciling
+ * an invoice is a question about every counter at once -- which is exactly
+ * what the manager's membership is -- and an account scoped to eight of the
+ * nine would produce a reconciliation that is quietly short. So the scope is
+ * the same list, from the same place, and adding a tenth pharmacy is one
+ * change rather than three.
+ */
+const OVERSEERS = [
+    {
+        key: 'manager',
+        username: 'uh.manager',
+        fallbackName: 'UH Contract Manager',
+        note: 'every counter, the contract view, the reports, and resetting the other portals',
+    },
+    {
+        key: 'billing1',
+        username: 'uh.billing1',
+        fallbackName: 'UH Pharmacy Billing 1',
+        note: 'pharmacy billing: every counter, the reports, and the bulk export with proof of delivery',
+    },
+    {
+        key: 'billing2',
+        username: 'uh.billing2',
+        fallbackName: 'UH Pharmacy Billing 2',
+        note: 'pharmacy billing: every counter, the reports, and the bulk export with proof of delivery',
+    },
+];
+
 const PORTALS = [
     ...COUNTERS.map((c) => ({
         key: c.code,
         username: `uh.${c.code}`,
-        name: `${c.name} (portal)`,
+        /* " (portal)" is appended by displayName, for every account at
+           once, so a counter and a person are labelled the same way. */
+        name: c.name,
         sites: [c.code],
         note: c.note,
     })),
-    /* Whoever runs the contract. Enumerated rather than given a flag: there
-     * is no "all pharmacies" setting and there should not be one, because
-     * scopeFor's whole-project branch is for OUR roles and would hand a
-     * client the dispatch board. Adding a ninth counter is therefore also a
-     * change to this membership, which is the right amount of friction. */
-    {
-        key: 'manager',
-        username: 'uh.manager',
-        name: 'UH Contract Manager (portal)',
+    /* Enumerated rather than given a flag: there is no "all pharmacies"
+     * setting and there should not be one, because scopeFor's whole-project
+     * branch is for OUR roles and would hand a client the dispatch board.
+     * Adding a ninth counter is therefore also a change to these
+     * memberships, which is the right amount of friction. */
+    ...OVERSEERS.map((o) => ({
+        key: o.key,
+        username: o.username,
+        fallbackName: o.fallbackName,
         sites: COUNTERS.map((c) => c.code),
-        /* THE ONE ACCOUNT THAT MAY RESET THE OTHERS. See the header, and
-           modules/uh/portal-reset.ts for what the capability does and does
-           not reach: the counters above and nothing else, never an Izy
-           login, never a courier, and never another manager. */
-        capabilities: { mayResetPortalPasswords: true },
-        note: 'every counter, the contract view, the reports, and resetting the other portals',
-    },
+        capabilities: CONTRACT_CAPABILITIES,
+        note: o.note,
+    })),
 ];
 
 /* ------------------------------------------------------------ addresses */
@@ -229,11 +296,47 @@ function readSetFlags() {
     return { found, problems };
 }
 
+/** --name key=Full Name. Indexed rather than looked up for the same reason as
+ *  --set: value() always answers with the FIRST match, so two of them would
+ *  read the first one twice.
+ *
+ *  The name is what appears on the portal logins screen that University
+ *  Health's own manager reads, so it should be a person. It is NOT in this
+ *  repository, which is public: see OVERSEERS. */
+function readNameFlags() {
+    const found = new Map();
+    const problems = [];
+    for (let i = 0; i < args.length; i += 1) {
+        const a = args[i];
+        let raw = null;
+        if (a.startsWith('--name=')) raw = a.slice('--name='.length);
+        else if (a === '--name') { raw = args[i + 1] ?? ''; i += 1; }
+        if (raw === null) continue;
+        const at = raw.indexOf('=');
+        const key = at === -1 ? '' : raw.slice(0, at).trim();
+        /* Everything after the FIRST equals sign, because a name is free text
+           and splitting on every one would quietly truncate it. */
+        const name = at === -1 ? '' : raw.slice(at + 1).trim();
+        if (!key || !name) { problems.push(`--name ${raw}: expected key=Full Name`); continue; }
+        if (name.length > 80) { problems.push(`--name ${key}: that name is longer than the server accepts`); continue; }
+        found.set(key, name);
+    }
+    return { found, problems };
+}
+
 const emailsFile = value('emails', '');
 const fromFile = emailsFile ? readAddresses(emailsFile) : { found: new Map(), problems: [] };
 const fromFlags = readSetFlags();
 const addresses = new Map([...fromFile.found, ...fromFlags.found]);
-const addressProblems = [...fromFile.problems, ...fromFlags.problems];
+const fromNames = readNameFlags();
+const givenNames = fromNames.found;
+const addressProblems = [...fromFile.problems, ...fromFlags.problems, ...fromNames.problems];
+
+/** Who this account belongs to, as it will appear on the portal logins
+ *  screen. A counter is named after the pharmacy; a person is named at run
+ *  time or falls back to something generic. */
+const displayName = (portal) =>
+    `${givenNames.get(portal.key) ?? portal.name ?? portal.fallbackName} (portal)`;
 
 const only = value('only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const wanted = only.length === 0
@@ -313,7 +416,7 @@ async function main() {
        than none: the accounts already made are already being handed out. */
     if (addressProblems.length > 0) {
         say('');
-        say('  REFUSING: the addresses have problems and nothing was written.');
+        say('  REFUSING: what was supplied has problems and nothing was written.');
         say('');
         for (const p of addressProblems) say(`      ${p}`);
         throw new Stop();
@@ -323,7 +426,7 @@ async function main() {
        `greeen` would simply never be applied, and the account would be
        created without the address somebody thought they had supplied. */
     const known = new Set(PORTALS.map((p) => p.key));
-    const strays = [...addresses.keys()].filter((k) => !known.has(k));
+    const strays = [...new Set([...addresses.keys(), ...givenNames.keys()])].filter((k) => !known.has(k));
     if (strays.length > 0) {
         say('');
         say(`  REFUSING: no portal is called ${strays.join(', ')}.`);
@@ -354,6 +457,25 @@ async function main() {
         say(`  NOTE: ${unaddressed.length} of these will have no email address and so`);
         say('  cannot reset their own password. Fine on a laptop; a production run');
         say('  refuses it. Missing: ' + unaddressed.map((p) => p.key).join(', '));
+    }
+
+    /* ───────────────────────────────────────── and a person behind a name
+
+       A counter is named after its pharmacy and needs nothing. An account
+       that belongs to a person falls back to something generic, and two of
+       those on the portal logins screen -- "UH Pharmacy Billing 1" and
+       "UH Pharmacy Billing 2" -- is a screen their own manager cannot use to
+       tell who is who. Said out loud rather than refused, because a name is
+       only ever sent when an account is CREATED: a re-run that would not
+       touch the name should not be stopped by the absence of one. */
+    const unnamed = wanted.filter((p) => p.fallbackName !== undefined && !givenNames.has(p.key));
+    if (unnamed.length > 0) {
+        say('');
+        say(`  NOTE: ${unnamed.length} of these have no name on this run, so a NEW account`);
+        say('  would be created with a generic one and whoever reads the portal logins');
+        say('  screen cannot tell them apart. Supply it with --name key="Full Name".');
+        for (const p of unnamed) say(`      ${p.key.padEnd(12)} would be "${displayName(p)}"`);
+        say('  (An account that already exists keeps the name it has either way.)');
     }
 
     insist('login', await call('/api/login', {
@@ -394,7 +516,7 @@ async function main() {
                    way this account ever replaces the password with one we
                    have never seen. */
                 body: JSON.stringify({
-                    username: portal.username, name: portal.name, role: 'staff', password: pass,
+                    username: portal.username, name: displayName(portal), role: 'staff', password: pass,
                     ...(email ? { email } : {}),
                 }),
             }), (s) => s === 201 || s === 200);
@@ -455,7 +577,7 @@ async function main() {
     say('  SHOWN ONCE. Not written anywhere; re-run with --reset if this is lost.');
     say('');
     for (const portal of made) {
-        say(`    ${portal.name}`);
+        say(`    ${displayName(portal)}`);
         say(`      username  ${portal.username}`);
         say(`      password  ${portal.pass ?? '(unchanged; account already existed)'}`);
         /* Said in the handover message, because the reset screen asks for the

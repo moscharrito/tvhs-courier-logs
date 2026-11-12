@@ -287,3 +287,66 @@ describe('an Izy dispatcher', () => {
         expect(res.status).toBe(403);
     });
 });
+
+/* ───────────────────────────────────── the billing pair, from 12 November
+ *
+ * University Health asked for two accounts for their pharmacy billing staff
+ * with the contract manager's privileges. Nothing was built for them: they
+ * are two more memberships over the same list of sites, carrying the same
+ * capability. create-pharmacy-portals.mjs spells that capability once, in
+ * CONTRACT_CAPABILITIES, so there is one place where "the manager's reach"
+ * is defined and three accounts that have it.
+ *
+ * WHICH MAKES ONE REFUSAL LOAD-BEARING THAT WAS PREVIOUSLY THEORETICAL.
+ * "No manager resets another manager" used to be a rule with a single
+ * manager behind it -- true and untestable. There are now three accounts
+ * holding this capability, and if `resettable` had not already skipped
+ * anybody who can reset, any one of them could have taken the other two
+ * over and locked out the contract.
+ */
+describe("a billing account with the contract manager's privileges", () => {
+    let billing;
+
+    beforeAll(async () => {
+        await portal('uh.billing1', 'UH Pharmacy Billing 1 (portal)', sites.map((s) => s.code), {
+            mayResetPortalPasswords: true,
+        });
+        await admin.post('/api/users/uh.billing1/password').send({ password: MANAGER_PASS });
+        billing = await agentFor('uh.billing1', MANAGER_PASS);
+    });
+
+    it('sees every counter, because reconciling an invoice is a question about all of them', async () => {
+        const res = await billing.get('/api/projects/uh/uh/client/summary');
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.pharmacies.map((p) => p.code).sort()).toEqual(sites.map((s) => s.code).sort());
+    });
+
+    it('may reset the counters, exactly as the manager may', async () => {
+        const res = await billing.get(PORTALS);
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.map((p) => p.username)).toContain('uh.green');
+    });
+
+    it('cannot reset the contract manager, and the manager cannot reset it', async () => {
+        /* THE REFUSAL THAT MATTERS NOW THERE IS MORE THAN ONE OF THESE.
+           Either direction would be one client account taking the contract
+           away from another, which is a thing only we should be able to do. */
+        const asBilling = await billing.get(PORTALS);
+        expect(asBilling.body.map((p) => p.username)).not.toContain('uh.manager');
+        const asManager = await manager.get(PORTALS);
+        expect(asManager.body.map((p) => p.username)).not.toContain('uh.billing1');
+
+        expect((await billing.post(`${PORTALS}/uh.manager/password`).send({ password: NEW_PASS })).status).toBe(404);
+        expect((await manager.post(`${PORTALS}/uh.billing1/password`).send({ password: NEW_PASS })).status).toBe(404);
+    });
+
+    it('is still only a client, with no reach into the dispatch board', async () => {
+        /* The scope is a membership, not a role. A billing clerk with the
+           manager's sites is still `pharmacy`, and scopeFor's whole-project
+           branch -- the one that would hand them our board -- is for OUR
+           roles only. */
+        for (const ours of ['board', 'orders', 'runs', 'drivers']) {
+            expect((await billing.get(`/api/projects/uh/uh/${ours}`)).status, ours).toBe(403);
+        }
+    });
+});
