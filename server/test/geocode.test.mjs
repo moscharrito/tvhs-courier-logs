@@ -286,6 +286,63 @@ describe('over HTTP', () => {
         expect(res.body.failed[0].reason).toMatch(/GOOGLE_MAPS_API_KEY/);
     });
 
+    /* ─────────────────────────────────────────────────────────────────
+     * THE ROUTE HAD NEVER SUCCEEDED (12 November 2026).
+     *
+     * It wrote `geocode_status = 'geocoded'`. The permitted values are
+     * pending | ok | failed | manual, and the table has a CHECK enforcing
+     * it, so SQLite rejected the write -- as a constraint error, which is
+     * not a GeoUnavailableError, so it went past the catch and out as a
+     * 500.
+     *
+     * Every test above exercises the path where NO provider is configured.
+     * That path writes 'failed', which is permitted, so the suite was green
+     * for as long as the feature was unused. The first person to run it
+     * with a working Amazon Location key got "The lookup failed: HTTP 500.
+     * Internal server error" and no idea why.
+     *
+     * Two tests, because the bug had two halves: a value the database will
+     * not accept, and nothing anywhere comparing the values the code writes
+     * against the values the schema allows.
+     * ───────────────────────────────────────────────────────────────── */
+
+    it('refuses a status the schema does not allow, which is what the 500 was', async () => {
+        const site = (await srv.core.client.execute(
+            "SELECT id FROM sites WHERE project_id = (SELECT id FROM projects WHERE code = 'uh') LIMIT 1",
+        )).rows[0];
+        await expect(srv.core.client.execute({
+            sql: "UPDATE sites SET geocode_status = 'geocoded' WHERE id = ?",
+            args: [Number(site.id)],
+        })).rejects.toThrow(/CHECK constraint failed/i);
+    });
+
+    it('only ever writes a status the schema allows', async () => {
+        /* Source-level on purpose. The behavioural test above proves the
+           database refuses a bad value; this proves no caller writes one,
+           which is the half that was missing. A route that writes a status
+           down a path nothing exercises is exactly how this got to
+           production. */
+        const { readFileSync } = await import('node:fs');
+        const { GEOCODE_STATUSES } = await import('../src/db/schema/uh.ts');
+        const allowed = new Set(GEOCODE_STATUSES);
+
+        const files = [
+            '../src/modules/uh/geocode.ts',
+            '../src/modules/uh/sites.ts',
+        ].map((f) => new URL(f, import.meta.url));
+
+        const written = new Set();
+        for (const f of files) {
+            const text = readFileSync(f, 'utf8');
+            for (const m of text.matchAll(/geocode_status\s*=\s*'([a-z_]+)'/g)) written.add(m[1]);
+        }
+
+        expect(written.size).toBeGreaterThan(0);
+        for (const status of written) {
+            expect(allowed.has(status), `"${status}" is written in SQL but is not in GEOCODE_STATUSES`).toBe(true);
+        }
+    });
+
     it('is closed to couriers and client viewers', async () => {
         const north = await srv.login('north');
         expect((await north.get('/api/projects/uh/uh/geocode')).status).toBe(403);

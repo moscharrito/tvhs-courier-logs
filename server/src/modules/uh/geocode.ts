@@ -113,7 +113,22 @@ export function createGeocodeRouter({ client, lookup, providerName, providerReas
             try {
                 const result = await lookup.geocode(addressOf(site), 'site');
                 await client.execute({
-                    sql: `UPDATE sites SET lat = ?, lng = ?, geocode_status = 'geocoded', geocoded_at = ? WHERE id = ?`,
+                    /* 'ok', NOT 'geocoded'. GEOCODE_STATUSES is
+                       pending | ok | failed | manual and the table has a
+                       CHECK that enforces it, so 'geocoded' was rejected by
+                       SQLite -- as a constraint error, which is not a
+                       GeoUnavailableError, so it went straight past the
+                       catch below and out as a 500.
+
+                       THIS ROUTE HAD NEVER SUCCEEDED. It could not: the
+                       first site that geocoded cleanly always threw. It
+                       went unnoticed for the same reason the pay bands did
+                       -- no provider was ever configured, so the only path
+                       anybody ever exercised was the one where every lookup
+                       fails, and that path writes 'failed', which is
+                       permitted. Found on 12 November, the first time
+                       anybody ran it with a working key. */
+                    sql: `UPDATE sites SET lat = ?, lng = ?, geocode_status = 'ok', geocoded_at = ? WHERE id = ?`,
                     args: [result.point.lat, result.point.lng, new Date().toISOString(), site.id],
                 });
                 located.push({ code: site.code, cached: result.cached, quality: result.quality });
