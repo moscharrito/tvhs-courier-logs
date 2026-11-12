@@ -188,6 +188,11 @@ export function payZoneLabel(zone: number): string {
     return band ? `Zone ${zone} (${band.label})` : `Zone ${zone}`;
 }
 
+/** Just the miles a band covers: "11-25 mi". Empty for a zone with no band. */
+export function payBandMiles(zone: number): string {
+    return PAY_BANDS.find((b) => b.zone === zone)?.label ?? '';
+}
+
 /** One delivered or failed stop, reduced to what pay cares about. */
 export interface PayableStop {
     serviceType: string;
@@ -224,6 +229,30 @@ export interface PayableStop {
      * and every pure test of the arithmetic -- is unaffected.
      */
     measured?: boolean;
+    /**
+     * THE MEASURED BAND, when the stop is being paid on a HIGHER one.
+     *
+     * The offer letter's band is the distance from the pickup. University
+     * Health's billing band is drawn around their campus and is often a
+     * different number for the same stop -- sometimes lower, sometimes
+     * higher. On 12 November the first full measurement put 208 of 648
+     * pharmacy/ZIP pairs BELOW the band they had been paid since go-live,
+     * because nothing had ever measured the distance and UH's zone had
+     * been standing in for it.
+     *
+     * Switching those to the letter would have been contractually clean and
+     * would have cut a third of the routes, for an error that was ours. So
+     * the rule is the HIGHER of the two bands: every underpayment is
+     * corrected, no courier's rate falls, and Izy carries the difference on
+     * the stops where UH's map runs long.
+     *
+     * This field holds the measured band on exactly those stops, and it
+     * exists so the payslip cannot lie. `zone` is what is PAID; without
+     * this, a seventeen-mile run paid at zone 4 would print "51+ mi" beside
+     * it -- a figure the courier would check against their letter and find
+     * false. Null, or absent, when the measured band is the one being paid.
+     */
+    heldAbove?: number | null;
 }
 
 export interface PayLine {
@@ -301,6 +330,27 @@ export function lineOf(stop: PayableStop, rates: DriverPaySettings): { key: stri
        error it makes is the one that started this. */
     if (stop.measured === false) {
         return { key: `zone-${stop.zone}-estimated`, label: `Zone ${stop.zone} (distance not measured)` };
+    }
+    /* HELD ABOVE THE LETTER, ON ITS OWN LINE AND SAYING SO. The distance
+       WAS measured and it bands lower than University Health's zone, which
+       is the band this stop has been paid since go-live. It keeps the
+       higher one.
+
+       The label names both numbers because only one of them is checkable
+       against the offer letter, and it is not the one being paid. A courier
+       reading "Zone 4 (51+ mi)" against a seventeen-mile run would conclude
+       the system is wrong about their work; "Zone 4 (held; measured 11-25
+       mi)" tells them what happened and that it was in their favour.
+
+       Its own key, like the stand-in above, so these are COUNTABLE: this is
+       the money Izy is paying over the letter, and a figure nobody can see
+       is one nobody can decide about later. */
+    if (stop.heldAbove !== null && stop.heldAbove !== undefined && stop.heldAbove !== stop.zone) {
+        const miles = payBandMiles(stop.heldAbove);
+        return {
+            key: `zone-${stop.zone}-held`,
+            label: `Zone ${stop.zone} (held; measured ${miles === '' ? `zone ${stop.heldAbove}` : miles})`,
+        };
     }
     /* THE BAND IS PRINTED BESIDE THE NUMBER, and that is not decoration.
        "Zone 1" meant two different things on two different documents for a

@@ -34,6 +34,10 @@ const FAR_ZIP = '78247';     // UH zone 1. Fourteen road miles from Medical Dr.
 const NEAR_ZIP = '78215';    // UH zone 1, and genuinely close.
 const UNMAPPED_ZIP = '99999'; // On no zone at all: out of area.
 const NO_DISTANCE_ZIP = '78216'; // UH zone 1, deliberately left unmeasured.
+/* UH zone 3, and genuinely NEAR a counter: their map is drawn around their
+   own campus. The 12 November measurement read 8.69 road miles from BC3,
+   which bands to pay zone 1 -- two bands BELOW what it has been paid. */
+const HELD_ZIP = '78256';
 
 const DRIVER = 'band.courier';
 const DAY = '2026-11-20';
@@ -108,6 +112,7 @@ beforeAll(async () => {
        their phone for the stop that started this. */
     await measure(FAR_ZIP, 14.0);
     await measure(NEAR_ZIP, 3.2);
+    await measure(HELD_ZIP, 8.69);
     /* NO_DISTANCE_ZIP deliberately gets no row. */
 
     await setRates();
@@ -264,5 +269,74 @@ describe('a band already on an order does not move', () => {
         })).rows[0];
         expect(Number(row.pay_zone)).toBe(3);
         expect(Number(row.pay_miles)).toBe(31.5);
+    });
+});
+
+describe('the higher of the two bands', () => {
+    /* ── WHY THE MEASUREMENT DOES NOT SIMPLY WIN.
+     *
+     * The letter bands by distance from the pickup, so the obvious rule is
+     * that a measured band replaces University Health's. That is what the
+     * code did, and it was written before anybody had seen a measurement.
+     *
+     * On 12 November the table was computed for the first time: 648 pairs,
+     * all by road. 223 banded HIGHER than the zone they had been paid on --
+     * the underpayment the couriers reported. 208 banded LOWER, because
+     * UH's map is drawn around their campus and a counter sitting nearer
+     * the far ZIPs had been priced as though it started downtown.
+     *
+     * Letting the measurement win outright would have cut the rate on a
+     * third of the routes, from the next order, for an error that was ours:
+     * nothing had ever measured the distance, so UH's band stood in for it
+     * and that is what people have been paid since go-live.
+     *
+     * So the stop keeps the HIGHER band. These tests pin that, and they pin
+     * the label, because the band being paid is no longer always the band
+     * the miles belong to. */
+    it('keeps the band it was paid on when the measurement comes in lower', async () => {
+        const o = await order(HELD_ZIP);
+
+        /* THE MEASUREMENT IS STILL THE TRUTH AND IS STILL STORED. The
+           policy is applied where money is worked out, not written back
+           over the number -- so a later decision can recompute from it. */
+        const row = (await db.execute({
+            sql: 'SELECT zone, pay_zone, pay_miles FROM orders WHERE id = ?', args: [o.id],
+        })).rows[0];
+        expect(Number(row.zone)).toBe(3);
+        expect(Number(row.pay_zone)).toBe(1);
+        expect(Number(row.pay_miles)).toBe(8.69);
+
+        const r = await record();
+        const line = r.totals.lines['zone-3-held'];
+        expect(line, JSON.stringify(r.totals.lines)).toBeDefined();
+        /* Paid at zone 3, which is what it paid yesterday. Not zone 1. */
+        expect(line.rateCents).toBe(1200);
+        expect(line.delivered).toBe(1);
+        /* And it has NOT quietly joined the ordinary zone 1 line, which at
+           this point holds exactly one stop: the genuinely close one from
+           the test above. If this stop had banded down it would be two. */
+        expect(r.totals.lines['zone-1'].delivered).toBe(1);
+    });
+
+    it('prints miles the courier can check, not the band being paid', async () => {
+        /* A seventeen-mile run paid at zone 4 must not print "51+ mi". The
+           courier would check that against their letter and find it false,
+           and the thing it would actually be telling them -- that they were
+           paid ABOVE the letter -- would be invisible. */
+        const r = await record();
+        expect(r.totals.lines['zone-3-held'].label).toBe('Zone 3 (held; measured 0-10 mi)');
+    });
+
+    it('still lets a measurement that bands HIGHER win, which is the repair', async () => {
+        /* The 208 that band low are the reason for the rule above. The 223
+           that band high are the reason any of this exists. */
+        await order(FAR_ZIP);
+
+        const r = await record();
+        expect(r.totals.lines['zone-2'], JSON.stringify(r.totals.lines)).toBeDefined();
+        expect(r.totals.lines['zone-2'].label).toBe('Zone 2 (11-25 mi)');
+        /* UH calls this ZIP zone 1. It is not being held down to it. */
+        expect(r.totals.lines['zone-2-held']).toBeUndefined();
+        expect(r.totals.lines['zone-1-held']).toBeUndefined();
     });
 });

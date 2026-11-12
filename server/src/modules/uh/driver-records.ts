@@ -278,15 +278,51 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
      *   its own line so it can be counted and closed -- these are the stops
      *   most likely to be underpaid, since the stand-in band is drawn
      *   around the city rather than measured from the counter. */
+    /* ── THE HIGHER OF THE TWO BANDS, AND WHY IT IS NOT JUST `paid`.
+     *
+     * This read `paid !== null ? paid : billing` -- the measured band wins
+     * outright the moment a distance exists. That is what the offer letter
+     * says and it was written before anybody had seen the measurement.
+     *
+     * On 12 November the distance table was computed for the first time:
+     * 648 pharmacy/ZIP pairs, every one by road. 223 banded HIGHER than the
+     * zone they had been paid on, which is the underpayment the couriers
+     * reported. 208 banded LOWER -- University Health's map is drawn around
+     * their campus, and a run from a counter that sits nearer the far ZIPs
+     * had been priced as though it started downtown.
+     *
+     * Letting `paid` win outright would have cut the rate on a third of the
+     * routes, from the next order, for an error that was ours: nothing had
+     * ever measured the distance, so UH's band stood in for it and that is
+     * what people have been paid since go-live.
+     *
+     * So the stop keeps the HIGHER band. Every underpayment is corrected,
+     * no courier's rate falls, and the difference on the other 208 is a
+     * cost Izy carries rather than a cut couriers absorb.
+     *
+     * THE MEASUREMENT IS STILL THE TRUTH AND IS STILL STORED. `pay_zone` on
+     * the order holds what the distance actually bands to; this is a policy
+     * applied at the edge where money is worked out, not a number written
+     * back over the measurement. Change the policy and the history is still
+     * there to recompute from -- which is the whole reason the two zones
+     * were kept as separate columns in the first place. */
     const payable = (rows: readonly StopRow[]) =>
         rows.map((r) => {
             const billing = r.zone === null || r.zone === undefined ? null : Number(r.zone);
             const paid = r.pay_zone === null || r.pay_zone === undefined ? null : Number(r.pay_zone);
+            /* Out of the contracted area: `billing` is null too and
+               outOfZoneCents prices it, exactly as it always has. */
+            const zone = paid === null ? billing
+                : billing === null ? paid
+                    : Math.max(paid, billing);
             return {
                 serviceType: r.service_type,
                 status: r.status,
-                zone: paid !== null ? paid : billing,
+                zone,
                 measured: paid !== null,
+                /* Only when the band being paid is NOT the measured one, so
+                   the payslip prints miles the courier can check. */
+                heldAbove: paid !== null && zone !== null && zone !== paid ? paid : null,
             };
         });
 
