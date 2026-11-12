@@ -563,24 +563,49 @@ describe('putting a driver on shift from here', () => {
     });
 
     it('relays the server’s refusal rather than inventing a success', async () => {
-        /* The gate is NOT softer because an administrator is asking: a
-           driver with no counter cannot be handed work, which is why the
-           courier's own route refuses it too. The dispatcher is looking at
-           the screen where that is fixed. */
+        /* THE REFUSAL USED HERE WAS `shift.noHomeSite` until 12 November,
+           when a driver with no counter stopped being refused at all --
+           twenty-two of ninety-three had none and the gate was turning
+           away a quarter of the roster. A disabled account is the refusal
+           that remains, and it is the better test anyway: it is the one
+           the screen can do nothing about.
+
+           What is pinned is not any particular refusal. It is that a 409
+           reaches the operator in the server's own words instead of the
+           row quietly redrawing as though the shift had opened. */
         const mocked = renderAsAdmin({
             'GET /api/projects/uh/uh/roster': rosterData({
-                drivers: [driver({ homeSiteId: null, homeSiteCode: null, homeSiteName: null })],
+                drivers: [driver({ status: 'disabled' })],
             }),
             [START]: {
                 status: 409,
-                body: { error: 'Dana Whitfield has no home pharmacy, so they cannot go on shift. Give them one on this screen first.', code: 'shift.noHomeSite' },
+                body: { error: "Dana Whitfield's account is disabled, so they cannot be given work. Switch the account back on first.", code: 'shift.accountDisabled' },
             },
         });
         await screen.findByText('Dana Whitfield');
         fireEvent.click(screen.getByRole('button', { name: 'Put on shift' }));
 
         await waitFor(() => { expect(mocked.calls).toContain(START); });
-        expect(await screen.findByRole('status')).toHaveTextContent(/no home pharmacy/);
+        expect(await screen.findByRole('status')).toHaveTextContent(/account is disabled/);
+    });
+
+    it('puts a driver with no home pharmacy on shift without arguing', async () => {
+        /* The roster screen says it itself, a few lines above this row: a
+           home pharmacy "is a default and not a restriction: anybody can
+           still be given any run". It orders what the board offers first.
+           Twenty-two drivers on this contract have none recorded and all of
+           them can work. */
+        const mocked = renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({
+                drivers: [driver({ homeSiteId: null, homeSiteCode: null, homeSiteName: null })],
+            }),
+            [START]: { id: 9001, alreadyOn: false },
+        });
+        await screen.findByText('Dana Whitfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Put on shift' }));
+
+        await waitFor(() => { expect(mocked.calls).toContain(START); });
+        expect(await screen.findByRole('status')).toHaveTextContent(/is on shift and can be given work/);
     });
 
     it('asks why before taking somebody off, and sends what was typed', async () => {
@@ -873,5 +898,49 @@ describe('finding a driver', () => {
 
         fireEvent.change(find(), { target: { value: 'tobias' } });
         expect(screen.queryByRole('heading', { name: /Robert B. Green/ })).not.toBeInTheDocument();
+    });
+});
+
+describe('when the account was made', () => {
+    /* Ninety-three drivers loaded in batches as each cohort cleared
+       onboarding. The date beside a name says which intake somebody came in
+       with, and -- the reason it was asked for -- whether a row with no
+       pharmacy and no telephone number has been sitting there a fortnight
+       or was created this morning. */
+    it('prints the date the driver was added', async () => {
+        renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({
+                drivers: [driver({ createdAt: '2026-11-03 14:22:08' })],
+            }),
+        });
+        await screen.findByText('Dana Whitfield');
+        expect(await screen.findByText(/added 3 Nov 2026/)).toBeInTheDocument();
+    });
+
+    it('reads the space-separated stamp SQLite actually writes', async () => {
+        /* CURRENT_TIMESTAMP gives "2026-11-03 14:22:08" -- a space, no zone
+           -- which new Date() reads as local in some browsers, UTC in
+           others and Invalid Date in the rest. An ISO one has to give the
+           same answer as the one above, on the same day. */
+        renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({
+                drivers: [driver({ createdAt: '2026-11-03T14:22:08.000Z' })],
+            }),
+        });
+        expect(await screen.findByText(/added 3 Nov 2026/)).toBeInTheDocument();
+    });
+
+    it('says nothing at all when there is no date, rather than NaN', async () => {
+        /* `created_at` carries a default rather than NOT NULL and the
+           earliest accounts predate it. A row that cannot be read prints
+           no date; it does not print "NaN NaN undefined". */
+        renderAsAdmin({
+            'GET /api/projects/uh/uh/roster': rosterData({
+                drivers: [driver({ createdAt: null })],
+            }),
+        });
+        await screen.findByText('Dana Whitfield');
+        expect(screen.queryByText(/added/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
     });
 });

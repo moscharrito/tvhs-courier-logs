@@ -34,32 +34,39 @@
  * anything still `picked_up`. The refusal names the count and points at the
  * screen that fixes it, which is Take back undelivered.
  *
- * GOING ON SHIFT NEEDS A PHARMACY, SINCE 2 NOVEMBER 2026.
+ * GOING ON SHIFT NEEDED A PHARMACY FROM 2 TO 12 NOVEMBER 2026. IT NO
+ * LONGER DOES.
  *
- * Until then the only test was "is a courier on this project", which on
- * University Health is thirty-nine accounts -- including the eight who are
- * not on the confirmed roster and have no counter. All of them could tap Go
- * on shift, and for as long as the unclaimed-work sweep was handing out
- * deliveries to whoever was on shift and least loaded, several of them got
- * real work. Being on shift is the answer to "who may be given a delivery",
- * so a gate that admits everybody makes that question meaningless.
+ * THE RULE AND WHY IT WAS MADE. Before 2 November the only test was "is a
+ * courier on this project", which on University Health was thirty-nine
+ * accounts -- including eight not on the confirmed roster and with no
+ * counter. All of them could tap Go on shift, and while the unclaimed-work
+ * sweep was handing deliveries to whoever was on shift and least loaded,
+ * several of them got real work. Being on shift answers "who may be given a
+ * delivery", so a gate admitting everybody made that question meaningless.
  *
- * The test is `settings.homeSiteId` on the membership, which is the same
- * fact the planner and the roster screen already use. A driver with no
- * pharmacy is refused and told to ring dispatch -- not told they are not a
- * courier, which is both wrong and no help.
+ * WHY IT IS GONE. The roster grew to ninety-three drivers and twenty-two of
+ * them have no home pharmacy -- not because anybody is unvetted, but
+ * because the counter has not been typed in yet. The gate was refusing a
+ * quarter of a real roster, and the message it gave ("ring dispatch") sent
+ * them to the people who were already trying to put them on.
  *
- * WHAT THIS COSTS, so nobody files it as a bug: a genuine floater -- no
- * fixed counter, covers wherever the day needs them -- cannot go on shift.
- * There is no such driver on the contract today, and /api/me/projects
- * already shows "Wherever the day needs you" for one, so the screen can
- * describe somebody the shift route now refuses. If one is ever hired, give
- * them a counter or this rule needs an exception, and the exception belongs
- * on the membership rather than in this file.
+ * The cost the rule was written against is smaller than it reads, and the
+ * roster screen says so in its own words: a home pharmacy "is a default and
+ * not a restriction: anybody can still be given any run". It orders what
+ * the board offers first. It was never what decides whether somebody is a
+ * real courier -- the membership is, and that is still checked, along with
+ * the account being active.
  *
- * STAFF ARE NOT GATED. An administrator or a site manager holding a shift is
- * doing it to cover a round, and they have no home counter to check: an
- * admin is enrolled in every project at boot. The rule is about couriers.
+ * WHAT TO WATCH, so this is reversible rather than forgotten: a driver on
+ * shift with no counter is offered no pharmacy's work ahead of anybody
+ * else's, so they rely on being assigned by hand. If the unclaimed-work
+ * sweep is ever pointed at "on shift and least loaded" again, that is the
+ * moment to decide whether an unplaced driver should be in that pool --
+ * and the answer belongs on the membership, not back in this file.
+ *
+ * STAFF WERE NEVER GATED either. An administrator or a site manager holding
+ * a shift is covering a round and has no home counter to check.
  *
  * AND THERE IS AN ESCAPE HATCH, BUT NOT IN THE DRIVER'S HANDS. A pharmacy
  * closes; a courier cannot hand anything back at eleven at night. Dispatch
@@ -81,11 +88,11 @@
  *
  * TWO THINGS KEEP IT HONEST.
  *
- * The SAME GATE as the driver's own route. A courier with no home pharmacy
- * cannot be put on shift by dispatch either -- the rule exists because
- * being on shift means "may be handed work", and there is no less reason
- * for that to hold when somebody else pressed it. The refusal names the
- * roster screen they are already looking at, which is where it is fixed.
+ * THE SAME CHECKS as the driver's own route, no softer because somebody at
+ * a desk is asking: on this project as a driver, and the account active.
+ * They moved together when the home-pharmacy gate went on 12 November too
+ * -- dispatch refusing what the driver's own bar allows, or the reverse,
+ * is how two people end up on the phone arguing about one button.
  *
  * And it is WRITTEN ON THE ROW, not only in the audit trail. `started_by`
  * carries the dispatcher's username; empty still means the courier did it
@@ -225,23 +232,11 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
 
     /* ------------------------------------------------------------ a courier */
 
-    /**
-     * The pharmacy this courier is based at, or null.
-     *
-     * Read off the membership rather than passed in, because the session
-     * says who is asking and nothing else: a route that trusted a body
-     * field here would let a driver name a counter to get past the gate.
-     */
-    async function homeSiteOf(projectId: number, username: string): Promise<number | null> {
-        const rs = await run(
-            `SELECT json_extract(m.settings, '$.homeSiteId') AS home_site_id
-               FROM memberships m JOIN users u ON u.id = m.user_id
-              WHERE m.project_id = ? AND u.username = ?`,
-            [projectId, username],
-        );
-        const v = rs.rows[0]?.['home_site_id'];
-        return v === null || v === undefined ? null : Number(v);
-    }
+    /* `homeSiteOf` lived here and read `settings.homeSiteId` off the
+       membership so the two start routes could refuse a courier with no
+       counter. Both refusals went on 12 November -- see the header -- and
+       it had no other caller, so it went with them rather than sitting
+       here as a function nothing calls. */
 
     router.post('/start', couriers, wrap(async (req, res) => {
         const project = req.project!;
@@ -260,17 +255,11 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        /* See the header. Couriers only: staff have no home counter and are
-           covering a round when they hold a shift at all. */
-        if (req.membership?.role === 'courier' && (await homeSiteOf(project.id, me)) === null) {
-            await req.audit('shift.start_refused', 'membership', me, { reason: 'no home pharmacy' });
-            res.status(409).json({
-                error: 'You are not assigned to a pharmacy, so you cannot go on shift. '
-                    + 'Ring dispatch and they will sort it out.',
-                code: 'shift.noHomeSite',
-            });
-            return;
-        }
+        /* NO HOME-PHARMACY GATE. It stood here from 2 to 12 November and
+           the header says why it was built and why it went. A courier with
+           no counter may go on shift; what they may not do is be somebody
+           other than an active courier on this project, and `couriers`
+           above still settles that. */
 
         const ins = await run(
             'INSERT INTO shifts (project_id, courier_username, started_at) VALUES (?, ?, ?) RETURNING *',
@@ -527,20 +516,14 @@ export function createShiftsRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        /* THE SAME GATE AS THE DRIVER'S OWN ROUTE, and deliberately not
-           softer because an administrator is asking. Being on shift means
-           "may be handed a delivery", and a driver with no counter cannot
-           be given one sensibly. Couriers only: a lead holding a shift is
-           covering a round and has no home counter to check. */
-        if (who.role === 'courier' && who.homeSiteId === null) {
-            await req.audit('shift.start_refused', 'membership', username, { reason: 'no home pharmacy', by: 'dispatch' });
-            res.status(409).json({
-                error: `${who.name} has no home pharmacy, so they cannot go on shift. `
-                    + 'Give them one on this screen first.',
-                code: 'shift.noHomeSite',
-            });
-            return;
-        }
+        /* NO HOME-PHARMACY GATE HERE EITHER, and the pair of them went
+           together on purpose: dispatch refusing what the driver's own bar
+           allows, or the other way round, is the kind of split that has
+           somebody on the phone arguing about a button. The header carries
+           the reasoning for both.
+
+           What is still checked above, and matters more: they are on this
+           project as a driver, and their account is active. */
 
         const by = actorOf(req);
         const ins = await run(

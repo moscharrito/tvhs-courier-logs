@@ -98,6 +98,11 @@ interface RosterDriver {
     homeSiteCode: string | null;
     homeSiteName: string | null;
     onShift: boolean;
+    /* When the account was made. Optional for the same reason alsoCovers
+       is: the server sends it, and a row that arrived without it should
+       leave the date off rather than take the roster down. Null for the
+       earliest accounts, which predate the column's default. */
+    createdAt?: string | null;
 }
 
 interface RosterSite { id: number; code: string; name: string }
@@ -916,8 +921,33 @@ function AddDriver({ sites, busy, onAdd }: {
 }
 
 /** The grey line under a name: what is true of the account, or nothing. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * "3 Nov 2026" from whatever the server sent, or null if it cannot be read.
+ *
+ * NOT `new Date(iso)`. SQLite's CURRENT_TIMESTAMP writes "2026-11-03
+ * 14:22:08" -- a space instead of a T and no zone marker -- which some
+ * browsers read as local time, some as UTC, and some as Invalid Date. The
+ * date part is taken by hand so the answer is the same everywhere and a row
+ * that cannot be read says nothing rather than "NaN NaN".
+ *
+ * The clock is deliberately dropped. What this answers is "which intake did
+ * they come in with", and a time of day on ninety-three rows is noise.
+ */
+function addedOn(iso: string | null | undefined): string | null {
+    if (typeof iso !== 'string') return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+    if (m === null) return null;
+    const [, year, month, day] = m;
+    if (year === undefined || month === undefined || day === undefined) return null;
+    const name = MONTHS[Number(month) - 1];
+    return name === undefined ? null : `${Number(day)} ${name} ${year}`;
+}
+
 function notes(d: RosterDriver): string[] {
     const handle = handleUnder(d);
+    const added = addedOn(d.createdAt);
     return [
         /* LABELLED, which it was not before the address moved out of this
            line. UH drivers sign in with their first name, so the handle
@@ -930,6 +960,10 @@ function notes(d: RosterDriver): string[] {
         handle === null ? null : `signs in as ${handle}`,
         d.role === 'lead' ? 'site manager' : null,
         d.status !== 'active' ? 'disabled' : null,
+        /* LAST, so it never pushes the handle off the start of the line.
+           It is the least urgent thing here and the one most often read by
+           somebody scanning rather than looking somebody up. */
+        added === null ? null : `added ${added}`,
     ].filter((x): x is string => x !== null);
 }
 

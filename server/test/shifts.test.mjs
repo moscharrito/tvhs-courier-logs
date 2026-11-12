@@ -69,26 +69,36 @@ describe('going on shift', () => {
         expect(res.body.courierUsername).toBe('ana.shift');
     });
 
-    it('refuses a courier with no pharmacy, and says who to ring', async () => {
-        /* Until 2 November the only test was "is a courier on this project",
-           which on University Health is thirty-nine accounts including the
-           eight who are not on the confirmed roster. All of them could tap
-           Go on shift, and while the unclaimed sweep was handing work to
+    it('lets a courier with no pharmacy go on shift', async () => {
+        /* THIS WAS A REFUSAL FROM 2 TO 12 NOVEMBER 2026 and the reasoning
+           was sound at the time: the only test had been "is a courier on
+           this project", thirty-nine accounts including eight not on the
+           confirmed roster, and while the unclaimed sweep handed work to
            whoever was on shift and least loaded, several of them got real
-           deliveries. */
+           deliveries.
+
+           It went when the roster reached ninety-three drivers and
+           twenty-two had no counter recorded -- not unvetted, just not
+           typed in yet. The gate was refusing a quarter of a real roster
+           and telling them to ring the people already trying to put them
+           on. A home pharmacy orders what the board offers first; it was
+           never what makes somebody a courier, and the membership still
+           settles that. */
         await admin.post('/api/users').send({ username: 'nohome.shift', name: 'No Home', password: 'shift-pass-1', role: 'driver' });
         await admin.put('/api/users/nohome.shift/memberships/uh').send({ role: 'courier', settings: {} });
         const them = srv.agent();
         expect((await them.post('/api/login').send({ username: 'nohome.shift', password: 'shift-pass-1' })).status).toBe(200);
 
         const res = await them.post(`${UH}/shifts/start`);
-        expect(res.status).toBe(409);
-        expect(res.body.code).toBe('shift.noHomeSite');
-        /* Told what to do, not told they are not a courier -- which would be
-           both wrong and no help to somebody standing at a counter. */
-        expect(res.body.error).toMatch(/ring dispatch/i);
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(res.body.alreadyOn).toBe(false);
 
-        /* And no shift was opened, which the status alone does not prove. */
+        /* And it really opened, which the status alone does not prove. */
+        expect((await them.get(`${UH}/shifts/mine`)).body.shift).not.toBeNull();
+
+        /* Off again too: the pair has to move together or somebody is on
+           shift with no way to come off. */
+        expect((await them.post(`${UH}/shifts/end`).send({})).status).toBe(200);
         expect((await them.get(`${UH}/shifts/mine`)).body.shift).toBeNull();
     });
 
@@ -348,19 +358,20 @@ describe('dispatch putting a driver on shift', () => {
         expect(again.body.id).toBe(first.id);
     });
 
-    it('refuses a driver with no pharmacy, and names the screen that fixes it', async () => {
-        /* NOT SOFTER BECAUSE AN ADMINISTRATOR IS ASKING. Being on shift
-           means "may be handed a delivery" and a driver with no counter
-           cannot be given one sensibly -- which is the whole reason the
-           courier's own route has this gate. */
+    it('puts a driver with no pharmacy on shift, same as their own bar', async () => {
+        /* THE TWO ROUTES MOVE TOGETHER. This refused from 2 to 12 November
+           because the courier's own route did, and it stopped refusing on
+           the same day for the same reason. A gate on one and not the
+           other is how two people end up on the phone arguing about one
+           button: dispatch pressing it and being told to fix a thing the
+           driver's own screen does not care about. */
         const u = await makeDriver('nohome.roster', { home: false });
         const res = await admin.post(`${FOR(u)}/start`).send({});
-        expect(res.status).toBe(409);
-        expect(res.body.code).toBe('shift.noHomeSite');
-        expect(res.body.error).toMatch(/home pharmacy/i);
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(res.body.alreadyOn).toBe(false);
 
-        // And nothing was opened, which the status alone does not prove.
-        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === u)).toBe(false);
+        // And it really opened, which the status alone does not prove.
+        expect((await admin.get(SHIFTS)).body.shifts.some((s) => s.courierUsername === u)).toBe(true);
     });
 
     it('refuses a disabled account, because they cannot record a stop either', async () => {

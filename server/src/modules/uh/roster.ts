@@ -153,7 +153,7 @@ export function createRosterRouter({ client }: { client: Client }): Router {
            was later removed still lists the driver -- with homeSite null, so
            the screen shows them as unassigned rather than hiding them. */
         const rs = await run(
-            `SELECT u.username, u.name, u.email, u.phone, u.status, m.role,
+            `SELECT u.username, u.name, u.email, u.phone, u.status, u.created_at, m.role,
                     json_extract(m.settings, '$.homeSiteId') AS home_site_id,
                     json_extract(m.settings, '$.alsoCovers') AS also_covers,
                     si.code AS home_site_code, si.name AS home_site_name,
@@ -178,6 +178,18 @@ export function createRosterRouter({ client }: { client: Client }): Router {
             phone: String(r['phone'] ?? ''),
             status: String(r['status']),
             role: String(r['role']),
+            /* WHEN THE ACCOUNT WAS MADE, which on this contract is a useful
+               thing to see beside a name: drivers were loaded in batches as
+               each cohort cleared onboarding, so the date says which intake
+               somebody came in with and whether a row with nothing filled
+               in is a week old or was created this morning.
+
+               Nullable in the schema -- `created_at` carries a default
+               rather than NOT NULL, and a handful of the earliest rows
+               predate it. Null here, so the screen can say nothing instead
+               of printing an invented date. */
+            createdAt: r['created_at'] === null || r['created_at'] === undefined
+                ? null : String(r['created_at']),
             homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined ? null : Number(r['home_site_id']),
             /* json_extract hands back the JSON text of an array, so it is
                parsed here rather than trusted. A blob hand-edited into the
