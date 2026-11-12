@@ -577,6 +577,15 @@ const MATRIX = [
        out as a file, deliberately (6 October 2026), so the row that matters
        is this one being UH_CLIENT_VIEW and not anything wider. */
     ['GET', `${UH}/client/orders.xlsx`, UH_CLIENT_VIEW, 'the deliveries as a spreadsheet, patient data included'],
+    /* THE SAME SPREADSHEET AND THE PROOF OF EVERY DELIVERY IN IT, which is
+       the largest quantity of patient data that leaves this system in one
+       act: every patient, address, signature and doorstep photograph in the
+       range. Same reach as the list and the spreadsheet, for the same reason
+       -- one query through gatherOrders, scoped by the membership and never
+       by the query string. A row wider than this one would hand a courier,
+       or a pharmacy's neighbour, a month of somebody else's patients in a
+       single click. */
+    ['GET', `${UH}/client/orders-with-pod.zip`, UH_CLIENT_VIEW, 'the deliveries and every proof of delivery, patient data included'],
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999/pod.pdf`, UH_CLIENT_VIEW, ''],
     /* The doorstep photograph. Same viewers as the delivery it belongs to,

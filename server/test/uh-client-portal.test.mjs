@@ -831,3 +831,82 @@ describe('the return form', () => {
         expect((await nobody.get(`${CLIENT}/orders/${order.id}/return-form`)).status).toBe(404);
     });
 });
+
+/* ───────────────────────────────────────────── how much of it comes back
+ *
+ * THE CONTRACT MANAGER COULD NOT SEE HIS OWN CONTRACT.
+ *
+ * The list stopped at five hundred rows with "narrow the dates to see the
+ * rest", which is sound advice for a pharmacist looking at today and useless
+ * to the person who oversees nine pharmacies and reconciles a month. He
+ * reported it on 12 November 2026: he could not load more than five hundred
+ * deliveries, and nothing told him how many there were.
+ *
+ * Two separate faults, and both are tested here, because fixing only the
+ * first leaves somebody paging blind:
+ *
+ *   he may now ask for more than the first page;
+ *   and the answer says how many there are either way.
+ */
+describe('the size of a list', () => {
+    const rowsOf = async (query) => {
+        const manager = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await manager.get(`${CLIENT}/orders?${query}`);
+        expect(res.status).toBe(200);
+        return res.body;
+    };
+
+    it('says how many deliveries the range holds, not only that there were more', async () => {
+        await delivered();
+        const body = await rowsOf(`from=${today}&to=${today}`);
+        expect(body.total).toBe(body.orders.length);
+        expect(body.truncated).toBe(false);
+    });
+
+    it('honours a smaller ceiling and reports the whole figure beside it', async () => {
+        /* Stands in for the manager's month: ask for less than there is, and
+           the figure still has to be the truth about the range. */
+        await delivered();
+        await delivered();
+        const all = await rowsOf(`from=${today}&to=${today}`);
+        expect(all.orders.length).toBeGreaterThan(1);
+
+        const one = await rowsOf(`from=${today}&to=${today}&limit=1`);
+        expect(one.orders).toHaveLength(1);
+        expect(one.truncated).toBe(true);
+        expect(one.total).toBe(all.total);
+        expect(one.limit).toBe(1);
+    });
+
+    it('serves ten thousand rather than five hundred, and says what the ceiling is', async () => {
+        /* The change itself. A browser handed a quarter of a million rows
+           renders nothing and the reader concludes the portal is broken,
+           which is where this started -- so there is still a ceiling, and
+           the screen is told what it is rather than discovering it. */
+        const body = await rowsOf(`from=${today}&to=${today}&limit=999999`);
+        expect(body.maxRows).toBe(10000);
+        expect(body.limit).toBe(10000);
+    });
+
+    it('treats nonsense as the first page rather than as nothing', async () => {
+        /* A limit of 0, of -3 or of "all" must not produce an empty list that
+           reads as a day with no deliveries in it. */
+        await delivered();
+        for (const limit of ['0', '-3', 'all', '']) {
+            const body = await rowsOf(`from=${today}&to=${today}&limit=${limit}`);
+            expect(body.limit, `limit=${limit}`).toBe(500);
+            expect(body.orders.length, `limit=${limit}`).toBeGreaterThan(0);
+        }
+    });
+
+    it('counts what the filters count, not the whole day', async () => {
+        /* The figure is what the screen offers to load. If it counted the
+           range while the rows were filtered, "show all 40" would load four
+           and the reader would conclude deliveries had gone missing. */
+        await delivered();
+        const all = await rowsOf(`from=${today}&to=${today}`);
+        const open = await rowsOf(`from=${today}&to=${today}&status=delivered&limit=1`);
+        expect(open.total).toBeLessThanOrEqual(all.total);
+        expect(open.total).toBeGreaterThan(0);
+    });
+});

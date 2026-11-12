@@ -88,7 +88,23 @@ interface ClientOrder {
 interface ListResponse {
     from: string; to: string; pharmacies: Pharmacy[];
     orders: ClientOrder[]; truncated: boolean; notes: string[];
+    /* How many the range holds, whatever came back. The contract manager
+     * could previously only be told that there were "more", which is not
+     * something you can reconcile a month against. Optional because an older
+     * server does not send it, and `orders.length` is the honest fallback. */
+    total?: number;
+    /** The ceiling that produced this answer, and the highest one allowed. */
+    limit?: number;
+    maxRows?: number;
 }
+
+/* What "show everything" asks for.
+ *
+ * The SERVER holds the real ceiling and clamps this to it, so the two cannot
+ * disagree in a direction that matters: a number past the ceiling comes back
+ * as the ceiling, with `maxRows` saying what it was. The figure here only has
+ * to be large enough to mean "all of it" for a month of nine pharmacies. */
+const ALL_ROWS = 10_000;
 
 interface SummaryResponse {
     serviceDate: string; timezone: string; pharmacies: Pharmacy[];
@@ -176,6 +192,11 @@ export function ClientPortal() {
     const [list, setList] = useState<ListResponse | null>(null);
     const [open, setOpen] = useState<number | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
+    /* Whether this reader has asked for the whole range rather than the first
+       page. Component state rather than a URL parameter on purpose: it is a
+       thing somebody did to this screen, not a view worth putting in a link
+       and sending to a colleague on hospital wifi. */
+    const [showAll, setShowAll] = useState(false);
 
     const from = params.get('from') ?? '';
     const to = params.get('to') ?? '';
@@ -201,19 +222,27 @@ export function ClientPortal() {
     if (search) query.set('q', search);
     const qs = query.toString();
 
+    /* The list query, which is the filters plus however much of them this
+       reader asked for. Kept apart from `query` so the export links below
+       carry the filters and NOT the row ceiling: a spreadsheet cut to the
+       first page of a screen is the bug this whole change is about. */
+    const listQuery = new URLSearchParams(query);
+    if (showAll) listQuery.set('limit', String(ALL_ROWS));
+    const listQs = listQuery.toString();
+
     const load = useCallback(async () => {
         setMsg(null);
         try {
             const [s, l] = await Promise.all([
                 api<SummaryResponse>(`${base}/summary`),
-                api<ListResponse>(`${base}/orders${qs ? `?${qs}` : ''}`),
+                api<ListResponse>(`${base}/orders${listQs ? `?${listQs}` : ''}`),
             ]);
             setSummary(s);
             setList(l);
         } catch (err) {
             setMsg(err instanceof ApiError ? err.message : 'Could not load your deliveries.');
         }
-    }, [base, qs]);
+    }, [base, listQs]);
     useEffect(() => { void load(); }, [load]);
 
     /* The screen stays current on its own, because this sits open on a
@@ -491,13 +520,84 @@ export function ClientPortal() {
                                 <a href={`${base}/orders.xlsx${params.toString() ? `?${params}` : ''}`}>
                                     Export to Excel
                                 </a>
+                                {/* AND THE PROOF OF EVERY ONE OF THEM, from
+                                    12 November 2026. Checking an invoice line
+                                    against the signature behind it meant
+                                    opening each delivery and downloading its
+                                    document one at a time -- two hundred of
+                                    those for a week of one pharmacy, which is
+                                    not a thing anybody finishes. The archive
+                                    carries the same spreadsheet with a column
+                                    naming each row's own document.
+
+                                    A plain link for the same reason as the
+                                    one above: the browser knows how to save a
+                                    download, and a few hundred megabytes of
+                                    patient data held alive in a blob URL
+                                    until the tab closes is the opposite of
+                                    what no-store is for. */}
+                                {' · '}
+                                <a href={`${base}/orders-with-pod.zip${params.toString() ? `?${params}` : ''}`}>
+                                    Export with proof of delivery
+                                </a>
                             </>
                         )}
                     </span>
                 </div>
+                {/* HOW MANY THERE ARE, AND A WAY TO SEE THEM.
+
+                    This read "Showing the first 500. Narrow the dates to see
+                    the rest", which is sound for a pharmacist looking at
+                    today and useless to the person who oversees nine
+                    pharmacies: his question IS the month, and he was told
+                    only that there was more without being told how much.
+                    Reported on 12 November 2026.
+
+                    So: the figure, and a button. Past the server's ceiling
+                    the honest answer is still a narrower range, and the
+                    spreadsheet -- which has no such limit -- is named rather
+                    than left for somebody to remember. */}
                 {list.truncated && (
                     <div className="izy-alert warn" role="status">
-                        Showing the first 500. Narrow the dates to see the rest.
+                        Showing the first {rows.length.toLocaleString()} of {(list.total ?? rows.length).toLocaleString()}.
+                        {(list.total ?? 0) <= (list.maxRows ?? ALL_ROWS) ? (
+                            <>
+                                {' '}
+                                <button
+                                    type="button"
+                                    className="izy-btn secondary"
+                                    onClick={() => {
+                                        setShowAll(true);
+                                        /* A list of several thousand rows
+                                           must not reload itself every
+                                           twenty seconds under somebody
+                                           reading it. */
+                                        live.setPaused(true);
+                                    }}
+                                >
+                                    Show all {(list.total ?? rows.length).toLocaleString()}
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                {' '}Narrow the dates to see the rest on screen, or export to Excel,
+                                which has no such limit.
+                            </>
+                        )}
+                    </div>
+                )}
+                {showAll && !list.truncated && (
+                    <div className="izy-alert" role="status">
+                        Showing all {rows.length.toLocaleString()}. Live updating is paused while
+                        this many are on screen.
+                        {' '}
+                        <button
+                            type="button"
+                            className="izy-btn secondary"
+                            onClick={() => { setShowAll(false); live.setPaused(false); }}
+                        >
+                            Back to the first page
+                        </button>
                     </div>
                 )}
                 {rows.length === 0 ? (

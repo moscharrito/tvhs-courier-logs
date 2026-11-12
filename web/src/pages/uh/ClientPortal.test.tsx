@@ -218,10 +218,86 @@ describe('ClientPortal', () => {
         expect(screen.getByText('Nothing for this day.')).toBeInTheDocument();
     });
 
-    it('warns when a range was cut short rather than quietly showing part of it', async () => {
-        renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ truncated: true }) }));
+    /* ──────────────────────────────── when the range holds more than a page
+     *
+     * THE CONTRACT MANAGER COULD NOT SEE HIS OWN CONTRACT.
+     *
+     * This said "Showing the first 500. Narrow the dates to see the rest" --
+     * sound advice for a pharmacist looking at today, and useless to the
+     * person who oversees nine pharmacies and reconciles a month, because
+     * his question IS the month. He was told there was more and never how
+     * much. Reported on 12 November 2026.
+     *
+     * It also said 500 whatever had actually come back, which is the kind of
+     * hardcoded figure that is quietly wrong for a year.
+     */
+    it('says how many the range holds, not just that it was cut short', async () => {
+        renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ truncated: true, total: 7812, maxRows: 10000 }) }));
         await settled();
-        expect(screen.getByText(/Showing the first 500/)).toBeInTheDocument();
+        expect(screen.getByText(/Showing the first 1 of 7,812/)).toBeInTheDocument();
+    });
+
+    it('offers to load the lot, and says so in the figure', async () => {
+        renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ truncated: true, total: 7812, maxRows: 10000 }) }));
+        await settled();
+        expect(screen.getByRole('button', { name: 'Show all 7,812' })).toBeInTheDocument();
+    });
+
+    it('asks the server for the lot when told to, and stops the screen moving under the reader', async () => {
+        /* Several thousand rows must not reload themselves every twenty
+           seconds while somebody is reading one. */
+        const asked: string[] = [];
+        renderPortal(routes({
+            [`GET ${BASE}/orders*`]: (url: string) => {
+                asked.push(url);
+                return asked.length === 1
+                    ? list({ truncated: true, total: 7812, maxRows: 10000 })
+                    : list({ truncated: false, total: 7812, maxRows: 10000 });
+            },
+        }));
+        await settled();
+        fireEvent.click(screen.getByRole('button', { name: 'Show all 7,812' }));
+        await settled();
+
+        expect(asked.some((u) => u.includes('limit=10000'))).toBe(true);
+        expect(screen.getByText(/Showing all 1\./)).toBeInTheDocument();
+        expect(screen.getByText(/Live updating is paused/)).toBeInTheDocument();
+    });
+
+    it('still asks for a narrower range when the range is past what a screen serves', async () => {
+        /* A browser handed a quarter of a million rows renders nothing and
+           the reader concludes the portal is broken, which is where this
+           started. So there is a ceiling, and past it the spreadsheet -- the
+           one thing with no such limit -- is named rather than left for
+           somebody to remember. */
+        renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ truncated: true, total: 94000, maxRows: 10000 }) }));
+        await settled();
+        expect(screen.getByText(/Showing the first 1 of 94,000/)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument();
+        expect(screen.getByText(/Narrow the dates .* export to Excel/is)).toBeInTheDocument();
+    });
+
+    it('does not leave the row ceiling on the export links', async () => {
+        /* A spreadsheet cut to the first page of a screen is the bug this
+           whole change is about, pointing the other way. */
+        renderPortal(routes({ [`GET ${BASE}/orders*`]: list({ truncated: true, total: 7812, maxRows: 10000 }) }));
+        await settled();
+        fireEvent.click(screen.getByRole('button', { name: 'Show all 7,812' }));
+        await settled();
+        for (const name of ['Export to Excel', 'Export with proof of delivery']) {
+            const link = screen.getByRole('link', { name });
+            expect(link.getAttribute('href')).not.toContain('limit=');
+        }
+    });
+
+    it('offers the deliveries and their proof in one archive', async () => {
+        /* Checking an invoice line against the signature behind it meant
+           opening each delivery and downloading its document one at a time.
+           University Health asked for it in bulk on 12 November 2026. */
+        renderPortal(routes({}));
+        await settled();
+        const link = screen.getByRole('link', { name: 'Export with proof of delivery' });
+        expect(link.getAttribute('href')).toContain('/orders-with-pod.zip');
     });
 
     it('shows the server refusal when a range is too long', async () => {

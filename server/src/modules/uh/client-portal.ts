@@ -39,6 +39,7 @@ import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
 import { etaFor, etasFor } from './eta';
 import { scopedReport, GROUPINGS, type Grouping } from './reports';
+import { ZipWriter, zipSafeName } from '../../core/zip/writer';
 import type { FileStorage } from '../../core/files/storage';
 import {
     PROOF_KINDS, ID_KIND, storedPhoto, hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus,
@@ -64,7 +65,31 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
 /** Longest window a client may ask for in one request. A year of a nine
  *  pharmacy contract is 95,000 rows, and nobody reads that in a browser. */
 const MAX_RANGE_DAYS = 92;
-const MAX_ROWS = 500;
+
+/* ───────────────────────────────────────────── how many rows a list may be
+ *
+ * TWO NUMBERS, BECAUSE "THE FIRST PAGE" AND "ALL OF IT" ARE DIFFERENT ASKS.
+ *
+ * `DEFAULT_ROWS` is what a request that says nothing gets. It is small on
+ * purpose: a pharmacist opening their counter wants today, and a counter's
+ * day is forty deliveries.
+ *
+ * `MAX_ROWS` is the ceiling on an explicit `limit`, and it exists because
+ * the contract manager is not a pharmacist. He oversees nine pharmacies and
+ * reconciles invoices across a month, which is eight thousand deliveries,
+ * and until 12 November 2026 the list simply stopped at five hundred of them
+ * with "narrow the dates to see the rest" -- advice that does not help
+ * somebody whose question IS the month. He could not see his own contract.
+ *
+ * So the screen may now ask for the lot, and the figure beside the list says
+ * how many there are rather than only that there were more. What it cannot
+ * do is ask for a quarter of a million: a browser given that renders nothing
+ * and the reader concludes the portal is broken, which is where we started.
+ * Ten thousand is a month of all nine counters with room over, it is 7 MB of
+ * JSON, and it is past anything either party has asked a screen for.
+ */
+const DEFAULT_ROWS = 500;
+const MAX_ROWS = 10_000;
 
 /* ─────────────────────────────────────────────────── what "still out" means
  *
@@ -203,6 +228,132 @@ function present(o: OrderRow, siteName: string, courierName: string) {
             deliveredAt: o.delivered_at ? new Date(o.delivered_at) : null,
         }),
     };
+}
+
+/* ──────────────────────────────────────────────────────── the spreadsheet
+ *
+ * ONE BUILDER, TWO ROUTES. The plain export hands this workbook over on its
+ * own; the bundle below puts the same workbook in a zip beside the proof of
+ * every delivery in it. They were briefly two copies of the same column list
+ * and the second one was already missing the zone column, which is how the
+ * proof-of-delivery lookup drifted for a fortnight in this same module.
+ *
+ * `proof` is the only difference between them: in a bundle each row names the
+ * document that proves it, so a reconciliation can go from a line on an
+ * invoice to the signature behind it without anybody searching a folder.
+ */
+interface WorkbookInput {
+    timezone: string;
+    sites: Array<{ id: number; code: string; name: string }>;
+    from: string;
+    to: string;
+    rows: Array<OrderRow & { site_name: string }>;
+    names: Map<string, string>;
+    /** Where this delivery's proof sits in the bundle, or why there is none.
+     *  Null when the spreadsheet travels alone and the column is left off. */
+    proof: ((row: OrderRow & { site_name: string }) => string) | null;
+}
+
+function buildWorkbook(input: WorkbookInput): ExcelJS.Workbook {
+    const { timezone, sites, from, to, rows, names, proof } = input;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Izy Global Services LLC';
+    wb.created = new Date();
+
+    const sheet = wb.addWorksheet('Deliveries');
+    sheet.columns = [
+        { header: 'Service date', key: 'serviceDate', width: 13 },
+        { header: 'Pharmacy', key: 'pharmacy', width: 26 },
+        { header: 'Zone', key: 'zone', width: 7 },
+        { header: 'Reference', key: 'reference', width: 16 },
+        { header: 'Service', key: 'serviceType', width: 10 },
+        { header: 'Patient', key: 'patient', width: 24 },
+        { header: 'Address', key: 'address', width: 34 },
+        { header: 'City', key: 'city', width: 16 },
+        { header: 'ZIP', key: 'zip', width: 8 },
+        { header: 'Status', key: 'status', width: 14 },
+        { header: 'Not delivered because', key: 'failureReason', width: 22 },
+        { header: 'On time', key: 'onTime', width: 9 },
+        { header: 'Requested', key: 'receivedAt', width: 22 },
+        { header: 'Due', key: 'dueAt', width: 22 },
+        { header: 'Collected', key: 'pickedUpAt', width: 22 },
+        { header: 'Arrived', key: 'arrivedAt', width: 22 },
+        { header: 'Delivered', key: 'deliveredAt', width: 22 },
+        { header: 'Returned', key: 'returnedAt', width: 22 },
+        { header: 'Received by', key: 'receivedBy', width: 22 },
+        { header: 'No signature because', key: 'noSignatureReason', width: 22 },
+        { header: 'Courier', key: 'courier', width: 14 },
+        /* Last, and only in a bundle. A column of empty cells in the plain
+           export would read as a missing document rather than as a column
+           that does not apply to a spreadsheet with nothing beside it. */
+        ...(proof === null ? [] : [{ header: 'Proof of delivery', key: 'proof', width: 54 }]),
+    ];
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    for (const r of rows) {
+        const view = present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '');
+        sheet.addRow({
+            serviceDate: view.serviceDate,
+            pharmacy: view.pharmacy,
+            /* The words, not a blank. A spreadsheet column that is
+               empty for an out-of-area delivery reads as missing data;
+               "out of area" is the fact. */
+            zone: view.zone === null ? 'out of area' : view.zone,
+            reference: view.reference,
+            serviceType: view.serviceType,
+            patient: view.recipientName,
+            address: view.address,
+            city: view.city,
+            zip: view.zip,
+            status: view.status,
+            failureReason: (view.failureReason ?? '').replace(/_/g, ' '),
+            /* Blank, not "no", while a delivery is still open. A column
+               of "no" against work in progress reads as failure. */
+            onTime: view.sla.onTime === null ? '' : view.sla.onTime ? 'yes' : 'no',
+            receivedAt: view.receivedAt ?? '',
+            dueAt: view.dueAt ?? '',
+            pickedUpAt: view.pickedUpAt ?? '',
+            arrivedAt: view.arrivedAt ?? '',
+            deliveredAt: view.deliveredAt ?? '',
+            returnedAt: view.returnedAt ?? '',
+            receivedBy: view.receivedBy ?? '',
+            noSignatureReason: view.noSignatureReason ?? '',
+            courier: view.courier,
+            ...(proof === null ? {} : { proof: proof(r) }),
+        });
+    }
+
+    /* What this file is, on the file itself. A spreadsheet outlives the
+       conversation that produced it, and somebody opening it in six
+       months should be able to tell what range it covers, which
+       pharmacies, and whose clock the times are on. */
+    const about = wb.addWorksheet('About');
+    about.columns = [{ width: 26 }, { width: 76 }];
+    about.addRow(['University Health Pharmacy Courier']).font = { bold: true, size: 14 };
+    about.addRow(['Service dates', `${from} to ${to}`]);
+    about.addRow(['Pharmacies', sites.length === 0 ? 'none on this account' : sites.map((x) => x.name).join(', ')]);
+    about.addRow(['Deliveries', rows.length]);
+    about.addRow(['Times', `${timezone}. Timestamps are ISO 8601 with a zone offset.`]);
+    about.addRow(['Produced', new Date().toISOString()]);
+    about.addRow(['By', 'Izy Global Services LLC']);
+    if (proof !== null) {
+        about.addRow([]);
+        about.addRow([
+            'Proof of delivery',
+            'Each row names its own document in the last column. The documents are in this '
+            + 'archive, in a folder per pharmacy. A delivery still in progress has no proof '
+            + 'yet and the column says so rather than pointing at nothing.',
+        ]);
+    }
+    about.addRow([]);
+    about.addRow([
+        'Contains patient data',
+        'Patient names and delivery addresses are in the Deliveries sheet. Handle and store this '
+        + 'file as you would any other record of your patients.',
+    ]).font = { bold: true };
+
+    return wb;
 }
 
 /* PROOF_KINDS and ID_KIND now live in pod-photos.ts, with the lookup that
@@ -435,9 +586,9 @@ export function createClientPortalRouter(
      * the pharmacy or the scope is wrong, so neither caller has to repeat the
      * refusals and neither can forget one.
      *
-     * `limit` differs on purpose: the list is a screen and 500 rows is more
-     * than anybody reads, while an export is a file somebody keeps and
-     * truncating it silently would be worse than refusing it.
+     * `limit` differs on purpose: the list is a screen, and an export is a
+     * file somebody keeps where truncating silently would be worse than
+     * refusing outright.
      */
     async function gatherOrders(req: Request, res: Response, limit: number) {
         const project = req.project!;
@@ -528,19 +679,48 @@ export function createClientPortalRouter(
         const rows = rs.rows as unknown as Array<OrderRow & { site_name: string }>;
         const names = await displayNames(project.id, rows.map((r) => r.assigned_to_username));
 
-        return {
-            project, scope, sites, q, from, to, rows, names,
-            truncated: rows.length === limit,
-        };
+        /* HOW MANY THERE ACTUALLY ARE, asked only when it is not already
+           known. A list that came back short of its own limit is the whole
+           answer and counting it again would be a second round trip to learn
+           something we are holding.
+
+           It matters when the list IS cut short. "Showing the first 500.
+           Narrow the dates to see the rest" tells a reader that something is
+           missing and not how much, so the only way to find out was to keep
+           halving the range -- and a reader who stops halving too early
+           reconciles an invoice against a list they believe is complete. */
+        const truncated = rows.length === limit;
+        const total = truncated
+            ? Number(
+                (await client.execute({
+                    sql: `SELECT COUNT(*) AS n FROM orders o
+                          JOIN sites s ON s.id = o.site_id
+                          WHERE ${filters.join(' AND ')}`,
+                    args,
+                })).rows[0]?.['n'] ?? rows.length,
+            )
+            : rows.length;
+
+        return { project, scope, sites, q, from, to, rows, names, truncated, total };
+    }
+
+    /** The row ceiling this request asked for, within what a browser can
+     *  take. See DEFAULT_ROWS: absent means the first page. */
+    function askedLimit(req: Request): number {
+        const raw = (req.query as Record<string, string | undefined>)['limit'];
+        if (raw === undefined || raw === '') return DEFAULT_ROWS;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 1) return DEFAULT_ROWS;
+        return Math.min(Math.floor(n), MAX_ROWS);
     }
 
     router.get('/orders', viewer, wrap(async (req, res) => {
-        const got = await gatherOrders(req, res, MAX_ROWS);
+        const got = await gatherOrders(req, res, askedLimit(req));
         if (!got) return;
-        const { project, scope, sites, q, from, to, rows, names, truncated } = got;
+        const { project, scope, sites, q, from, to, rows, names, truncated, total } = got;
 
         await req.audit('client.list', 'order', null, {
-            from, to, rows: rows.length, sites: sites.length,
+            from, to, rows: rows.length, total, sites: sites.length,
             filters: Object.keys(q).filter((k) => ['status', 'siteId', 'reference'].includes(k)),
         });
 
@@ -573,6 +753,16 @@ export function createClientPortalRouter(
                 eta: etas.get(Number(r.id)) ?? null,
             })),
             truncated,
+            /* What the range holds, whether or not it all came back, so the
+               screen can offer "show all 7,812" instead of "narrow the
+               dates". */
+            total,
+            /* And the ceiling that produced it, so a screen asking for
+               everything can tell "all of it" from "all we will serve": a
+               range holding more than MAX_ROWS is still truncated, and
+               saying so is the difference between a limit and a silence. */
+            limit: askedLimit(req),
+            maxRows: MAX_ROWS,
             notes: scopeNote(sites, scope),
         });
     }));
@@ -624,88 +814,10 @@ export function createClientPortalRouter(
             return;
         }
 
-        const wb = new ExcelJS.Workbook();
-        wb.creator = 'Izy Global Services LLC';
-        wb.created = new Date();
+        const wb = buildWorkbook({
+            timezone: project.timezone, sites, from, to, rows, names, proof: null,
+        });
 
-        const sheet = wb.addWorksheet('Deliveries');
-        sheet.columns = [
-            { header: 'Service date', key: 'serviceDate', width: 13 },
-            { header: 'Pharmacy', key: 'pharmacy', width: 26 },
-            { header: 'Zone', key: 'zone', width: 7 },
-            { header: 'Reference', key: 'reference', width: 16 },
-            { header: 'Service', key: 'serviceType', width: 10 },
-            { header: 'Patient', key: 'patient', width: 24 },
-            { header: 'Address', key: 'address', width: 34 },
-            { header: 'City', key: 'city', width: 16 },
-            { header: 'ZIP', key: 'zip', width: 8 },
-            { header: 'Status', key: 'status', width: 14 },
-            { header: 'Not delivered because', key: 'failureReason', width: 22 },
-            { header: 'On time', key: 'onTime', width: 9 },
-            { header: 'Requested', key: 'receivedAt', width: 22 },
-            { header: 'Due', key: 'dueAt', width: 22 },
-            { header: 'Collected', key: 'pickedUpAt', width: 22 },
-            { header: 'Arrived', key: 'arrivedAt', width: 22 },
-            { header: 'Delivered', key: 'deliveredAt', width: 22 },
-            { header: 'Returned', key: 'returnedAt', width: 22 },
-            { header: 'Received by', key: 'receivedBy', width: 22 },
-            { header: 'No signature because', key: 'noSignatureReason', width: 22 },
-            { header: 'Courier', key: 'courier', width: 14 },
-        ];
-        sheet.getRow(1).font = { bold: true };
-        sheet.views = [{ state: 'frozen', ySplit: 1 }];
-
-        for (const r of rows) {
-            const view = present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '');
-            sheet.addRow({
-                serviceDate: view.serviceDate,
-                pharmacy: view.pharmacy,
-                /* The words, not a blank. A spreadsheet column that is
-                   empty for an out-of-area delivery reads as missing data;
-                   "out of area" is the fact. */
-                zone: view.zone === null ? 'out of area' : view.zone,
-                reference: view.reference,
-                serviceType: view.serviceType,
-                patient: view.recipientName,
-                address: view.address,
-                city: view.city,
-                zip: view.zip,
-                status: view.status,
-                failureReason: (view.failureReason ?? '').replace(/_/g, ' '),
-                /* Blank, not "no", while a delivery is still open. A column
-                   of "no" against work in progress reads as failure. */
-                onTime: view.sla.onTime === null ? '' : view.sla.onTime ? 'yes' : 'no',
-                receivedAt: view.receivedAt ?? '',
-                dueAt: view.dueAt ?? '',
-                pickedUpAt: view.pickedUpAt ?? '',
-                arrivedAt: view.arrivedAt ?? '',
-                deliveredAt: view.deliveredAt ?? '',
-                returnedAt: view.returnedAt ?? '',
-                receivedBy: view.receivedBy ?? '',
-                noSignatureReason: view.noSignatureReason ?? '',
-                courier: view.courier,
-            });
-        }
-
-        /* What this file is, on the file itself. A spreadsheet outlives the
-           conversation that produced it, and somebody opening it in six
-           months should be able to tell what range it covers, which
-           pharmacies, and whose clock the times are on. */
-        const about = wb.addWorksheet('About');
-        about.columns = [{ width: 26 }, { width: 76 }];
-        about.addRow(['University Health Pharmacy Courier']).font = { bold: true, size: 14 };
-        about.addRow(['Service dates', `${from} to ${to}`]);
-        about.addRow(['Pharmacies', sites.length === 0 ? 'none on this account' : sites.map((x) => x.name).join(', ')]);
-        about.addRow(['Deliveries', rows.length]);
-        about.addRow(['Times', `${project.timezone}. Timestamps are ISO 8601 with a zone offset.`]);
-        about.addRow(['Produced', new Date().toISOString()]);
-        about.addRow(['By', 'Izy Global Services LLC']);
-        about.addRow([]);
-        about.addRow([
-            'Contains patient data',
-            'Patient names and delivery addresses are in the Deliveries sheet. Handle and store this '
-            + 'file as you would any other record of your patients.',
-        ]).font = { bold: true };
 
         /* Before the bytes, so a copy that was taken is recorded even if the
            download is interrupted. The count is the point: this is the record
@@ -724,6 +836,237 @@ export function createClientPortalRouter(
            copy of this. */
         res.setHeader('Cache-Control', 'no-store, private');
         res.end(buffer);
+    }));
+
+    /* ──────────────────────────────────── the spreadsheet AND every proof
+     *
+     * THE MANUAL PROCESS THIS ENDS.
+     *
+     * The export above gives University Health's billing staff the rows.
+     * Checking those rows against the proof behind them meant opening each
+     * delivery in turn and downloading its document one at a time: a week of
+     * one pharmacy is two hundred deliveries, so reconciling a week was two
+     * hundred clicks, and reconciling a month across nine counters was not
+     * something anybody was ever going to finish. They asked for it in bulk
+     * on 12 November 2026 and they were right to.
+     *
+     * ONE ZIP: the same spreadsheet the export produces, and beside it the
+     * proof of every delivery in it, in a folder per pharmacy. The
+     * spreadsheet's last column names each row's own document, so the path
+     * from an invoice line to the signature behind it is a column rather
+     * than a search.
+     *
+     * A DOCUMENT FOR EVERY DELIVERY THAT REACHED AN OUTCOME, and none for one
+     * still in the air. A proof of delivery for a delivery that has not
+     * happened is a page saying nothing happened, and a folder full of those
+     * teaches a reader that the documents are not worth opening.
+     *
+     * SCOPED AND COUNTED EXACTLY LIKE THE EXPORT. Same gatherOrders, so the
+     * bundle covers what the screen covers; the audit row records how many
+     * rows AND how many documents, because this is the largest quantity of
+     * patient data that leaves this system in one act and the trail should
+     * say so in those terms.
+     *
+     * IT STREAMS. See core/zip/writer.ts: several hundred documents is a few
+     * hundred megabytes and two minutes of work, and a server that buffers
+     * that is a server that falls over on a Tuesday afternoon. The cost of
+     * streaming is that the ceiling has to be enforced BEFORE the first byte,
+     * because there is no way to refuse half way through a download -- hence
+     * the check below rather than a guard inside the loop.
+     */
+
+    /* Documents, not rows. Five hundred proofs is a fortnight of one of the
+     * big counters or a week of all nine, it is the figure the request was
+     * made about, and it is about two minutes and a couple of hundred
+     * megabytes. Past that the honest answer is a narrower range: a download
+     * somebody abandons at eight minutes has reconciled nothing. */
+    const BUNDLE_MAX_DOCUMENTS = 500;
+
+    /* How many proofs are built at once. The cost of one is a dozen round
+     * trips -- the order, its packages, its custody chain, its signatures,
+     * then its photographs out of the bucket -- and nearly all of that is
+     * waiting. Sequentially a week of one pharmacy took over a minute of
+     * almost pure latency. Five at a time, written in order, because a zip
+     * is a sequence and the reader should find the pharmacies in the order
+     * the spreadsheet lists them. */
+    const BUNDLE_CONCURRENCY = 5;
+
+    router.get('/orders-with-pod.zip', viewer, wrap(async (req, res) => {
+        const got = await gatherOrders(req, res, EXPORT_MAX_ROWS + 1);
+        if (!got) return;
+        const { project, sites, from, to, rows, names } = got;
+
+        if (rows.length > EXPORT_MAX_ROWS) {
+            res.status(400).json({
+                error: `That is more than ${EXPORT_MAX_ROWS.toLocaleString()} deliveries. `
+                    + 'Ask for a narrower range, so the file you keep is the whole of what you asked for.',
+                code: 'client.exportTooLarge',
+            });
+            return;
+        }
+
+        /* Which rows get a document. OPEN_STATUSES is the same list the
+           figure at the top of the page counts, so "still out" on the screen
+           and "no proof yet" in the spreadsheet are one definition. */
+        const settled = rows.filter((r) => !OPEN_STATUSES.includes(r.status as typeof OPEN_STATUSES[number]));
+
+        if (settled.length > BUNDLE_MAX_DOCUMENTS) {
+            res.status(400).json({
+                error: `That range holds ${settled.length.toLocaleString()} completed deliveries, and a `
+                    + `bundle carries ${BUNDLE_MAX_DOCUMENTS.toLocaleString()} documents at a time. `
+                    + 'Ask for a narrower range — a week of one pharmacy, or a few days of all of them — '
+                    + 'so the file you keep is the whole of what you asked for. '
+                    + 'The Excel export alone has no such limit.',
+                code: 'client.bundleTooLarge',
+                deliveries: rows.length,
+                documents: settled.length,
+                maxDocuments: BUNDLE_MAX_DOCUMENTS,
+            });
+            return;
+        }
+        if (settled.length === 0) {
+            res.status(400).json({
+                error: 'Nothing in that range has finished yet, so there is no proof to bundle. '
+                    + 'The Excel export has the rows.',
+                code: 'client.bundleEmpty',
+            });
+            return;
+        }
+
+        /* Where each document will sit, decided before anything is rendered
+           because the spreadsheet carries the paths and the spreadsheet goes
+           in first. A row whose document fails to build is corrected in
+           proof-not-available.txt at the end rather than left as a path
+           pointing at nothing -- the alternative is rendering five hundred
+           documents before writing the first byte, which is the buffering
+           this route exists to avoid. */
+        const folder = new Map(sites.map((s) => [s.id, zipSafeName(s.name)]));
+        const pathOf = new Map<number, string>();
+        for (const r of settled) {
+            const dir = folder.get(Number(r.site_id)) ?? zipSafeName(r.site_name);
+            pathOf.set(Number(r.id), `${dir}/${podFilename(Number(r.id), r.service_date)}`);
+        }
+
+        /* Every courier on the project, once. The documents name the people
+           on their own timelines, and asking per document would be five
+           hundred copies of the same query. */
+        const couriers = await client.execute({
+            sql: `SELECT u.username FROM users u JOIN memberships m ON m.user_id = u.id
+                  WHERE m.project_id = ?`,
+            args: [project.id],
+        });
+        const courierNames = await displayNames(project.id, couriers.rows.map((r) => String(r['username'])));
+
+        /** One document, or why there is not one. Never throws: a proof that
+         *  could not be built is a line in a text file at the end of the
+         *  bundle, not a half-written zip. */
+        async function buildPod(id: number): Promise<{ id: number; pdf: Buffer | null; why: string }> {
+            try {
+                const hasPhoto = await hasProofPhoto(client, project.id, id);
+                const data = await loadPodData(client, {
+                    projectId: project.id,
+                    orderId: id,
+                    timezone: project.timezone,
+                    hasPhoto,
+                    courierName: (username) => courierNames.get(username) ?? '',
+                    photoAvailable: storage.available,
+                });
+                if (!data) return { id, pdf: null, why: 'the delivery could not be read' };
+                await attachPhotos(client, storage, project.id, id, data);
+                return { id, pdf: renderPod(data), why: '' };
+            } catch {
+                /* Same rule as pod-photos.ts: the record is worth more than
+                   the picture, and 499 documents are worth more than a
+                   refusal because one of them would not render. */
+                return { id, pdf: null, why: 'the document could not be produced' };
+            }
+        }
+
+        const wb = buildWorkbook({
+            timezone: project.timezone,
+            sites,
+            from,
+            to,
+            rows,
+            names,
+            proof: (r) => pathOf.get(Number(r.id)) ?? 'no proof yet — still in progress',
+        });
+        const sheet = Buffer.from(await wb.xlsx.writeBuffer());
+
+        /* Before the bytes, so a copy that was taken is recorded even if the
+           download is interrupted. Documents as well as rows: this is the
+           record of how much patient data left here, and a bundle is a
+           different quantity from a spreadsheet. */
+        await req.audit('client.export_bundle', 'order', `${from}..${to}`, {
+            rows: rows.length,
+            documents: settled.length,
+            sites: sites.length,
+            containedPatientData: true,
+        });
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="deliveries-and-proof-${from}-to-${to}.zip"`);
+        /* Patient names, addresses, signatures and photographs of front
+           doors. Nothing between here and the browser keeps a copy. */
+        res.setHeader('Cache-Control', 'no-store, private');
+        /* No Content-Length: the size is not known until the last document
+           has been rendered, and a wrong one is worse than none. */
+
+        const zip = new ZipWriter(res);
+        const failures: string[] = [];
+        try {
+            await zip.add(`deliveries-${from}-to-${to}.xlsx`, sheet);
+
+            /* Five in flight, written in order. `queue` holds the promises
+               already started; each one taken off starts the next, so there
+               are never more than BUNDLE_CONCURRENCY awaiting the database
+               and never a document written out of turn. */
+            const queue: Array<Promise<{ id: number; pdf: Buffer | null; why: string }>> = [];
+            let next = 0;
+            const start = () => {
+                const row = settled[next];
+                if (row === undefined) return;
+                next += 1;
+                queue.push(buildPod(Number(row.id)));
+            };
+            for (let i = 0; i < BUNDLE_CONCURRENCY; i += 1) start();
+
+            while (queue.length > 0) {
+                const done = await queue.shift()!;
+                start();
+                const name = pathOf.get(done.id);
+                if (done.pdf === null || name === undefined) {
+                    failures.push(`${pathOf.get(done.id) ?? `delivery ${done.id}`} — ${done.why}`);
+                    continue;
+                }
+                await zip.add(name, done.pdf);
+            }
+
+            /* Only when there is something to say. An empty file named
+               "proof-not-available" in every bundle is a file people learn
+               to ignore, and then do not read on the one that matters. */
+            if (failures.length > 0) {
+                await zip.add('proof-not-available.txt', Buffer.from(
+                    'These deliveries are in the spreadsheet and their proof of delivery could not be\n'
+                    + 'produced for this bundle. The documents themselves are still available one at a\n'
+                    + 'time in the portal, and nothing here means the delivery did not happen.\n\n'
+                    + failures.map((f) => `  ${f}\n`).join('')
+                    + '\nPlease tell us about any of these: they are our fault, not yours.\n',
+                    'utf8',
+                ));
+            }
+
+            await zip.finish();
+            res.end();
+        } catch {
+            /* The response has already begun, so there is no status code left
+               to send and no honest way to finish the file. Destroying the
+               socket is what tells the browser the download failed, which is
+               the one thing a reader must not be left guessing about: a zip
+               that opens and is missing documents is worse than one that did
+               not arrive. */
+            res.destroy();
+        }
     }));
 
     /* ---------------------------------------------------------- reports ----

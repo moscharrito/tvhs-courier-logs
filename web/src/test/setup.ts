@@ -43,7 +43,17 @@ export function mockFetch(routes: Record<string, unknown>) {
         }
         const hit = Object.entries(routes).find(([k]) => k === key || (k.endsWith('*') && key.startsWith(k.slice(0, -1))));
         if (!hit) return new Response(JSON.stringify({ error: `no mock for ${key}` }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-        const value = hit[1] as { status?: number; body?: unknown } | unknown[] | Record<string, unknown>;
+        /* A HANDLER, FOR A SCREEN THAT ASKS THE SAME URL TWICE AND SHOULD GET
+           A DIFFERENT ANSWER. The client portal's "show all" is exactly that:
+           the first list comes back cut short, the reader presses the button,
+           and the second one is the whole range. A fixed body cannot tell
+           that story, and a test that cannot tell it would have passed with
+           the button doing nothing. Called with the url and the init, so a
+           handler can answer on the query string it was given. */
+        const resolved = typeof hit[1] === 'function'
+            ? (hit[1] as (url: string, init?: RequestInit) => unknown)(url, init)
+            : hit[1];
+        const value = resolved as { status?: number; body?: unknown } | unknown[] | Record<string, unknown>;
         const isEnvelope = value && typeof value === 'object' && !Array.isArray(value) && 'status' in value && 'body' in value;
         const status = isEnvelope ? Number((value as { status: number }).status) : 200;
         const body = isEnvelope ? (value as { body: unknown }).body : value;
