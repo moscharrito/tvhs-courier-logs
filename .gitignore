@@ -208,3 +208,7 @@ pods.ps1
 pods-*.txt
 zones.ps1
 zips.ps1
+
+# Holds the two billing people's names and hospital addresses, and takes the
+# admin password at the prompt. Public repository: never goes in.
+billing.ps1
