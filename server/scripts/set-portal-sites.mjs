@@ -16,6 +16,12 @@
  *     ... --revoke-reset --apply
  *         Take it away again.
  *
+ *     --user uh.manager --grant-oversight --apply
+ *         Say this account oversees the contract rather than standing at a
+ *         counter, which takes the counter panels off its screen: "Send a
+ *         list" and "Lists handed over". It GRANTS NOTHING and refuses
+ *         nothing; --revoke-oversight puts them back.
+ *
  * ─────────────────────────────────────────────────────────────────────────
  * WHY THE CAPABILITY LIVES IN THE SAME SCRIPT AS THE SITE LIST.
  *
@@ -36,6 +42,22 @@
  * IT REFUSES TO GRANT A SECOND ONE. Every account holding it can take over
  * any counter portal, so two is a question rather than a configuration.
  * --also says yes deliberately.
+ *
+ * WHAT overseesContract IS, AND WHY IT IS NOT THE SAME THING. It says this
+ * account has no counter of its own -- the contract manager, and the billing
+ * staff added on 12 November 2026. It decides whether two panels are offered
+ * and nothing else; see modules/uh/portal-capability.ts for why it is a
+ * setting rather than a guess at the number of pharmacies.
+ *
+ * There is no --also for it. Several accounts overseeing the contract is the
+ * ordinary case rather than a question, because it is not a verb.
+ *
+ * IT DOES, HOWEVER, TAKE AN ACCOUNT OUT OF THE RESET LIST. An account that
+ * oversees is not one of the counters a manager may reset, so granting this
+ * to somebody the manager could previously reset removes that reach. That is
+ * the intent -- the contract manager should not be able to rotate the
+ * billing staff passwords and sign in as them -- and it is said out loud
+ * below rather than discovered.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * WHY THIS EXISTS WHEN create-pharmacy-portals.mjs ALREADY WRITES THE SCOPE.
@@ -101,6 +123,8 @@ const wantSites = value('sites', '');
 const grantReset = has('grant-reset');
 const revokeReset = has('revoke-reset');
 const alsoReset = has('also');
+const grantOversight = has('grant-oversight');
+const revokeOversight = has('revoke-oversight');
 
 /* The name of the setting, spelled here because this script talks to the
    API over HTTP and imports nothing from src. modules/uh/portal-capability.ts
@@ -109,6 +133,7 @@ const alsoReset = has('also');
    name nothing reads. This is the second place. If it is ever renamed, that
    file's export is the thing to follow. */
 const RESET_CAPABILITY = 'mayResetPortalPasswords';
+const OVERSIGHT_CAPABILITY = 'overseesContract';
 
 if (!isLocal && !has('i-mean-production')) {
     console.error(`Refusing to touch ${base} without --i-mean-production.`);
@@ -122,8 +147,13 @@ if (grantReset && revokeReset) {
     console.error('--grant-reset and --revoke-reset are opposites. Pick one.');
     process.exit(1);
 }
-if (username === '' || (wantSites === '' && !grantReset && !revokeReset)) {
+if (grantOversight && revokeOversight) {
+    console.error('--grant-oversight and --revoke-oversight are opposites. Pick one.');
+    process.exit(1);
+}
+if (username === '' || (wantSites === '' && !grantReset && !revokeReset && !grantOversight && !revokeOversight)) {
     console.error('Usage: --user uh.manager [--sites all|code,code] [--grant-reset|--revoke-reset]');
+    console.error('                         [--grant-oversight|--revoke-oversight]');
     console.error('                         [--project uh] [--apply]');
     process.exit(1);
 }
@@ -259,6 +289,11 @@ async function main() {
     if (grantReset) say('     ->     may reset the other portals');
     if (revokeReset) say('     ->     may NOT reset the other portals');
 
+    const hadOversight = settings[OVERSIGHT_CAPABILITY] === true;
+    say(`  counter   ${hadOversight ? 'oversees the contract, no counter of its own' : 'a counter: sends lists, sees what it handed over'}`);
+    if (grantOversight) say('     ->     oversees the contract, no counter of its own');
+    if (revokeOversight) say('     ->     a counter: sends lists, sees what it handed over');
+
     /* SAID OUT LOUD, because it is the thing a fresh PUT would have eaten. */
     const kept = Object.keys(settings).filter((k) => k !== 'siteIds');
     say(`  keeping   ${kept.length > 0 ? kept.join(', ') : '(nothing else in settings)'}`);
@@ -266,9 +301,10 @@ async function main() {
     const added = siteIds === null ? [] : siteIds.filter((id) => !before.includes(id)).map(nameOf);
     const removed = siteIds === null ? [] : before.filter((id) => !siteIds.includes(id)).map(nameOf);
     const resetChanging = (grantReset && !hadReset) || (revokeReset && hadReset);
+    const oversightChanging = (grantOversight && !hadOversight) || (revokeOversight && hadOversight);
 
     say('');
-    if (added.length === 0 && removed.length === 0 && !resetChanging) {
+    if (added.length === 0 && removed.length === 0 && !resetChanging && !oversightChanging) {
         say('  Nothing to change: that is already how this account is set up.');
         return;
     }
@@ -276,6 +312,23 @@ async function main() {
     if (removed.length > 0) say(`  - ${removed.join(', ')}`);
     if (grantReset && !hadReset) say(`  + ${RESET_CAPABILITY}`);
     if (revokeReset && hadReset) say(`  - ${RESET_CAPABILITY}`);
+    if (grantOversight && !hadOversight) say(`  + ${OVERSIGHT_CAPABILITY}`);
+    if (revokeOversight && hadOversight) say(`  - ${OVERSIGHT_CAPABILITY}`);
+
+    /* THE ONE CONSEQUENCE BEYOND A SCREEN, said before it happens rather
+       than found afterwards: portal-reset.ts builds the manager list from
+       accounts that are counters, and this says an account is not one. */
+    if (grantOversight && !hadOversight) {
+        say('');
+        say('  NOTE: this also takes the account OUT of the reset list the contract');
+        say('  manager sees, because an account that oversees is not one of their');
+        say('  counters. Only an Izy administrator can reset its password after this.');
+    }
+    if (revokeOversight && hadOversight) {
+        say('');
+        say('  NOTE: this also puts the account back INTO the reset list the contract');
+        say('  manager sees, if its pharmacies are within theirs.');
+    }
 
     /* ───────── ONE ACCOUNT, OR A DELIBERATE SECOND ONE
      *
@@ -314,11 +367,14 @@ async function main() {
 
     if (siteIds !== null) settings.siteIds = siteIds;
     if (grantReset) settings[RESET_CAPABILITY] = true;
+    if (grantOversight) settings[OVERSIGHT_CAPABILITY] = true;
     /* DELETED, not set to false. mayReset() in portal-capability.ts tests
        for a literal true, so `false` would read the same as absent -- but a
        settings blob is read by people as well as code, and a key saying
        false looks like a considered denial rather than a verb nobody has. */
     if (revokeReset) delete settings[RESET_CAPABILITY];
+    /* Deleted rather than set to false, for the reason just above. */
+    if (revokeOversight) delete settings[OVERSIGHT_CAPABILITY];
 
     insist('membership', await call(`/api/users/${username}/memberships/${projectCode}`, {
         method: 'PUT',
@@ -333,15 +389,18 @@ async function main() {
         .find((m) => String(m.code) === projectCode);
     const nowIds = Array.isArray(now?.settings?.siteIds) ? now.settings.siteIds.map(Number) : [];
     const nowReset = now?.settings?.[RESET_CAPABILITY] === true;
+    const nowOversight = now?.settings?.[OVERSIGHT_CAPABILITY] === true;
 
     say(`  WROTE: ${username} now sees ${nowIds.length} of ${sites.length}: ${nowIds.map(nameOf).join(', ')}`);
     say(`         and ${nowReset ? 'MAY' : 'may NOT'} reset the other portals.`);
+    say(`         It ${nowOversight ? 'oversees the contract' : 'is a counter'}.`);
     const stillKept = Object.keys(now?.settings ?? {}).filter((k) => k !== 'siteIds');
     say(`  kept:  ${stillKept.length > 0 ? stillKept.join(', ') : '(nothing else)'}`);
 
     const wantIds = siteIds ?? before;
     const wantReset = grantReset ? true : revokeReset ? false : hadReset;
-    if (nowIds.length !== wantIds.length || nowReset !== wantReset) {
+    const wantOversight = grantOversight ? true : revokeOversight ? false : hadOversight;
+    if (nowIds.length !== wantIds.length || nowReset !== wantReset || nowOversight !== wantOversight) {
         say('');
         say('  WARNING: that is not what was asked for. Check it before trusting this.');
         throw new Stop();

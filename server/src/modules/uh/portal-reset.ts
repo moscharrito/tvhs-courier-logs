@@ -66,6 +66,22 @@
  *                              else's, which requires knowing the current
  *                              one.
  *
+ *   does not oversee the       ADDED 12 NOVEMBER 2026, WITH THE BILLING
+ *   contract                   ACCOUNTS, and the rule above would not have
+ *                              covered them. Billing was asked for with the
+ *                              manager's scope and WITHOUT the reset, so for
+ *                              the first time there is an account here that
+ *                              is not a resetter, is not an Izy login, and
+ *                              whose sites are a subset of the manager's --
+ *                              every earlier line would have let it through.
+ *                              The manager could have rotated billing's
+ *                              password and signed in as them.
+ *
+ *                              The rule was never really "not a resetter".
+ *                              It was "not a counter", and a resetter
+ *                              happened to be the only non-counter there
+ *                              was. Now it is spelled.
+ *
  * The subset rule is what makes this safe without a hard-coded list of eight
  * usernames: the authority is the scope the account already has, so it cannot
  * grow by someone forgetting to update a constant here.
@@ -100,7 +116,7 @@ import type { Client } from '@libsql/client';
 import type { SessionStore } from '../../core/auth/sessions';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { scopeFor } from './client-portal';
-import { mayReset } from './portal-capability';
+import { mayReset, oversees } from './portal-capability';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -186,6 +202,7 @@ export function createPortalResetRouter({ client, store }: { client: Client; sto
             if (Number(raw.admin_anywhere) === 1) continue;
             const settings = parseSettings(raw.settings);
             if (mayReset(settings)) continue;
+            if (oversees(settings)) continue;
             const siteIds = scopeFor(undefined, settings).siteIds;
             if (!withinScope(mine, siteIds)) continue;
             out.push({ row: raw, siteIds });

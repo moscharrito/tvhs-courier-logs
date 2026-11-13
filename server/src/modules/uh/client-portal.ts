@@ -33,7 +33,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { searchFragment, CLIENT_SEARCH_COLUMNS } from './search';
-import { mayReset } from './portal-capability';
+import { mayReset, oversees } from './portal-capability';
 import { presentHandling, handlingFlags } from './handling';
 import { evaluateSla, type OrderStatus } from './lifecycle';
 import { loadPodData, podFilename, renderPod } from './pod';
@@ -567,6 +567,14 @@ export function createClientPortalRouter(
                screen and the endpoint cannot disagree -- a link to a page the
                server would refuse is worse than no link. */
             canResetPortalPasswords: mayReset(req.membership?.settings ?? {}),
+            /* Whether this account oversees the contract rather than
+               standing at a counter. It gates nothing -- see
+               portal-capability.ts -- it only tells the screen whether the
+               counter's own panels are this reader's. Reported rather than
+               guessed from the number of pharmacies, for the reason written
+               there: the guess is wrong the day a counter is given its
+               neighbour's deliveries to watch. */
+            overseesContract: oversees(req.membership?.settings ?? {}),
             delivered: byStatus['delivered'] ?? 0,
             notDelivered: byStatus['failed'] ?? 0,
             notes: scopeNote(sites, scope),

@@ -125,6 +125,12 @@ interface SummaryResponse {
     /** True for the contract manager: they may reset their own counters'
      *  passwords. Absent for an ordinary pharmacy. */
     canResetPortalPasswords?: boolean;
+    /* True for an account that oversees the contract rather than standing
+     * at a counter -- the contract manager and the billing staff. It grants
+     * nothing: it decides whether the COUNTER'S OWN panels are offered.
+     * Absent reads as a counter, which is the safe direction: an older
+     * server that does not send it leaves the screen exactly as it was. */
+    overseesContract?: boolean;
     notes: string[];
 }
 
@@ -362,8 +368,15 @@ export function ClientPortal() {
                     Offered only where the contract has agreed to it. Until
                     University Health say whether lists come through the
                     portal or by email, the answer is email, and a link to a
-                    page the server would refuse is worse than no link. */}
-                {summary.canUploadList === true && (
+                    page the server would refuse is worse than no link.
+
+                    AND NOT TO SOMEBODY WITHOUT A COUNTER. The contract
+                    manager and the billing staff oversee nine pharmacies
+                    and dispense at none, so "send a list" on their screen
+                    is a question with no answer: whose list, from which
+                    counter? Off for them from 12 November 2026, on
+                    University Health's own reading of the page. */}
+                {summary.canUploadList === true && summary.overseesContract !== true && (
                     <>
                         {' '}
                         <Link className="izy-btn secondary" to={`/projects/${code}/send-list`}>
@@ -371,10 +384,13 @@ export function ClientPortal() {
                         </Link>
                     </>
                 )}
-                {/* The contract manager only. Offered on the strength of the
-                    server's own answer rather than the number of pharmacies
-                    on the account, so the link and the endpoint behind it
-                    cannot disagree. */}
+                {/* The contract manager only, and deliberately NOT the
+                    billing staff beside him: they read and export, and
+                    rotating a counter's password stays with the person who
+                    runs the contract. It is the membership that decides, not
+                    this line -- billing simply does not carry the capability
+                    -- so the link and the endpoint behind it cannot
+                    disagree. */}
                 {summary.canResetPortalPasswords === true && (
                     <>
                         {' '}
@@ -424,7 +440,15 @@ export function ClientPortal() {
                     They are buttons rather than anchors because this changes
                     the query on the page it is already on. */}
                 <div className="izy-stats">
-                    <div><Count n={summary.total} onPick={() => today('')} label="sent to us" /></div>
+                    {/* "SENT TO COURIER", NOT "SENT TO US".
+
+                        This page is read by University Health, so "us" is
+                        whoever the reader takes it to mean -- and on a screen
+                        with their own name at the top, the natural reading is
+                        the hospital. It is the opposite: the figure counts
+                        what the pharmacy handed to the courier. Renamed on
+                        their own reading of it, 12 November 2026. */}
+                    <div><Count n={summary.total} onPick={() => today('')} label="sent to courier" /></div>
                     <div><Count n={summary.outstanding} onPick={() => today('open')} label="still out" /></div>
                     <div><Count n={summary.delivered} onPick={() => today('delivered')} label="delivered" /></div>
                     <div className={summary.notDelivered > 0 ? 'izy-stat-bad' : undefined}>
@@ -436,7 +460,7 @@ export function ClientPortal() {
                 </div>
                 <p className="izy-muted">
                     Any of these opens the deliveries behind it. Still out, delivered, not delivered
-                    and cancelled add up to what was sent to us.
+                    and cancelled add up to what was sent to the courier.
                 </p>
             </div>
 
@@ -656,12 +680,19 @@ export function ClientPortal() {
                 hands a file over and creates nothing, which is exactly what
                 the email attachment did, so there is nothing for the setting
                 to protect. */}
-            <ListDrops
-                projectCode={code}
-                timezone={summary.timezone}
-                canUpload
-                canHandle={false}
-            />
+            {/* Nor to somebody without a counter, for the same reason as
+                "Send a list" above: this is a pharmacy's receipt for the
+                paperwork IT handed us, and on the contract manager's screen
+                it is nine pharmacies' paperwork in one pile answering a
+                question he did not ask. */}
+            {summary.overseesContract !== true && (
+                <ListDrops
+                    projectCode={code}
+                    timezone={summary.timezone}
+                    canUpload
+                    canHandle={false}
+                />
+            )}
 
             {detail && <ProofOfDelivery code={code} order={detail} onClose={() => setOpen(null)} />}
         </>

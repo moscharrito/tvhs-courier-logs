@@ -29,3 +29,39 @@ export const RESET_CAPABILITY = 'mayResetPortalPasswords';
  */
 export const mayReset = (settings: Record<string, unknown>): boolean =>
     settings[RESET_CAPABILITY] === true;
+
+/* ─────────────────────────────────────────── standing at a counter, or not
+ *
+ * WHAT THIS DISTINGUISHES, AND WHY IT IS NOT DERIVED.
+ *
+ * A pharmacist's portal carries the tools of a counter: sending tomorrow's
+ * list, and the receipt for the lists already handed over. The contract
+ * manager and the billing staff have no counter. They oversee nine of them,
+ * and those two panels on their screen are a question with no answer --
+ * which pharmacy is this list for? -- and a drop box that is nine pharmacies'
+ * paperwork in one pile. University Health asked for them off on 12 November
+ * 2026, having looked at the screen.
+ *
+ * IT IS ITS OWN SETTING RATHER THAN A GUESS. Two guesses were available and
+ * both are wrong in a way nobody would notice for a year:
+ *
+ *   "more than one pharmacy" -- true of these three accounts today and false
+ *   the day a counter is given its neighbour's deliveries to watch, at which
+ *   point a real pharmacy silently loses the only way it has to send a list;
+ *
+ *   mayResetPortalPasswords -- it was true of exactly these accounts this
+ *   morning and is not any more, because billing was asked for without the
+ *   reset. Overloading a verb to mean a kind of account is how a capability
+ *   ends up granted by a line that was about something else.
+ *
+ * So it is written on the membership, by the same script that writes the
+ * scope, and it grants nothing. Nothing is refused on the strength of it:
+ * it only decides whether a panel is offered. An account that has it and
+ * posts a list anyway is still allowed to, because the list upload has its
+ * own rules and this is not one of them.
+ */
+export const OVERSIGHT_CAPABILITY = 'overseesContract';
+
+/** True only for a literal `true`, for the reason above `mayReset`. */
+export const oversees = (settings: Record<string, unknown>): boolean =>
+    settings[OVERSIGHT_CAPABILITY] === true;

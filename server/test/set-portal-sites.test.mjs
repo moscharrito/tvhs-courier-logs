@@ -274,3 +274,94 @@ describe('set-portal-sites.mjs and the reset capability', () => {
         expect(after.mayResetPortalPasswords).toBe(true);
     });
 });
+
+/* ──────────────────────────── saying an account has no counter of its own
+ *
+ * `overseesContract` arrived on 12 November 2026 with the billing accounts.
+ * It grants nothing and refuses nothing: it takes the counter panels off a
+ * screen -- "Send a list", and the receipt for the lists already handed
+ * over -- for somebody who oversees nine pharmacies and dispenses at none.
+ *
+ * It is here rather than in create-pharmacy-portals.mjs because uh.manager
+ * ALREADY EXISTS on production and needs the key added to a membership that
+ * must keep everything else it has. That is the merge this script was
+ * written for, and the test that matters is still the one about what it did
+ * not touch.
+ */
+describe('set-portal-sites.mjs and the counter panels', () => {
+    const settingsOf = async (username) => {
+        const users = (await admin.get('/api/users')).body;
+        const u = users.find((x) => x.username === username);
+        return (u.memberships ?? []).find((m) => m.code === 'uh')?.settings ?? {};
+    };
+
+    it('grants it without --sites, and keeps the scope and the reset verb', async () => {
+        /* uh.testmanager is the live shape: every counter, and the reset.
+           Adding oversight must cost it neither. */
+        const before = await settingsOf('uh.testmanager');
+        expect(before.mayResetPortalPasswords).toBe(true);
+        expect(before.overseesContract).toBeUndefined();
+
+        const res = await run(['--user', 'uh.testmanager', '--grant-oversight', '--apply']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('unchanged (no --sites given)');
+        expect(res.out).toContain('oversees the contract');
+
+        const after = await settingsOf('uh.testmanager');
+        expect(after.overseesContract).toBe(true);
+        expect(after.mayResetPortalPasswords).toBe(true);
+        expect(after.siteIds).toEqual(before.siteIds);
+    });
+
+    it('says out loud that it changes who the manager can reset', async () => {
+        /* The one consequence beyond a screen. An operator who reads only
+           the flag name would not expect it, so the script says it before
+           it writes rather than leaving it to be found weeks later by a
+           pharmacist who cannot be helped. */
+        const res = await run(['--user', 'uh.plain', '--grant-oversight']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toMatch(/OUT of the reset list/i);
+        expect(res.out).toContain('Dry run');
+    });
+
+    it('is a no-op the second time rather than writing again', async () => {
+        const res = await run(['--user', 'uh.testmanager', '--grant-oversight', '--apply']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('already how this account is set up');
+        expect(res.out).not.toContain('WROTE:');
+    });
+
+    it('revokes by deleting the key rather than writing false', async () => {
+        /* oversees() tests for a literal true, so `false` would read the
+           same as absent -- but a settings blob is read by people too, and
+           a key saying false looks like a considered denial. */
+        const res = await run(['--user', 'uh.testmanager', '--revoke-oversight', '--apply']);
+        expect(res.code, res.out).toBe(0);
+        const after = await settingsOf('uh.testmanager');
+        expect('overseesContract' in after).toBe(false);
+        expect(after.mayResetPortalPasswords).toBe(true);
+    });
+
+    it('refuses both flags at once rather than picking one', async () => {
+        const res = await run(['--user', 'uh.plain', '--grant-oversight', '--revoke-oversight', '--apply']);
+        expect(res.code).toBe(1);
+        expect(res.out).toContain('opposites');
+    });
+
+    it('needs no --sites, but still needs a user', async () => {
+        const res = await run(['--grant-oversight', '--apply']);
+        expect(res.code).toBe(1);
+        expect(res.out).toContain('Usage:');
+    });
+
+    it('asks no permission for a second one, because it is not a verb', async () => {
+        /* --also exists for the reset because everybody holding that can
+           take over a counter portal. Several accounts overseeing the
+           contract is the ordinary case: a manager and two in billing. */
+        const res = await run(['--user', 'uh.plain', '--grant-oversight', '--apply']);
+        expect(res.code, res.out).toBe(0);
+        expect(res.out).toContain('WROTE:');
+        expect(res.out).not.toMatch(/Pass --also/);
+        expect((await settingsOf('uh.plain')).overseesContract).toBe(true);
+    });
+});

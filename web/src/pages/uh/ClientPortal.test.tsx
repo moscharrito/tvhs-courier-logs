@@ -478,7 +478,18 @@ describe('opening the figures at the top', () => {
 
     it('says the four figures add up, because they did not before', async () => {
         renderPortal();
-        expect(await screen.findByText(/add up to what was sent to us/)).toBeInTheDocument();
+        expect(await screen.findByText(/add up to what was sent to the courier/)).toBeInTheDocument();
+    });
+
+    it('calls the total what it is: what went to the courier, not to "us"', async () => {
+        /* "Sent to us" is read on a screen with University Health's own name
+           at the top, where the natural reading of "us" is the hospital. It
+           is the opposite: the figure counts what the pharmacy handed over.
+           Renamed on their own reading of the page, 12 November 2026. */
+        renderPortal();
+        await settled();
+        expect(screen.getByText(/sent to courier/i)).toBeInTheDocument();
+        expect(screen.queryByText(/sent to us/i)).toBeNull();
     });
 });
 
@@ -500,6 +511,66 @@ describe('the link to sending a list', () => {
     it('never hides performance and reports, which every account gets', async () => {
         renderPortal();
         expect(await screen.findByRole('link', { name: /Performance and reports/i })).toBeInTheDocument();
+    });
+});
+
+/* ────────────────────────────── an account with no counter of its own
+ *
+ * The contract manager and the billing staff oversee nine pharmacies and
+ * dispense at none. Two panels on this page belong to a counter: sending
+ * tomorrow's list, and the receipt for the lists already handed over. On
+ * their screen the first is a question with no answer -- whose list, from
+ * which counter? -- and the second is nine pharmacies' paperwork in one
+ * pile. University Health asked for both off on 12 November 2026, having
+ * looked at the page.
+ *
+ * The flag comes from the server and grants nothing. A counter that does
+ * not send it is a counter, which is the safe direction: an older server
+ * leaves this screen exactly as it was.
+ */
+describe('a portal that oversees the contract', () => {
+    const overseer = (over = {}) => routes({
+        [`GET ${BASE}/summary`]: summary({
+            canUploadList: true, overseesContract: true, ...over,
+        }),
+    });
+
+    it('is not offered a list to send, because it has no counter to send one from', async () => {
+        renderPortal(overseer());
+        await settled();
+        expect(screen.queryByRole('link', { name: /Send a list/i })).toBeNull();
+    });
+
+    it("is not shown the lists handed over, which are a counter's own receipt", async () => {
+        renderPortal(overseer());
+        await settled();
+        expect(screen.queryByText(/Lists handed over/i)).toBeNull();
+    });
+
+    it('keeps them for a counter, which is what they are for', async () => {
+        /* The half of this that would be easy to break and hard to notice:
+           a pharmacy that loses the only way it has to send tomorrow's list
+           goes back to email and nobody here finds out. */
+        renderPortal(routes({ [`GET ${BASE}/summary`]: summary({ canUploadList: true }) }));
+        await settled();
+        expect(screen.getByRole('link', { name: /Send a list/i })).toBeInTheDocument();
+        expect(screen.getByText(/Lists handed over/i)).toBeInTheDocument();
+    });
+
+    it('still offers the contract manager the pharmacy logins', async () => {
+        /* Kept for him and not for billing, and the difference is the
+           membership rather than this screen: billing does not carry the
+           capability, so the server reports false and the server refuses
+           the page too. */
+        renderPortal(overseer({ canResetPortalPasswords: true }));
+        await settled();
+        expect(screen.getByRole('link', { name: /Pharmacy logins/i })).toBeInTheDocument();
+    });
+
+    it('offers billing no pharmacy logins', async () => {
+        renderPortal(overseer({ canResetPortalPasswords: false }));
+        await settled();
+        expect(screen.queryByRole('link', { name: /Pharmacy logins/i })).toBeNull();
     });
 });
 

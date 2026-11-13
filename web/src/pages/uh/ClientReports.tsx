@@ -249,7 +249,15 @@ export function ClientReports() {
                                     <td>Completion rate</td>
                                     <td><b>{pct(report.rates.completionRate)}</b></td>
                                     <td className="izy-muted">
-                                        every delivery given to us
+                                        {/* "given to the courier", not "given
+                                            to us", for the reason the figure
+                                            at the top of the deliveries page
+                                            was renamed on 12 November 2026:
+                                            this screen has University
+                                            Health's own name on it, so "us"
+                                            reads as the hospital and the
+                                            denominator reads backwards. */}
+                                        every delivery given to the courier
                                         {report.totals.cancelled > 0 && <>, less the {report.totals.cancelled} cancelled</>}
                                         {report.totals.stillOpen > 0 && <> &middot; {report.totals.stillOpen} still out, counted against it</>}
                                     </td>

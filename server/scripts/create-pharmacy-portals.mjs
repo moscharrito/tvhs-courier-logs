@@ -47,15 +47,15 @@
  * to the pharmacy it belongs to, by a channel you would be comfortable
  * showing University Health, and delete it afterwards.
  *
- * What replaces the old rule is the MANAGER'S RESET: the overseeing accounts
- * are created with mayResetPortalPasswords, which lets whoever runs the
- * contract set a new password for any of the counters themselves, audited,
- * without telephoning us. So a credential that has gone astray is a
- * five-minute fix at their end rather than a support call at ours.
+ * What replaces the old rule is the MANAGER'S RESET: uh.manager is created
+ * with mayResetPortalPasswords, which lets whoever runs the contract set a
+ * new password for any of the counters themselves, audited, without
+ * telephoning us. So a credential that has gone astray is a five-minute fix
+ * at their end rather than a support call at ours.
  *
- * It does not reach each other. portal-reset.ts skips any account that can
- * itself reset, so the manager and the billing pair cannot take one another
- * over; only we can reset those three.
+ * The manager alone. Billing was asked for without it (12 November), and
+ * portal-reset.ts skips any account that can itself reset, so nothing that
+ * holds this verb can be taken over by something else that holds it.
  *
  *   node server/scripts/create-pharmacy-portals.mjs                      # local
  *   node server/scripts/create-pharmacy-portals.mjs --i-mean-production  # the live site
@@ -170,15 +170,30 @@ const COUNTERS = [
     { code: 'bc3', name: 'University Health Business Center III', note: 'volume not in the 2026 H1 actuals' },
 ];
 
-/* What an account that oversees the whole contract may do beyond reading it.
+/* What an account that oversees the whole contract carries beyond its scope.
  *
- * SPELLED ONCE, because it is now held by more than one person. See the
- * header, and modules/uh/portal-reset.ts for what it does and does not reach:
- * the counters above and nothing else, never an Izy login, never a courier,
- * and never another account that holds this same capability -- `resettable`
- * skips anybody who can reset, so these people cannot take each other over.
+ * TWO SETTINGS, AND THEY ARE NOT THE SAME THING. Keeping them apart is what
+ * made the 12 November change a one-line difference between manager and
+ * billing rather than a rewrite.
+ *
+ * OVERSIGHT grants nothing. It says this account has no counter of its own,
+ * so the counter's panels -- sending tomorrow's list, and the receipt for
+ * the lists already handed over -- are not offered to it. Nothing is refused
+ * on the strength of it. See modules/uh/portal-capability.ts.
+ *
+ * RESET is a verb, and the manager has it alone. See
+ * modules/uh/portal-reset.ts for what it does and does not reach: the
+ * counters and nothing else, never an Izy login, never a courier, and never
+ * another account that holds it -- `resettable` skips anybody who can reset,
+ * so nobody holding this can be taken over by somebody else holding it.
+ *
+ * University Health asked for billing WITHOUT it on 12 November: they read
+ * and export, and rotating a counter's password stays with the person who
+ * runs the contract. That is why the two are separate constants and why the
+ * screen reads the membership rather than counting pharmacies.
  */
-const CONTRACT_CAPABILITIES = { mayResetPortalPasswords: true };
+const OVERSIGHT = { overseesContract: true };
+const MAY_RESET = { mayResetPortalPasswords: true };
 
 /* Whoever oversees the whole contract, as opposed to standing at one counter.
  *
@@ -195,33 +210,42 @@ const CONTRACT_CAPABILITIES = { mayResetPortalPasswords: true };
  * logins screen somebody else has to read, so a production run says so.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * WHY BILLING HAS THE MANAGER'S REACH AND NOT A LESSER ONE.
+ * WHY BILLING HAS THE MANAGER'S SCOPE, AND WHERE IT STOPS.
  *
  * University Health asked on 12 November 2026 for two accounts for their
- * pharmacy billing staff with the contract manager's privileges. Reconciling
- * an invoice is a question about every counter at once -- which is exactly
- * what the manager's membership is -- and an account scoped to eight of the
- * nine would produce a reconciliation that is quietly short. So the scope is
- * the same list, from the same place, and adding a tenth pharmacy is one
- * change rather than three.
+ * pharmacy billing staff with the contract manager's reach. Reconciling an
+ * invoice is a question about every counter at once -- which is exactly what
+ * the manager's membership is -- and an account scoped to eight of the nine
+ * would produce a reconciliation that is quietly short. So the scope is the
+ * same list, from the same place, and adding a tenth pharmacy is one change
+ * rather than three.
+ *
+ * NOT THE RESET, though. Asked for and then narrowed the same day, once the
+ * screen was looked at: billing reads and exports, and setting a new
+ * password on a counter login stays with the contract manager. The two are
+ * separate settings for exactly this reason -- see OVERSIGHT and MAY_RESET
+ * above.
  */
 const OVERSEERS = [
     {
         key: 'manager',
         username: 'uh.manager',
         fallbackName: 'UH Contract Manager',
+        capabilities: { ...OVERSIGHT, ...MAY_RESET },
         note: 'every counter, the contract view, the reports, and resetting the other portals',
     },
     {
         key: 'billing1',
         username: 'uh.billing1',
         fallbackName: 'UH Pharmacy Billing 1',
+        capabilities: { ...OVERSIGHT },
         note: 'pharmacy billing: every counter, the reports, and the bulk export with proof of delivery',
     },
     {
         key: 'billing2',
         username: 'uh.billing2',
         fallbackName: 'UH Pharmacy Billing 2',
+        capabilities: { ...OVERSIGHT },
         note: 'pharmacy billing: every counter, the reports, and the bulk export with proof of delivery',
     },
 ];
@@ -246,7 +270,7 @@ const PORTALS = [
         username: o.username,
         fallbackName: o.fallbackName,
         sites: COUNTERS.map((c) => c.code),
-        capabilities: CONTRACT_CAPABILITIES,
+        capabilities: o.capabilities,
         note: o.note,
     })),
 ];
