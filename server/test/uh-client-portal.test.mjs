@@ -910,3 +910,83 @@ describe('the size of a list', () => {
         expect(open.total).toBeGreaterThan(0);
     });
 });
+
+/* ──────────────────────────────────── one end of a range, given on its own
+ *
+ * Found by filling the To box in a browser and leaving From empty, which is
+ * how a person asks for everything up to a date. The reply was 400 and the
+ * page rendered it as "Invalid request" with the filters gone -- no rows, no
+ * boxes, nothing to undo it with except the browser button.
+ *
+ * The cause was the order of two fallbacks: `from` fell back to today and
+ * `to` fell back to `from`, so a To in the past described a range running
+ * backwards. /reports next door had always anchored on `to`, so the same two
+ * dates worked on Performance and killed Deliveries.
+ *
+ * These four are the whole truth table, because the fix is a reordering and
+ * a reordering is exactly the kind of change that quietly moves a case
+ * nobody was looking at.
+ */
+describe('a date range with only one end filled in', () => {
+    const ask = async (query) => {
+        const portal = await agentFor('uh.pharmacist', 'client-pass-1');
+        return portal.get(`${CLIENT}/orders${query ? `?${query}` : ''}`);
+    };
+
+    /* IT HAS TO BE IN THE PAST. The first version of this asked for
+       to=today, which passed before the fix as well: `from` fell back to
+       today and the range came out as today..today by accident. The bug
+       only appears once the To date is behind today, which is also the only
+       way anybody would use the box on its own. */
+    const past = '2026-01-15';
+
+    it('takes a To with no From as that single day', async () => {
+        /* THE BUG. Anything other than 200 here is the dead page again. */
+        const res = await ask(`to=${past}`);
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        expect(res.body.from).toBe(past);
+        expect(res.body.to).toBe(past);
+    });
+
+    it('still takes a From with no To as that single day', async () => {
+        await delivered();
+        const res = await ask(`from=${today}`);
+        expect(res.status).toBe(200);
+        expect(res.body.from).toBe(today);
+        expect(res.body.to).toBe(today);
+    });
+
+    it('still reads neither as today', async () => {
+        const res = await ask('');
+        expect(res.status).toBe(200);
+        expect(res.body.from).toBe(today);
+        expect(res.body.to).toBe(today);
+    });
+
+    it('still refuses a range that genuinely runs backwards', async () => {
+        /* The check earns its place only if something can still trip it.
+           Both ends given, the later one first, is a typed mistake and
+           should be told rather than quietly reversed: a reader who meant
+           one of the two dates would otherwise get the wrong month and no
+           sign of it. */
+        const res = await ask(`from=${today}&to=2020-01-01`);
+        expect(res.status).toBe(400);
+        expect(res.body.details).toContain('to: is before from');
+    });
+
+    it('carries the same rule into both exports', async () => {
+        /* gatherOrders feeds the spreadsheet and the proof bundle as well as
+           the screen, so a To on its own has to reach all three. */
+        await delivered();
+        const portal = await agentFor('uh.pharmacist', 'client-pass-1');
+        const sheet = await portal.get(`${CLIENT}/orders.xlsx?to=${past}`);
+        expect(sheet.status).toBe(200);
+        /* The bundle refuses an empty range on its own terms -- there is
+           nothing finished back then -- and that refusal is the proof the
+           dates were accepted. A 400 saying the range runs backwards is the
+           failure this test is for, so the two are told apart by name. */
+        const bundle = await portal.get(`${CLIENT}/orders-with-pod.zip?to=${past}`);
+        expect([200, 400]).toContain(bundle.status);
+        if (bundle.status === 400) expect(bundle.body.code).toBe('client.bundleEmpty');
+    });
+});

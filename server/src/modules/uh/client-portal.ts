@@ -605,8 +605,22 @@ export function createClientPortalRouter(
 
         const today = todayIn(project.timezone);
         const isDate = (v: string | undefined) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
-        const from = isDate(q['from']) ? q['from']! : isDate(q['date']) ? q['date']! : today;
-        const to = isDate(q['to']) ? q['to']! : isDate(q['date']) ? q['date']! : from;
+        /* WHICHEVER END IS GIVEN ANCHORS THE OTHER. `from` used to fall back
+           to today and `to` to `from`, so a To date on its own -- everything
+           up to the tenth, with the From box left empty -- became from=today,
+           to=the tenth: a range running backwards, refused, and the page
+           renders that refusal as "Invalid request" with the filter boxes
+           gone, so the only way back is the browser button. A box a person
+           can fill on its own has to work on its own.
+
+           /reports has anchored on `to` since it was written, which is why
+           the same dates worked on one screen and not the other. The four
+           cases are unchanged apart from the broken one: neither given is
+           today, `from` alone is that day, `to` alone is now that day, and
+           both given is the range. */
+        const day = isDate(q['date']) ? q['date']! : undefined;
+        const from = isDate(q['from']) ? q['from']! : day ?? (isDate(q['to']) ? q['to']! : today);
+        const to = isDate(q['to']) ? q['to']! : day ?? from;
         if (to < from) {
             res.status(400).json({ error: 'Invalid request', details: ['to: is before from'] });
             return null;

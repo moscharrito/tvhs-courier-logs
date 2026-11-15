@@ -144,7 +144,13 @@ export function describeFilter(f: {
 }, pharmacyName?: string | undefined): string {
     const parts: string[] = [];
     if (f.from !== '' || f.to !== '') {
-        parts.push(f.from === f.to || f.to === '' ? (f.from || f.to) : `${f.from} to ${f.to}`);
+        /* ONE END FILLED IN IS ONE DAY, whichever end it is. The empty `to`
+           was handled and the empty `from` was not, so a To date on its own
+           read "Showing  to 2026-11-10" -- a range up to that date, which is
+           not what the list below it holds. The server resolves either end
+           on its own to that single day, and this now says the same thing. */
+        const oneEnd = f.from === '' || f.to === '' || f.from === f.to;
+        parts.push(oneEnd ? (f.from || f.to) : `${f.from} to ${f.to}`);
     }
     if (f.siteId !== '') parts.push(pharmacyName ?? 'one pharmacy');
     if (f.status === 'open') parts.push('still out');

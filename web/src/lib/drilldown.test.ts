@@ -137,6 +137,20 @@ describe('saying what the list is narrowed to', () => {
         expect(describeFilter({ ...none, from: '2026-11-03', to: '2026-11-03' })).toBe('2026-11-03');
     });
 
+    it('says one date for one end, whichever end it is', () => {
+        /* Filling the To box and leaving From empty is how somebody asks for
+           a past day without counting backwards to it. It used to render as
+           "Showing  to 2026-11-03" -- a leading gap, and a claim about a
+           range that the rows underneath did not match. */
+        expect(describeFilter({ ...none, to: '2026-11-03' })).toBe('2026-11-03');
+        expect(describeFilter({ ...none, from: '2026-11-03' })).toBe('2026-11-03');
+    });
+
+    it('still says both when both are given', () => {
+        expect(describeFilter({ ...none, from: '2026-11-01', to: '2026-11-03' }))
+            .toBe('2026-11-01 to 2026-11-03');
+    });
+
     it('names the pharmacy when it knows the name', () => {
         expect(describeFilter({ ...none, siteId: '4' }, 'Robert B. Green')).toContain('Robert B. Green');
     });
