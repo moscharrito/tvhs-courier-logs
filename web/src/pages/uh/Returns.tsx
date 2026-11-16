@@ -422,7 +422,14 @@ function TakeBack({ code, forCourier, onBack }: {
 
             {done && (
                 <div className="izy-alert ok" role="status">
-                    Handed back {done.returned.length} {done.returned.length === 1 ? 'order' : 'orders'}.
+                    {/* "Sent to dispatch" in the same words the stop screen
+                        uses, because this is the same meaning: the server
+                        has it. A driver who reads one screen saying a stop
+                        went to dispatch and another saying only that orders
+                        were handed back is entitled to wonder whether the
+                        second one told anybody. The count stays -- it is
+                        what they count against the sheet in their hand. */}
+                    Handed back {done.returned.length} {done.returned.length === 1 ? 'order' : 'orders'}, sent to dispatch.
                     {done.notes.length > 0 && <ul>{done.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
                 </div>
             )}
@@ -432,11 +439,38 @@ function TakeBack({ code, forCourier, onBack }: {
                    now only reached when sending live did not work, so
                    "waiting for signal" is usually right -- but a 502 from a
                    restart lands here too, and that sentence would be a lie
-                   on a phone with five bars. */
+                   on a phone with five bars.
+                 *
+                 * WHY THIS DOES NOT SAY "SENT TO DISPATCH" LIKE THE STOP
+                 * SCREEN DOES, THOUGH IT WAS ASKED TO.
+                 *
+                 * The two screens reach their queue by opposite routes. A
+                 * stop goes through it ALWAYS -- the photograph has to be in
+                 * the bucket before the delivery that names it -- so a
+                 * queued stop on a working phone is the ordinary path and
+                 * the record is dispatch's a moment later. This screen tries
+                 * the server FIRST and only falls back here when that failed
+                 * for something other than a 4xx: no signal, a dead network,
+                 * a 5xx. Reaching this banner means the server did not
+                 * confirm, and it may be minutes rather than a moment.
+                 *
+                 * The confirmed case on this screen already exists and is
+                 * already green: "Handed back N orders", above. That is the
+                 * counterpart to the stop screen's confirmation. This one is
+                 * the exception, and a driver who walks away from a counter
+                 * believing a hand-back landed when it did not is the whole
+                 * reason the queue was built.
+                 *
+                 * So what is matched is the shape -- lead with the fact, one
+                 * sentence, no doubled clause -- and not a claim that would
+                 * be false here. The catch-up clause stays: refresh() runs
+                 * but the server has not recorded the hand-back, so the rows
+                 * are still on screen and a driver who is not told why will
+                 * hand the same load back twice. */
                 <div className="izy-alert warn" role="status">
                     {navigator.onLine === false
-                        ? 'Saved on this phone. The handover will be sent as soon as you have signal, and this list will catch up then.'
-                        : 'Saved on this phone and sending now. This list will catch up when it goes through.'}
+                        ? 'Saved on this phone. It will be sent as soon as you have signal, and this list will catch up then.'
+                        : 'Saved on this phone. Sending it to dispatch now; this list will catch up when it goes through.'}
                 </div>
             )}
 

@@ -462,3 +462,74 @@ describe('when it cannot be sent right now', () => {
         expect((screen.getByLabelText('Packages counted') as HTMLInputElement).value).toBe('3');
     });
 });
+
+describe('how this screen words a hand-back, against how the stop screen does', () => {
+    /* The two were matched on 16 November as far as they honestly can be,
+       and this pins the one place they must NOT be.
+
+       A stop always goes through the queue -- the photograph has to be in
+       the bucket before the delivery that names it -- so a queued stop on a
+       working phone is the ordinary path, and it says "Order status sent to
+       dispatch". This screen posts to the server FIRST and only queues when
+       that failed for something other than a 4xx. Reaching the queue here
+       means the server did not confirm, so the same sentence would be a
+       lie, and a driver who walks away from a counter believing a hand-back
+       landed when it did not is what the queue exists to prevent. */
+
+    /** Name, photograph of part 3, count. The same three fields the other
+     *  block's fillIn sets; that one is scoped to its own describe. */
+    const fillIn = () => {
+        fireEvent.change(screen.getByLabelText('Printed name'), { target: { value: 'Night Pharmacist' } });
+        attachForm();
+        fireEvent.change(screen.getByLabelText('Packages counted'), { target: { value: '3' } });
+    };
+
+    it('says it reached dispatch when the server actually said so', async () => {
+        renderReturns({
+            ...routes(),
+            ...fileRoutes,
+            [`POST ${RETURNS}`]: { status: 201, body: { returned: [21, 22], refused: [], discrepancy: 0, notes: [] } },
+        });
+        await screen.findByRole('heading', { name: 'Take back' });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        /* The same two words the stop screen now uses for the same meaning,
+           with the count kept because that is what a driver checks against
+           the sheet in their hand. */
+        const ok = await screen.findByText(/Handed back 2 orders, sent to dispatch/);
+        expect(ok.closest('.izy-alert')).toHaveClass('ok');
+    });
+
+    it('never claims dispatch has it when the server did not answer', async () => {
+        renderReturns({
+            ...routes(),
+            ...fileRoutes,
+            'POST /api/projects/uh/uh/files': { status: 503, body: { error: 'upstream' } },
+        });
+        await screen.findByRole('heading', { name: 'Take back' });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+        /* The stop screen's confirmation must not appear on this path. */
+        expect(screen.queryByText(/sent to dispatch\./)).toBeNull();
+        expect(screen.queryByText(/Handed back/)).toBeNull();
+    });
+
+    it('still explains why every row is still on the screen', async () => {
+        /* refresh() runs, but the server has not recorded the hand-back, so
+           the list comes back unchanged. A driver not told why hands the
+           same load back a second time. */
+        renderReturns({
+            ...routes(),
+            ...fileRoutes,
+            'POST /api/projects/uh/uh/files': { status: 503, body: { error: 'upstream' } },
+        });
+        await screen.findByRole('heading', { name: 'Take back' });
+        fillIn();
+        fireEvent.click(screen.getByRole('button', { name: /Hand back/ }));
+
+        await waitFor(() => expect(screen.getByText(/this list will catch up/)).toBeInTheDocument());
+    });
+});
