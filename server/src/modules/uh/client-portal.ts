@@ -828,7 +828,7 @@ export function createClientPortalRouter(
         const { project, sites, from, to, rows, names } = got;
 
         if (rows.length > EXPORT_MAX_ROWS) {
-            res.status(400).json({
+            refuse(req, res, {
                 error: `That is more than ${EXPORT_MAX_ROWS.toLocaleString()} deliveries. `
                     + 'Ask for a narrower range, so the file you keep is the whole of what you asked for.',
                 code: 'client.exportTooLarge',
@@ -902,7 +902,72 @@ export function createClientPortalRouter(
      * made about, and it is about two minutes and a couple of hundred
      * megabytes. Past that the honest answer is a narrower range: a download
      * somebody abandons at eight minutes has reconciled nothing. */
-    const BUNDLE_MAX_DOCUMENTS = 500;
+    /**
+     * A REFUSAL A PERSON CAN READ.
+     *
+     * Both exports are ordinary links, so a browser NAVIGATES to them. A 400
+     * carrying JSON therefore arrives as a page of braces in a tab with no
+     * filters on it and no way back but the browser button -- which is what
+     * the contract manager met on 16 November with 3,684 documents behind
+     * it. The message was already written for a person; it was being
+     * delivered to a parser.
+     *
+     * The API answer is unchanged. Anything that asks for JSON, which is
+     * every test and every script, still gets the same body with the same
+     * `code`. Only a client that asked for HTML is given HTML.
+     */
+    function refuse(req: Request, res: Response, body: { error: string; code: string } & Record<string, unknown>): void {
+        res.status(400);
+        if (req.accepts(['json', 'html']) !== 'html') {
+            res.json(body);
+            return;
+        }
+        const safe = body.error.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] ?? c));
+        res.type('html').send([
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width,initial-scale=1">',
+            '<title>That export was not made</title><style>',
+            'body{font:16px/1.6 system-ui,sans-serif;margin:0;background:#f6f7f6;color:#14241a}',
+            'main{max-width:34rem;margin:12vh auto;padding:2rem;background:#fff;border-radius:12px;',
+            'box-shadow:0 1px 3px rgba(0,0,0,.12)}h1{font-size:1.25rem;margin:0 0 1rem}',
+            'a{color:#0f6b3d}@media(prefers-color-scheme:dark){body{background:#101512;color:#e8efe9}',
+            'main{background:#17201b;box-shadow:none}a{color:#7fd6a4}}</style></head><body><main>',
+            '<h1>That export was not made</h1><p>', safe, '</p>',
+            '<p><a href="#" onclick="history.back();return false">Back to the deliveries</a></p>',
+            '</main></body></html>',
+        ].join(''));
+    }
+
+    /**
+     * WHAT A BUNDLE IS ACTUALLY LIMITED BY.
+     *
+     * Not the number of documents. A proof of delivery is a few kilobytes of
+     * text and whatever photographs were taken at the door, and pdf-images
+     * copies a JPEG in whole -- so one document can be four pictures at the
+     * 20 MB upload ceiling, and another can be 4 KB. Counting them says
+     * almost nothing about the file somebody is about to wait for.
+     *
+     * What it is limited by is the container. This writer is ZIP32: offsets
+     * in the central directory are four bytes, so past 4 GB an archive is
+     * not large, it is WRONG -- and wrong after several minutes of
+     * downloading, which is the worst way to find out. Hence a budget well
+     * under it, checked before the first byte.
+     *
+     * And that figure is knowable in advance: files.bytes is written when an
+     * upload is presigned and corrected when it is confirmed, so the sum of
+     * the photographs in a range is a query rather than a guess. The refusal
+     * can therefore say "about 2.4 GB" instead of "more than 500", which is
+     * the difference between a reader who knows what to do next and one who
+     * does not.
+     *
+     * The count ceiling stays as a second bound, raised to where it binds on
+     * TIME rather than size: five thousand documents is minutes of rendering
+     * even before the bytes move.
+     */
+    const BUNDLE_MAX_DOCUMENTS = 5_000;
+    const BUNDLE_MAX_BYTES = 3 * 1024 * 1024 * 1024;
+    /** The non-photograph part of one document: text, vectors, the signature. */
+    const DOCUMENT_BASE_BYTES = 6 * 1024;
 
     /* How many proofs are built at once. The cost of one is a dozen round
      * trips -- the order, its packages, its custody chain, its signatures,
@@ -919,7 +984,7 @@ export function createClientPortalRouter(
         const { project, sites, from, to, rows, names } = got;
 
         if (rows.length > EXPORT_MAX_ROWS) {
-            res.status(400).json({
+            refuse(req, res, {
                 error: `That is more than ${EXPORT_MAX_ROWS.toLocaleString()} deliveries. `
                     + 'Ask for a narrower range, so the file you keep is the whole of what you asked for.',
                 code: 'client.exportTooLarge',
@@ -932,12 +997,19 @@ export function createClientPortalRouter(
            and "no proof yet" in the spreadsheet are one definition. */
         const settled = rows.filter((r) => !OPEN_STATUSES.includes(r.status as typeof OPEN_STATUSES[number]));
 
+        if (settled.length === 0) {
+            refuse(req, res, {
+                error: 'Nothing in that range has finished yet, so there is no proof to bundle. '
+                    + 'The Excel export has the rows.',
+                code: 'client.bundleEmpty',
+            });
+            return;
+        }
         if (settled.length > BUNDLE_MAX_DOCUMENTS) {
-            res.status(400).json({
+            refuse(req, res, {
                 error: `That range holds ${settled.length.toLocaleString()} completed deliveries, and a `
                     + `bundle carries ${BUNDLE_MAX_DOCUMENTS.toLocaleString()} documents at a time. `
-                    + 'Ask for a narrower range — a week of one pharmacy, or a few days of all of them — '
-                    + 'so the file you keep is the whole of what you asked for. '
+                    + 'Ask for a shorter range, or one pharmacy at a time. '
                     + 'The Excel export alone has no such limit.',
                 code: 'client.bundleTooLarge',
                 deliveries: rows.length,
@@ -946,11 +1018,39 @@ export function createClientPortalRouter(
             });
             return;
         }
-        if (settled.length === 0) {
-            res.status(400).json({
-                error: 'Nothing in that range has finished yet, so there is no proof to bundle. '
-                    + 'The Excel export has the rows.',
-                code: 'client.bundleEmpty',
+
+        /* THE SIZE, BEFORE ANYTHING IS BUILT. Asked in batches because the
+           settled list can hold thousands of ids and a parameter list has a
+           ceiling; the sum is the same either way. A photograph whose row
+           lost its byte count contributes nothing here, which is the right
+           direction to be wrong in only because the budget sits a full
+           gigabyte under what the format can carry. */
+        const settledIds = settled.map((r) => Number(r.id));
+        let photoBytes = 0;
+        for (let i = 0; i < settledIds.length; i += 400) {
+            const batch = settledIds.slice(i, i + 400);
+            const rs = await client.execute({
+                sql: `SELECT COALESCE(SUM(bytes), 0) AS n FROM files
+                      WHERE project_id = ? AND status = 'stored'
+                        AND order_id IN (${batch.map(() => '?').join(',')})`,
+                args: [project.id, ...batch],
+            });
+            photoBytes += Number(rs.rows[0]?.['n'] ?? 0);
+        }
+        const estimate = photoBytes + settled.length * DOCUMENT_BASE_BYTES;
+        if (estimate > BUNDLE_MAX_BYTES) {
+            const gb = (n: number) => `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+            refuse(req, res, {
+                error: `That range holds ${settled.length.toLocaleString()} documents and their `
+                    + `photographs, about ${gb(estimate)}. A bundle carries ${gb(BUNDLE_MAX_BYTES)}, `
+                    + 'because past that the zip format cannot address its own contents and the file '
+                    + 'would arrive broken after a long wait. Ask for a shorter range, or one pharmacy '
+                    + 'at a time. The Excel export alone has no such limit.',
+                code: 'client.bundleTooLarge',
+                deliveries: rows.length,
+                documents: settled.length,
+                estimatedBytes: estimate,
+                maxBytes: BUNDLE_MAX_BYTES,
             });
             return;
         }

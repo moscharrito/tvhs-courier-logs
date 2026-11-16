@@ -30,6 +30,8 @@ let admin;
 let discharge;
 let green;
 let today;
+/* Looked up, never assumed: UH is not project 1. */
+let projectId;
 
 const agentFor = async (username, password) => {
     const a = srv.agent();
@@ -86,6 +88,9 @@ async function delivered(over = {}) {
 beforeAll(async () => {
     srv = await startServer();
     admin = await srv.login('admin');
+    projectId = Number((await srv.core.client.execute({
+        sql: 'SELECT id FROM projects WHERE code = ?', args: ['uh'],
+    })).rows[0].id);
     const sites = (await admin.get('/api/projects/uh/uh/sites')).body;
     discharge = sites.find((s) => s.code === 'discharge');
     green = sites.find((s) => s.code === 'green');
@@ -270,5 +275,131 @@ describe('the record of what left', () => {
         expect(detail.documents).toBe(2);
         expect(detail.rows).toBe(3);
         expect(detail.containedPatientData).toBe(true);
+    });
+});
+
+/* ────────────────────────────── what a bundle is actually limited by
+ *
+ * The first version refused above 500 documents. The contract manager asked
+ * for a fortnight of all nine counters on 16 November, which is 3,684 of
+ * them, and got the refusal -- as a page of JSON, because the export is a
+ * link and a browser follows links.
+ *
+ * Both halves of that were wrong. A document is a few kilobytes plus
+ * whatever photographs were taken, and pdf-images copies a JPEG whole, so a
+ * count predicts almost nothing about the size of the file. The container
+ * does have a hard edge -- ZIP32 addresses four bytes of offset -- and
+ * files.bytes already knows what every photograph weighs, so the limit can
+ * be the real one and the refusal can name a figure.
+ */
+describe('the size of a bundle, rather than the count', () => {
+    /** Photographs of a stated size, as finished uploads leave them. */
+    async function weighs(orderId, bytes, kind = 'doorstep') {
+        const at = new Date().toISOString();
+        await srv.core.client.execute({
+            sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+                  VALUES (?, ?, ?, ?, 'image/jpeg', ?, 'stored', 'ada.courier', ?, ?)`,
+            args: [projectId, orderId, kind, `uh/x/order-${orderId}/${kind}/${Math.random()}.jpg`, bytes, at, at],
+        });
+    }
+
+    it('lets through a count that the old ceiling refused', async () => {
+        /* Not 3,684 of them -- that is a minute of fixtures to prove an
+           inequality. The point is that the number alone no longer decides,
+           and 500 was the number that used to. */
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await bundle(manager, `from=${today}&to=${today}`);
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toContain('zip');
+    });
+
+    it('refuses on the weight of the photographs, and says what it is', async () => {
+        /* One delivery, one enormous photograph. Nothing about the count is
+           unusual; everything about the file would be.
+
+           It is taken out again at the end, because every other test in this
+           describe asks for the same day: a four-gigabyte row left behind
+           refuses all of them, and the failure reads as though the thing
+           being tested had broken. */
+        const o = await delivered();
+        await weighs(o.id, 4 * 1024 * 1024 * 1024);
+
+        let body;
+        try {
+            const manager = await agentFor('uh.manager', 'manager-pass-1');
+            const res = await bundle(manager, `from=${today}&to=${today}`);
+            expect(res.status).toBe(400);
+            body = JSON.parse(res.body.toString());
+        } finally {
+            await srv.core.client.execute({
+                sql: 'DELETE FROM files WHERE project_id = ? AND order_id = ?',
+                args: [projectId, o.id],
+            });
+        }
+        expect(body.code).toBe('client.bundleTooLarge');
+        expect(body.estimatedBytes).toBeGreaterThan(4 * 1024 * 1024 * 1024);
+        expect(body.error).toMatch(/about [\d.]+ GB/);
+        /* The number a reader needs in order to decide what to ask for
+           instead. A refusal that only says no sends them to us. */
+        expect(body.error).toMatch(/one pharmacy at a time|shorter range/i);
+    });
+
+    it('counts only photographs that were actually stored', async () => {
+        /* A presigned upload that never completed is a row with a size and
+           no object behind it. Counting it would refuse a bundle over bytes
+           that are not going to be in it. */
+        const o = await delivered();
+        const at = new Date().toISOString();
+        await srv.core.client.execute({
+            sql: `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at)
+                  VALUES (?, ?, 'doorstep', ?, 'image/jpeg', ?, 'pending', 'ada.courier', ?)`,
+            args: [projectId, o.id, `uh/x/order-${o.id}/pending.jpg`, 4 * 1024 * 1024 * 1024, at],
+        });
+
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await bundle(manager, `from=${today}&to=${today}`);
+        expect(res.status).toBe(200);
+    });
+});
+
+/* ──────────────────────────────── a refusal that a browser can show
+ *
+ * The exports are links. A browser navigating to one and receiving JSON
+ * puts braces on the screen, with no filters and nothing to click. Every
+ * message in this route was already written in sentences for a person --
+ * they were simply being handed to a parser.
+ */
+describe('how a refusal arrives', () => {
+    it('answers a browser with a page rather than JSON', async () => {
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await manager
+            .get(`${CLIENT}/orders-with-pod.zip?from=2020-01-01&to=2020-01-02`)
+            .set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+        expect(res.status).toBe(400);
+        expect(res.headers['content-type']).toContain('text/html');
+        expect(res.text).toContain('<!doctype html>');
+        /* The same sentence, not a generic error page. */
+        expect(res.text).toMatch(/Nothing in that range has finished yet/);
+        expect(res.text).toMatch(/history\.back/);
+    });
+
+    it('still answers everything else with JSON', async () => {
+        /* Every script and every test in this repository reads `code`. */
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await manager.get(`${CLIENT}/orders-with-pod.zip?from=2020-01-01&to=2020-01-02`);
+        expect(res.status).toBe(400);
+        expect(res.headers['content-type']).toContain('json');
+        expect(res.body.code).toBe('client.bundleEmpty');
+    });
+
+    it('does not put the message into the page unescaped', async () => {
+        /* The dates reach the message, and the message reaches the markup.
+           Nothing user-written goes in today, which is exactly when an
+           escape gets left out and nobody notices for a year. */
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await manager
+            .get(`${CLIENT}/orders-with-pod.zip?from=2020-01-01&to=2020-01-02`)
+            .set('Accept', 'text/html');
+        expect(res.text).not.toMatch(/<script/i);
     });
 });
