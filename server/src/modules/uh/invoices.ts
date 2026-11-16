@@ -512,6 +512,150 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         res.status(201).json(await present(req, created.rows[0]!));
     }));
 
+    /* ──────────────────────────── PRICING A RANGE WITHOUT BILLING FOR IT
+     *
+     * Until now the only way to see what a period comes to was to open an
+     * invoice for it, and opening an invoice is gated twice over: the period
+     * must be finished, and it must not overlap one already open. Both guards
+     * are right -- billing a day still being worked gives a finance team a
+     * number that moves, and two invoices across one delivery is how a client
+     * is charged twice -- but neither has anything to do with ANSWERING A
+     * QUESTION. "What did Wheatley come to between the 3rd and the 9th", or
+     * "what are we at so far this month", are not attempts to bill anybody,
+     * and they were being refused as though they were.
+     *
+     * So this prices any range at all, including today, including a range an
+     * issued invoice already covers, and writes the same spreadsheet. What it
+     * does NOT do is the part the guards exist for: no invoice row, no
+     * reserved number, nothing to issue, nothing that can be sent. The
+     * workbook says so on its face, because a spreadsheet of priced
+     * deliveries is one forward to a hospital away from being mistaken for a
+     * bill.
+     *
+     * Admin only, like everything else in this file.
+     *
+     * REGISTERED BEFORE `/:id` ON PURPOSE. Express matches in order, and to a
+     * route pattern "export.xlsx" is a perfectly good :id.
+     */
+    router.get('/export.xlsx', read, wrap2(async (req, res) => {
+        const project = req.project!;
+        const q = req.query as Record<string, string | undefined>;
+        const isDate = (s: string | undefined) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+        if (!isDate(q['from']) || !isDate(q['to'])) {
+            res.status(400).json({
+                error: 'Give a from and a to date, each as YYYY-MM-DD.',
+                code: 'export.datesMissing',
+            });
+            return;
+        }
+        const from = q['from']!;
+        const to = q['to']!;
+        if (to < from) {
+            res.status(400).json({ error: 'Invalid request', details: ['to: is before from'] });
+            return;
+        }
+        /* NOT A POLICY GATE -- A TIMEOUT. buildDraft prices every settled
+           delivery in the range, and at UH's volumes a year is around 95,000
+           of them. Cloudflare gives an origin 100 seconds and then returns a
+           522 that says nothing about what went wrong. A refusal naming the
+           limit is a better answer than a dead connection, and a year covers
+           any billing question anybody has asked. */
+        const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+        if (days > 366) {
+            res.status(400).json({
+                error: `That is ${days.toLocaleString()} days. This prices every delivery in the range one by one, `
+                    + 'and much past a year it takes longer than the connection is allowed to stay open. '
+                    + 'Ask for a year or less.',
+                code: 'export.rangeTooLong',
+                days,
+                maxDays: 366,
+            });
+            return;
+        }
+        const siteId = /^\d+$/.test(q['siteId'] ?? '') ? Number(q['siteId']) : null;
+
+        const draft = await buildDraft(client, project, { from, to, siteId });
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Izy Global Services LLC';
+        const sheet = wb.addWorksheet('Deliveries');
+        sheet.columns = [
+            { header: 'Service date', width: 13 }, { header: 'Reference', width: 18 },
+            { header: 'Pharmacy', width: 40 }, { header: 'ZIP', width: 8 },
+            { header: 'Zone', width: 8 }, { header: 'Service', width: 11 },
+            { header: 'Outcome', width: 11 }, { header: 'Items', width: 7 },
+            { header: 'Base', width: 11 }, { header: 'STAT', width: 10 },
+            { header: 'After hours', width: 12 }, { header: 'Dry run', width: 11 },
+            { header: 'Miles', width: 8 }, { header: 'Mileage', width: 11 }, { header: 'Amount', width: 12 },
+        ];
+        sheet.getRow(1).font = { bold: true };
+        for (const line of draft.lines) {
+            const row = sheet.addRow([
+                line.serviceDate, line.reference, line.pharmacy, line.deliveryZip,
+                line.zone === null ? 'out of area' : line.zone, line.serviceType,
+                line.dryRun ? 'dry run' : 'delivered', line.items,
+                toDollars(line.baseCents), toDollars(line.statCents), toDollars(line.afterHoursCents),
+                toDollars(line.dryRunCents), line.outOfAreaMiles ?? '', toDollars(line.outOfAreaCents),
+                toDollars(line.amountCents),
+            ]);
+            for (const col of [9, 10, 11, 12, 14, 15]) row.getCell(col).numFmt = '$#,##0.00';
+        }
+        const totals = sheet.addRow(['', '', '', '', '', '', '', '', '', '', '', '', '', 'Subtotal', toDollars(draft.subtotalCents)]);
+        totals.font = { bold: true };
+        totals.getCell(15).numFmt = '$#,##0.00';
+
+        const summary = wb.addWorksheet('Summary');
+        summary.columns = [{ width: 30 }, { width: 12 }, { width: 14 }];
+        summary.addRow(['Billing export — NOT AN INVOICE', '', '']).font = { bold: true, size: 14 };
+        /* Said plainly and first. This workbook is a priced range for
+           somebody to read; it has no number, it is not recorded, and
+           nothing here has been or will be billed on the strength of it. */
+        summary.addRow(['This is a working figure, not a bill. No invoice has been raised for', '', '']);
+        summary.addRow(['this range and no invoice number is reserved by it. A period can only', '', '']);
+        summary.addRow(['be billed once, through Invoices.', '', '']);
+        summary.addRow([]);
+        summary.addRow([`Service dates ${from} to ${to}`, '', '']);
+        summary.addRow([siteId === null ? 'Every pharmacy' : (draft.lines[0]?.pharmacy ?? `Pharmacy ${siteId}`), '', '']);
+        summary.addRow([`Taken ${new Date().toISOString()}`, '', '']);
+        summary.addRow([]);
+        summary.addRow(['By zone', 'Deliveries', 'Amount']).font = { bold: true };
+        for (const z of draft.byZone) summary.addRow([z.zone, z.count, toDollars(z.cents)]).getCell(3).numFmt = '$#,##0.00';
+        summary.addRow([]);
+        summary.addRow(['By service type', 'Deliveries', 'Amount']).font = { bold: true };
+        for (const t of draft.byServiceType) summary.addRow([t.serviceType, t.count, toDollars(t.cents)]).getCell(3).numFmt = '$#,##0.00';
+        summary.addRow([]);
+        summary.addRow(['Dry runs', draft.dryRuns.count, toDollars(draft.dryRuns.cents)]).getCell(3).numFmt = '$#,##0.00';
+        summary.addRow(['Dry run items', draft.dryRuns.items, '']);
+        summary.addRow([]);
+        summary.addRow(['Subtotal', draft.lines.length, toDollars(draft.subtotalCents)]).font = { bold: true };
+        summary.getRow(summary.rowCount).getCell(3).numFmt = '$#,##0.00';
+        /* The same exceptions an invoice would carry, for the same reason:
+           a delivery that could not be priced has to stay visible, or the
+           total quietly means less than the reader thinks it does. */
+        if (draft.exceptions.length > 0) {
+            summary.addRow([]);
+            summary.addRow(['Could not be priced', draft.exceptions.length, '']).font = { bold: true };
+            summary.addRow(['These are NOT in the subtotal above.', '', '']);
+            const ex = wb.addWorksheet('Not priced');
+            ex.columns = [
+                { header: 'Service date', width: 13 }, { header: 'Order', width: 10 },
+                { header: 'Reference', width: 18 }, { header: 'Why', width: 70 },
+            ];
+            ex.getRow(1).font = { bold: true };
+            for (const e of draft.exceptions) ex.addRow([e.serviceDate, e.orderId, e.reference, e.reason]);
+        }
+
+        await req.audit('invoice.rangeExport', 'report', `${from}..${to}`, {
+            format: 'xlsx', lines: draft.lines.length, siteId: siteId ?? 0, exceptions: draft.exceptions.length,
+        });
+        const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Length', String(buffer.length));
+        res.setHeader('Content-Disposition', `attachment; filename="billing-${from}_to_${to}.xlsx"`);
+        res.setHeader('Cache-Control', 'no-store, private');
+        res.end(buffer);
+    }));
+
     /* --------------------------------------------------------------- detail */
 
     router.get('/:id', read, wrap2(async (req, res) => {

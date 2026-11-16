@@ -162,10 +162,35 @@ export function Invoices() {
                         <input type="date" value={period.to} onChange={(e) => setPeriod({ ...period, to: e.target.value })} required />
                     </label>
                     <button className="izy-btn" type="submit" disabled={busy || !period.from || !period.to}>Open draft</button>
+                    {/* ASKING WHAT A RANGE COMES TO IS NOT BILLING FOR IT.
+                        Opening a draft is refused for a period that is not
+                        over, and refused again for one an invoice already
+                        covers. Both guards are right and neither has
+                        anything to do with "what is Wheatley at so far this
+                        month", which was being turned away by them.
+
+                        A plain link, like every other export in this
+                        application: the browser knows how to save a
+                        download, and the file carries patient-free billing
+                        lines that have no reason to sit in a blob URL until
+                        the tab is closed. */}
+                    <a
+                        className={`izy-btn secondary${!period.from || !period.to ? ' disabled' : ''}`}
+                        href={!period.from || !period.to ? undefined
+                            : `${base}/export.xlsx?from=${period.from}&to=${period.to}`}
+                        aria-disabled={!period.from || !period.to}
+                    >
+                        Export without billing
+                    </a>
                 </form>
                 <p className="izy-muted">
                     A draft re-prices every delivery in the period each time you open it. Issuing it freezes the lines,
                     which is what stops a sent total from moving afterwards.
+                </p>
+                <p className="izy-muted">
+                    <strong>Export without billing</strong> prices any range at all — including today, and including
+                    days an invoice already covers — and raises nothing. No invoice, no number reserved, nothing that
+                    can be sent. Use it to answer a question; use a draft to bill.
                 </p>
             </div>
 

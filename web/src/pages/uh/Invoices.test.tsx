@@ -193,3 +193,58 @@ describe('Invoices', () => {
         expect(within(draft!).queryByText('0')).not.toBeInTheDocument();
     });
 });
+
+/* ────────────────── pricing a range without billing for it
+ *
+ * The dates were already on this card; what was missing was a way to use
+ * them that did not open a billing period. Asking what a range comes to was
+ * being refused by the two guards that stop a period being billed twice or
+ * billed early, which are about billing and not about asking.
+ */
+describe('exporting a range without billing', () => {
+    const openPage = async () => {
+        renderInvoices();
+        await screen.findByRole('heading', { name: 'Open a draft' });
+    };
+
+    it('offers nothing to click until both dates are given', async () => {
+        await openPage();
+        /* Queried by text, not by role: an anchor with no href is not a
+           link as far as the accessibility tree is concerned, which is
+           precisely the state being asserted. */
+        /* Scoped to the anchor: the paragraph below repeats the name in
+           bold, so a bare text query matches twice. */
+        const link = screen.getByText('Export without billing', { selector: 'a' });
+        expect(link).not.toHaveAttribute('href');
+        expect(link).toHaveAttribute('aria-disabled', 'true');
+        /* And it must not be queryable as a link either, or a keyboard user
+           would land on a control that does nothing. */
+        expect(screen.queryByRole('link', { name: /Export without billing/ })).toBeNull();
+    });
+
+    it('points at the export once a range is chosen', async () => {
+        await openPage();
+        fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-11-01' } });
+        fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-11-15' } });
+        expect(screen.getByRole('link', { name: /Export without billing/ }))
+            .toHaveAttribute('href', '/api/projects/uh/uh/invoices/export.xlsx?from=2026-11-01&to=2026-11-15');
+    });
+
+    it('does not post anything, because it bills nothing', async () => {
+        /* A link, not a submit. If this ever became a button inside the
+           form it would open a draft instead, which is the exact thing it
+           exists to avoid. */
+        await openPage();
+        fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-11-01' } });
+        fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-11-15' } });
+        const link = screen.getByRole('link', { name: /Export without billing/ });
+        expect(link.tagName).toBe('A');
+        expect(link).not.toHaveAttribute('type', 'submit');
+    });
+
+    it('says plainly that it raises no invoice', async () => {
+        await openPage();
+        expect(screen.getByText(/raises nothing/)).toBeInTheDocument();
+        expect(screen.getByText(/No invoice, no number reserved/)).toBeInTheDocument();
+    });
+});

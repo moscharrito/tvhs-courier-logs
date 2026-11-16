@@ -527,3 +527,123 @@ describe('the documents', () => {
         expect(res.headers['cache-control']).toMatch(/no-store/);
     });
 });
+
+/* ───────────────────────────── pricing a range without billing for it
+ *
+ * Asked for on 16 November: "allow Admin export Invoice for any Date range
+ * at will. currently it is a little bit gated."
+ *
+ * The gates are real and both of them earn their place -- a period that
+ * includes today bills a day still being worked, and two invoices across one
+ * delivery is how a hospital is charged twice. But they were gating the
+ * wrong verb. Until now the only way to SEE what a range came to was to open
+ * an invoice for it, so "what is Wheatley at so far this month" was refused
+ * as though somebody had tried to bill for it.
+ *
+ * So this prices anything and bills nothing. The tests that matter are the
+ * last two: that no invoice appears behind it, and that the file says on its
+ * face it is not one.
+ */
+describe('exporting a range that is not an invoice', () => {
+    const EXPORT = `${INVOICES}/export.xlsx`;
+
+    const sheetsOf = async (res) => {
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(res.body);
+        return wb;
+    };
+
+    it('prices a range that an existing invoice already covers', async () => {
+        /* POST would answer 409 here. The whole point: asking what a period
+           came to is not an attempt to bill it a second time. */
+        const clash = await admin.post(INVOICES).send({ from: FROM, to: TO });
+        expect(clash.status, 'the period really is already invoiced').toBe(409);
+
+        const res = await admin.get(`${EXPORT}?from=${FROM}&to=${TO}`).buffer().parse(asBuffer);
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/spreadsheetml/);
+    });
+
+    it('prices a period that is not over, including today', async () => {
+        const today = (await admin.get('/api/projects/uh/uh/board')).body.serviceDate;
+        const res = await admin.get(`${EXPORT}?from=${today}&to=${today}`).buffer().parse(asBuffer);
+        expect(res.status, 'periodNotClosed must not apply to a question').toBe(200);
+    });
+
+    it('raises no invoice and reserves no number', async () => {
+        /* THE ONE THAT WOULD COST MONEY IF IT WERE WRONG. An export that
+           quietly opened a draft would consume an invoice number and start
+           overlapping every real invoice after it. */
+        const before = (await admin.get(INVOICES)).body;
+        await admin.get(`${EXPORT}?from=2026-07-01&to=2026-07-31`).buffer().parse(asBuffer);
+        const after = (await admin.get(INVOICES)).body;
+        expect(after.invoices.length).toBe(before.invoices.length);
+    });
+
+    it('says on the file that it is not a bill', async () => {
+        /* A spreadsheet of priced deliveries is one forward away from being
+           read as an invoice by somebody in a finance team. */
+        const res = await admin.get(`${EXPORT}?from=${FROM}&to=${TO}`).buffer().parse(asBuffer);
+        const wb = await sheetsOf(res);
+        const summary = wb.getWorksheet('Summary');
+        const text = summary.getSheetValues().flat().filter((v) => typeof v === 'string').join(' ');
+        expect(text).toMatch(/NOT AN INVOICE/);
+        expect(text).toMatch(/no invoice number is reserved/);
+        /* And it carries no invoice number anywhere, because it has none. */
+        expect(text).not.toMatch(/Invoice UH-/);
+    });
+
+    it('carries the same priced lines an invoice would', async () => {
+        const res = await admin.get(`${EXPORT}?from=${FROM}&to=${TO}`).buffer().parse(asBuffer);
+        const wb = await sheetsOf(res);
+        const deliveries = wb.getWorksheet('Deliveries');
+        expect(deliveries.rowCount, 'a header and at least one delivery').toBeGreaterThan(1);
+        expect(deliveries.getRow(1).values).toContain('Service date');
+        expect(deliveries.getRow(1).values).toContain('Amount');
+    });
+
+    it('narrows to one pharmacy', async () => {
+        const res = await admin
+            .get(`${EXPORT}?from=${FROM}&to=${TO}&siteId=${discharge.id}`)
+            .buffer().parse(asBuffer);
+        expect(res.status).toBe(200);
+    });
+
+    it('refuses a range longer than a year, naming the limit', async () => {
+        /* Not a policy gate: buildDraft prices every delivery one by one and
+           past a year it outlives the connection. A refusal that says so
+           beats a 522 that says nothing. */
+        const res = await admin.get(`${EXPORT}?from=2026-01-01&to=2027-12-31`);
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('export.rangeTooLong');
+        expect(res.body.maxDays).toBe(366);
+    });
+
+    it('refuses a backwards range and a missing one', async () => {
+        expect((await admin.get(`${EXPORT}?from=2026-06-07&to=2026-06-01`)).status).toBe(400);
+        expect((await admin.get(`${EXPORT}?from=2026-06-01`)).body.code).toBe('export.datesMissing');
+        expect((await admin.get(`${EXPORT}?from=nope&to=2026-06-01`)).body.code).toBe('export.datesMissing');
+    });
+
+    it('is behind the same door as the invoices themselves', async () => {
+        /* Every priced line for a range, which is the commercial position in
+           one file. A courier is refused the invoice list and must be
+           refused this for the same reason -- otherwise the new route is a
+           way around the old permission. */
+        const ada = srv.agent();
+        await ada.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+        expect((await ada.get(INVOICES)).status, 'the invoice list refuses a courier').toBe(403);
+        expect((await ada.get(`${EXPORT}?from=${FROM}&to=${TO}`)).status).toBe(403);
+
+        /* And the client, who receives a checked document from us rather
+           than an endpoint that prices their own deliveries on demand. */
+        const uh = srv.agent();
+        await uh.post('/api/login').send({ username: 'uh.finance', password: 'client-pass-1' });
+        expect((await uh.get(`${EXPORT}?from=${FROM}&to=${TO}`)).status).toBe(403);
+    });
+
+    it('is never cached', async () => {
+        const res = await admin.get(`${EXPORT}?from=${FROM}&to=${TO}`).buffer().parse(asBuffer);
+        expect(res.headers['cache-control']).toMatch(/no-store/);
+    });
+});

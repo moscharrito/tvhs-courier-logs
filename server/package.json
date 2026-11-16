@@ -36,6 +36,7 @@
     "make:docket": "tsx scripts/make-docket.mjs",
     "portal-upload": "node scripts/portal-upload.mjs",
     "driver-rates": "tsx scripts/driver-rates.mjs",
+    "billing-basis": "node scripts/billing-zone-basis.mjs",
     "settings:show": "node scripts/settings-show.mjs",
     "measure:zones": "tsx scripts/measure-pay-zones.mjs",
     "backfill:zones": "tsx scripts/backfill-pay-zones.mjs"
