@@ -30,7 +30,7 @@ import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
 import { presentHandling, signingInstruction, handlingFlags } from './handling';
 import { SIGNATURE_RULES, SERVICE_TYPES } from '../../db/schema/uh';
-import { dateIn } from '../../core/dates';
+import { dateIn, instantAt } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
 import { zipZoneMap, scheduleOn, siteZipMileMap, payKey } from './zones';
@@ -459,7 +459,47 @@ export function createOrdersRouter(
         // next one, which is what a UTC date would have said.
         const serviceDate = body.serviceDate ?? dateIn(receivedAt, project.timezone);
         const settings = resolveSettings(project.settings);
-        const due = dueForNewOrder(body.serviceType, receivedAt, settings);
+
+        /* ── THE DEADLINE FOLLOWS THE DAY THE WORK IS FOR ──────────────
+         *
+         * `serviceDate` has been accepted here since the import path needed
+         * it, and until 16 November nothing but imports ever sent one: an
+         * order taken by hand was always for today, so measuring its
+         * deadline from "now" and measuring it from "the day it belongs to"
+         * were the same arithmetic and nobody had to choose.
+         *
+         * The STAT/ad hoc form now has a date on it, and they stop being
+         * the same. An order dated Thursday and timed from now is due two
+         * hours from THIS morning -- so it reads as overdue for three days,
+         * and the unclaimed sweep, which escalates to dispatch 45 minutes
+         * before a deadline, would raise Thursday's delivery today. A
+         * dispatcher being paged about work that is not late is how a
+         * dispatcher learns to ignore the pager.
+         *
+         * So for any other day the window runs from the start of business
+         * ON that day. 07:00 is not invented for this: it is
+         * pricing.afterHoursEnd, the hour Addendum 1 uses to close the
+         * after-hours window, so the deadline and the surcharge agree about
+         * when the day begins. A STAT dated tomorrow is due 09:00 tomorrow.
+         *
+         * `received_at` is NOT moved. That column is a fact -- the moment
+         * somebody picked up the telephone -- and it is what the custody
+         * record and any dispute are read against. Only the deadline moves,
+         * because only the deadline is a promise about a day.
+         *
+         * BACKDATING IS ALLOWED AND DELIBERATELY UNRESTRICTED. An order
+         * entered for a past day gets that day's deadline, which will
+         * usually read as missed, and that is the honest answer: the work
+         * was late, or it was never on a clock anybody was watching. It
+         * also lands in that day's invoice period and that month's
+         * completion rate, which is the point of being able to record it.
+         */
+        const today = dateIn(receivedAt, project.timezone);
+        const [bh, bm] = settings.pricing.afterHoursEnd.split(':').map(Number);
+        const clockFrom = serviceDate === today
+            ? receivedAt
+            : instantAt(serviceDate, bh ?? 7, bm ?? 0, project.timezone);
+        const due = dueForNewOrder(body.serviceType, clockFrom, settings);
 
         const zip = normalizeZip(body.zip);
         const zone = resolveZone(zip, await zipZoneMap(client, project.id, serviceDate));

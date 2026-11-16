@@ -318,6 +318,81 @@ describe('manual STAT and ad hoc orders', () => {
         const body = await makeOrder({ zip: '78006' });   // Boerne, outside the published list
         expect(body.zone).toBeNull();
     });
+
+    /* ─────────────────────── an order taken for a day that is not today
+     *
+     * The STAT/ad hoc form gained a date on 16 November. `serviceDate` had
+     * been accepted here all along for the importer, and while only imports
+     * sent one it did not matter that the DEADLINE was measured from "now"
+     * instead: a hand-taken order was always for today, so the two were the
+     * same arithmetic.
+     *
+     * They are not the same once a dispatcher can pick Thursday. Timed from
+     * now, Thursday's order is due two hours from this morning -- it reads
+     * as overdue for three days, and the unclaimed sweep escalates to
+     * dispatch 45 minutes before a deadline, so somebody gets paged today
+     * about work that is not late. These tests are that bug.
+     */
+    describe('dated for another day', () => {
+        /** 07:00 America/Chicago on a given date, as the server computes it. */
+        const businessStart = (date) => {
+            const guess = Date.parse(`${date}T07:00:00Z`);
+            const offset = (at) => {
+                const parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Chicago', hour12: false,
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                }).formatToParts(new Date(at));
+                const g = (t) => Number(parts.find((p) => p.type === t)?.value ?? '0');
+                return Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'), g('second')) - at;
+            };
+            let ms = guess - offset(guess);
+            ms = guess - offset(ms);
+            return ms;
+        };
+
+        it('measures a future order from the start of business on its own day', async () => {
+            const body = await makeOrder({ serviceDate: '2027-03-18', requestedAt: PAST });
+            expect(body.serviceDate).toBe('2027-03-18');
+            /* Two hours from 07:00 that day, NOT two hours from the call. */
+            expect(body.dueAt).toBe(iso(businessStart('2027-03-18') + 120 * 60000));
+            /* And it is not due this morning, which is the whole bug. */
+            expect(new Date(body.dueAt).getTime()).toBeGreaterThan(PAST_MS + 120 * 60000);
+        });
+
+        it('gives a future ad hoc its four hours from that morning too', async () => {
+            const body = await makeOrder({ serviceType: 'adhoc', serviceDate: '2027-03-18', requestedAt: PAST });
+            expect(body.dueAt).toBe(iso(businessStart('2027-03-18') + 240 * 60000));
+        });
+
+        it('keeps received_at as the moment the call was taken, not the service day', async () => {
+            /* The deadline is a promise about a day; received_at is a fact
+               about a telephone. Moving both would lose the second one, and
+               it is what the custody record is read against. */
+            const body = await makeOrder({ serviceDate: '2027-03-18', requestedAt: PAST });
+            expect(body.receivedAt).toBe(PAST);
+        });
+
+        it('takes a backdated order and dates it to the day it happened', async () => {
+            /* Allowed deliberately and without a limit: a call that came in
+               at the end of a shift and was written up the next morning
+               belongs to the day it happened, and so does its invoice line. */
+            const body = await makeOrder({ serviceDate: '2026-09-10', requestedAt: PAST });
+            expect(body.serviceDate).toBe('2026-09-10');
+            expect(body.dueAt).toBe(iso(businessStart('2026-09-10') + 120 * 60000));
+        });
+
+        it('still measures today from the request, not from this morning', async () => {
+            /* The case that must not regress. Everything above is for other
+               days; an order for today has to behave exactly as it did
+               before the date existed. */
+            const today = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+            }).format(new Date(PAST_MS));
+            const body = await makeOrder({ serviceDate: today, requestedAt: PAST });
+            expect(body.dueAt).toBe(iso(PAST_MS + 120 * 60000));
+        });
+    });
 });
 
 /* ------------------------------------------------------------- the walk */

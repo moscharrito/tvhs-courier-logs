@@ -62,6 +62,8 @@ describe('finding and removing an order taken by hand', () => {
         await screen.findByText(/Ines Vargas/);
         fireEvent.change(screen.getByLabelText('At pharmacy'), { target: { value: '7' } });
         fireEvent.change(screen.getByLabelText('Service level'), { target: { value: 'adhoc' } });
+        /* The FILTER's date, which stayed "On day" -- the form above has its
+           own, called "Delivery date", and the two must not share a label. */
         fireEvent.change(screen.getByLabelText('On day'), { target: { value: '2026-09-14' } });
         fireEvent.click(screen.getByRole('button', { name: 'Find orders' }));
 
@@ -190,6 +192,117 @@ describe('NewOrder', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
         fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'adhoc' } });
         expect(screen.queryByText(/one hour of pickup/)).not.toBeInTheDocument();
+    });
+
+    /* ───────────────────────────────── the day the order is for
+     *
+     * Added 16 November. Until then every hand-taken order was for today,
+     * because there was nowhere on the form to say otherwise -- a pharmacy
+     * ringing on Monday about a Thursday delivery had to be remembered by
+     * somebody rather than recorded.
+     *
+     * The field is only half of it. The deadline moves with the date, and
+     * the line under the form is the one place a dispatcher sees that it
+     * has moved, so these check the sentence as much as the input.
+     */
+    describe('the day it is for', () => {
+        const openForm = async () => {
+            mockFetch(routes);
+            render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
+            fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
+        };
+
+        it('opens on today in the project timezone, not the browser’s', async () => {
+            await openForm();
+            const today = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+            }).format(new Date());
+            expect(screen.getByLabelText('Delivery date')).toHaveValue(today);
+            /* And while it is today, the wording is the one dispatch has
+               always read. */
+            expect(screen.getByText(/Saved now, this is due by/)).toBeInTheDocument();
+        });
+
+        it('says the deadline runs from that morning once the date is not today', async () => {
+            await openForm();
+            fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '2027-03-18' } });
+
+            expect(screen.queryByText(/Saved now/)).not.toBeInTheDocument();
+            const line = screen.getByText(/Dated 2027-03-18/);
+            /* 07:00 plus the two-hour STAT window. The point of the sentence
+               is that a dispatcher sees 9:00 AM on the 18th rather than a
+               time this morning, so the time itself is asserted. */
+            expect(line).toHaveTextContent(/Mar 18, 9:00\s?AM/);
+            expect(line).toHaveTextContent(/from 7:00\s?AM that day, not from now/);
+        });
+
+        it('moves that deadline out to 11:00 for ad hoc', async () => {
+            await openForm();
+            fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '2027-03-18' } });
+            fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'adhoc' } });
+            expect(screen.getByText(/Dated 2027-03-18/)).toHaveTextContent(/Mar 18, 11:00\s?AM/);
+        });
+
+        it('allows a STAT on a future date, which the contract wording does not forbid', async () => {
+            await openForm();
+            fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '2027-03-18' } });
+            /* The pickup rule still applies and still says so: the hour
+               runs from pickup, whenever that turns out to be. */
+            expect(screen.getByText(/one hour of pickup/)).toBeInTheDocument();
+            expect(screen.getByLabelText('Delivery date')).toHaveValue('2027-03-18');
+        });
+
+        it('takes a backdated order without argument', async () => {
+            await openForm();
+            fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '2026-09-10' } });
+            expect(screen.getByLabelText('Delivery date')).toHaveValue('2026-09-10');
+            expect(screen.getByText(/Dated 2026-09-10/)).toBeInTheDocument();
+        });
+
+        it('sends the chosen day with the order', async () => {
+            const { bodies } = mockFetch({
+                ...routes,
+                'POST /api/projects/uh/uh/orders': {
+                    id: 42, serviceType: 'stat', status: 'ready', zone: 1,
+                    dueAt: '2027-03-18T14:00:00.000Z', recipientName: 'Ines Vargas',
+                },
+            });
+            render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
+            fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
+            fill();
+            fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '2027-03-18' } });
+            fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
+
+            await screen.findByRole('status');
+            expect(bodies['POST /api/projects/uh/uh/orders'])
+                .toMatchObject({ serviceDate: '2027-03-18' });
+        });
+
+        it('comes back to today after one is saved, so the next call is not misdated', async () => {
+            /* THE ONE THAT WOULD HURT. A dispatcher takes Thursday's order,
+               then answers the phone again -- and the second order is for
+               Thursday too, silently, because the form kept the last date.
+               Nobody checks a field they did not touch. */
+            mockFetch({
+                ...routes,
+                'POST /api/projects/uh/uh/orders': {
+                    id: 43, serviceType: 'stat', status: 'ready', zone: 1,
+                    dueAt: '2027-03-18T14:00:00.000Z', recipientName: 'Ines Vargas',
+                },
+            });
+            render(<NewOrder projectCode="uh" timezone="America/Chicago" canCreate canDelete />);
+            fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
+            fill();
+            fireEvent.change(screen.getByLabelText('Delivery date'), { target: { value: '2027-03-18' } });
+            fireEvent.click(screen.getByRole('button', { name: 'Create order' }));
+            await screen.findByRole('status');
+
+            fireEvent.click(await screen.findByRole('button', { name: 'Take an order' }));
+            const today = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+            }).format(new Date());
+            expect(screen.getByLabelText('Delivery date')).toHaveValue(today);
+        });
     });
 
     it('creates the order and reports its number, deadline and zone', async () => {

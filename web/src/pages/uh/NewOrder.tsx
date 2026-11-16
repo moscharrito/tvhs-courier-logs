@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { clockFor, todayIn } from '../../lib/when';
+import { clockFor, instantIn, stampFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import type { Site } from './Sites';
@@ -47,6 +47,10 @@ interface Removed {
 
 const EMPTY = {
     serviceType: 'stat' as 'stat' | 'adhoc',
+    /* Filled in from the project timezone when the form opens, never from
+       the browser's own date -- a dispatcher working from elsewhere must
+       still take an order for San Antonio's today. See `blank` below. */
+    serviceDate: '',
     recipientName: '', recipientPhone: '',
     addressLine: '', addressLine2: '', city: 'San Antonio', state: 'TX', zip: '',
     description: '', quantity: '1', deliveryNotes: '', externalRef: '',
@@ -56,6 +60,12 @@ const EMPTY = {
 /** Minutes each service type allows, from the request. Matches the contract
  *  defaults in core/projects/settings; the server is the authority. */
 const WINDOW_MINUTES: Record<string, number> = { stat: 120, adhoc: 240 };
+
+/** When a day's clock starts, for an order dated other than today. Mirrors
+ *  pricing.afterHoursEnd, the hour Addendum 1 closes the after-hours window
+ *  at -- the same constant the server measures the deadline from, so this
+ *  line and the saved order agree. The server remains the authority. */
+const BUSINESS_START = '07:00';
 
 export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
     projectCode: string; timezone: string; canCreate: boolean;
@@ -80,9 +90,17 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
        said in the project's zone and not in the zone this machine happens to
        be set to. */
     const clock = clockFor(timezone);
+    /* Carries the month and day, for a deadline that is not today's. */
+    const stamp = stampFor(timezone);
     const [sites, setSites] = useState<Site[] | null>(null);
     const [siteId, setSiteId] = useState<number | ''>('');
-    const [form, setForm] = useState(EMPTY);
+    /* A fresh form, dated today WHERE THE WORK HAPPENS. todayIn reads the
+       project timezone, so a dispatcher on a laptop still set to another
+       zone does not open the form on yesterday or tomorrow. Recomputed on
+       each reset rather than captured once, because this panel stays
+       mounted across midnight on a night shift. */
+    const blank = useCallback(() => ({ ...EMPTY, serviceDate: todayIn(timezone) }), [timezone]);
+    const [form, setForm] = useState(blank);
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
@@ -188,6 +206,7 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
                 json: {
                     siteId: Number(siteId),
                     serviceType: form.serviceType,
+                    serviceDate: form.serviceDate,
                     recipientName: form.recipientName,
                     recipientPhone: form.recipientPhone,
                     addressLine: form.addressLine,
@@ -205,7 +224,7 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
             const due = created.dueAt ? ` Due ${clock(created.dueAt)}.` : '';
             const zone = created.zone === null ? ' Out of area, so it needs a distance before it can be priced.' : ` Zone ${created.zone}.`;
             setMsg({ kind: 'ok', text: `Order ${created.id} created and ready for dispatch.${due}${zone}` });
-            setForm(EMPTY);
+            setForm(blank());
             setOpen(false);
         } catch (err) {
             setMsg(err instanceof ApiError
@@ -216,7 +235,19 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
         }
     };
 
-    const dueIfSavedNow = new Date(Date.now() + (WINDOW_MINUTES[form.serviceType] ?? 120) * 60_000);
+    /* WHAT THE DEADLINE WILL ACTUALLY BE, for the day chosen rather than
+       for now. This mirrors the rule in modules/uh/orders.ts: today runs
+       from this moment, any other day runs from the start of business on
+       that day. The line under the form is the only warning a dispatcher
+       gets that a date they picked moves the clock, so it has to be the
+       real figure and not an approximation of it. */
+    const isToday = form.serviceDate === todayIn(timezone);
+    const clockFrom = isToday
+        ? new Date()
+        : instantIn(timezone, `${form.serviceDate}T${BUSINESS_START}`);
+    const dueThen = clockFrom
+        ? new Date(clockFrom.getTime() + (WINDOW_MINUTES[form.serviceType] ?? 120) * 60_000)
+        : null;
 
     return (
         <Section
@@ -253,6 +284,27 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
                                 <option value="adhoc">ad hoc</option>
                             </select>
                         </label>
+                        {/* THE DAY THE WORK IS FOR, which until now was always
+                            today because there was nowhere to say otherwise.
+
+                            NOT "On day", which is what the filter below the
+                            form is called. Two controls under that one label
+                            on a single screen -- one setting the order's date,
+                            one searching by it -- is the kind of thing that is
+                            obvious to whoever built it and to nobody else.
+
+                            No min or max. Backdating is allowed on purpose:
+                            a call that came in at the end of a shift and was
+                            not recorded until the next morning belongs to the
+                            day it happened, and so does its invoice line. */}
+                        <label className="izy-field">Delivery date
+                            <input
+                                type="date"
+                                value={form.serviceDate}
+                                onChange={(e) => setForm({ ...form, serviceDate: e.target.value })}
+                                required
+                            />
+                        </label>
                         <label className="izy-field">Reference<input value={form.externalRef} onChange={(e) => setForm({ ...form, externalRef: e.target.value })} placeholder="Rx number, optional" /></label>
                     </div>
 
@@ -279,13 +331,18 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
                     </div>
 
                     <p className="izy-muted">
-                        Saved now, this is due by {clock(dueIfSavedNow.toISOString())}.
+                        {dueThen === null
+                            ? 'Choose a day to see the deadline.'
+                            : isToday
+                                ? `Saved now, this is due by ${clock(dueThen.toISOString())}.`
+                                : `Dated ${form.serviceDate}, this is due by ${stamp(dueThen.toISOString())} —`
+                                    + ` the window runs from ${clock(instantIn(timezone, `${form.serviceDate}T${BUSINESS_START}`)?.toISOString() ?? '')} that day, not from now.`}
                         {form.serviceType === 'stat' && ' STAT also has to be delivered within one hour of pickup.'}
                     </p>
 
                     <div className="izy-row">
                         <button className="izy-btn" type="submit" disabled={busy}>{busy ? 'Saving' : 'Create order'}</button>
-                        <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => { setOpen(false); setForm(EMPTY); setMsg(null); }}>Cancel</button>
+                        <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => { setOpen(false); setForm(blank()); setMsg(null); }}>Cancel</button>
                     </div>
                 </form>
             )}
