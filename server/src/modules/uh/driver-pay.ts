@@ -523,6 +523,14 @@ export function payFor(stops: readonly PayableStop[], rates: DriverPaySettings):
  * bonus is for completing the round, and the per-delivery rate already pays
  * nothing for a dry run. The consequence worth stating out loud: a driver
  * whose every stop failed still earns the bonus.
+ *
+ * AND IT IS A WINDOW, NOT A SWITCH. Withdrawn on 16 November 2026, which is
+ * a different thing from never having existed: the eleven days it was live
+ * were worked, and the people who worked them were told what they were
+ * worth. Zeroing the amount would have taken $150 off each of those days in
+ * the same screen somebody disburses from, so the end date lives beside the
+ * start date and the past keeps answering the way it always did. See
+ * completionBonusUntil in core/projects/settings.
  */
 export function bonusFor(
     qualifyingDays: readonly string[],
@@ -530,9 +538,12 @@ export function bonusFor(
 ): { bonusDays: number; bonusCents: number } {
     if (rates.completionBonusCents <= 0) return { bonusDays: 0, bonusCents: 0 };
     const from = rates.completionBonusFrom;
+    const until = rates.completionBonusUntil;
     /* String comparison, which is correct for YYYY-MM-DD and avoids
-       inventing a timezone to parse a service date into. */
-    const days = from === null ? qualifyingDays : qualifyingDays.filter((d) => d >= from);
+       inventing a timezone to parse a service date into. `until` is
+       INCLUSIVE: it names the last day the bonus is earned, so a reader
+       setting it does not have to think about what the day after is. */
+    const days = qualifyingDays.filter((d) => (from === null || d >= from) && (until === null || d <= until));
     return { bonusDays: days.length, bonusCents: days.length * rates.completionBonusCents };
 }
 

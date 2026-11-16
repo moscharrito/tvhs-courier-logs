@@ -232,6 +232,30 @@ export interface DriverPaySettings {
      * which is the expensive way round to be wrong.
      */
     completionBonusFrom: string | null;
+    /**
+     * The LAST service date the bonus applies to, inclusive, or null for no
+     * end at all.
+     *
+     * WHY ENDING IT NEEDED ITS OWN FIELD RATHER THAN `--bonus 0`.
+     *
+     * The bonus is recomputed from the live rate card every time anybody
+     * asks what a day is worth; nothing stores what was awarded. So setting
+     * the amount to zero does not stop the bonus, it ABOLISHES it -- the
+     * figures for every day already worked drop by $150 each, including the
+     * days sitting in a disbursement somebody has already told a driver
+     * about. The first time that is noticed is on a payslip, by the person
+     * it is short to.
+     *
+     * `completionBonusFrom` exists because starting a bonus must not reach
+     * backwards. This is the same argument running the other way: stopping
+     * one must not reach backwards either. The pair bracket the window the
+     * bonus was really live for, so the past stays answerable after the
+     * arrangement ends -- which is the whole reason the records exist.
+     *
+     * Removed from 16 November 2026, the Monday it was withdrawn, so the
+     * last day it is earned is the 15th. Per-delivery pay is untouched.
+     */
+    completionBonusUntil: string | null;
     /** Shown beside the figures so a reader knows what the number is. */
     currency: string;
 }
@@ -470,6 +494,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
            already owed, so it is never made by a deploy. */
         completionBonusCents: 0,
         completionBonusFrom: null,
+        completionBonusUntil: null,
         currency: 'USD',
     },
     pricing: {
@@ -596,6 +621,11 @@ export const SettingsPatch = z.object({
         /* A service date, or null to mean every day. Validated as a shape
            here; whether it is in the past is the administrator's call. */
         completionBonusFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        /* The last day it is earned, inclusive. Null means it has not been
+           stopped. Not checked against `from` here: a window that ends
+           before it begins pays nothing, which is what it says, and the
+           script that sets this refuses the pair outright. */
+        completionBonusUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
         currency: z.string().trim().length(3).toUpperCase().optional(),
     }).strict().optional(),
     pricing: z.object({
@@ -792,6 +822,11 @@ function driverPaySection(raw: unknown): DriverPaySettings {
         ? source['completionBonusFrom']
         : defaults.completionBonusFrom;
 
+    const bonusUntil = typeof source['completionBonusUntil'] === 'string'
+        && /^\d{4}-\d{2}-\d{2}$/.test(source['completionBonusUntil'])
+        ? source['completionBonusUntil']
+        : defaults.completionBonusUntil;
+
     /* Anything that is not one of the two known bases falls back to the
        default rather than being carried forward. A stored value nobody
        recognises must not decide how somebody is paid. */
@@ -812,6 +847,7 @@ function driverPaySection(raw: unknown): DriverPaySettings {
             : defaults.outOfZoneCents,
         completionBonusCents: bonusCents,
         completionBonusFrom: bonusFrom,
+        completionBonusUntil: bonusUntil,
         currency,
     };
 }

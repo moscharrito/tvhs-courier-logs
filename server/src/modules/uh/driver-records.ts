@@ -614,7 +614,14 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                 ...(rates.completionBonusCents > 0 ? [[
                     'Completion bonus',
                     `${(rates.completionBonusCents / 100).toFixed(2)} ${rates.currency} for each day on which the driver finished every stop assigned to them`
-                    + `${rates.completionBonusFrom === null ? '' : `, from ${rates.completionBonusFrom}`}`
+                    /* BOTH ENDS OF THE WINDOW, because after the bonus was
+                       withdrawn a reader opening an October export would
+                       otherwise be told about an arrangement that no longer
+                       runs, with nothing saying when it stopped. */
+                    + (rates.completionBonusFrom === null && rates.completionBonusUntil === null ? ''
+                        : rates.completionBonusUntil === null ? `, from ${rates.completionBonusFrom}`
+                            : rates.completionBonusFrom === null ? `, up to and including ${rates.completionBonusUntil}`
+                                : `, from ${rates.completionBonusFrom} up to and including ${rates.completionBonusUntil}`)
                     + '. A delivery that was attempted and failed counts as finished; a stop still open does not.',
                 ] as [string, string]] : []),
                 ['Blank pay', 'A rate is not set for a service level that was worked, so no figure is given rather than a short one.'],

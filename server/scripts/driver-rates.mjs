@@ -11,13 +11,32 @@
  * change, it goes through here, where every run says which server it hit
  * and reads the result back.
  *
- *   node server/scripts/driver-rates.mjs --show
- *   node server/scripts/driver-rates.mjs --basis zone --zone1 5.00 --zone2 7.25 \
+ * UNDER tsx, NOT node -- AND THESE LINES SAID node UNTIL 16 NOVEMBER 2026.
+ *
+ * This script imports PAY_BANDS from a TypeScript module on purpose (see
+ * the note at the import), and plain node cannot resolve a named export out
+ * of one. So every example below failed on its first line with "does not
+ * provide an export named PAY_BANDS" -- including the run that was pointed
+ * at production, by somebody expecting to change what a courier is paid.
+ * The usage block simply was not updated when the import went in, which is
+ * the ordinary way a file comes to lie about itself.
+ *
+ * The npm script carries the runner, so these are copyable as they stand:
+ *
+ *   npm run driver-rates -w server -- --show
+ *   npm run driver-rates -w server -- --basis zone --zone1 5.00 --zone2 7.25 \
  *       --zone3 12.00 --zone4 22.00 --zone5 28.00
- *   node server/scripts/driver-rates.mjs --no-zone 28.00   (a ZIP on no zone)
- *   node server/scripts/driver-rates.mjs --show --base https://logs.izyglobalservices.com
- *   node server/scripts/driver-rates.mjs --bonus 150.00 --bonus-from 2026-11-05
- *   node server/scripts/driver-rates.mjs --bonus 0          (switch it off)
+ *   npm run driver-rates -w server -- --no-zone 28.00   (a ZIP on no zone)
+ *   npm run driver-rates -w server -- --show --base https://logs.izyglobalservices.com
+ *   npm run driver-rates -w server -- --bonus 150.00 --bonus-from 2026-11-05
+ *   npm run driver-rates -w server -- --bonus-until 2026-11-15   (stop it)
+ *   npm run driver-rates -w server -- --bonus 0          (abolish it)
+ *
+ * --bonus-until AND --bonus 0 ARE NOT THE SAME INSTRUCTION. The first ends
+ * the arrangement on a date and leaves every day before it worth what it
+ * was worth. The second says it never existed, and takes the amount off
+ * days already worked and possibly already promised. Stopping a bonus is
+ * almost always the first one.
  *
  * Add --i-mean-production for a remote server. The admin password is asked
  * for with the echo off; SEED_ADMIN_PASS still wins when it is already set.
@@ -114,6 +133,25 @@ if (bonusFrom !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(bonusFrom)) {
     process.exit(1);
 }
 
+/* --bonus-until: THE LAST DAY IT IS EARNED, INCLUSIVE.
+ *
+ * Inclusive because that is how somebody says it out loud -- "the last day
+ * is the fifteenth" -- and an off-by-one here is a day of somebody's pay.
+ * `none` clears it, for an arrangement that is started up again. */
+const bonusUntilRaw = value('bonus-until');
+const bonusUntil = bonusUntilRaw === 'none' ? null : bonusUntilRaw;
+if (bonusUntil !== undefined && bonusUntil !== null && !/^\d{4}-\d{2}-\d{2}$/.test(bonusUntil)) {
+    console.error(`--bonus-until must be a service date like 2026-11-15, or "none", not ${bonusUntilRaw}.`);
+    process.exit(1);
+}
+/* A window that ends before it begins pays nobody anything. It is almost
+   certainly two dates typed the wrong way round, and it would show up as
+   every driver's bonus silently vanishing. */
+if (typeof bonusUntil === 'string' && typeof bonusFrom === 'string' && bonusUntil < bonusFrom) {
+    console.error(`--bonus-until ${bonusUntil} is before --bonus-from ${bonusFrom}, so no day could earn it.`);
+    process.exit(1);
+}
+
 /* ── THE STOP THAT IS IN NO ZONE ───────────────────────────────────────
  *
  * Its own flag and not a sixth zone, because it is the price of not being
@@ -156,6 +194,7 @@ const patch = {
     ...(Object.keys(perDeliveryCents).length > 0 ? { perDeliveryCents } : {}),
     ...(bonusCents === undefined ? {} : { completionBonusCents: bonusCents }),
     ...(bonusFrom === undefined ? {} : { completionBonusFrom: bonusFrom }),
+    ...(bonusUntil === undefined ? {} : { completionBonusUntil: bonusUntil }),
 };
 if (!show && Object.keys(patch).length === 0) {
     console.error('Nothing to change. Pass --show to read the rates, or a rate to set one.');
@@ -241,8 +280,16 @@ function print(pay) {
     const bonus = pay.completionBonusCents;
     if (typeof bonus === 'number' && bonus > 0) {
         const from = pay.completionBonusFrom;
+        const until = pay.completionBonusUntil;
         console.log(`  Completion bonus  ${money(bonus, pay.currency)} per finished day`);
         console.log(`    from            ${from ?? 'every day in the range (RETROACTIVE)'}`);
+        /* WITHDRAWN IS NOT OFF, and the line says which. A reader who sees
+           only "off" cannot tell a bonus that never ran from one that ran
+           for eleven days and still has to be paid out. */
+        console.log(`    until           ${until ?? 'no end set -- still running'}`);
+        if (until !== null && until !== undefined) {
+            console.log(`    i.e.            earned up to and including ${until}, nothing after`);
+        }
     } else {
         console.log('  Completion bonus  off');
     }

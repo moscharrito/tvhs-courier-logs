@@ -146,9 +146,15 @@ describe('the completion bonus', () => {
        stops standing, or applied to a day that was already disbursed, is
        money out of the door. */
 
-    const setBonus = async (cents, from = null) => {
+    const setBonus = async (cents, from = null, until = null) => {
         const res = await admin.patch('/api/projects/uh/settings')
-            .send({ driverPay: { completionBonusCents: cents, completionBonusFrom: from } });
+            .send({
+                driverPay: {
+                    completionBonusCents: cents,
+                    completionBonusFrom: from,
+                    completionBonusUntil: until,
+                },
+            });
         expect(res.status, JSON.stringify(res.body).slice(0, 200)).toBe(200);
     };
 
@@ -315,6 +321,87 @@ describe('the completion bonus', () => {
         const d = res.body.drivers.find((x) => x.username === who);
         expect(d.delivered, 'only the Green delivery is counted').toBe(1);
         expect(d.bonusDays, 'but the day was still completed').toBe(1);
+    });
+
+    /* ───────────────────────────────── withdrawing it, which is not the
+     * same as never having had it
+     *
+     * Izy Global withdrew the bonus on Monday 16 November 2026, eleven days
+     * after it started. The obvious way to do that -- set the amount to
+     * nought -- would have taken $150 off every one of those eleven days as
+     * well, because nothing stores what was awarded and the figure is
+     * recomputed from the live rate card each time it is asked for. The
+     * disbursement screen would simply have shown less, with nothing
+     * anywhere saying why.
+     *
+     * So the end date is tested the way the start date is, and the test
+     * that matters is the last one: the days before the cut-off keep their
+     * money.
+     */
+    describe('ending it on a date', () => {
+        it('pays a day on the last day of the window', async () => {
+            await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+            /* `day` itself is the last day it is earned. Inclusive, because
+               that is how somebody says "the fifteenth is the last day" and
+               an off-by-one here is a day of a person's pay. */
+            await setBonus(15000, '2000-01-01', day);
+            const who = await freshDriver();
+            await deliveredBy(who);
+            const d = await payOf(who);
+            expect(d.bonusDays, 'the closing day still earns it').toBe(1);
+            expect(d.bonusCents).toBe(15000);
+        });
+
+        it('pays nothing the day after it', async () => {
+            await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+            /* A window that closed yesterday. Same driver, same finished
+               day, no bonus -- which is the whole point of the change. */
+            const yesterday = new Date(`${day}T12:00:00Z`);
+            yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+            await setBonus(15000, '2000-01-01', yesterday.toISOString().slice(0, 10));
+            const who = await freshDriver();
+            await deliveredBy(who);
+            const d = await payOf(who);
+            expect(d.bonusDays, 'the window had closed').toBe(0);
+            expect(d.bonusCents).toBe(0);
+            /* And the per-delivery pay is untouched, which is the half of
+               the instruction that was "keep the standard per delivery
+               pay". One stat delivery at $7. */
+            expect(d.payCents).toBe(700);
+        });
+
+        it('leaves the days inside the window worth what they were worth', async () => {
+            /* THE REGRESSION THIS EXISTS FOR. Read the same finished day
+               twice: once while the bonus is running, once after it has
+               been ended with a date in the future of that day. The figure
+               must not move. `--bonus 0` would move it, which is why
+               ending and abolishing are two different operations. */
+            await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+            await setBonus(15000, '2000-01-01', null);
+            const who = await freshDriver();
+            await deliveredBy(who);
+            const during = await payOf(who);
+            expect(during.bonusCents).toBe(15000);
+
+            await setBonus(15000, '2000-01-01', day);
+            const after = await payOf(who);
+            expect(after.bonusCents, 'the past is still answerable').toBe(during.bonusCents);
+            expect(after.payCents).toBe(during.payCents);
+        });
+
+        it('abolishing it still clears the past, so the two are visibly different', async () => {
+            /* Not a bug -- the documented meaning of a zero rate, and the
+               reason the end date had to exist. Asserted so that nobody
+               "fixes" one into the other. */
+            await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
+            await setBonus(15000, '2000-01-01', null);
+            const who = await freshDriver();
+            await deliveredBy(who);
+            expect((await payOf(who)).bonusCents).toBe(15000);
+
+            await setBonus(0, '2000-01-01', null);
+            expect((await payOf(who)).bonusCents, 'zero reaches backwards').toBe(0);
+        });
     });
 });
 
