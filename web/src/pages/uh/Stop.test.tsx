@@ -14,7 +14,7 @@ import { Stop } from './Stop';
 import { AuthProvider } from '../../app/auth';
 import { mockFetch } from '../../test/setup';
 import { IDBFactory } from 'fake-indexeddb';
-import { queued, rejections, resetOutboxForTests } from '../../lib/outbox';
+import { enqueue, queued, rejections, resetOutboxForTests } from '../../lib/outbox';
 
 const session = { id: 4, username: 'ada.courier', name: 'Ada Courier', role: 'driver', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'courier' }];
@@ -364,8 +364,10 @@ describe('Stop', () => {
         /* THROUGH THE QUEUE, EVEN ON FULL SIGNAL. A photograph has to reach
            the bucket before the delivery that references it, so the entry is
            queued and drained immediately rather than posted inline. The
-           screen says so in those words. */
-        await waitFor(() => expect(screen.getByText(/Saved on this phone and sending now/)).toBeInTheDocument());
+           screen says so -- as a plain confirmation, because with a signal
+           the queue drains in well under a second and there is nothing the
+           driver has to do about it. */
+        await waitFor(() => expect(screen.getByText('Order status sent to dispatch.')).toBeInTheDocument());
         await waitFor(() => expect(bodyOf(fn, `POST ${ORDER}/deliver`)).toBeDefined());
         const body = bodyOf(fn, `POST ${ORDER}/deliver`);
         expect(body.signedName).toBe('Ines Vargas');
@@ -446,7 +448,7 @@ describe('Stop', () => {
         /* A doorstep delivery always goes through the offline queue: the photo
            has to be in the bucket before the delivery is claimed, and that is
            the queue's job whether or not there is signal right now. */
-        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByText('Order status sent to dispatch.')).toBeInTheDocument());
         const expected = ['POST /api/projects/uh/uh/files', 'PUT https://bucket.example/put?sig=x', 'POST /api/projects/uh/uh/files/9/stored', `POST ${ORDER}/doorstep`];
         await waitFor(() => expect(calls.filter((c) => expected.includes(c))).toEqual(expected));
         expect(bodyOf(fn, `POST ${ORDER}/doorstep`)).toMatchObject({ fileId: 9, noSignatureReason: 'Nobody answered, left inside the screen door' });
@@ -528,8 +530,11 @@ describe('Stop', () => {
 
         // And the stop stops offering an outcome it has already been given.
         expect(screen.getByRole('heading', { name: 'Recorded' })).toBeInTheDocument();
-        expect(screen.getByText('What you saved is recorded and sent to dispatch.')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
+        /* One statement, not two. The alert above already said where it
+           went; the card under it is a receipt and a way back. */
+        expect(screen.queryByText(/What you saved is recorded/)).toBeNull();
+        expect(screen.getByRole('link', { name: 'Back to your list' })).toBeInTheDocument();
     });
 
     it('says what the record is in one word, with no paragraph under it', async () => {
@@ -909,5 +914,159 @@ describe('a time for a stop filed late', () => {
         /* In the project's zone, so a dispatcher can check it against what
            the courier told them rather than against UTC. */
         expect(await screen.findByText(/This applies to every button below/)).toBeInTheDocument();
+    });
+});
+
+describe('tapping "I have arrived" more than once', () => {
+    /* REPORTED 16 NOVEMBER, with a photograph of the screen.
+     *
+     * A driver tapped the arrival, the record went into the queue, and the
+     * whole stop collapsed to a "Recorded" card and a link away: no arrival
+     * button, no "How did it go?", nothing to record the delivery with. One
+     * flag -- "is anything queued for this order" -- was hiding both the
+     * arrival button (right) and the outcome form (wrong), because
+     * pendingFor could not tell an arrival from an outcome. */
+
+    it('still offers the outcome while the arrival is on its way', async () => {
+        setOnline(false);
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'I have arrived' }));
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+
+        /* THE WHOLE BUG. A driver who has arrived has not finished, and the
+           three endings must stay on screen until one is chosen. */
+        expect(screen.getByRole('heading', { name: 'How did it go?' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Handed over' })).toBeInTheDocument();
+    });
+
+    it('takes the arrival button away, so there is nothing to tap twice', async () => {
+        setOnline(false);
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'I have arrived' }));
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+
+        expect(screen.queryByRole('button', { name: 'I have arrived' })).not.toBeInTheDocument();
+        expect(await queued()).toHaveLength(1);
+    });
+
+    it('does not call the stop "Recorded" when only the arrival is in', async () => {
+        /* That card is a receipt for an OUTCOME. Showing it for an arrival
+           tells a driver they are finished when they have not started. */
+        setOnline(false);
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'I have arrived' }));
+        await waitFor(() => expect(screen.getByText(/Saved on this phone/)).toBeInTheDocument());
+
+        expect(screen.queryByRole('heading', { name: 'Recorded' })).not.toBeInTheDocument();
+    });
+
+    it('is workable on a stop opened with an arrival already waiting', async () => {
+        /* The flag was read on mount too, so re-opening a stop whose arrival
+           had not drained gave the same dead screen -- which is how a driver
+           stays stuck rather than merely being stuck once. */
+        setOnline(false);
+        await enqueue({
+            url: ORDER + '/arrive',
+            body: {},
+            label: 'Arrival for Ines Vargas',
+            orderId: 21,
+        });
+
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        /* waitFor: the queue is read asynchronously on mount, so the
+           arrival button is on screen for a frame before it is taken
+           away. What matters is where it settles. */
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'I have arrived' })).not.toBeInTheDocument());
+        expect(screen.getByRole('button', { name: 'Handed over' })).toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Recorded' })).not.toBeInTheDocument();
+    });
+
+    it('hides the outcome form when the OUTCOME is the thing waiting', async () => {
+        /* The rule the old flag existed to enforce, which must survive the
+           fix: a courier must not record the same handover twice. */
+        setOnline(false);
+        await enqueue({
+            url: ORDER + '/deliver',
+            body: { signedName: 'Ines Vargas' },
+            label: 'Delivery for Ines Vargas',
+            orderId: 21,
+        });
+
+        renderStop();
+        await screen.findByRole('heading', { name: 'Stop' });
+
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument());
+        expect(screen.getByRole('heading', { name: 'Recorded' })).toBeInTheDocument();
+    });
+});
+
+describe('when the outcome is recorded', () => {
+    const delivered = () => ({
+        ...routes(),
+        ...fileRoutes,
+        ['POST ' + ORDER + '/deliver']: { status: 201, body: { status: 'delivered' } },
+    });
+
+    const recordDelivery = async () => {
+        await screen.findByRole('heading', { name: 'Stop' });
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+        fireEvent.change(screen.getByLabelText(/Printed name/), { target: { value: 'Ines Vargas' } });
+        attachForm();
+        fireEvent.click(screen.getByRole('button', { name: 'Record the delivery' }));
+    };
+
+    it('does not mention the phone when the phone has a signal', async () => {
+        /* "Saved on this phone and sending now" was true and read as a
+           warning, and drivers recorded the stop again because of it. */
+        renderStop(delivered());
+        await recordDelivery();
+
+        await waitFor(() => expect(screen.getByText('Order status sent to dispatch.')).toBeInTheDocument());
+        expect(screen.queryByText(/Saved on this phone/)).toBeNull();
+    });
+
+    it('puts the driver back on their list', async () => {
+        /* "They get stuck on this page" was the report. Being unstuck means
+           being moved, not being offered a link. */
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            renderStop(delivered());
+            await recordDelivery();
+            await waitFor(() => expect(screen.getByText('Order status sent to dispatch.')).toBeInTheDocument());
+
+            /* Still here while the confirmation is readable. */
+            expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/21/stop');
+
+            await vi.advanceTimersByTimeAsync(2000);
+
+            /* Rendered cold with nothing behind it in the history, so the
+               fallback is the run rather than a back that leaves the app. */
+            await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/my-run'));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('stays put after an arrival, which is not an ending', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            renderStop({ ...routes(), ['POST ' + ORDER + '/arrive']: { status: 201, body: { status: 'arrived' } } });
+            await screen.findByRole('heading', { name: 'Stop' });
+            fireEvent.click(screen.getByRole('button', { name: 'I have arrived' }));
+
+            await vi.advanceTimersByTimeAsync(3000);
+
+            expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/21/stop');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

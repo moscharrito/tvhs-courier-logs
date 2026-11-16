@@ -13,12 +13,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { clockFor, instantIn } from '../../lib/when';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { Loading } from '../../app/Loading';
-import { sendOrQueue, pendingFor, type QueuedPhoto } from '../../lib/outbox';
+import { sendOrQueue, pendingActionsFor, subscribe, type QueuedPhoto } from '../../lib/outbox';
 import { PHOTO_ACCEPT, photoProblem, photoType } from '../../lib/photos';
 import { CardButton, CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { NavigateIcon, PhoneIcon, PinIcon, RouteIcon } from '../../app/Icons';
@@ -81,11 +81,25 @@ const LABELS: Record<string, string> = {
     arrive: 'Arrival', deliver: 'Delivery', doorstep: 'Doorstep delivery', attempt: 'Attempt',
 };
 
+/** The three endings a stop can have.
+ *
+ *  An arrival is deliberately not one of them. It is the clock starting,
+ *  and a stop that has arrived still needs its outcome recorded -- which
+ *  is exactly the distinction that was missing when one flag covered both.
+ */
+const OUTCOMES = ['deliver', 'doorstep', 'attempt'];
+
+/** How long the confirmation stays on screen before the driver is put back
+ *  on their list. Long enough to read four words, short enough that nobody
+ *  waits for it. */
+const BACK_TO_LIST_MS = 1_500;
+
 type Choice = null | 'deliver' | 'doorstep' | 'attempt';
 
 export function Stop() {
     const { code = '', orderId = '' } = useParams();
     const navigate = useNavigate();
+    const locationKey = useLocation().key;
     const base = `/api/projects/${code}/uh/orders/${orderId}`;
     /* The deadline this stop is measured against is a wall-clock time in the
        project's zone, so it is shown in that zone and not the phone's. */
@@ -168,7 +182,15 @@ export function Stop() {
        typing in one silently fills the other. */
     const [reasons, setReasons] = useState<Record<number, { code: string; note: string }>>({});
     const [busy, setBusy] = useState(false);
-    const [queuedHere, setQueuedHere] = useState(false);
+    /* TWO QUESTIONS, NOT ONE. See the note on pendingActionsFor in
+       lib/outbox.ts: these were a single `queuedHere` flag, and an arrival
+       waiting in the queue therefore took the outcome form off the screen
+       as well as the arrival button. */
+    const [arrivalQueued, setArrivalQueued] = useState(false);
+    const [outcomeQueued, setOutcomeQueued] = useState(false);
+    /* Set when an OUTCOME has been recorded from this screen, which is the
+       moment the driver is finished here and wants their list back. */
+    const [finished, setFinished] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string; details?: string[] } | null>(null);
 
     const load = useCallback(async () => {
@@ -212,12 +234,55 @@ export function Stop() {
        pendingFor reads IndexedDB and does not take one, so the cheap thing
        that covers all three is to stop writing rather than to stop asking. */
     /* A stop whose outcome is queued must not offer the outcome again: the
-       courier would record it twice and see two entries waiting. */
+       courier would record it twice and see two entries waiting. An arrival
+       is a different matter -- it hides the arrival button and NOTHING
+       else, because a stop that has arrived still has to be recorded.
+     *
+     * SUBSCRIBED, not read once on mount. The queue empties while this
+     * screen is open, and a refusal takes an entry out of it; asking only
+     * at mount left the button hidden on a stop whose arrival had in fact
+     * been rejected, with nothing to tell the driver why. */
     useEffect(() => {
         let live = true;
-        void pendingFor(Number(orderId)).then((q) => { if (live) setQueuedHere(q); });
-        return () => { live = false; };
-    }, [orderId]);
+        let had = false;
+        const refresh = () => {
+            void pendingActionsFor(Number(orderId)).then((actions) => {
+                if (!live) return;
+                setArrivalQueued(actions.includes('arrive'));
+                setOutcomeQueued(actions.some((a) => OUTCOMES.includes(a)));
+                /* The queue for this stop has just emptied, so dispatch now
+                   knows what only this phone knew. Re-read the stop, or the
+                   arrival button reappears on a stop that has arrived --
+                   `arrivedAt` is still null in the copy loaded before the
+                   queue drained, and the driver taps it a second time. */
+                if (had && actions.length === 0) void load();
+                had = actions.length > 0;
+            });
+        };
+        refresh();
+        const off = subscribe(refresh);
+        return () => { live = false; off(); };
+    }, [orderId, load]);
+
+    /* BACK TO THE LIST, BECAUSE THE WORK HERE IS DONE.
+     *
+     * A driver who records an outcome is finished with this stop and wants
+     * the next one. Leaving them on a page whose every control has just
+     * disappeared is what "I got stuck" meant. navigate(-1) rather than a
+     * link to the run: it returns them to the list they were reading, on
+     * the day they had chosen, at the place they had scrolled to.
+     *
+     * `location.key` is 'default' only on a first entry with no history
+     * behind it -- a refresh, or a link opened cold -- and there is nothing
+     * to go back TO in that case, so the run is the fallback. */
+    useEffect(() => {
+        if (!finished) return undefined;
+        const timer = setTimeout(() => {
+            if (locationKey === 'default') navigate(`/projects/${code}/my-run`);
+            else navigate(-1);
+        }, BACK_TO_LIST_MS);
+        return () => { clearTimeout(timer); };
+    }, [finished, navigate, code, locationKey]);
     useEffect(() => {
         let live = true;
         api<{ available: boolean }>(`/api/projects/${code}/uh/files/status/check`)
@@ -281,14 +346,29 @@ export function Stop() {
                    through the queue, because the photo has to reach the bucket
                    before the event does, so "waiting for signal" would be a
                    lie when the phone has five bars. */
+                /* WORDED AS DONE WHEN IT IS GOING THROUGH, AND HONESTLY
+                   WHEN IT IS NOT.
+                 *
+                 * "Saved on this phone and sending now" was accurate and
+                 * read as a warning: two clauses, one of them about the
+                 * phone, in a yellow box. Drivers took it to mean dispatch
+                 * had not got it and recorded the stop again. With a signal
+                 * the queue sends it in well under a second and there is
+                 * genuinely nothing left for the driver to do, so it says
+                 * so. Changed 16 November on instruction.
+                 *
+                 * No signal is a different fact and still gets said: the
+                 * driver needs to know it is riding on this phone until
+                 * they are back in the open. */
                 setMsg({
-                    kind: 'warn',
+                    kind: navigator.onLine === false ? 'warn' : 'ok',
                     text: navigator.onLine === false
                         ? 'Saved on this phone. It will be sent as soon as you have signal.'
-                        : 'Saved on this phone and sending now.',
+                        : 'Order status sent to dispatch.',
                 });
-                setQueuedHere(true);
             }
+            if (path === 'arrive') setArrivalQueued(true);
+            if (OUTCOMES.includes(path)) { setOutcomeQueued(true); setFinished(true); }
             setChoice(null);
             setSignedName('');
             setPhoto(null);
@@ -585,7 +665,7 @@ export function Stop() {
                 </div>
             )}
 
-            {queuedHere && !closed && (
+            {(finished || outcomeQueued) && !closed && (
                 <div className="izy-card">
                     {/* WORDED AS DONE, ON PURPOSE, AND IT IS NOT THE WHOLE
                         TRUTH. This card shows when the record is in the
@@ -598,10 +678,23 @@ export function Stop() {
                         the driver there is genuinely nothing left to do --
                         but if anybody is ever chasing a delivery dispatch
                         cannot see, this screen is why the driver will say
-                        they sent it. */}
+                        they sent it.
+
+                        THE SENTENCE UNDER THE HEADING IS GONE. The alert
+                        directly above already says the stop went to
+                        dispatch, and saying it twice in two wordings on one
+                        screen is what made this page feel like a problem
+                        rather than a receipt. The driver is on their way
+                        back to the list a second and a half from now; this
+                        is a receipt and a way out, nothing more. */}
                     <h2>Recorded</h2>
-                    <p>What you saved is recorded and sent to dispatch.</p>
-                    <CardLink to={`/projects/${code}/my-run`} title="Back to today" Icon={RouteIcon} tone="primary" compact />
+                    <CardLink
+                        to={`/projects/${code}/my-run`}
+                        title="Back to your list"
+                        Icon={RouteIcon}
+                        tone="primary"
+                        compact
+                    />
                 </div>
             )}
 
@@ -758,7 +851,7 @@ export function Stop() {
                 </div>
             ) : (
                 <>
-                    {order.arrivedAt === null && !queuedHere && (
+                    {order.arrivedAt === null && !arrivalQueued && !outcomeQueued && !finished && (
                         /* FIRST, AND ON ITS OWN. The deadline is measured
                            against this and it counts even when nobody answers
                            the door, so it is the primary card and nothing
@@ -785,7 +878,15 @@ export function Stop() {
                         />
                     )}
 
-                    {choice === null && !queuedHere && (
+                    {/* NOT GATED ON THE ARRIVAL ANY MORE, AND THAT IS THE
+                        BUG FIX. An arrival sitting in the queue used to
+                        take this card off the screen, so a driver who
+                        tapped "I have arrived" twice was left on a stop
+                        with no arrival button and no way to record what
+                        happened at the door. Only an OUTCOME already
+                        recorded hides it now -- which is the thing it was
+                        always meant to prevent. */}
+                    {choice === null && !outcomeQueued && !finished && (
                         <div className="izy-card">
                             <h2>How did it go?</h2>
                             {/* Cards rather than a row of three pills. These

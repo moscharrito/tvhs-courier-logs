@@ -308,6 +308,30 @@ export async function pendingFor(orderId: number): Promise<boolean> {
     return (await queued()).some((e) => e.orderId === orderId);
 }
 
+/**
+ * WHICH actions are queued for one order, not merely whether any are.
+ *
+ * The stop screen used pendingFor for two different jobs, and they are not
+ * the same question. "Is the OUTCOME already queued" must hide the delivery
+ * form, or a courier records the same handover twice. "Is the ARRIVAL
+ * already queued" must hide the arrival button, and nothing else.
+ *
+ * Asking only "is anything queued" conflated them, so an arrival sitting in
+ * the queue -- which is the normal state for about a second, and a long one
+ * in a basement -- took the outcome form off the screen as well. A courier
+ * who tapped "I have arrived" twice got a stop they could no longer record
+ * at all, with no way forward but to leave the page. Reported 16 November.
+ *
+ * Returns the last segment of each queued entry's URL: 'arrive', 'deliver',
+ * 'doorstep', 'attempt'. Duplicates are kept; the caller is asking what is
+ * there, not how many.
+ */
+export async function pendingActionsFor(orderId: number): Promise<string[]> {
+    return (await queued())
+        .filter((e) => e.orderId === orderId)
+        .map((e) => e.url.split('?')[0]!.replace(/\/+$/, '').split('/').pop() ?? '');
+}
+
 /* ------------------------------------------------------------- sending */
 
 class RetryLater extends Error { }

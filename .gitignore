@@ -212,3 +212,14 @@ zips.ps1
 # Holds the two billing people's names and hospital addresses, and takes the
 # admin password at the prompt. Public repository: never goes in.
 billing.ps1
+
+# Ends the UH completion bonus on a date against production. Prompts for
+# the admin password and clears it; never holds one.
+bonus.ps1
+
+# Read-only measurement of what distance-based billing zones would do.
+# Prompts for the admin password and clears it. The CSV is per-delivery
+# working: miles, zone, rate. No patient data, but not for the repo.
+basis.ps1
+*-basis.csv
+*-basis.txt

@@ -88,3 +88,42 @@ describe('SyncStatus', () => {
         expect(await rejections()).toHaveLength(0);
     });
 });
+
+describe('while the queue is actually sending', () => {
+    /* REMOVED 16 NOVEMBER on instruction. This banner announced "Sending 2
+       things." in yellow across the top of every screen, including the stop
+       screen that had just told the driver their delivery was recorded.
+       Two messages about one event, one reassuring and one alarming, and
+       yellow is the colour this app uses for something a person has to deal
+       with. Sending is not that: the queue does it unaided in well under a
+       second, and without a signal it does it later by itself. */
+
+    it('says nothing at all', async () => {
+        setOnline(false);
+        await queueOne();
+        await queueOne('Arrival for Ines Vargas');
+        setOnline(true);
+
+        /* A reply that never settles, so the flush stays in flight and the
+           component sits in exactly the state being tested. */
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => { })));
+
+        const { container } = render(<SyncStatus />);
+        void flush();
+
+        await waitFor(() => expect(container).toBeEmptyDOMElement());
+        expect(screen.queryByText(/Sending/)).toBeNull();
+        expect(screen.queryByText(/2 things/)).toBeNull();
+    });
+
+    it('still speaks up for work that is sitting here and not moving', async () => {
+        /* The case that does need a person, and the reason this component
+           was not simply deleted. */
+        setOnline(false);
+        await queueOne();
+
+        render(<SyncStatus />);
+
+        expect(await screen.findByText(/1 thing is saved on this phone and not sent yet/)).toBeInTheDocument();
+    });
+});
