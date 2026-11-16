@@ -652,6 +652,8 @@ const MATRIX = [
     ['GET', `${UH}/invoices/999999`, UH_STAFF, ''],
     ['GET', `${UH}/invoices/999999/invoice.xlsx`, UH_STAFF, ''],
     ['GET', `${UH}/invoices/999999/invoice.pdf`, UH_STAFF, ''],
+    ['GET', `${UH}/invoices/export.xlsx?from=2026-06-01&to=2026-06-07`, UH_STAFF,
+        'every priced delivery in any range, billed or not. The same door as the invoices themselves'],
     ['POST', `${UH}/invoices`, UH_MANAGE, ''],
     ['POST', `${UH}/invoices/999999/adjustments`, UH_MANAGE, ''],
     ['DELETE', `${UH}/invoices/999999/adjustments/999999`, UH_MANAGE, ''],
@@ -738,6 +740,13 @@ describe('the matrix covers the application', () => {
            this multiset and brings somebody back to the table above. */
         const suffix = (path) => {
             let p = path;
+            /* A QUERY STRING IS NOT PART OF THE ROUTE. A row that has to send
+               parameters to be worth calling -- the billing range export
+               needs a from and a to, or it answers 400 and proves nothing
+               about who may call it -- would otherwise never match the
+               path the router declares, and the row would read as a missing
+               endpoint rather than a covered one. */
+            p = p.replace(/\?.*$/, '');
             // Strip the mount, so what is left is what the router declares.
             p = p.replace(/^\/api\/projects\/[a-z]+\/tvhs(?=\/|$)/, '');
             p = p.replace(/^\/api\/projects\/[a-z]+\/uh\/[a-z-]+(?=\/|$)/, '');
