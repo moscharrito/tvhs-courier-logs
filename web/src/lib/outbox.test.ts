@@ -11,7 +11,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import {
     enqueue, queued, flush, sendOrQueue, rejections, dismissRejection, clearOutbox,
     pendingFor, subscribe, newEventId, resetOutboxForTests, setOutboxUser,
-    signOutPrompt, confirmSignOut,
+    signOutPrompt, confirmSignOut, uploadPhotoNow,
 } from './outbox';
 
 const url = (n: number) => `/api/projects/uh/uh/orders/${n}/arrive`;
@@ -241,6 +241,123 @@ describe('a queued photo', () => {
         // Not sent, and not reported as delivered either.
         expect(await queued()).toHaveLength(1);
         expect(await rejections()).toHaveLength(0);
+    });
+});
+
+describe('the photograph is made smaller on the way out', () => {
+    /* lib/downscale.ts holds the why. What matters HERE is that it happens
+       before the file row is created, because that call declares the
+       content type and the length, and the signed PUT is signed over the
+       type it declared. A shrink applied after the create would be an
+       upload S3 refuses. */
+
+    /** Just enough browser to decode and re-encode. jsdom has neither. */
+    function installCanvas(opts: { width: number; height: number; bytes: number }) {
+        vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
+            width: opts.width, height: opts.height, close: () => undefined,
+        })));
+        vi.stubGlobal('OffscreenCanvas', class {
+            constructor(public width: number, public height: number) {}
+            getContext() { return { fillStyle: '', fillRect: () => undefined, drawImage: () => undefined }; }
+            convertToBlob(o: { type: string }) {
+                return Promise.resolve(new Blob([new Uint8Array(opts.bytes)], { type: o.type }));
+            }
+        });
+    }
+
+    const camera = (bytes: number, type = 'image/jpeg') => new Blob([new Uint8Array(bytes)], { type });
+
+    /** Queue it, then drain. A photograph ALWAYS goes through the queue --
+     *  see sendOrQueue -- and it flushes in the background, so asserting
+     *  straight after it would be racing a drain that has not run. */
+    async function upload(orderId: number, blob: Blob, contentType: string, fileId: number) {
+        setOnline(false);
+        await enqueue({
+            url: `/api/projects/uh/uh/orders/${orderId}/doorstep`,
+            body: {}, label: 'Doorstep', orderId,
+            photo: { blob, contentType, kind: 'doorstep', bodyKey: 'fileId' },
+        });
+        setOnline(true);
+        const { calls } = fetchReturning(
+            { status: 201, body: { id: fileId, upload: { url: 'https://bucket.example/put', method: 'PUT', headers: {} } } },
+            { status: 200 },
+            { status: 200, body: { id: fileId, status: 'stored' } },
+            { status: 201, body: { status: 'delivered' } },
+        );
+        await flush();
+        return calls;
+    }
+
+    it('declares and uploads the smaller one, not the one the camera made', async () => {
+        installCanvas({ width: 4032, height: 3024, bytes: 380_000 });
+
+        const calls = await upload(11, camera(1_900_000), 'image/jpeg', 51);
+
+        /* The length the file service is told, which is the figure the
+           bundle's size estimate adds up later. */
+        expect(calls[0]!.body).toMatchObject({ bytes: 380_000, contentType: 'image/jpeg' });
+        expect(calls[1]!.url).toBe('https://bucket.example/put');
+        expect((calls[1]!.body as Blob).size).toBe(380_000);
+        /* And the confirmation agrees, so nothing in `files` is left
+           describing bytes that were never sent. */
+        expect(calls[2]!.body).toMatchObject({ bytes: 380_000 });
+    });
+
+    it('declares a converted HEIC as the JPEG it now is', async () => {
+        /* The type in the create is the type the PUT is signed over. If
+           this said image/heic while the body was a JPEG, S3 would refuse
+           the upload and the courier would see a retry that never ends. */
+        installCanvas({ width: 4032, height: 3024, bytes: 410_000 });
+
+        const calls = await upload(12, camera(2_400_000, 'image/heic'), 'image/heic', 52);
+
+        expect(calls[0]!.body).toMatchObject({ contentType: 'image/jpeg' });
+        expect((calls[1]!.body as Blob).type).toBe('image/jpeg');
+    });
+
+    it('sends what the camera gave us when the browser cannot shrink it', async () => {
+        /* No stubs: this is jsdom, and it is also a phone too old for
+           OffscreenCanvas. The handover still gets its proof, at full size.
+           Through uploadPhotoNow rather than the queue because a blob that
+           has been through fake-indexeddb comes back without its size, and
+           the size is the whole assertion. */
+        const { calls } = fetchReturning(
+            { status: 201, body: { id: 53, upload: { url: 'https://bucket.example/put', method: 'PUT', headers: {} } } },
+            { status: 200 },
+            { status: 200, body: { id: 53, status: 'stored' } },
+        );
+
+        const fileId = await uploadPhotoNow({
+            module: '/api/projects/uh/uh', orderId: 13,
+            blob: camera(1_900_000), contentType: 'image/jpeg',
+            kind: 'courier_form', idemKey: 'k-13',
+        });
+
+        expect(fileId).toBe(53);
+        expect(calls[0]!.body).toMatchObject({ bytes: 1_900_000, contentType: 'image/jpeg' });
+        expect((calls[1]!.body as Blob).size).toBe(1_900_000);
+    });
+
+    it('shrinks the handover proof too, not only the queued doorstep', async () => {
+        /* uploadPhotoNow is the other way in: the signed collection form
+           and the identification go straight up, before the delivery is
+           queued. Both land in putPhoto, which is why the rule lives
+           there and not at the pickers. */
+        installCanvas({ width: 4032, height: 3024, bytes: 365_000 });
+        const { calls } = fetchReturning(
+            { status: 201, body: { id: 54, upload: { url: 'https://bucket.example/put', method: 'PUT', headers: {} } } },
+            { status: 200 },
+            { status: 200, body: { id: 54, status: 'stored' } },
+        );
+
+        await uploadPhotoNow({
+            module: '/api/projects/uh/uh', orderId: null,
+            blob: camera(2_100_000), contentType: 'image/jpeg',
+            kind: 'courier_form', idemKey: 'k-14',
+        });
+
+        expect(calls[0]!.body).toMatchObject({ bytes: 365_000, orderId: null });
+        expect((calls[1]!.body as Blob).size).toBe(365_000);
     });
 });
 

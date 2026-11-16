@@ -28,6 +28,7 @@
  */
 
 import { ApiError } from './api';
+import { smallerPhoto } from './downscale';
 
 const DB_NAME = 'izy-outbox';
 const DB_VERSION = 1;
@@ -381,7 +382,27 @@ async function putPhoto(
     module: string, orderId: number | null | undefined, blob: Blob,
     contentType: string, kind: string, idemKey: string,
 ): Promise<number> {
-    const photo = { blob, contentType, kind };
+    /* SMALLER FIRST, AND HERE RATHER THAN AT THE NINE PICKERS.
+     *
+     * Every photograph this application stores passes through this
+     * function -- the ones queued offline and the two a handover uploads
+     * straight away. The pickers that choose them number nine across two
+     * screens, and a rule applied at nine call sites is a rule that will be
+     * applied at eight of them by Christmas. core/pod-photos.ts on the
+     * server was written about exactly that drift.
+     *
+     * It must happen BEFORE the create below, not after: that call declares
+     * the content type, the signed PUT is signed OVER that type, and S3
+     * refuses an upload whose bytes disagree with what was signed. The
+     * declared length is a pre-declaration corrected at /stored, so the
+     * byte counts the bundle adds up are the real ones either way.
+     *
+     * Null means the original. See lib/downscale.ts: a browser that cannot
+     * do it is not a reason to stop a driver at a door. */
+    const smaller = await smallerPhoto(blob, contentType);
+    const photo = smaller
+        ? { blob: smaller.blob, contentType: smaller.contentType, kind }
+        : { blob, contentType, kind };
     const entry = { id: idemKey };
     const created = await postJson(`${module}/files`, {
         kind: photo.kind,
