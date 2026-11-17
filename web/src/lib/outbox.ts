@@ -32,6 +32,14 @@
  *   THE QUEUE IS PHI. It holds names, addresses and signatures, in IndexedDB
  *   on a phone that may be personal. Entries are deleted the moment they are
  *   accepted, rejections are capped and expire, and signing out empties it.
+ *
+ *   IT SAYS HOW LONG IT HELD EACH ONE. A delivery recorded in a loading dock
+ *   at six and sent at half past eight happened at six, and the record has
+ *   to say so: the server stamps its own clock, so without this the time on
+ *   a custody row is when the NETWORK allowed the work rather than when the
+ *   courier did it. Sent as an AGE rather than an instant, because a phone's
+ *   clock can be hours out while the gap between two readings of it is still
+ *   right. See `recordedAgoMs`.
  */
 
 import { ApiError } from './api';
@@ -565,7 +573,22 @@ export async function flush(): Promise<void> {
             }
 
             try {
-                const body: Record<string, unknown> = { ...entry.body, clientEventId: entry.id };
+                const body: Record<string, unknown> = {
+                    ...entry.body,
+                    clientEventId: entry.id,
+                    /* How long this has been waiting, measured by one clock
+                       at both ends so its accuracy does not matter. The
+                       server subtracts it from its own now.
+
+                       NOT SENT when the caller already put an `at` in the
+                       body: that is a courier backdating on purpose, and it
+                       is theirs rather than something to correct. */
+                    ...(entry.body !== null
+                        && typeof entry.body === 'object'
+                        && 'at' in (entry.body as Record<string, unknown>)
+                        ? {}
+                        : { recordedAgoMs: Math.max(0, Date.now() - entry.createdAt) }),
+                };
                 /* Normalised, because `photo` predates `photos` and an
                    entry queued by an older build is still somebody's
                    undelivered round. */

@@ -75,6 +75,19 @@ const Where = {
     lat: z.number().min(-90).max(90).optional(),
     lng: z.number().min(-180).max(180).optional(),
     at: z.string().datetime({ offset: true }).optional(),
+    /* ───────── HOW LONG AGO THE COURIER DID IT, NOT WHEN ─────────────
+     *
+     * An AGE rather than an instant, and that is the whole design. A
+     * phone's clock can be hours out -- which is why this route stamps
+     * the server's own time and always has -- but the gap between two
+     * readings of a wrong clock is still right. The server subtracts
+     * this from its own now, and the drift cancels.
+     *
+     * Capped at seven days: a bogus age would stamp a delivery into a
+     * period that has already been reported on, and the queue has no
+     * business holding work older than that anyway.
+     */
+    recordedAgoMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000).optional(),
 };
 
 const Arrive = z.object({ ...Where, note: z.string().trim().max(300).default('') });
@@ -317,13 +330,55 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         return order;
     }
 
-    function whenOr400(body: { at?: string | undefined }, res: Response): Date | null {
-        const at = body.at ? new Date(body.at) : new Date();
-        if (at.getTime() > Date.now() + CLOCK_SKEW_MS) {
-            res.status(400).json({ error: 'Invalid request', details: ['at: cannot be in the future'] });
-            return null;
+    /**
+     * When the work happened.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * WHY THIS IS NOT SIMPLY `new Date()`.
+     *
+     * It was, and the queue is why that is wrong. A courier standing in a
+     * loading dock records a delivery at six; the phone holds it until it
+     * finds a signal at half past eight; this stamped half past eight. The
+     * record said the work happened when the NETWORK allowed it rather than
+     * when the courier did it -- which moved the on-time figure, and, until
+     * the rule changed on 17 November, put an $18 after-hours surcharge on a
+     * delivery made in daylight.
+     *
+     * Three sources, in order:
+     *
+     *   `at`              a courier backdating on purpose. Theirs, so it
+     *                     wins, and it is still refused if it is in the
+     *                     future.
+     *   `recordedAgoMs`   how long the phone held it. Subtracted from the
+     *                     server's clock, so a phone whose clock is wrong
+     *                     does not matter: see the field.
+     *   nothing           now, as before.
+     *
+     * FLOORED AT THE PICKUP. An age is only as good as the clock that
+     * measured it, and one that jumped mid-queue could put a delivery before
+     * the courier had the package -- a chain of custody that reads
+     * backwards, which is worse than a late stamp. The pickup is the one
+     * instant we know came from this server.
+     */
+    function whenOr400(
+        body: { at?: string | undefined; recordedAgoMs?: number | undefined },
+        res: Response,
+        order?: { pickup_at: string | null } | null,
+    ): Date | null {
+        if (body.at) {
+            const at = new Date(body.at);
+            if (at.getTime() > Date.now() + CLOCK_SKEW_MS) {
+                res.status(400).json({ error: 'Invalid request', details: ['at: cannot be in the future'] });
+                return null;
+            }
+            return at;
         }
-        return at;
+
+        if (body.recordedAgoMs === undefined) return new Date();
+
+        const at = Date.now() - body.recordedAgoMs;
+        const pickedUp = order?.pickup_at ? Date.parse(order.pickup_at) : Number.NaN;
+        return new Date(Number.isFinite(pickedUp) && at < pickedUp ? pickedUp : at);
     }
 
     function refuseTransition(err: unknown, res: Response, order: OrderRow): boolean {
@@ -400,7 +455,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         if (!order) return;
         const body = parse(Arrive, req.body ?? {}, res);
         if (!body) return;
-        const at = whenOr400(body, res);
+        const at = whenOr400(body, res, order);
         if (!at) return;
 
         try {
@@ -440,7 +495,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         if (!order) return;
         const body = parse(Deliver, req.body, res);
         if (!body) return;
-        const at = whenOr400(body, res);
+        const at = whenOr400(body, res, order);
         if (!at) return;
 
         const projectId = req.project!.id;
@@ -732,7 +787,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
 
         const body = parse(Doorstep, req.body, res);
         if (!body) return;
-        const at = whenOr400(body, res);
+        const at = whenOr400(body, res, order);
         if (!at) return;
 
         const projectId = req.project!.id;
@@ -832,7 +887,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         if (!order) return;
         const body = parse(Evidence, req.body ?? {}, res);
         if (!body) return;
-        const at = whenOr400(body, res);
+        const at = whenOr400(body, res, order);
         if (!at) return;
         const projectId = req.project!.id;
 
@@ -999,7 +1054,7 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
         if (!order) return;
         const body = parse(Attempt, req.body, res);
         if (!body) return;
-        const at = whenOr400(body, res);
+        const at = whenOr400(body, res, order);
         if (!at) return;
 
         const projectId = req.project!.id;

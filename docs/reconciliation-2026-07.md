@@ -1,6 +1,6 @@
 # Reconciliation: 2026-07-01 to 2026-07-31
 
-Produced by `npm run reconcile -w server` on 2026-09-13.
+Produced by `npm run reconcile -w server` on 2026-11-17.
 
 A simulated month was billed through the invoice pipeline, and every line was
 then re-derived from the rate card by `src/modules/uh/reconcile.ts`, which
@@ -11,8 +11,8 @@ shares no code with the pricing module. This is phase 3's acceptance gate.
 | | |
 |---|---|
 | Deliveries billed | 7772 |
-| Invoice total | $186,168.50 |
-| Independently checked total | $186,168.50 |
+| Invoice total | $185,321.50 |
+| Independently checked total | $185,321.50 |
 | Difference | **$0.00** |
 | Lines that differ | 0 |
 | Deliveries that could not be priced | 323 |
@@ -43,42 +43,43 @@ document is not in the repository, so no script can do it.
 Spread through the month so they are not all one day and one pharmacy. Check
 these with a calculator against the table above.
 
-**Order 1** (SIM-20260701-0001) = $12.50
+**Order 13372** (SIM-20260701-0001) = $12.50
 
 - zone 1: $12.50
 - total: $12.50
 
-**Order 1008** (SIM-20260704-0189) = $22.00
+**Order 14379** (SIM-20260704-0189) = $9.00
 
-- zone 3: $22.00
-- total: $22.00
+- dry run: $9.00 x 1 item = $9.00
+- dry run replaces the delivery charge, so no zone rate and no mileage
+- total: $9.00
 
-**Order 2017** (SIM-20260708-0198) = $14.50
+**Order 15388** (SIM-20260708-0198) = $14.50
 
 - zone 2: $14.50
 - total: $14.50
 
-**Order 3030** (SIM-20260712-0165) = $22.00
+**Order 16401** (SIM-20260712-0165) = $22.00
 
 - zone 3: $22.00
 - total: $22.00
 
-**Order 4050** (SIM-20260716-0139) = $12.50
+**Order 17421** (SIM-20260716-0139) = $12.50
 
 - zone 1: $12.50
 - total: $12.50
 
-**Order 5064** (SIM-20260720-0153) = $12.50
+**Order 18435** (SIM-20260720-0153) = $12.50
 
 - zone 1: $12.50
 - total: $12.50
 
-**Order 6066** (SIM-20260724-0063) = $22.00
+**Order 19437** (SIM-20260724-0063) = $22.00
 
 - zone 3: $22.00
 - total: $22.00
 
-**Order 7073** (SIM-20260728-0070) = $14.50
+**Order 20444** (SIM-20260728-0070) = $14.50
 
 - zone 2: $14.50
 - total: $14.50
@@ -91,7 +92,7 @@ these with a calculator against the table above.
 
 323 deliveries could not be priced and are in neither total:
 
-- Out of area with no mileage recorded. Needs the distance from ticket 1.4 before it can be billed.
+- Out of area with no University Health authorisation on record. Addendum 2 clause 9 requires one before it can be billed at the out-of-area rate. Record their approval against the order, or leave it off this invoice.
 
 ## What this does and does not prove
 

@@ -783,3 +783,92 @@ describe('access control and the record', () => {
         expect(blob).not.toMatch(/"x":/);
     });
 });
+
+/* ----------------------------------------- when the work actually happened */
+
+describe('a stop the phone could not send straight away', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * The work happened when the courier did it, not when the network
+     * allowed it. A delivery recorded in a loading dock at six and sent at
+     * half past eight used to be stamped half past eight, because this route
+     * stamps the server's own clock. That moved the on-time figure, and
+     * until 17 November it put an $18 after-hours surcharge on a delivery
+     * made in daylight.
+     *
+     * The phone sends an AGE, not an instant: its clock may be hours out,
+     * but the gap between two readings of it is still right.
+     */
+
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+    const deliver = async (order, body) => {
+        const ada = await courierAgent('ada.courier');
+        return ada.post(`${ORDERS}/${order.id}/deliver`)
+            .send({ signedName: 'Ines Vargas', courierFormFileId: await storedForm(), ...body });
+    };
+    const stampOf = async (column, id) =>
+        Date.parse(String((await sql(`SELECT ${column} FROM orders WHERE id = ?`, [id])).rows[0][column]));
+
+    /** Collected this morning, so an afternoon stop has room behind it.
+     *  A round picked up and delivered in the same second is floored at the
+     *  pickup and proves nothing about the age. */
+    const collectedEarlier = async (hoursAgo = 6) => {
+        const order = await pickedUpOrder();
+        await sql('UPDATE orders SET pickup_at = ? WHERE id = ?', [
+            new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString(), order.id,
+        ]);
+        return order;
+    };
+
+    it('stamps it when the courier did it, not when the queue drained', async () => {
+        const order = await collectedEarlier();
+        const before = Date.now();
+        const res = await deliver(order, { recordedAgoMs: TWO_HOURS });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+        const gap = before - await stampOf('delivered_at', order.id);
+        // Two hours back, give or take the time the request itself took.
+        expect(gap).toBeGreaterThan(TWO_HOURS - 60_000);
+        expect(gap).toBeLessThan(TWO_HOURS + 60_000);
+    });
+
+    it('never dates a delivery before the courier had the package', async () => {
+        /* An age is only as good as the clock that measured it. One that
+           jumped mid-queue could put the delivery before the pickup, which
+           is a chain of custody reading backwards -- worse than a late
+           stamp. The pickup came from this server, so it is the floor. */
+        const order = await pickedUpOrder();
+        const pickedUp = await stampOf('pickup_at', order.id);
+
+        const res = await deliver(order, { recordedAgoMs: 6 * 24 * 60 * 60 * 1000 });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(await stampOf('delivered_at', order.id)).toBe(pickedUp);
+    });
+
+    it('lets a deliberate backdate win over the age', async () => {
+        const order = await pickedUpOrder();
+        const at = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const res = await deliver(order, { at, recordedAgoMs: TWO_HOURS });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(await stampOf('delivered_at', order.id)).toBe(Date.parse(at));
+    });
+
+    it('still refuses a time in the future', async () => {
+        const order = await pickedUpOrder();
+        const ahead = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        expect((await deliver(order, { at: ahead })).status).toBe(400);
+    });
+
+    it('refuses an age older than the queue has any business holding', async () => {
+        const order = await pickedUpOrder();
+        expect((await deliver(order, { recordedAgoMs: 8 * 24 * 60 * 60 * 1000 })).status).toBe(400);
+    });
+
+    it('records an arrival the same way', async () => {
+        const order = await collectedEarlier();
+        const ada = await courierAgent('ada.courier');
+        const before = Date.now();
+        const res = await ada.post(`${ORDERS}/${order.id}/arrive`).send({ recordedAgoMs: TWO_HOURS });
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(before - await stampOf('arrived_at', order.id)).toBeGreaterThan(TWO_HOURS - 60_000);
+    });
+});

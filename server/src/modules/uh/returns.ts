@@ -69,6 +69,13 @@ const RecordReturn = z.object({
     lat: z.number().min(-90).max(90).optional(),
     lng: z.number().min(-180).max(180).optional(),
     at: z.string().datetime({ offset: true }).optional(),
+    /* How long the phone held this before it could send it. An AGE, not an
+       instant, so a phone with a wrong clock still gives the right answer
+       once the server subtracts it from its own now. See the same field on
+       stop.ts, which carries the argument. A return recorded in a basement
+       at six should not be dated half past eight because that is when the
+       van came back into the open. */
+    recordedAgoMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000).optional(),
 });
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -362,10 +369,18 @@ export function createReturnsRouter({ client }: { client: Client }): Router {
 
         const project = req.project!;
         const settings = resolveSettings(project.settings);
-        const at = body.at ? new Date(body.at) : new Date();
-        if (at.getTime() > Date.now() + CLOCK_SKEW_MS) {
-            res.status(400).json({ error: 'Invalid request', details: ['at: cannot be in the future'] });
-            return;
+        /* A backdate wins, then the age the phone held it, then now. The
+           future check only applies to the first: an age cannot produce
+           one, because it is subtracted from the server's own clock. */
+        let at: Date;
+        if (body.at) {
+            at = new Date(body.at);
+            if (at.getTime() > Date.now() + CLOCK_SKEW_MS) {
+                res.status(400).json({ error: 'Invalid request', details: ['at: cannot be in the future'] });
+                return;
+            }
+        } else {
+            at = new Date(Date.now() - (body.recordedAgoMs ?? 0));
         }
 
         const site = await client.execute({

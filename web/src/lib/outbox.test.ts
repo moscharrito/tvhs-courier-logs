@@ -194,6 +194,63 @@ describe('draining', () => {
     });
 });
 
+describe('how long the phone held it', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * A courier standing in a loading dock records a delivery at six. The
+     * phone holds it until it finds a signal at half past eight. The server
+     * stamps its own clock, so the record said half past eight -- the time
+     * the NETWORK allowed the work, not the time the courier did it. It
+     * moved the on-time figure, and until the rule changed on 17 November it
+     * put an $18 after-hours surcharge on a delivery made in daylight.
+     */
+
+    it('tells the server how long it waited, so the stamp is when the work happened', async () => {
+        /* Two and a half hours in a basement. The CLOCK is pinned at both
+           ends, not the timers: fake timers stall fake-indexeddb, and this
+           queue is all IndexedDB. */
+        const recorded = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(recorded);
+        try {
+            setOnline(false);
+            await enqueue({ url: url(1), body: { signedName: 'A Recipient' }, label: 'Delivery', orderId: 1 });
+
+            clock.mockReturnValue(recorded + 150 * 60 * 1000);
+            setOnline(true);
+            const { calls } = fetchReturning({ status: 201 });
+            await flush();
+
+            const sent = calls[0].body;
+            expect(sent.recordedAgoMs).toBe(150 * 60 * 1000);
+            // Nothing absolute: a phone's clock may be hours out, the gap is not.
+            expect(sent.at).toBeUndefined();
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    it('is about zero when the queue drains straight away', async () => {
+        setOnline(false);
+        await enqueue({ url: url(2), body: {}, label: 'Arrival', orderId: 2 });
+        setOnline(true);
+        const { calls } = fetchReturning({ status: 201 });
+        await flush();
+        expect(calls[0].body.recordedAgoMs).toBeLessThan(60 * 1000);
+    });
+
+    it('leaves a deliberate backdate alone', async () => {
+        /* `at` in the body is a courier saying when it happened. Theirs, and
+           not something for the queue to correct. */
+        setOnline(false);
+        const at = '2026-11-17T18:00:00.000Z';
+        await enqueue({ url: url(3), body: { at, signedName: 'A Recipient' }, label: 'Delivery', orderId: 3 });
+        setOnline(true);
+        const { calls } = fetchReturning({ status: 201 });
+        await flush();
+        expect(calls[0].body.at).toBe(at);
+        expect(calls[0].body.recordedAgoMs).toBeUndefined();
+    });
+});
+
 describe('a queued photo', () => {
     it('reaches the bucket before the event that depends on it', async () => {
         setOnline(false);
