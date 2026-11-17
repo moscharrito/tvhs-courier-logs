@@ -25,7 +25,7 @@ interface Settings {
     sla: Sla;
     businessHours: { start: string; end: string; days: number[] };
     listRelease: { earliest: string; latest: string; allowPortalUpload: boolean };
-    pricing: { afterHoursStart: string; afterHoursEnd: string; dryRunReplacesBase: boolean };
+    pricing: { afterHoursStart: string; afterHoursEnd: string; dryRunReplacesBase: boolean; zoneBasis: 'zip' | 'distance' };
     /** The number the courier app's call button dials, and what it calls them.
      *  Optional on the wire only so a client older than the server does not
      *  crash on a payload that predates it. */
@@ -176,6 +176,26 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                                 <td>Dry run {mark('pricing.dryRunReplacesBase')}</td>
                                 <td>{s.pricing.dryRunReplacesBase ? 'replaces the delivery charge' : 'adds to the delivery charge'}</td>
                                 <td>replaces</td>
+                            </tr>
+                            <tr>
+                                {/* WHAT DECIDES THE ZONE A DELIVERY BILLS AT,
+                                    and the one row on this table that can move
+                                    the invoice by tens of thousands a year.
+                                    Loud when it is not the contract's basis,
+                                    because a reader checking a figure needs to
+                                    know before they quote it. */}
+                                <td>Billing zone {mark('pricing.zoneBasis')}</td>
+                                <td>
+                                    {s.pricing.zoneBasis === 'zip'
+                                        ? "University Health's ZIP table"
+                                        : (
+                                            <span className="izy-stat-warn">
+                                                road miles from the dispatching pharmacy, banded as driver pay
+                                                {' '}&mdash; not the basis Addendum 2 clause 2 prices by
+                                            </span>
+                                        )}
+                                </td>
+                                <td>the ZIP table</td>
                             </tr>
                             <tr>
                                 {/* The courier app's call button. Empty until

@@ -66,7 +66,18 @@ describe('contract defaults', () => {
         expect(DEFAULT_PROJECT_SETTINGS.listRelease)
             .toEqual({ earliest: '12:00', latest: '14:00', allowPortalUpload: false });
         // "specifically between 8:00 p.m. and 7:00 a.m."
-        expect(DEFAULT_PROJECT_SETTINGS.pricing).toEqual({ afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true });
+        //
+        // zoneBasis DEFAULTS TO THE CONTRACT'S OWN BASIS, and this line is
+        // the guard on that. Addendum 2 clause 2 prices by destination ZIP.
+        // 'distance' bands road miles the way driver pay does; it exists
+        // because Izy Global Management asked for one measure under both,
+        // it bills about six per cent less, and it needs an amended
+        // addendum before it can be charged. A release that quietly flipped
+        // this would change every open draft and every figure quoted off
+        // one, so the default is pinned here rather than only in the code.
+        expect(DEFAULT_PROJECT_SETTINGS.pricing).toEqual({
+            afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true, zoneBasis: 'zip',
+        });
     });
 
     it('is the single source the pricing module reads, so the two cannot drift', () => {

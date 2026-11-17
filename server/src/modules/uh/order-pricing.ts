@@ -25,6 +25,7 @@
 
 import type { Client } from '@libsql/client';
 import { priceFor, isAfterHours, pricingSettingsFrom, type PriceBreakdown, type Zone } from './pricing';
+import { payZoneForMiles, payBandMiles } from './driver-pay';
 import { scheduleOn } from './zones';
 
 /** The columns of `orders` this needs. A row read with SELECT * satisfies it. */
@@ -38,6 +39,10 @@ export interface PricedOrderRow {
      *  that callers which never had it keep pricing by zone. */
     zip?: string | null;
     out_of_area_miles: number | null;
+    /** Road miles from the dispatching pharmacy, as driver pay measures
+     *  them. Only read when pricing.zoneBasis is 'distance'; optional so a
+     *  caller that never selected it keeps pricing exactly as before. */
+    pay_miles?: number | null;
     received_at: string;
     pickup_at: string | null;
     delivered_at: string | null;
@@ -129,8 +134,45 @@ export async function priceOrder(
         }
     }
 
+    /* ──────────────────────── WHICH ZONE, AND WHAT DECIDED IT ────────────
+     *
+     * 'zip' is the contract's basis and the default: orders.zone, resolved
+     * from University Health's published ZIP list when the delivery was
+     * imported. Nothing below runs.
+     *
+     * 'distance' bands the road miles from the dispatching pharmacy using
+     * payZoneForMiles -- the SAME function driver pay uses, not a second
+     * copy of the same four numbers. Two band tables for one contract is
+     * how what we bill and what we pay come apart, which is the thing this
+     * basis was asked for in order to prevent.
+     *
+     * A STOP WITH NO MEASURED DISTANCE IS NOT ZONE 1, AND IT IS NOT OUT OF
+     * AREA EITHER. payZoneForMiles answers null for an unmeasured stop, and
+     * letting that null fall through to the out-of-area branch would bill a
+     * perfectly ordinary San Antonio address per mile against a mileage of
+     * zero -- which is to say, nothing at all, silently. So it is refused as
+     * unpriceable and lands in the invoice's exceptions list, where a person
+     * decides. Run measure:zones to clear them.
+     */
+    let zone = (order.zone === null ? null : Number(order.zone)) as Zone | null;
+    let zoneNote: string | null = null;
+    if (settings.zoneBasis === 'distance') {
+        const miles = order.pay_miles === null || order.pay_miles === undefined ? null : Number(order.pay_miles);
+        const banded = payZoneForMiles(miles);
+        if (banded === null) {
+            return {
+                available: false,
+                reason: 'Billing is set to price by distance and no road distance has been measured '
+                    + 'for this destination. Run measure:zones, or price this period on the ZIP table.',
+            };
+        }
+        zone = banded as Zone;
+        zoneNote = `Zone ${banded} by distance: ${miles!.toFixed(1)} road miles from the dispatching pharmacy `
+            + `(${payBandMiles(banded)}), not University Health's ZIP table.`;
+    }
+
     const breakdown = priceFor({
-        zone: (order.zone === null ? null : Number(order.zone)) as Zone | null,
+        zone,
         /* For a zone 4 or 5 rate held against this destination. Ignored
            anywhere else; Addendum 2 clause 3. */
         zip: order.zip ?? null,
@@ -144,6 +186,10 @@ export async function priceOrder(
     return {
         available: true,
         ...breakdown,
+        /* Said on the line itself. A reader a year from now looking at
+           $14.50 against a ZIP the bid table calls zone 1 needs to be told
+           why, on the document, not in a release note. */
+        notes: zoneNote === null ? breakdown.notes : [zoneNote, ...breakdown.notes],
         afterHours: isAfterHours(at, settings),
         dryRun,
         items,

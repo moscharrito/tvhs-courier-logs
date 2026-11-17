@@ -266,6 +266,42 @@ export interface PricingSection {
     afterHoursEnd: string;
     /** true: the dry-run flat fee replaces the zone rate. false: it is added. */
     dryRunReplacesBase: boolean;
+    /**
+     * WHAT DECIDES WHICH ZONE A DELIVERY IS BILLED AT.
+     *
+     * 'zip'       University Health's published ZIP list (Bid Table
+     *             BT-89AO), read off the DESTINATION ZIP alone. The same
+     *             ZIP is the same zone whichever pharmacy sent the driver.
+     *             This is what Addendum 2 clause 2 prices by and it is the
+     *             default; nothing changes until somebody sets the other.
+     *
+     * 'distance'  Road miles from the DISPATCHING PHARMACY, banded exactly
+     *             as the contractor offer letter bands driver pay --
+     *             0-10, 11-25, 26-50, 51+ -- against the BAFO rate card.
+     *             Requested by Izy Global Management so that what we bill
+     *             and what we pay rest on one measure.
+     *
+     * THREE THINGS A READER SHOULD KNOW BEFORE SETTING 'distance'.
+     *
+     * It needs an amended addendum. Clause 2 prices by destination ZIP and
+     * clause 3 bars ZIP-specific pricing inside zones 1 to 3. This setting
+     * changes what we compute; it cannot change what we are entitled to
+     * charge, and billing UH on a basis they have not agreed is a dispute
+     * rather than a rate change.
+     *
+     * It bills LESS. Measured over 1 to 15 November 2026 against 3,324
+     * deliveries: $47,461.50 on the ZIP table, $44,503.00 on the pay bands.
+     * About six per cent, or roughly $62,000 a year.
+     *
+     * It makes the invoice depend on our own routing. A distance is measured
+     * from the counter that dispatched, so the same address billed from two
+     * pharmacies lands in two zones. Over that fortnight 32 ZIPs covering
+     * 1,632 deliveries would have moved zone depending on which counter sent
+     * the driver. That is the first objection University Health will raise.
+     *
+     * See scripts/billing-zone-basis.mjs, which measures all three.
+     */
+    zoneBasis: 'zip' | 'distance';
 }
 
 export interface DispatchSettings {
@@ -511,6 +547,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         // replaces the delivery charge or is added to it. Replace is the
         // reading that cannot over-bill UH. Open item 10.
         dryRunReplacesBase: true,
+        /* THE CONTRACT'S OWN BASIS, and the only one Addendum 2 clause 2
+           supports. 'distance' exists and is off: see the field's note. */
+        zoneBasis: 'zip',
     },
     /* No default number: a wrong one is worse than none, because a courier
        standing at a door with a problem would dial it and reach a stranger.
@@ -632,6 +671,7 @@ export const SettingsPatch = z.object({
         afterHoursStart: hhmm.optional(),
         afterHoursEnd: hhmm.optional(),
         dryRunReplacesBase: z.boolean().optional(),
+        zoneBasis: z.enum(['zip', 'distance']).optional(),
     }).strict().optional(),
     dispatch: z.object({
         /* Deliberately permissive: numbers are written a dozen ways and a

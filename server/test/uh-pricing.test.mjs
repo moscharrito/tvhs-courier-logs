@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startServer } from './helpers/server.mjs';
 import { priceFor, isAfterHours, resolveZone, localMinutes, pricingSettingsFrom, DEFAULT_PRICING_SETTINGS } from '../src/modules/uh/pricing.ts';
+import { priceOrder } from '../src/modules/uh/order-pricing.ts';
 
 // The Izy BAFO schedule, as seeded from Bid Table BT-89AO.
 const BAFO = {
@@ -293,5 +294,150 @@ describe('seeded data and endpoints', () => {
         const res = await admin.get(`${UH}?on=2026-01-01`);
         expect(res.body.schedule).toBeNull();
         expect(res.body.zoneZipCounts).toEqual([]);
+    });
+
+    describe('billing on distance instead of the ZIP table', () => {
+        /* Asked for by Izy Global Management so that what we bill and what we
+           pay rest on one measure. It is OFF by default and has to be, because
+           Addendum 2 clause 2 prices by destination ZIP: this changes what we
+           compute, not what we are entitled to charge. */
+
+        /* NO SECOND startServer() HERE. Two in one file close each other's
+           database client and the whole suite dies on "CLIENT_CLOSED". This
+           block is nested inside the describe that already has one. */
+        let uh;
+        beforeAll(async () => {
+            const rs = await srv.core.client.execute("SELECT id FROM projects WHERE code = 'uh'");
+            uh = { id: Number(rs.rows[0].id) };
+        });
+
+        const distance = { pricing: { zoneBasis: 'distance' } };
+        const byZip = { pricing: { zoneBasis: 'zip' } };
+
+        /** An order row as the invoice query hands one over. */
+        const row = (over = {}) => ({
+            id: 1, service_date: '2026-06-03', service_type: 'scheduled', status: 'delivered',
+            zone: 1, zip: '78207', out_of_area_miles: null, pay_miles: null,
+            received_at: '2026-06-03T15:00:00.000Z', pickup_at: '2026-06-03T15:10:00.000Z',
+            delivered_at: '2026-06-03T16:00:00.000Z', ...over,
+        });
+
+        const project = (settings) => ({ id: uh.id, settings, timezone: 'America/Chicago' });
+
+        it('leaves every price exactly where it was by default', async () => {
+            /* The guard that matters most. Nothing moves until somebody sets
+               the basis, and "somebody" is an explicit, audited act. */
+            const order = row({ zone: 3, pay_miles: 4 });
+            const before = await priceOrder(srv.core.client, order, project({}));
+            const after = await priceOrder(srv.core.client, order, project(byZip));
+
+            expect(before.available).toBe(true);
+            expect(before.zone).toBe(3);
+            expect(before.total).toBe(after.total);
+            /* Four miles would be zone 1 on the pay bands. The ZIP table says
+               zone 3, and the ZIP table is what bills. */
+            expect(before.base).toBe(22);
+        });
+
+        it('bands the miles the way the offer letter bands driver pay', async () => {
+            /* 0-10, 11-25, 26-50, 51+. The same function driver pay calls, not
+               a second copy of the same four numbers. */
+            const at = async (miles) => {
+                const p = await priceOrder(srv.core.client, row({ zone: 5, pay_miles: miles }), project(distance));
+                return p.zone;
+            };
+
+            expect(await at(0.4)).toBe(1);
+            expect(await at(10)).toBe(1);
+            expect(await at(10.1)).toBe(2);
+            expect(await at(25)).toBe(2);
+            expect(await at(25.1)).toBe(3);
+            expect(await at(50)).toBe(3);
+            expect(await at(50.1)).toBe(4);
+        });
+
+        it('charges the BAFO rate for the band it lands in', async () => {
+            /* The rates do not change. Only what decides which one applies. */
+            const priced = await priceOrder(srv.core.client, row({ zone: 1, pay_miles: 18 }), project(distance));
+
+            expect(priced.available).toBe(true);
+            expect(priced.zone).toBe(2);
+            expect(priced.base).toBe(14.5);
+            expect(priced.total).toBe(14.5);
+        });
+
+        it('overrides the ZIP table rather than deferring to it', async () => {
+            /* A delivery University Health's table calls zone 4 at $36.00, four
+               road miles from the counter that sent it. This is the change, and
+               it is the direction that costs us money. */
+            const byTable = await priceOrder(srv.core.client, row({ zone: 4, pay_miles: 4 }), project(byZip));
+            const byMiles = await priceOrder(srv.core.client, row({ zone: 4, pay_miles: 4 }), project(distance));
+
+            expect(byTable.base).toBe(36);
+            expect(byMiles.base).toBe(12.5);
+        });
+
+        it('says on the line itself why the figure is what it is', async () => {
+            /* A reader a year from now looking at $14.50 against a ZIP the bid
+               table calls zone 1 has to be told why, on the document. */
+            const priced = await priceOrder(srv.core.client, row({ zone: 1, pay_miles: 18 }), project(distance));
+
+            expect(priced.notes[0]).toMatch(/18\.0 road miles from the dispatching pharmacy/);
+            expect(priced.notes[0]).toMatch(/not University Health's ZIP table/);
+        });
+
+        it('refuses a stop it cannot measure instead of billing it as zone 1', async () => {
+            /* The rule payZoneForMiles already enforces for pay: a missing
+               number is reported as missing, never resolved to the cheapest
+               plausible one. It lands in the invoice's exceptions, where a
+               person decides. */
+            const priced = await priceOrder(srv.core.client, row({ zone: 2, pay_miles: null }), project(distance));
+
+            expect(priced.available).toBe(false);
+            expect(priced.reason).toMatch(/no road distance has been measured/);
+            expect(priced.reason).toMatch(/measure:zones/);
+        });
+
+        it('does not quietly send an unmeasured stop down the out-of-area path', async () => {
+            /* The subtle one. Out of area bills per mile, and per mile against a
+               mileage of zero is nothing at all -- so an ordinary San Antonio
+               address with no measured distance would have billed $0.00 and
+               looked like a priced line. */
+            const priced = await priceOrder(
+                srv.core.client,
+                row({ zone: 2, pay_miles: null, out_of_area_miles: null }),
+                project(distance),
+            );
+
+            expect(priced.available).toBe(false);
+            expect(priced.total).toBeUndefined();
+        });
+
+        it('still bills a failed stop as a dry run, whichever basis is set', async () => {
+            /* The basis decides the zone. It has nothing to do with whether an
+               attempt is billable, and must not quietly change that. */
+            const priced = await priceOrder(
+                srv.core.client,
+                row({ status: 'failed', zone: 1, pay_miles: 18 }),
+                project(distance),
+            );
+
+            expect(priced.available).toBe(true);
+            expect(priced.dryRun).toBe(true);
+            /* The flat fee replaces the band rate, exactly as it replaces the
+               ZIP rate: $9.00, not $14.50. */
+            expect(priced.total).toBe(9);
+        });
+
+        it('keeps the STAT surcharge on top of the banded rate', async () => {
+            const priced = await priceOrder(
+                srv.core.client,
+                row({ service_type: 'stat', zone: 1, pay_miles: 18 }),
+                project(distance),
+            );
+
+            expect(priced.zone).toBe(2);
+            expect(priced.total).toBe(14.5 + 22);
+        });
     });
 });

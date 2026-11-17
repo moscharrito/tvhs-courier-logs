@@ -70,6 +70,10 @@ export interface PricingSettings {
     timezone: string;
     /** true: the dry-run fee replaces the zone rate. false: it is added. */
     dryRunReplacesBase: boolean;
+    /** 'zip' (the contract's basis, and the default) or 'distance' (the
+     *  driver-pay bands). See PricingSection in core/projects/settings.ts,
+     *  which carries the full argument and the money it moves. */
+    zoneBasis: 'zip' | 'distance';
 }
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {

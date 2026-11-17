@@ -303,7 +303,10 @@ export function Invoices() {
                             <div><b>{money(open.adjustmentsTotal)}</b><span>adjustments</span></div>
                         )}
                         <div><b>{money(open.total)}</b><span>total</span></div>
-                        <div><b>{open.dryRuns.count}</b><span>dry runs, {open.dryRuns.items} items</span></div>
+                        {/* Their word, not ours. A failed delivery is what
+                            happened; "dry run" is the bid table's name for
+                            the RATE, which is why the invoice carries both. */}
+                        <div><b>{open.dryRuns.count}</b><span>undelivered, {open.dryRuns.items} items</span></div>
                     </div>
 
                     <div className="izy-row">
@@ -405,7 +408,11 @@ export function Invoices() {
                                     <td>{l.deliveryZip}</td>
                                     <td>{l.zone === null ? 'out of area' : l.zone}</td>
                                     <td>{l.serviceType}</td>
-                                    <td>{l.dryRun ? `dry run, ${l.items} ${l.items === 1 ? 'item' : 'items'}` : 'delivered'}</td>
+                                    {/* "undelivered" against "delivered": what
+                                        happened at the door, in one word each.
+                                        The dry-run RATE is named on the
+                                        summary, where it can be reconciled. */}
+                                    <td>{l.dryRun ? `undelivered, ${l.items} ${l.items === 1 ? 'item' : 'items'}` : 'delivered'}</td>
                                     <td>{money(l.amountCents / 100)}</td>
                                 </tr>
                             ))}

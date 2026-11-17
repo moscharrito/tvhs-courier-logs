@@ -136,7 +136,7 @@ export async function buildDraft(
        business in an invoicing path at all. */
     const rs = await client.execute({
         sql: `SELECT o.id, o.service_date, o.service_type, o.status, o.zone, o.zip,
-                     o.out_of_area_miles, o.received_at, o.pickup_at, o.delivered_at,
+                     o.out_of_area_miles, o.pay_miles, o.received_at, o.pickup_at, o.delivered_at,
                      o.external_ref, o.out_of_area_authorised_at, s.name AS site_name
                 FROM orders o JOIN sites s ON s.id = o.site_id
               WHERE o.project_id = ? AND o.service_date >= ? AND o.service_date <= ?
@@ -586,7 +586,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             { header: 'Zone', width: 8 }, { header: 'Service', width: 11 },
             { header: 'Outcome', width: 11 }, { header: 'Items', width: 7 },
             { header: 'Base', width: 11 }, { header: 'STAT', width: 10 },
-            { header: 'After hours', width: 12 }, { header: 'Dry run', width: 11 },
+            { header: 'After hours', width: 12 }, { header: 'Undelivered', width: 12 },
             { header: 'Miles', width: 8 }, { header: 'Mileage', width: 11 }, { header: 'Amount', width: 12 },
         ];
         sheet.getRow(1).font = { bold: true };
@@ -625,8 +625,8 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         summary.addRow(['By service type', 'Deliveries', 'Amount']).font = { bold: true };
         for (const t of draft.byServiceType) summary.addRow([t.serviceType, t.count, toDollars(t.cents)]).getCell(3).numFmt = '$#,##0.00';
         summary.addRow([]);
-        summary.addRow(['Dry runs', draft.dryRuns.count, toDollars(draft.dryRuns.cents)]).getCell(3).numFmt = '$#,##0.00';
-        summary.addRow(['Dry run items', draft.dryRuns.items, '']);
+        summary.addRow(['Undelivered (dry run rate)', draft.dryRuns.count, toDollars(draft.dryRuns.cents)]).getCell(3).numFmt = '$#,##0.00';
+        summary.addRow(['Undelivered items', draft.dryRuns.items, '']);
         summary.addRow([]);
         summary.addRow(['Subtotal', draft.lines.length, toDollars(draft.subtotalCents)]).font = { bold: true };
         summary.getRow(summary.rowCount).getCell(3).numFmt = '$#,##0.00';
@@ -969,7 +969,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             { header: 'Zone', width: 8 }, { header: 'Service', width: 11 },
             { header: 'Outcome', width: 11 }, { header: 'Items', width: 7 },
             { header: 'Base', width: 11 }, { header: 'STAT', width: 10 },
-            { header: 'After hours', width: 12 }, { header: 'Dry run', width: 11 },
+            { header: 'After hours', width: 12 }, { header: 'Undelivered', width: 12 },
             { header: 'Miles', width: 8 }, { header: 'Mileage', width: 11 }, { header: 'Amount', width: 12 },
         ];
         sheet.getRow(1).font = { bold: true };
@@ -1007,8 +1007,8 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         summary.addRow(['By service type', 'Deliveries', 'Amount']).font = { bold: true };
         for (const t of view.byServiceType) summary.addRow([t.serviceType, t.count, toDollars(t.cents)]).getCell(3).numFmt = '$#,##0.00';
         summary.addRow([]);
-        summary.addRow(['Dry runs', view.dryRuns.count, toDollars(view.dryRuns.cents)]).getCell(3).numFmt = '$#,##0.00';
-        summary.addRow(['Dry run items', view.dryRuns.items, '']);
+        summary.addRow(['Undelivered (dry run rate)', view.dryRuns.count, toDollars(view.dryRuns.cents)]).getCell(3).numFmt = '$#,##0.00';
+        summary.addRow(['Undelivered items', view.dryRuns.items, '']);
         if (view.excludedCount > 0) {
             summary.addRow([]);
             summary.addRow(['Left off this invoice', view.excludedCount, '']).font = { bold: true };
@@ -1172,7 +1172,13 @@ export function renderInvoice(view: RenderableInvoice, now: Date = new Date()): 
     y = Math.min(y, serviceY) - 6;
     if (view.dryRuns.count > 0) {
         page.text(
-            `Dry runs: ${view.dryRuns.count} ${view.dryRuns.count === 1 ? 'delivery' : 'deliveries'}, `
+            /* "Undelivered", not "dry run", because this document is read
+               by a hospital and a dry run is our word for their failed
+               delivery. The bid table's own line item is "Dry Run", so the
+               rate is named alongside it and an accounts payable team can
+               still match the charge to what they agreed. */
+            `Undelivered (dry run rate): ${view.dryRuns.count} `
+            + `${view.dryRuns.count === 1 ? 'delivery' : 'deliveries'}, `
             + `${view.dryRuns.items} ${view.dryRuns.items === 1 ? 'item' : 'items'}, ${money(view.dryRuns.cents)}`,
             MARGIN, y, { size: 9, grey: 0.3 },
         );

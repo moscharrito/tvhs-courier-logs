@@ -161,12 +161,17 @@ describe('Invoices', () => {
         expect(within(panel).getByRole('link', { name: 'Excel' })).toHaveAttribute('href', `${BASE}/3/invoice.xlsx`);
     });
 
-    it('shows a dry run line as a dry run with its item count', async () => {
+    it('calls an undelivered line undelivered, with its item count', async () => {
+        /* "Dry run" is the bid table's name for the RATE, not for what
+           happened at the door, and this document is read by a hospital.
+           The rate's own name stays on the summary so an accounts payable
+           team can still match the charge to what they agreed. */
         renderInvoices();
         const panel = await openFirst();
-        expect(within(panel).getByText('dry run, 2 items')).toBeInTheDocument();
+        /* Twice: once on the line it happened to, once in the summary. */
+        expect(within(panel).getAllByText('undelivered, 2 items')).toHaveLength(2);
         expect(within(panel).getByText('delivered')).toBeInTheDocument();
-        expect(within(panel).getByText(/1 dry run|dry runs, 2 items/)).toBeInTheDocument();
+        expect(within(panel).queryByText(/dry run/i)).toBeNull();
     });
 
     it('requires a reason on an adjustment, through the form', async () => {
