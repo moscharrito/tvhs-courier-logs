@@ -86,6 +86,7 @@ const check = reconcile(
         orderId: l.orderId, reference: l.reference, zone: l.zone, serviceType: l.serviceType,
         dryRun: l.dryRun, items: l.items, outOfAreaMiles: l.outOfAreaMiles,
         amountCents: l.amountCents, performedAt: l.performedAt,
+        requestedAt: l.requestedAt,
     })),
     timezone,
 );

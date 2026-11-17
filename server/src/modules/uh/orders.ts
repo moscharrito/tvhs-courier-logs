@@ -32,7 +32,7 @@ import { presentHandling, signingInstruction, handlingFlags } from './handling';
 import { SIGNATURE_RULES, SERVICE_TYPES } from '../../db/schema/uh';
 import { dateIn, instantAt } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
-import { priceFor, resolveZone, pricingSettingsFrom, isAfterHours } from './pricing';
+import { resolveZone, pricingSettingsFrom } from './pricing';
 import { zipZoneMap, scheduleOn, siteZipMileMap, payKey } from './zones';
 import { payZoneForMiles } from './driver-pay';
 import { dedupeKeyFor, normalizePhone, normalizeZip } from './import-parse';

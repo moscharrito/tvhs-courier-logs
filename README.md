@@ -212,7 +212,7 @@ The detail page shows the packages, the full price breakdown, and the chain of c
 
 The breakdown is computed rather than stored, so it follows the settings and the effective schedule. Three inputs are not simply read off the row:
 
-- **After hours** is measured at the delivery when there is one, else the pickup, else the request. Addendum 1 defines the service as one "requested and performed outside of normal business hours", and performed is what a courier can be held to. The response says which instant was used, because on a borderline order an $18 surcharge turns on it.
+- **After hours** needs BOTH halves of Addendum 1's "requested and performed outside of normal business hours": the service is charged the surcharge only when the request and the delivery are both between 8 pm and 7 am. Performed alone was the reading until 17 November 2026, and on a scheduled round it put $18 on every stop a long day had not reached by eight — our schedule slipping, billed as a night call-out nobody asked for. The narrow reading is the default for the same reason the morning boundary is 7 am rather than 8: where the contract is open, we take the side that cannot over-bill. `pricing.afterHoursRequiresRequest` returns the old reading if University Health ever confirm it in writing.
 - **A dry run** bills per item, counting the quantities of the packages that actually failed rather than the whole order, since an order can be part delivered.
 - **Mileage** for an out-of-area order is still unknown until ticket 1.4. `priceFor` says so in its notes rather than quietly billing zero as though the question were settled.
 

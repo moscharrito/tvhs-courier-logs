@@ -74,6 +74,9 @@ export interface PricingSettings {
      *  driver-pay bands). See PricingSection in core/projects/settings.ts,
      *  which carries the full argument and the money it moves. */
     zoneBasis: 'zip' | 'distance';
+    /** true: Addendum 1's "requested AND performed" is read as both. See
+     *  PricingSection, which carries the argument and the money it moves. */
+    afterHoursRequiresRequest: boolean;
 }
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
@@ -88,9 +91,20 @@ export interface PriceInput {
      *  so every existing caller keeps the zone rate it already had. */
     zip?: string | null | undefined;
     serviceType: ServiceType;
-    /** Set explicitly, or left out and derived from `at`. */
+    /** Set explicitly, or left out and derived from `at` and `requestedAt`. */
     afterHours?: boolean;
+    /** When the service was PERFORMED: the delivery, else the pickup. */
     at?: Date;
+    /**
+     * When it was REQUESTED -- the instant the order reached us.
+     *
+     * The second half of Addendum 1's "requested and performed outside of
+     * normal business hours". Optional, and its absence is NOT treated as
+     * satisfying the condition: a caller that cannot say when a service was
+     * asked for cannot show it was asked for at night, and the surcharge
+     * is left off rather than guessed at.
+     */
+    requestedAt?: Date;
     dryRun?: boolean;
     /** Dry run is charged per item (Addendum 1). Defaults to 1. */
     items?: number;
@@ -159,9 +173,51 @@ export function priceFor(input: PriceInput, schedule: PriceSchedule, settings: P
     const notes: string[] = [];
     const items = Math.max(1, Math.floor(input.items ?? 1));
 
-    const afterHours = input.afterHours ?? (input.at ? isAfterHours(input.at, settings) : false);
-    if (input.afterHours === undefined && !input.at) {
+    /* ───────── "REQUESTED AND PERFORMED", WHICH IS TWO CONDITIONS ─────────
+     *
+     * Addendum 1 joins them with `and`. Read as `performed` alone -- which
+     * it was until 17 November 2026 -- a scheduled list requested at the
+     * counter in the morning puts $18 on every stop a long round has not
+     * reached by eight in the evening. That is our schedule slipping, billed
+     * to a hospital as a night call-out they never asked for.
+     *
+     * With both, what is left is the service the surcharge describes:
+     * University Health ring after eight, and a driver goes out.
+     *
+     * `afterHours` passed explicitly still wins, because a caller that has
+     * already decided -- a stored invoice line being re-read, a quote with
+     * the box ticked -- is not asking this function to decide again. */
+    let afterHours: boolean;
+    if (input.afterHours !== undefined) {
+        afterHours = input.afterHours;
+    } else if (!input.at) {
+        afterHours = false;
         notes.push('No time given; priced as business hours.');
+    } else {
+        const performed = isAfterHours(input.at, settings);
+        if (!settings.afterHoursRequiresRequest) {
+            afterHours = performed;
+        } else if (!input.requestedAt) {
+            /* Not guessed either way. Without the request instant we cannot
+               show the service was asked for at night, so it is not charged
+               -- the same side of an open question the window takes. */
+            afterHours = false;
+            if (performed) {
+                notes.push(
+                    'Performed after hours, but the time of the request is not known, '
+                    + 'so the after-hours surcharge was not applied (Addendum 1 requires both).',
+                );
+            }
+        } else {
+            afterHours = performed && isAfterHours(input.requestedAt, settings);
+            if (performed && !afterHours) {
+                notes.push(
+                    'Performed after hours on a request made during business hours, so no '
+                    + 'after-hours surcharge: Addendum 1 defines the service as one requested '
+                    + 'AND performed outside normal business hours.',
+                );
+            }
+        }
     }
 
     // Base: zone rate, or mileage when out of area.

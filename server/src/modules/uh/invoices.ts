@@ -97,6 +97,9 @@ export interface DraftLine {
     note: string;
     /** What the after-hours decision on this line was measured against. */
     performedAt: string;
+    /** When the service was REQUESTED. The other half of Addendum 1's
+     *  "requested and performed", frozen so reconcile.ts can apply it. */
+    requestedAt: string;
 }
 
 export interface Exception {
@@ -246,6 +249,7 @@ export async function buildDraft(
             amountCents: toCents(pricing.total),
             note: pricing.notes.join(' '),
             performedAt: pricing.measuredAt,
+            requestedAt: String(row.received_at ?? ''),
         });
     }
 
@@ -353,6 +357,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             amountCents: Number(l['amount_cents']),
             note: String(l['note']),
             performedAt: String(l['performed_at'] ?? ''),
+            requestedAt: String(l['requested_at'] ?? ''),
         }));
     }
 
@@ -820,8 +825,9 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
          * leaves room to spare. Seventeen statements for a fortnight. */
         const LINE_COLUMNS = `project_id, invoice_id, order_id, service_date, reference, pharmacy,
                       delivery_zip, zone, service_type, dry_run, items, base_cents, stat_cents, after_hours_cents,
-                      dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note, performed_at`;
-        const LINE_TUPLE = `(${new Array(20).fill('?').join(', ')})`;
+                      dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note, performed_at,
+                      requested_at`;
+        const LINE_TUPLE = `(${new Array(21).fill('?').join(', ')})`;
         const ROWS_PER_STATEMENT = 200;
 
         const writes: Array<{ sql: string; args: InValue[] }> = [{
@@ -837,6 +843,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
                     line.deliveryZip, line.zone, line.serviceType, line.dryRun ? 1 : 0, line.items,
                     line.baseCents, line.statCents, line.afterHoursCents, line.dryRunCents,
                     line.outOfAreaMiles, line.outOfAreaCents, line.amountCents, line.note, line.performedAt,
+                    line.requestedAt,
                 ] as InValue[]),
             });
         }
@@ -1488,7 +1495,7 @@ export function renderInvoice(
             y -= 15;
         };
         surcharge('STAT', `$${rates.stat.toFixed(2)}`);
-        surcharge('After hours', `$${rates.afterHours.toFixed(2)}`);
+        surcharge('After hours (requested and performed 8:00 pm - 7:00 am)', `$${rates.afterHours.toFixed(2)}`);
         surcharge('Undelivered (dry run rate, per item)', `$${rates.dryRun.toFixed(2)}`);
         surcharge(
             'Out of area (per one-way mile from the originating pharmacy; requires prior authorization)',

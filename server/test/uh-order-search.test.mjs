@@ -318,19 +318,52 @@ describe('the pricing breakdown on an order', () => {
         expect((await admin.get(`${BASE}/${order.id}`)).body.pricing.available).toBe(true);
     });
 
-    it('measures after hours at the delivery, which is what a courier controls', async () => {
-        const order = await makeOrder({ serviceType: 'adhoc', requestedAt: BUSINESS_HOURS_PAST });
+    /* 03:00 UTC on a summer date is 22:00 in Chicago: after hours. */
+    const DELIVERED_LATE = '2026-09-15T03:00:00.000Z';
+    const REQUESTED_LATE = '2026-09-15T02:00:00.000Z'; // 21:00 Chicago
+
+    const deliveredAt = async (instant, over = {}) => {
+        const order = await makeOrder({ serviceType: 'adhoc', ...over });
         await ev(order.id, { type: 'assigned', courierUsername: 'sam.courier' });
         await ev(order.id, { type: 'picked_up', signedName: 'Tech' });
         await ev(order.id, { type: 'delivered', signedName: 'Ines Vargas' });
-        // 03:00 UTC on a summer date is 22:00 in Chicago: after hours.
-        await sql("UPDATE orders SET delivered_at = '2026-09-15T03:00:00.000Z' WHERE id = ?", [order.id]);
+        await sql('UPDATE orders SET delivered_at = ? WHERE id = ?', [instant, order.id]);
+        return (await admin.get(`${BASE}/${order.id}`)).body;
+    };
 
-        const detail = await admin.get(`${BASE}/${order.id}`);
-        expect(detail.body.pricing).toMatchObject({
-            afterHours: true, afterHoursSurcharge: 18, measuredFrom: 'delivered', provisional: false,
+    it('charges no after-hours surcharge on a daytime request delivered late', async () => {
+        /* ─────────────────────────────────────────────────────────────────
+         * This test used to assert the opposite, under the title "measures
+         * after hours at the delivery, which is what a courier controls".
+         *
+         * Addendum 1 defines the service as one "requested AND performed"
+         * outside normal business hours, and reading it as performed alone
+         * put $18 on every stop a long round had not reached by eight --
+         * billed to a hospital for work they asked for at lunchtime.
+         * Changed 17 November 2026 on instruction.
+         */
+        const body = await deliveredAt(DELIVERED_LATE, { requestedAt: BUSINESS_HOURS_PAST });
+        expect(body.pricing).toMatchObject({
+            afterHours: false, afterHoursSurcharge: 0, measuredFrom: 'delivered', provisional: false,
         });
-        expect(detail.body.pricing.total).toBe(30.5);   // 12.50 zone 1 + 18
+        expect(body.pricing.total).toBe(12.5);   // zone 1, and nothing on top
+        /* Said on the line, because an amount with no surcharge in it looks
+           like a miss to anybody who knows the delivery ran late. */
+        expect(body.pricing.notes.join(' ')).toMatch(/requested\s+AND\s+performed/i);
+    });
+
+    it('still charges the night call-out, which is what the surcharge is for', async () => {
+        const body = await deliveredAt(DELIVERED_LATE, { requestedAt: REQUESTED_LATE });
+        expect(body.pricing).toMatchObject({ afterHours: true, afterHoursSurcharge: 18 });
+        expect(body.pricing.total).toBe(30.5);   // 12.50 zone 1 + 18
+    });
+
+    it('reports after hours as what was charged, not as what the clock said', async () => {
+        /* The flag and the money have to agree. "after hours: yes" beside an
+           amount carrying no surcharge is how somebody concludes the invoice
+           is wrong. */
+        const body = await deliveredAt(DELIVERED_LATE, { requestedAt: BUSINESS_HOURS_PAST });
+        expect(body.pricing.afterHours).toBe(body.pricing.afterHoursSurcharge > 0);
     });
 
     it('bills a dry run per failed item and drops the delivery charge', async () => {

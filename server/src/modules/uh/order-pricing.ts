@@ -24,7 +24,7 @@
  */
 
 import type { Client } from '@libsql/client';
-import { priceFor, isAfterHours, pricingSettingsFrom, type PriceBreakdown, type Zone } from './pricing';
+import { priceFor, pricingSettingsFrom, type PriceBreakdown, type Zone } from './pricing';
 import { payZoneForMiles, payBandMiles } from './driver-pay';
 import { scheduleOn } from './zones';
 
@@ -178,6 +178,10 @@ export async function priceOrder(
         zip: order.zip ?? null,
         serviceType: order.service_type as 'scheduled' | 'stat' | 'adhoc',
         at,
+        /* The second half of "requested and performed". received_at is when
+           the order reached us -- off a daily list in the morning for a
+           scheduled delivery, off the telephone for a night STAT. */
+        requestedAt: new Date(order.received_at),
         dryRun,
         items,
         ...(order.out_of_area_miles !== null ? { outOfAreaMiles: Number(order.out_of_area_miles) } : {}),
@@ -190,7 +194,11 @@ export async function priceOrder(
            $14.50 against a ZIP the bid table calls zone 1 needs to be told
            why, on the document, not in a release note. */
         notes: zoneNote === null ? breakdown.notes : [zoneNote, ...breakdown.notes],
-        afterHours: isAfterHours(at, settings),
+        /* What was CHARGED, not what the clock alone would say. The two
+           part company on a daytime request delivered late, and a screen
+           reading "after hours" beside an amount that has no surcharge in
+           it is how somebody concludes the invoice is wrong. */
+        afterHours: breakdown.afterHoursSurcharge > 0,
         dryRun,
         items,
         measuredAt: at.toISOString(),

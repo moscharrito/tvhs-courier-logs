@@ -75,8 +75,16 @@ describe('contract defaults', () => {
         // addendum before it can be charged. A release that quietly flipped
         // this would change every open draft and every figure quoted off
         // one, so the default is pinned here rather than only in the code.
+        // afterHoursRequiresRequest reads Addendum 1's "requested AND
+        // performed" as both, which is what stops a scheduled round billing
+        // $18 a stop for running past eight. Pinned for the same reason:
+        // flipping it quietly would change what a hospital is charged.
         expect(DEFAULT_PROJECT_SETTINGS.pricing).toEqual({
-            afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true, zoneBasis: 'zip',
+            afterHoursStart: '20:00',
+            afterHoursEnd: '07:00',
+            dryRunReplacesBase: true,
+            afterHoursRequiresRequest: true,
+            zoneBasis: 'zip',
         });
     });
 

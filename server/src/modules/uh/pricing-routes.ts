@@ -21,6 +21,11 @@ const QuoteBody = z.object({
     zone: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
     serviceType: z.enum(['scheduled', 'stat', 'adhoc']).default('scheduled'),
     at: z.string().datetime({ offset: true }).optional(),
+    /* The second half of Addendum 1's "requested and performed". Left out,
+       a quote is read as a service asked for and done at the same instant --
+       the night call-out somebody is usually quoting. Pass it to price the
+       other case: a morning list delivered late. */
+    requestedAt: z.string().datetime({ offset: true }).optional(),
     afterHours: z.boolean().optional(),
     dryRun: z.boolean().optional(),
     items: z.number().int().min(1).max(500).optional(),
@@ -112,6 +117,13 @@ export function createPricingRouter({ client }: { client: Client }): Router {
             zone,
             serviceType: body.serviceType,
             at,
+            /* ONE INSTANT MEANS A CALL-OUT. A quote names when the work
+               happens; with nothing else said, the job is being asked for
+               then too, which is what makes a 10pm quote a 10pm job rather
+               than this morning's list running late. An invoice never takes
+               this default -- order-pricing passes the order's real
+               received_at. */
+            requestedAt: body.requestedAt ? new Date(body.requestedAt) : at,
             ...(body.afterHours !== undefined ? { afterHours: body.afterHours } : {}),
             ...(body.dryRun !== undefined ? { dryRun: body.dryRun } : {}),
             ...(body.items !== undefined ? { items: body.items } : {}),

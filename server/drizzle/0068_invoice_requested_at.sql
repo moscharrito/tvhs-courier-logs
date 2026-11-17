@@ -1,0 +1,19 @@
+-- When the service was REQUESTED, frozen onto the invoice line beside when
+-- it was performed.
+--
+-- Addendum 1 defines the after-hours surcharge as one "requested AND
+-- performed outside of normal business hours". Until 17 November 2026 only
+-- the performed instant was kept, because only the performed instant was
+-- used -- so a line charged $18 carried no record of the half of the test
+-- that was never applied.
+--
+-- It is needed by more than history. reconcile.ts re-derives every line from
+-- the rate card without sharing any code with pricing.ts, and that check is
+-- what stands between a reading in the code and an invoice going to a
+-- hospital. Without this column it cannot apply the rule at all, and would
+-- report a difference on every evening delivery of a morning's list.
+--
+-- Empty on lines issued before today. reconcile treats an empty value the
+-- same way pricing does: it cannot show the service was asked for at night,
+-- so it does not expect the surcharge.
+ALTER TABLE `invoice_lines` ADD `requested_at` text DEFAULT '' NOT NULL;

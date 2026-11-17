@@ -77,16 +77,36 @@ describe('working a line out from the bid table', () => {
 
     it('adds the after-hours surcharge from the contract hours, not the settings', () => {
         /* Addendum 1: between 8pm and 7am. 03:00 UTC is 22:00 in San Antonio
-           in July. */
-        const late = { ...base, performedAt: '2026-07-07T03:00:00.000Z' };
+           in July. Requested then as well, because the addendum wants both
+           and this test is about the WINDOW. */
+        const late = { ...base, performedAt: '2026-07-07T03:00:00.000Z', requestedAt: '2026-07-07T02:00:00.000Z' };
         expect(isAfterHoursByContract(late.performedAt, TZ)).toBe(true);
         expect(expectedForLine(late).expectedCents).toBe(1250 + 1800);
 
-        const earlyMorning = { ...base, performedAt: '2026-07-06T11:00:00.000Z' }; // 06:00 local
+        const earlyMorning = {
+            ...base, performedAt: '2026-07-06T11:00:00.000Z', requestedAt: '2026-07-06T10:00:00.000Z',
+        }; // 06:00 and 05:00 local
         expect(expectedForLine(earlyMorning).expectedCents).toBe(1250 + 1800);
 
         const sevenAm = { ...base, performedAt: '2026-07-06T12:00:00.000Z' }; // 07:00 local
         expect(isAfterHoursByContract(sevenAm.performedAt, TZ)).toBe(false);
+    });
+
+    it('withholds it on a daytime request delivered after eight', () => {
+        /* The reading taken on 17 November 2026. Checked here as well as in
+           pricing.ts precisely because the two share no code: if only one of
+           them learns the rule, this file is what says so. */
+        const late = { ...base, performedAt: '2026-07-07T03:00:00.000Z', requestedAt: '2026-07-06T15:00:00.000Z' };
+        const check = expectedForLine(late);
+        expect(check.expectedCents).toBe(1250);
+        expect(check.working.join(' ')).toMatch(/Addendum 1 requires both/);
+    });
+
+    it('asks rather than assumes on a line issued before the request was kept', () => {
+        const late = { ...base, performedAt: '2026-07-07T03:00:00.000Z', requestedAt: '' };
+        const check = expectedForLine(late);
+        expect(check.expectedCents).toBe(1250);
+        expect(check.questions.join(' ')).toMatch(/before the time of the request was recorded/);
     });
 
     it('reads the hour in the contract timezone, not the server one', () => {
@@ -152,6 +172,7 @@ describe('a simulated period, billed and then checked', () => {
                 orderId: l.orderId, reference: l.reference, zone: l.zone, serviceType: l.serviceType,
                 dryRun: l.dryRun, items: l.items, outOfAreaMiles: l.outOfAreaMiles,
                 amountCents: l.amountCents, performedAt: l.performedAt,
+                requestedAt: l.requestedAt,
             })), TZ),
         };
     }, 120_000);

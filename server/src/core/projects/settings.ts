@@ -308,6 +308,34 @@ export interface PricingSection {
     /** true: the dry-run flat fee replaces the zone rate. false: it is added. */
     dryRunReplacesBase: boolean;
     /**
+     * MUST THE REQUEST HAVE BEEN AFTER HOURS TOO, OR ONLY THE DELIVERY?
+     *
+     * Addendum 1: "any pickup or delivery service REQUESTED AND PERFORMED
+     * outside of normal business hours". Two conditions, joined by `and`.
+     *
+     * This was read as `performed` alone until 17 November 2026, on the
+     * grounds that performed is what a courier can be held to. What that
+     * missed is what it does to a scheduled round. A list arrives at the
+     * counter in the morning, is requested in business hours, and is given
+     * a due time that can itself fall after 8 p.m.; a van still out at half
+     * past eight then put $18 on every remaining stop. On the November 2-14
+     * invoice that was 3,312 scheduled deliveries' worth of exposure and
+     * some $11,000 -- charged to a hospital because our own round ran long,
+     * on work they asked for at lunchtime.
+     *
+     * true  (default) BOTH instants must be outside business hours. In
+     *       practice that is the night call-out the surcharge describes:
+     *       University Health ring, and a driver goes out.
+     * false the performed instant alone, the older reading. Set it only if
+     *       University Health confirm that reading in writing.
+     *
+     * The narrow reading is the default for the same reason the morning
+     * boundary is 7 a.m. rather than 8: where the contract is open, we take
+     * the side that cannot over-bill them. Doing that for the window and not
+     * for the trigger is how the two drifted apart in the first place.
+     */
+    afterHoursRequiresRequest: boolean;
+    /**
      * WHAT DECIDES WHICH ZONE A DELIVERY IS BILLED AT.
      *
      * 'zip'       University Health's published ZIP list (Bid Table
@@ -589,6 +617,10 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         // replaces the delivery charge or is added to it. Replace is the
         // reading that cannot over-bill UH. Open item 10.
         dryRunReplacesBase: true,
+        /* Addendum 1 says "requested AND performed". Both, since 17
+           November 2026, on instruction. See the field's note for what the
+           other reading did to a scheduled round. */
+        afterHoursRequiresRequest: true,
         /* THE CONTRACT'S OWN BASIS, and the only one Addendum 2 clause 2
            supports. 'distance' exists and is off: see the field's note. */
         zoneBasis: 'zip',
@@ -734,6 +766,7 @@ export const SettingsPatch = z.object({
         afterHoursStart: hhmm.optional(),
         afterHoursEnd: hhmm.optional(),
         dryRunReplacesBase: z.boolean().optional(),
+        afterHoursRequiresRequest: z.boolean().optional(),
         zoneBasis: z.enum(['zip', 'distance']).optional(),
     }).strict().optional(),
     billing: z.object({

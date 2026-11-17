@@ -47,6 +47,9 @@ export interface CheckInput {
     outOfAreaMiles: number | null;
     /** The instant the service was performed, as the invoice measured it. */
     performedAt: string;
+    /** The instant it was REQUESTED. Empty on lines issued before 17
+     *  November 2026, when only the performed instant was kept. */
+    requestedAt?: string | undefined;
     timezone: string;
 }
 
@@ -125,9 +128,33 @@ export function expectedForLine(input: CheckInput): CheckResult {
         total += cents(RATE_CARD.statSurcharge);
         working.push(`STAT surcharge: $${RATE_CARD.statSurcharge.toFixed(2)}`);
     }
+    /* ───────── "REQUESTED AND PERFORMED", BOTH, SINCE 17 NOVEMBER ─────────
+     *
+     * Addendum 1 joins them with `and`. Spelled out here rather than read
+     * from the setting, like the window above, so that flipping the setting
+     * cannot silently move both sides of this check at once -- which is the
+     * entire reason this file shares no code with pricing.ts. */
     if (isAfterHoursByContract(input.performedAt, input.timezone)) {
-        total += cents(RATE_CARD.afterHoursSurcharge);
-        working.push(`after hours (performed at ${hourAt(input.performedAt, input.timezone)}:00 local): $${RATE_CARD.afterHoursSurcharge.toFixed(2)}`);
+        const requested = input.requestedAt ?? '';
+        if (requested === '') {
+            /* Issued before the request instant was kept. Not expected,
+               because we cannot show the service was asked for at night. */
+            questions.push(
+                'Performed after hours, but this line was issued before the time of the request was '
+                + 'recorded, so the surcharge cannot be checked against Addendum 1 either way.',
+            );
+        } else if (isAfterHoursByContract(requested, input.timezone)) {
+            total += cents(RATE_CARD.afterHoursSurcharge);
+            working.push(
+                `after hours (requested at ${hourAt(requested, input.timezone)}:00 and performed at `
+                + `${hourAt(input.performedAt, input.timezone)}:00 local): $${RATE_CARD.afterHoursSurcharge.toFixed(2)}`,
+            );
+        } else {
+            working.push(
+                `no after-hours surcharge: performed at ${hourAt(input.performedAt, input.timezone)}:00 but `
+                + `requested at ${hourAt(requested, input.timezone)}:00, and Addendum 1 requires both`,
+            );
+        }
     }
 
     working.push(`total: $${(total / 100).toFixed(2)}`);
@@ -165,6 +192,8 @@ export interface ReconcilableLine {
     amountCents: number;
     /** When the invoice priced it: delivered, else picked up, else requested. */
     performedAt: string;
+    /** When it reached us. Empty on lines issued before 17 November 2026. */
+    requestedAt?: string | undefined;
 }
 
 export function reconcile(lines: ReconcilableLine[], timezone: string, sampleSize = 8): Reconciliation {
@@ -182,6 +211,7 @@ export function reconcile(lines: ReconcilableLine[], timezone: string, sampleSiz
             items: line.items,
             outOfAreaMiles: line.outOfAreaMiles,
             performedAt: line.performedAt,
+            requestedAt: line.requestedAt,
             timezone,
         });
         for (const q of check.questions) questions.add(q);

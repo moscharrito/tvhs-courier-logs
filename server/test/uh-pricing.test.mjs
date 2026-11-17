@@ -61,8 +61,10 @@ describe('priceFor: after hours', () => {
         const at = CT('2026-06-16T12:30:00Z');
         expect(isAfterHours(at, settings)).toBe(false);
         expect(isAfterHours(at, scope)).toBe(true);
-        expect(priceFor({ zone: 1, serviceType: 'scheduled', at }, BAFO, settings).total).toBe(12.5);
-        expect(priceFor({ zone: 1, serviceType: 'scheduled', at }, BAFO, scope).total).toBe(30.5);
+        /* Requested at the same hour, so the window is the only thing under
+           test here rather than the requested-and-performed rule. */
+        expect(priceFor({ zone: 1, serviceType: 'scheduled', at, requestedAt: at }, BAFO, settings).total).toBe(12.5);
+        expect(priceFor({ zone: 1, serviceType: 'scheduled', at, requestedAt: at }, BAFO, scope).total).toBe(30.5);
     });
 
     it('reads the clock in the project timezone, not the server timezone', () => {
@@ -80,8 +82,11 @@ describe('priceFor: after hours', () => {
         expect(isAfterHours(CT('2026-01-16T01:59:00Z'), settings)).toBe(false);
     });
 
-    it('derives after hours from `at` when not told, and says so when it has neither', () => {
-        expect(priceFor({ zone: 1, serviceType: 'scheduled', at: CT('2026-06-16T03:00:00Z') }, BAFO).afterHoursSurcharge).toBe(18);
+    it('derives after hours from the clock when not told, and says so when it has neither', () => {
+        const night = CT('2026-06-16T03:00:00Z'); // 22:00 Central
+        expect(priceFor(
+            { zone: 1, serviceType: 'scheduled', at: night, requestedAt: night }, BAFO,
+        ).afterHoursSurcharge).toBe(18);
         const blind = priceFor({ zone: 1, serviceType: 'scheduled' }, BAFO);
         expect(blind.afterHoursSurcharge).toBe(0);
         expect(blind.notes.join(' ')).toMatch(/priced as business hours/i);
@@ -90,6 +95,67 @@ describe('priceFor: after hours', () => {
     it('an explicit afterHours flag beats the clock', () => {
         const at = CT('2026-06-16T17:00:00Z'); // noon Central
         expect(priceFor({ zone: 1, serviceType: 'scheduled', at, afterHours: true }, BAFO).afterHoursSurcharge).toBe(18);
+    });
+});
+
+describe('priceFor: "requested AND performed", which is two conditions', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * Addendum 1 joins them with `and`, and until 17 November 2026 this
+     * charged on `performed` alone. On the 2-14 November invoice that put
+     * roughly $11,000 on 3,312 SCHEDULED deliveries -- work University
+     * Health asked for off a morning list, delivered late because the round
+     * ran long. Changed on instruction.
+     */
+    const settings = DEFAULT_PRICING_SETTINGS; // 20:00-07:00, America/Chicago
+    const MORNING = CT('2026-06-16T14:00:00Z'); // 09:00 Central
+    const EVENING = CT('2026-06-16T03:00:00Z'); // 22:00 Central
+    const scheduled = (over) => priceFor({ zone: 1, serviceType: 'scheduled', ...over }, BAFO, settings);
+
+    it('charges nothing extra on a daytime request delivered after eight', () => {
+        /* The money. A van still out at half past eight on the morning's
+           list is our schedule slipping, not a night call-out. */
+        const p = scheduled({ at: EVENING, requestedAt: MORNING });
+        expect(p.afterHoursSurcharge).toBe(0);
+        expect(p.total).toBe(12.5);
+        // And says why, on the line, because the amount alone looks like a miss.
+        expect(p.notes.join(' ')).toMatch(/requested\s+AND\s+performed/i);
+    });
+
+    it('still charges the night call-out, which is what the surcharge is for', () => {
+        const p = scheduled({ at: EVENING, requestedAt: EVENING });
+        expect(p.afterHoursSurcharge).toBe(18);
+        expect(p.total).toBe(30.5);
+    });
+
+    it('charges nothing on a night request delivered the next morning', () => {
+        // Both halves have to hold; this one fails on `performed`.
+        expect(scheduled({ at: MORNING, requestedAt: EVENING }).afterHoursSurcharge).toBe(0);
+    });
+
+    it('leaves it off rather than guessing when the request time is unknown', () => {
+        /* The same side of an open question the window takes: we cannot show
+           it was asked for at night, so it is not charged. */
+        const p = scheduled({ at: EVENING });
+        expect(p.afterHoursSurcharge).toBe(0);
+        expect(p.notes.join(' ')).toMatch(/time of the request is not known/i);
+    });
+
+    it('goes back to the old reading only when the setting says so', () => {
+        /* Set false only if University Health confirm it in writing. */
+        const old = { ...settings, afterHoursRequiresRequest: false };
+        const p = priceFor({ zone: 1, serviceType: 'scheduled', at: EVENING, requestedAt: MORNING }, BAFO, old);
+        expect(p.afterHoursSurcharge).toBe(18);
+    });
+
+    it('does not quietly re-decide for a caller that already decided', () => {
+        /* A stored invoice line being re-read, or a quote with the box
+           ticked, is not asking this function to work it out again. */
+        expect(scheduled({ at: EVENING, requestedAt: MORNING, afterHours: true }).afterHoursSurcharge).toBe(18);
+        expect(scheduled({ at: EVENING, requestedAt: EVENING, afterHours: false }).afterHoursSurcharge).toBe(0);
+    });
+
+    it('is the default, so nobody has to switch it on', () => {
+        expect(DEFAULT_PRICING_SETTINGS.afterHoursRequiresRequest).toBe(true);
     });
 });
 
