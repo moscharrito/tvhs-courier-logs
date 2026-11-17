@@ -44,6 +44,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Client } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
+import { codeOf } from '../../core/files/probe';
 import { buildKey, type FileStorage } from '../../core/files/storage';
 import { scopeFor } from './client-portal';
 
@@ -215,15 +216,46 @@ export function createListDropsRouter(
            the object are written by the same request, so there is no window
            in which a drop exists with nothing behind it. */
         const signed = storage.presignUpload(key, contentType);
+        /* EXACTLY THE SIGNED HEADERS AND NOTHING ELSE, which is what
+         * Presigned's own comment asks for and what every other caller
+         * does. This line used to be:
+         *
+         *     headers: { 'Content-Type': contentType, ...signed.headers }
+         *
+         * and that spread is not a no-op. `signed.headers` carries
+         * `content-type` in lower case, so the object had two distinct
+         * keys; `new Headers()` APPENDS rather than overwrites when two
+         * names normalise the same, so what went out was
+         *
+         *     content-type: application/vnd...sheet, application/vnd...sheet
+         *
+         * a comma-joined duplicate, which is not the value that was signed.
+         * S3 answered SignatureDoesNotMatch and the pharmacy was told the
+         * file could not be stored. It never worked -- not for BC3, not for
+         * any pharmacy, not for any file -- and because the refusal said
+         * nothing about why, it read as an outage rather than a bug. */
         const put = await fetch(signed.url, {
             method: 'PUT',
-            headers: { 'Content-Type': contentType, ...(signed.headers ?? {}) },
+            headers: signed.headers,
             body: new Uint8Array(body),
         });
         if (!put.ok) {
+            /* WHAT S3 SAID, NOT JUST THAT IT SAID NO. The body was read and
+             * dropped, which is the mistake putPhoto's own comment is about,
+             * one layer down: "AccessDenied" is a bucket policy, a missing
+             * s3:PutObject is IAM, and "SignatureDoesNotMatch" is this
+             * server building the request wrong. Three different people fix
+             * those, and the message named none of them. codeOf carries the
+             * code only -- never a URL, a key or an address. */
+            const why = codeOf(put.status, await put.text().catch(() => ''));
+            await req.audit('list.drop_failed', 'site', String(options.data.siteId), {
+                serviceDate: options.data.serviceDate, bytes: body.length, contentType, reason: why,
+            });
             res.status(502).json({
-                error: 'The file could not be stored. Nothing was recorded; try again.',
+                error: `The file could not be stored (${why}). Nothing was recorded; `
+                    + 'try again, and tell dispatch if it keeps happening.',
                 code: 'drop.storeFailed',
+                reason: why,
             });
             return;
         }

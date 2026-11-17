@@ -40,7 +40,30 @@ beforeAll(async () => {
     const realFetch = globalThis.fetch;
     vi.stubGlobal('fetch', async (url, init = {}) => {
         if (init.method === 'PUT' && String(url).includes('amazonaws.com')) {
-            puts.push({ url: String(url), contentType: init.headers?.['Content-Type'], body: init.body });
+            /* THROUGH `Headers`, THE WAY REAL fetch DOES IT, and that is not
+               pedantry -- it is the whole reason this suite was green while
+               the feature had never once worked.
+            
+               This used to read `init.headers?.['Content-Type']` straight
+               off the object. Real fetch does not: it builds a Headers,
+               which lower-cases every name and APPENDS when two names
+               normalise the same. The route was passing both
+               `'Content-Type'` and, by spreading the signed set,
+               `'content-type'` -- two distinct object keys -- so what left
+               the process was a comma-joined duplicate that did not match
+               the signature. Reading the raw object could not see that, and
+               returning 200 regardless meant nothing ever asked.
+            
+               So: normalise like fetch, and record what was ACTUALLY sent. */
+            const headers = new Headers(init.headers ?? {});
+            const sent = {};
+            headers.forEach((v, k) => { sent[k] = v; });
+            puts.push({
+                url: String(url),
+                contentType: headers.get('content-type'),
+                headers: sent,
+                body: init.body,
+            });
             return new Response('', { status: 200 });
         }
         return realFetch(url, init);
@@ -316,5 +339,67 @@ describe('marking one dealt with', () => {
         expect(back.status).toBe(200);
         expect(back.body.handled).toBe(false);
         expect(back.body.handledBy).toBe('');
+    });
+});
+
+describe('the request that actually reaches the bucket', () => {
+    /* REPORTED 17 NOVEMBER: a pharmacist at BC3 handed over a spreadsheet
+       and got "The file could not be stored. Nothing was recorded; try
+       again." It had never worked, for any pharmacy or any file.
+
+       The route sent `{ 'Content-Type': ct, ...signed.headers }`. The signed
+       set carries `content-type` in lower case, so that object had two
+       distinct keys; fetch builds a Headers, which lower-cases names and
+       APPENDS when two normalise the same, so what went out was
+       "application/vnd...sheet, application/vnd...sheet" -- not the value
+       that was signed. S3 answered SignatureDoesNotMatch.
+
+       These tests assert on the headers as a Headers sees them, which is
+       the only view that could have caught it. */
+
+    it('sends the content type exactly once, as it was signed', async () => {
+        puts = [];
+        const them = await agentFor('drop.pharmacist', 'drop-pass-1');
+        const bytes = Buffer.from('not really a spreadsheet');
+        const res = await hand(them, { siteId: discharge.id, serviceDate: today }, bytes, XLSX, 'bc3.xlsx');
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+        expect(puts).toHaveLength(1);
+        /* The failure mode was a comma-joined duplicate, so an equality
+           check is the assertion -- `toContain` would have passed on the
+           broken value. */
+        expect(puts[0].contentType).toBe(XLSX);
+        expect(puts[0].contentType).not.toMatch(/,/);
+    });
+
+    it('sends nothing the signature did not cover', async () => {
+        /* Presigned's own comment: "Exactly the headers the caller must
+           send, or the signature will not match." An extra header is not
+           free, and this route proved it. */
+        puts = [];
+        const them = await agentFor('drop.pharmacist', 'drop-pass-1');
+        await hand(them, { siteId: discharge.id, serviceDate: today }, Buffer.from('x'), XLSX, 'bc3.xlsx');
+
+        /* The signed set, and only it: the content type, SSE-KMS, and the
+           key id -- that last one because this project configures a KMS
+           key, and storage.ts signs it when there is one. The assertion is
+           an equality rather than a subset check, because the bug was an
+           EXTRA header, and a subset check would have passed. */
+        const names = Object.keys(puts[0].headers).sort();
+        expect(names).toEqual([
+            'content-type',
+            'x-amz-server-side-encryption',
+            'x-amz-server-side-encryption-aws-kms-key-id',
+        ]);
+    });
+
+    it('keeps the encryption header the bucket policy requires', async () => {
+        /* Without it the policy refuses the write outright, which would be
+           the same opaque message by a different route. */
+        puts = [];
+        const them = await agentFor('drop.pharmacist', 'drop-pass-1');
+        await hand(them, { siteId: discharge.id, serviceDate: today }, Buffer.from('x'), XLSX, 'bc3.xlsx');
+
+        expect(puts[0].headers['x-amz-server-side-encryption']).toBe('aws:kms');
     });
 });

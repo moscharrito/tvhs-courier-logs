@@ -227,3 +227,7 @@ basis.ps1
 # Takes a production database snapshot. Prompts for the Turso URL and
 # token and clears them; never holds either.
 snapshot.ps1
+
+# Closes doomed rows in the mail queue. Prompts for the admin password
+# and clears it; dry run unless -Apply.
+mailclear.ps1

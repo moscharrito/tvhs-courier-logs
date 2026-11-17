@@ -81,7 +81,13 @@ export interface FilesProbe {
 /** S3 answers failures with XML naming the fault. The CODE only: a message
  *  carries ARNs and the bucket name, and this endpoint's standing rule is
  *  that it says whether something works, never what it is called. */
-function codeOf(status: number, xml: string): string {
+/** S3's own error code out of its XML body, or the bare status when there
+ *  is none. Exported because every caller that PUTs to the bucket needs to
+ *  say WHICH refusal it met: "AccessDenied" and "SignatureDoesNotMatch" are
+ *  different jobs for different people, and a 502 that says neither sends
+ *  somebody to read the wrong logs. Never carries a URL, a key or an
+ *  address. */
+export function codeOf(status: number, xml: string): string {
     const code = /<Code>([^<]+)<\/Code>/.exec(xml)?.[1];
     return code ?? `HTTP ${status}`;
 }
