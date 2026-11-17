@@ -214,6 +214,35 @@ export function applyEvent(order: OrderState, event: EventInput, settings: Proje
     const rule = EVENT_RULES[event.type];
 
     if (!rule.from.includes(order.status)) {
+        /* ──────── ALREADY WHERE THE EVENT WAS TRYING TO PUT IT ──────────
+         *
+         * Told apart from an illegal transition because to the person
+         * reading it the two mean opposite things: one is "this did not
+         * happen", the other is "this happened already".
+         *
+         * A courier's phone sent the same delivery twice on 17 November --
+         * a tab restored from memory with the old screen still on it,
+         * which is ordinary on a phone -- and the message built below came
+         * back as `Cannot record "delivered" while the order is delivered:
+         * the order must be picked_up`. A sentence that contradicts
+         * itself, about work that HAD been recorded, with a line under it
+         * telling the driver to go and explain the stop to dispatch.
+         *
+         * STILL A 409, not a 200. This call recorded nothing, and a route
+         * that claims it did would be a worse lie than the one being
+         * fixed. The code is what matters: the courier app reads it and
+         * drops the duplicate without troubling anybody. See
+         * web/src/lib/outbox.ts. */
+        const settled = (rule.to !== null && order.status === rule.to)
+            // `arrived` moves no status, so its record is the timestamp.
+            || (event.type === 'arrived' && order.arrivedAt !== null);
+        if (settled) {
+            throw new TransitionError(
+                `"${event.type}" is already recorded on this order.`,
+                'transition.alreadyDone',
+            );
+        }
+
         const expected = rule.from.length === 0
             ? 'it is recorded when the order is created and cannot be repeated'
             : `the order must be ${list(rule.from)}`;

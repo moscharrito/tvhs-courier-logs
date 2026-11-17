@@ -11,7 +11,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import {
     enqueue, queued, flush, sendOrQueue, rejections, dismissRejection, clearOutbox,
     pendingFor, subscribe, newEventId, resetOutboxForTests, setOutboxUser,
-    signOutPrompt, confirmSignOut, uploadPhotoNow,
+    signOutPrompt, confirmSignOut, uploadPhotoNow, settledAlready,
 } from './outbox';
 
 const url = (n: number) => `/api/projects/uh/uh/orders/${n}/arrive`;
@@ -424,6 +424,88 @@ describe('a phone with no room for the photograph', () => {
         } finally {
             put.mockRestore();
         }
+    });
+});
+
+describe('a refusal that means the work is already recorded', () => {
+    /* 17 November. A driver was shown "Delivery for <patient>: Cannot record
+       "delivered" while the order is delivered: the order must be picked_up"
+       over a delivery that WAS on the record, with "Tell dispatch what
+       happened at these stops" underneath it. Two tabs, one stop, nothing
+       wrong and nothing for anybody to do. */
+
+    const deliver = (n: number) => `/api/projects/uh/uh/orders/${n}/deliver`;
+
+    it('drops it rather than telling the courier their delivery failed', async () => {
+        setOnline(false);
+        await enqueue({ url: deliver(7), body: { signedName: 'Someone' }, label: 'Delivery for A Patient', orderId: 7 });
+        setOnline(true);
+        fetchReturning({
+            status: 409,
+            body: { error: '"delivered" is already recorded on this order.', code: 'transition.alreadyDone' },
+        });
+
+        await flush();
+        expect(await queued()).toHaveLength(0);
+        // The half that matters: nothing to dismiss, because nothing is wrong.
+        expect(await rejections()).toHaveLength(0);
+    });
+
+    it('still shouts when the transition is genuinely illegal', async () => {
+        setOnline(false);
+        await enqueue({ url: deliver(8), body: { signedName: 'Someone' }, label: 'Delivery for B Patient', orderId: 8 });
+        setOnline(true);
+        fetchReturning({
+            status: 409,
+            body: {
+                error: 'Cannot record "delivered" while the order is assigned: the order must be picked_up.',
+                code: 'transition.illegal',
+                status: 'assigned',
+            },
+        });
+
+        await flush();
+        const shown = await rejections();
+        expect(shown).toHaveLength(1);
+        expect(shown[0]!.label).toBe('Delivery for B Patient');
+    });
+
+    it('reads an older server, which has no word for it', () => {
+        /* A phone runs the build it last cached, so it may be talking to a
+           server newer than itself or older. Before `transition.alreadyDone`
+           existed the refusal said `transition.illegal` and named the status,
+           which is enough on its own. */
+        expect(settledAlready(deliver(9), { code: 'transition.illegal', status: 'delivered' })).toBe(true);
+        expect(settledAlready(deliver(9), { code: 'transition.illegal', status: 'assigned' })).toBe(false);
+    });
+
+    it('knows what each action was going for', () => {
+        const attempt = '/api/projects/uh/uh/orders/9/attempt';
+        expect(settledAlready(attempt, { code: 'transition.illegal', status: 'failed' })).toBe(true);
+        // An attempt is going for `failed`. A delivered order is not that.
+        expect(settledAlready(attempt, { code: 'transition.illegal', status: 'delivered' })).toBe(false);
+    });
+
+    it('does not swallow a refusal that is about something else', () => {
+        expect(settledAlready(deliver(9), { error: 'That order is not assigned to you' })).toBe(false);
+        expect(settledAlready(deliver(9), { code: 'transition.missingField' })).toBe(false);
+        expect(settledAlready(deliver(9), null)).toBe(false);
+    });
+
+    it('lets a stale screen with a signal through without an error', async () => {
+        /* sendOrQueue goes straight at the network when online, so this
+           refusal would land on the stop screen rather than in the banner. */
+        setOnline(true);
+        fetchReturning({
+            status: 409,
+            body: { error: '"delivered" is already recorded on this order.', code: 'transition.alreadyDone' },
+        });
+
+        const result = await sendOrQueue({
+            url: deliver(10), body: { signedName: 'Someone' }, label: 'Delivery for C Patient', orderId: 10,
+        });
+        expect(result.sent).toBe(true);
+        expect(await rejections()).toHaveLength(0);
     });
 });
 

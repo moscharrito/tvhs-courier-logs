@@ -22,6 +22,13 @@
  *   with every later event stuck behind it. Those are moved aside and shown to
  *   the courier. Only network failures and 5xx are retried.
  *
+ *   EXCEPT WHERE THE NO MEANS "ALREADY DONE". A refusal because the order is
+ *   already in the state the entry was trying to put it in is not a failure
+ *   to record anything -- it is the record, made by something else. Raising it
+ *   tells a courier their delivery did not go through when it did, and asks
+ *   them to explain a stop where nothing is wrong. Those are dropped silently.
+ *   See `settledAlready`.
+ *
  *   THE QUEUE IS PHI. It holds names, addresses and signatures, in IndexedDB
  *   on a phone that may be personal. Entries are deleted the moment they are
  *   accepted, rejections are capped and expire, and signing out empties it.
@@ -236,6 +243,61 @@ async function remove(id: string): Promise<void> {
     await run(QUEUE, 'readwrite', (s) => s.delete(id));
 }
 
+/* ───────────────── A REFUSAL THAT MEANS "ALREADY DONE" ─────────────────
+ *
+ * The one case where a 4xx must not reach the courier.
+ *
+ * A stop can be recorded twice from one phone without anybody doing
+ * anything wrong: mobile Chrome keeps old tabs and restores them, and a
+ * restored stop screen still holds the state it had before the delivery
+ * went through on another tab, outcome form and all. The idempotency key
+ * cannot help -- that makes a RETRY of one action safe, and this is a
+ * second action, with a second id.
+ *
+ * So the second one is refused, correctly, and on 17 November a driver was
+ * shown "Delivery for <patient>: Cannot record delivered while the order is
+ * delivered: the order must be picked_up" over a delivery that was on the
+ * record, with "Tell dispatch what happened at these stops" under it.
+ *
+ * Nothing was wrong, so nothing is raised. The entry is dropped as though
+ * it had been accepted, because in every sense the courier cares about it
+ * was.
+ */
+
+/** What each queued action is trying to make true, by the last segment of
+ *  its URL -- the same way `pendingActionsFor` reads one. */
+const PRODUCES: Record<string, string> = {
+    deliver: 'delivered',
+    doorstep: 'delivered',
+    attempt: 'failed',
+};
+
+const actionOf = (url: string): string =>
+    url.split('?')[0]!.replace(/\/+$/, '').split('/').pop() ?? '';
+
+/**
+ * Is this refusal the server saying the work is already recorded?
+ *
+ * Two ways, because a phone runs the build it last cached and may be talking
+ * to a server newer than itself, or older:
+ *
+ *   `transition.alreadyDone` -- said plainly. Covers arrival too, which
+ *   changes no status and so cannot be recognised by the status alone.
+ *
+ *   `transition.illegal` whose reported status is the one this action would
+ *   have produced. What an older server sends, and true on its own terms.
+ *
+ * Narrow on purpose. A delivery refused because the order is still `assigned`
+ * is a real problem and must stay loud.
+ */
+export function settledAlready(url: string, body: Record<string, unknown> | null): boolean {
+    if (!body) return false;
+    if (body['code'] === 'transition.alreadyDone') return true;
+    if (body['code'] !== 'transition.illegal') return false;
+    const wanted = PRODUCES[actionOf(url)];
+    return wanted !== undefined && body['status'] === wanted;
+}
+
 async function reject(entry: OutboxEntry, status: number, error: string): Promise<void> {
     await remove(entry.id);
     await run(REJECTED, 'readwrite', (s) => s.put({
@@ -329,7 +391,7 @@ export async function pendingFor(orderId: number): Promise<boolean> {
 export async function pendingActionsFor(orderId: number): Promise<string[]> {
     return (await queued())
         .filter((e) => e.orderId === orderId)
-        .map((e) => e.url.split('?')[0]!.replace(/\/+$/, '').split('/').pop() ?? '');
+        .map((e) => actionOf(e.url));
 }
 
 /* ------------------------------------------------------------- sending */
@@ -517,6 +579,13 @@ export async function flush(): Promise<void> {
                     throw new RetryLater(`server ${res.status}`);
                 }
                 if (res.status >= 400) {
+                    /* Dropped, not rejected: the order is already in the
+                       state this was trying to put it in, so there is
+                       nothing to tell anybody. */
+                    if (settledAlready(entry.url, res.body)) {
+                        await remove(entry.id);
+                        continue;
+                    }
                     await reject(entry, res.status, String(res.body?.['error'] ?? `Refused (${res.status})`));
                     continue;
                 }
@@ -586,7 +655,10 @@ async function sendDirect(input: EnqueueInput, id: string): Promise<
     }
 
     const res = await postJson(input.url, body);
-    if (res.status >= 400) throw asApiError(res);
+    /* Same judgement as the queue makes, for the same reason: a stale screen
+       with a signal posts straight at the network and would otherwise put the
+       self-contradicting refusal on the stop screen instead of the banner. */
+    if (res.status >= 400 && !settledAlready(input.url, res.body)) throw asApiError(res);
     return { sent: true, status: res.status, body: res.body };
 }
 
@@ -649,8 +721,13 @@ export async function sendOrQueue(input: EnqueueInput): Promise<
         if (res.status >= 500 || res.status === 429 || res.status === 408) throw new RetryLater(`server ${res.status}`);
         /* A refusal is not a queueing problem and must not be dressed up as
            one: the courier has to see what the server said, now, while they
-           are still standing there. */
-        if (res.status >= 400) throw asApiError(res);
+           are still standing there.
+
+           Unless it says the work is already recorded, which is not a
+           refusal the courier has anything to do about. The main path for a
+           phone with a signal comes through here, so leaving it out would
+           have fixed the banner and left the stop screen saying it. */
+        if (res.status >= 400 && !settledAlready(input.url, res.body)) throw asApiError(res);
         return { sent: true, status: res.status, body: res.body };
     } catch (err) {
         if (!(err instanceof RetryLater)) throw err;

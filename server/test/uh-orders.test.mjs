@@ -182,6 +182,48 @@ describe('the transition table', () => {
         }
     });
 
+    it('says a repeat is already recorded, rather than a sentence that contradicts itself', () => {
+        /* 17 November. A phone sent the same delivery twice -- a restored tab
+           holding the screen from before it went through -- and the courier
+           was shown `Cannot record "delivered" while the order is delivered:
+           the order must be picked_up` over work that WAS on the record.
+
+           The code is the point: the courier app reads it and drops the
+           duplicate without troubling anybody. */
+        try {
+            applyEvent(state('delivered'), { type: 'delivered', at: new Date(), signedName: 'X' }, DEFAULT_PROJECT_SETTINGS);
+            throw new Error('should have refused');
+        } catch (e) {
+            expect(e.code).toBe('transition.alreadyDone');
+            expect(e.message).toMatch(/already recorded/);
+            // The self-contradiction is gone.
+            expect(e.message).not.toMatch(/must be picked_up/);
+        }
+    });
+
+    it('calls a repeated arrival already recorded, which changes no status', () => {
+        /* `arrived` has to:null, so it cannot be recognised by the status
+           alone. Its record is the timestamp. */
+        const arrived = state('delivered', { arrivedAt: new Date('2026-09-14T18:00:00Z') });
+        try {
+            applyEvent(arrived, { type: 'arrived', at: new Date() }, DEFAULT_PROJECT_SETTINGS);
+            throw new Error('should have refused');
+        } catch (e) {
+            expect(e.code).toBe('transition.alreadyDone');
+        }
+    });
+
+    it('keeps an attempt on a delivered order loud, because that is a real disagreement', () => {
+        /* Going for `failed` on something `delivered` is two people saying
+           different things about one stop, not a duplicate. */
+        try {
+            applyEvent(state('delivered'), { type: 'attempted', at: new Date(), reason: 'no_access' }, DEFAULT_PROJECT_SETTINGS);
+            throw new Error('should have refused');
+        } catch (e) {
+            expect(e.code).toBe('transition.illegal');
+        }
+    });
+
     it('insists on the fields an event is meaningless without', () => {
         /* Scope 1.2.8 wants the printed name of the sending AND the
            receiving personnel. The receiving half is still enforced here.
