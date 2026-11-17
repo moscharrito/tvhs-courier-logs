@@ -35,8 +35,10 @@ import type { Client, InValue } from '@libsql/client';
 import ExcelJS from 'exceljs';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn, dateIn } from '../../core/dates';
+import { resolveSettings, type BillingSection } from '../../core/projects/settings';
 import { DELETE_REASON_MIN } from './order-delete';
 import { priceOrder, createPricingCache, type PricedOrderRow } from './order-pricing';
+import { scheduleOn } from './zones';
 import { buildPdf, Page, PAGE, wrap } from '../../core/pdf/writer';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -436,6 +438,29 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             createdAt: String(invoice['created_at']),
             createdBy: String(invoice['created_by'] ?? ''),
             timezone: project.timezone,
+            /* The references a hospital's accounts payable quote back, and
+               who the document is addressed to. Held on the project, never
+               in source: this repository is public and a customer's PO and
+               contract number are theirs. See BillingSection. */
+            billing: resolveSettings(project.settings).billing,
+            /* THE RATE CARD IN FORCE AT THE END OF THE PERIOD, for the
+               attachment that states what each zone was charged at. The end
+               rather than the start because that is the card a reader has
+               in front of them; a period spanning a rate change is a
+               different conversation and the lines carry the real prices
+               either way. Null when no schedule covers the period, and the
+               attachment then leaves the rate column out rather than
+               printing zeroes that look agreed. */
+            rates: await (async () => {
+                const sched = await scheduleOn(client, project.id, String(invoice['period_to']));
+                return sched === null ? null : {
+                    zone: sched.zoneRates,
+                    stat: sched.statSurcharge,
+                    afterHours: sched.afterHoursSurcharge,
+                    dryRun: sched.dryRunFee,
+                    outOfAreaPerMile: sched.outOfAreaPerMile,
+                };
+            })(),
             /* Said on every draft: the numbers move until it is issued. */
             recomputes: status === 'draft',
         };
@@ -1109,6 +1134,19 @@ export interface RenderableInvoice {
      *  University Health, and slicing a UTC ISO string dated an invoice
      *  issued at 8pm in Chicago to the following day. */
     timezone: string;
+    /** Who it is addressed to and the references they quote back. Held on
+     *  the project, never in source: see BillingSection. */
+    billing: BillingSection;
+    /** The rate card in force at the end of the period, for Attachment 1.
+     *  Null when no schedule covers it, and the attachment then leaves the
+     *  rate column out rather than printing zeroes that look agreed. */
+    rates: {
+        zone: Record<1 | 2 | 3 | 4 | 5, number>;
+        stat: number;
+        afterHours: number;
+        dryRun: number;
+        outOfAreaPerMile: number;
+    } | null;
 }
 
 const MARGIN = 48;
@@ -1128,174 +1166,363 @@ const MARGIN = 48;
  * records actually wants, and `detail: 'lines'` still renders the long PDF
  * for anybody who wants it on paper.
  */
+/**
+ * THE INVOICE DOCUMENT, to the template agreed on 17 November 2026.
+ *
+ * Page 1 is the invoice: who it is from, who it is to, the references a
+ * hospital's accounts payable quote back, what is owed by zone, and the
+ * total. Page 2 is Attachment 1, which states the rate each zone was
+ * charged at and every surcharge in the contract, so the arithmetic on
+ * page 1 can be checked without asking us for anything.
+ *
+ * WHAT IS NOT ON IT: no patient name, no address, and no per-delivery row.
+ * A fortnight of this contract is 3,321 deliveries; listing them turns an
+ * invoice into a ledger with an invoice on the front. The detail is in the
+ * spreadsheet, the document says so, and `detail: 'lines'` still renders
+ * the long version for anybody who wants it on paper.
+ *
+ * THE REFERENCES COME FROM PROJECT SETTINGS, not from here. This repository
+ * is public and a customer's purchase order and contract number are theirs.
+ * A block with no values is left off rather than printed as a placeholder,
+ * because an invoice carrying "PO: TBC" is one that sits unpaid.
+ */
 export function renderInvoice(
     view: RenderableInvoice,
     now: Date = new Date(),
     opts: { detail?: 'summary' | 'lines' } = {},
 ): Buffer {
     const detailed = opts.detail === 'lines';
+    const b = view.billing;
+    const RIGHT = PAGE.width - MARGIN;
+    /* The heading navy, taken from the template. */
+    const NAVY = { r: 0.121569, g: 0.219608, b: 0.392157 };
+    const RULE = 0.72;
+
     const pages: Page[] = [];
     let page = new Page();
     pages.push(page);
-    let y = PAGE.height - MARGIN;
+    let y = 0;
 
-    const header = (continued: boolean) => {
-        page.text('Invoice', MARGIN, y, { font: 'Helvetica-Bold', size: 18 });
-        page.textRight('Izy Global Services LLC', PAGE.width - MARGIN, y, { font: 'Helvetica-Bold', size: 10 });
-        page.textRight('University Health Pharmacy Courier', PAGE.width - MARGIN, y - 12, { size: 9, grey: 0.4 });
-        y -= 26;
-        page.text(
-            `${view.number}   Service dates ${view.periodFrom} to ${view.periodTo}${continued ? '   (continued)' : ''}`,
-            MARGIN, y, { size: 10, grey: 0.3 },
-        );
-        if (view.status !== 'issued' && view.status !== 'paid') {
-            page.textRight(view.status.toUpperCase(), PAGE.width - MARGIN, y, { font: 'Helvetica-Bold', size: 11, grey: 0.35 });
+    const longDate = (iso: string): string => new Intl.DateTimeFormat('en-US', {
+        timeZone: view.timezone, year: 'numeric', month: 'long', day: 'numeric',
+    }).format(new Date(iso));
+
+    /* HOW THE CONTRACT WRITES THEM, not how the database stores them. The
+       rows come back as `scheduled`, `stat`, `adhoc` and `zone 1`, which is
+       right for a column name and wrong on a document going to a hospital's
+       accounts payable. An unknown value is capitalised rather than dropped:
+       a service level we have not met before should still print. */
+    const SERVICE_LABEL: Record<string, string> = {
+        scheduled: 'Scheduled', stat: 'STAT', adhoc: 'Ad hoc',
+    };
+    const titled = (value: string): string =>
+        value.charAt(0).toUpperCase() + value.slice(1);
+    const serviceLabel = (value: string): string => SERVICE_LABEL[value] ?? titled(value);
+
+    /* "November 2 - 14, 2026" rather than the month and year twice. Only
+       collapsed when they genuinely match; a period spanning a month or a
+       year is written out in full, because that is the case a reader is
+       most likely to misread. */
+    const periodLabel = (): string => {
+        const from = new Date(`${view.periodFrom}T12:00:00Z`);
+        const to = new Date(`${view.periodTo}T12:00:00Z`);
+        const sameMonth = view.periodFrom.slice(0, 7) === view.periodTo.slice(0, 7);
+        if (!sameMonth) return `${longDate(from.toISOString())} - ${longDate(to.toISOString())}`;
+        const month = new Intl.DateTimeFormat('en-US', { timeZone: view.timezone, month: 'long' }).format(from);
+        const d = (x: Date) => new Intl.DateTimeFormat('en-US', { timeZone: view.timezone, day: 'numeric' }).format(x);
+        const year = new Intl.DateTimeFormat('en-US', { timeZone: view.timezone, year: 'numeric' }).format(to);
+        return `${month} ${d(from)} - ${d(to)}, ${year}`;
+    };
+
+    /** The reference line that runs along the foot of every page. */
+    const reference = [
+        view.number,
+        b.poNo ? `PO ${b.poNo}` : '',
+        b.contractNo ? `Contract ${b.contractNo}` : '',
+    ].filter(Boolean).join('  |  ');
+
+    /** Our details, top right, on every page. */
+    const letterhead = (): void => {
+        y = PAGE.height - MARGIN;
+        for (const line of b.letterhead) {
+            page.textRight(line, RIGHT, y, { size: 8.2, grey: 0.33 });
+            y -= 12.8;
         }
-        y -= 10;
-        page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.25, width: 1 });
         y -= 18;
     };
-    header(false);
 
-    const columns: Array<{ label: string; x: number; right?: boolean }> = [
-        { label: 'Date', x: MARGIN },
-        { label: 'Reference', x: MARGIN + 62 },
-        { label: 'Pharmacy', x: MARGIN + 150 },
-        { label: 'Zone', x: MARGIN + 300 },
-        { label: 'Service', x: MARGIN + 340 },
-        { label: 'Outcome', x: MARGIN + 392 },
-        { label: 'Amount', x: PAGE.width - MARGIN, right: true },
-    ];
-    const headerRow = () => {
-        for (const c of columns) {
-            if (c.right) page.textRight(c.label, c.x, y, { font: 'Helvetica-Bold', size: 8 });
-            else page.text(c.label, c.x, y, { font: 'Helvetica-Bold', size: 8 });
-        }
-        y -= 4;
-        page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.75 });
-        y -= 11;
+    const newPage = (): void => {
+        page = new Page();
+        pages.push(page);
+        letterhead();
     };
-    if (detailed) headerRow();
 
-    for (const line of detailed ? view.lines : []) {
-        if (y < MARGIN + 120) {
-            page = new Page();
-            pages.push(page);
-            y = PAGE.height - MARGIN;
-            header(true);
-            headerRow();
-        }
-        page.text(line.serviceDate, columns[0]!.x, y, { size: 8 });
-        page.text(line.reference || `#${line.orderId}`, columns[1]!.x, y, { size: 8 });
-        /* Truncation says so. A silently cut pharmacy name on an invoice is a
-           line somebody has to go and look up to be sure of. */
-        const fitted = wrap(line.pharmacy, 'Helvetica', 8, 140);
-        const pharmacy = fitted.length > 1 ? `${wrap(line.pharmacy, 'Helvetica', 8, 134)[0] ?? ''}...` : (fitted[0] ?? '');
-        page.text(pharmacy, columns[2]!.x, y, { size: 8 });
-        page.text(line.zone === null ? 'out' : String(line.zone), columns[3]!.x, y, { size: 8 });
-        page.text(line.serviceType, columns[4]!.x, y, { size: 8 });
-        page.text(line.dryRun ? `undelivered x${line.items}` : 'delivered', columns[5]!.x, y, { size: 8 });
-        page.textRight(money(line.amountCents), columns[6]!.x, y, { size: 8 });
-        y -= 11;
+    /** Enough room for `need` points, or a fresh page. */
+    const room = (need: number): void => {
+        if (y - need < MARGIN + 46) newPage();
+    };
+
+    letterhead();
+
+    /* ── page 1: who, and against what ──────────────────────────────── */
+
+    page.text('INVOICE', MARGIN, y, { font: 'Helvetica-Bold', size: 13, rgb: NAVY });
+    if (view.status !== 'issued' && view.status !== 'paid') {
+        page.textRight(view.status.toUpperCase(), RIGHT, y, { font: 'Helvetica-Bold', size: 11, grey: 0.4 });
     }
+    y -= 20;
+
+    /* The references, two columns. A pair with no value is skipped rather
+       than printed empty: a blank beside "PO No." reads as an omission. */
+    const refs: Array<[string, string]> = [
+        ['Invoice No.', view.number],
+        ['Invoice Date', view.issuedAt ? longDate(view.issuedAt) : longDate(now.toISOString())],
+        ['Service Period', periodLabel()],
+        ['Terms', b.terms],
+        ['Contract No.', b.contractNo],
+        ['PO No.', b.poNo],
+        ['RFP', b.rfp],
+        ['Tax', b.taxNote],
+    ].filter((r): r is [string, string] => r[1] !== '');
+
+    const colWidth = (RIGHT - MARGIN) / 2;
+    const refTop = y;
+    refs.forEach((pair, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = MARGIN + col * colWidth;
+        const ry = refTop - row * 22;
+        page.text(pair[0], x, ry, { size: 7, grey: 0.45 });
+        page.text(pair[1], x, ry - 10, { size: 9 });
+    });
+    y = refTop - Math.ceil(refs.length / 2) * 22 - 10;
+
+    /* BILL TO and FROM, side by side. */
+    const blockTop = y;
+    const block = (x: number, title: string, name: string, lines: readonly string[]): number => {
+        let by = blockTop;
+        page.text(title, x, by, { font: 'Helvetica-Bold', size: 7.5, grey: 0.45 });
+        by -= 13;
+        if (name) { page.text(name, x, by, { font: 'Helvetica-Bold', size: 9.5 }); by -= 12; }
+        for (const line of lines) { page.text(line, x, by, { size: 8.5, grey: 0.25 }); by -= 11; }
+        return by;
+    };
+    const left = b.billToName || b.billToLines.length > 0
+        ? block(MARGIN, 'BILL TO', b.billToName, b.billToLines)
+        : blockTop;
+    const right = block(MARGIN + colWidth, 'FROM / REMIT TO', b.remitToName, b.remitToLines);
+    y = Math.min(left, right) - 16;
+
+    /* ── the money ──────────────────────────────────────────────────── */
+
+    const COL_COUNT = RIGHT - 150;
+    const COL_AMOUNT = RIGHT;
+
+    const tableHead = (first: string, count: string, amount: string): void => {
+        page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
+        page.text(first, MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight(count, COL_COUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight(amount, COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        y -= 18;
+    };
+    const row = (label: string, count: string, amount: string, bold = false): void => {
+        const font = bold ? 'Helvetica-Bold' as const : 'Helvetica' as const;
+        page.text(label, MARGIN + 5, y, { size: 8.5, font });
+        if (count) page.textRight(count, COL_COUNT, y, { size: 8.5, font });
+        page.textRight(amount, COL_AMOUNT, y, { size: 8.5, font });
+        y -= 15;
+    };
+    const rule = (): void => { y += 4; page.line(MARGIN, y, RIGHT, y, { grey: RULE }); y -= 10; };
+
+    tableHead('Description', 'Deliveries', 'Amount');
+    for (const z of view.byZone) {
+        room(60);
+        row(`${titled(z.zone)} delivery`, z.count.toLocaleString('en-US'), money(z.cents));
+    }
+    rule();
+    row('Subtotal', '', money(view.subtotalCents), true);
+    for (const a of view.adjustments) {
+        room(40);
+        row(a.description || 'Adjustment', '', money(Math.round(a.amount * 100)));
+    }
+    row(b.taxNote ? 'Sales / use tax (exempt)' : 'Sales / use tax', '', money(0));
+    rule();
+    page.text('TOTAL DUE', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 10.5, rgb: NAVY });
+    page.textRight(money(view.totalCents), COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 10.5, rgb: NAVY });
+    y -= 22;
+
+    if (view.dryRuns.count > 0) {
+        const d = view.dryRuns;
+        page.text(
+            `Included above: undelivered deliveries priced at the dry run rate - `
+            + `${d.count.toLocaleString('en-US')} ${d.count === 1 ? 'delivery' : 'deliveries'}, `
+            + `${d.items.toLocaleString('en-US')} ${d.items === 1 ? 'item' : 'items'}, ${money(d.cents)}.`,
+            MARGIN, y, { size: 8, grey: 0.35 },
+        );
+        y -= 20;
+    }
+
+    room(120);
+    tableHead('By service level', 'Deliveries', 'Amount');
+    let serviceCount = 0;
+    for (const t of view.byServiceType) {
+        serviceCount += t.count;
+        row(serviceLabel(t.serviceType), t.count.toLocaleString('en-US'), money(t.cents));
+    }
+    rule();
+    row('Total', serviceCount.toLocaleString('en-US'), money(view.subtotalCents), true);
+    y -= 10;
+
+    const note = (text: string, size = 7.5): void => {
+        room(40);
+        for (const t of wrap(text, 'Helvetica', size, RIGHT - MARGIN)) {
+            page.text(t, MARGIN, y, { size, grey: 0.4 });
+            y -= size + 2.5;
+        }
+        y -= 6;
+    };
+
+    note('Attachments: (1) Rates applied and summary, page 2. (2) Delivery-level spreadsheet for the '
+        + 'service period: every delivery listed with date, pharmacy, destination ZIP, zone, service level '
+        + 'and outcome. Available in any format University Health prefers.');
+    note('Each delivery is priced at the zone rate for its destination ZIP, plus any surcharge that '
+        + 'applies to it, under the Bid Table and Addendum No. 2'
+        + `${b.rfp ? ` to ${b.rfp}` : ''}. The amount shown for each zone is the sum of those prices `
+        + 'for deliveries in that zone.');
+
+    if (view.excludedCount > 0 && view.excludedNote) note(view.excludedNote);
+    if (view.notes) note(view.notes);
+
+    /* ── page 2: the rates behind page 1 ────────────────────────────── */
+
+    newPage();
+    page.text('Attachment 1 - Rates Applied and Summary', MARGIN, y, { font: 'Helvetica-Bold', size: 11, rgb: NAVY });
+    y -= 16;
+    page.text(
+        `Invoice ${reference}  |  Service period ${periodLabel()}`,
+        MARGIN, y, { size: 8, grey: 0.35 },
+    );
+    y -= 22;
+
+    const rates = view.rates;
+    const COL_RATE = MARGIN + 250;
+
+    page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
+    page.text('Zone', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
+    if (rates) page.textRight('Contract rate per delivery*', COL_RATE, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Deliveries', COL_COUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Amount', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    y -= 18;
+
+    let zoneCount = 0;
+    for (const z of view.byZone) {
+        zoneCount += z.count;
+        page.text(`${titled(z.zone)} delivery`, MARGIN + 5, y, { size: 8.5 });
+        /* The rate for the zone this row is about, read off its label. A
+           row we cannot match to a rate prints no rate rather than the
+           wrong one: "out of area" has no zone rate by definition. */
+        const n = /(\d)/.exec(z.zone)?.[1];
+        const rate = rates && n ? rates.zone[Number(n) as 1 | 2 | 3 | 4 | 5] : undefined;
+        if (rate !== undefined) page.textRight(`$${rate.toFixed(2)}`, COL_RATE, y, { size: 8.5 });
+        page.textRight(z.count.toLocaleString('en-US'), COL_COUNT, y, { size: 8.5 });
+        page.textRight(money(z.cents), COL_AMOUNT, y, { size: 8.5 });
+        y -= 15;
+    }
+    rule();
+    row('Total', zoneCount.toLocaleString('en-US'), money(view.subtotalCents), true);
+    y -= 8;
+
+    if (rates) {
+        note('*Zone 4 and Zone 5 rates are set by ZIP code or community in the Bid Table. Amounts are the '
+            + "sum of each delivery's price, including any surcharge below.");
+
+        room(120);
+        page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
+        page.text('Surcharge (contract, flat per delivery)', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight('Rate', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        y -= 18;
+        const surcharge = (label: string, value: string): void => {
+            page.text(label, MARGIN + 5, y, { size: 8.5 });
+            page.textRight(value, COL_AMOUNT, y, { size: 8.5 });
+            y -= 15;
+        };
+        surcharge('STAT', `$${rates.stat.toFixed(2)}`);
+        surcharge('After hours', `$${rates.afterHours.toFixed(2)}`);
+        surcharge('Undelivered (dry run rate, per item)', `$${rates.dryRun.toFixed(2)}`);
+        surcharge(
+            'Out of area (per one-way mile from the originating pharmacy; requires prior authorization)',
+            `$${rates.outOfAreaPerMile.toFixed(2)} / mile`,
+        );
+        y -= 8;
+    }
+
+    room(130);
+    tableHead('Service level', 'Deliveries', 'Amount');
+    for (const t of view.byServiceType) row(serviceLabel(t.serviceType), t.count.toLocaleString('en-US'), money(t.cents));
+    rule();
+    row('Total', serviceCount.toLocaleString('en-US'), money(view.subtotalCents), true);
+    y -= 10;
+
+    if (view.dryRuns.count > 0) {
+        const d = view.dryRuns;
+        note(`Undelivered deliveries: ${d.count.toLocaleString('en-US')} deliveries, `
+            + `${d.items.toLocaleString('en-US')} items, ${money(d.cents)} at the dry run rate, `
+            + 'included in the zone amounts above.');
+    }
+    note('Each delivery has a proof-of-delivery record with the recipient signature, and the ID photo '
+        + 'when ID is required, retained by Izy Global Services LLC and available on request. '
+        + 'Patient names and addresses are not shown on invoices or attachments.');
+
+    /* ── the per-delivery table, only when asked for ────────────────── */
 
     if (detailed) {
-        y -= 4;
-        page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.75 });
-        y -= 14;
-    }
-
-    const totalLine = (label: string, amount: string, bold = false) => {
-        page.textRight(label, PAGE.width - MARGIN - 90, y, { font: bold ? 'Helvetica-Bold' : 'Helvetica', size: 10 });
-        page.textRight(amount, PAGE.width - MARGIN, y, { font: bold ? 'Helvetica-Bold' : 'Helvetica', size: 10 });
-        y -= 14;
-    };
-    totalLine(`Subtotal, ${view.lines.length} ${view.lines.length === 1 ? 'delivery' : 'deliveries'}`, money(view.subtotalCents));
-    for (const a of view.adjustments) {
-        for (const text of wrap(`${a.description} (${a.reason})`, 'Helvetica', 9, 300)) {
-            page.text(text, MARGIN, y + 2, { size: 9, grey: 0.35 });
-            break;
-        }
-        totalLine('Adjustment', money(Math.round(a.amount * 100)));
-    }
-    totalLine('Total', money(view.totalCents), true);
-
-    y -= 8;
-    page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.85 });
-    y -= 14;
-    page.text('BY ZONE', MARGIN, y, { size: 7, grey: 0.45 });
-    page.text('BY SERVICE', MARGIN + 200, y, { size: 7, grey: 0.45 });
-    y -= 12;
-    const startY = y;
-    for (const z of view.byZone) {
-        page.text(`${z.zone}: ${z.count} at ${money(z.cents)}`, MARGIN, y, { size: 9, grey: 0.3 });
-        y -= 11;
-    }
-    let serviceY = startY;
-    for (const t of view.byServiceType) {
-        page.text(`${t.serviceType}: ${t.count} at ${money(t.cents)}`, MARGIN + 200, serviceY, { size: 9, grey: 0.3 });
-        serviceY -= 11;
-    }
-    y = Math.min(y, serviceY) - 6;
-    if (view.dryRuns.count > 0) {
-        page.text(
-            /* "Undelivered", not "dry run", because this document is read
-               by a hospital and a dry run is our word for their failed
-               delivery. The bid table's own line item is "Dry Run", so the
-               rate is named alongside it and an accounts payable team can
-               still match the charge to what they agreed. */
-            `Undelivered (dry run rate): ${view.dryRuns.count} `
-            + `${view.dryRuns.count === 1 ? 'delivery' : 'deliveries'}, `
-            + `${view.dryRuns.items} ${view.dryRuns.items === 1 ? 'item' : 'items'}, ${money(view.dryRuns.cents)}`,
-            MARGIN, y, { size: 9, grey: 0.3 },
-        );
-        y -= 12;
-    }
-
-    /* WHERE THE PER-DELIVERY DETAIL WENT, said on the invoice.
-     *
-     * Without this line a summary reads as an invoice with its backing
-     * omitted, and the first thing a hospital's accounts payable does with
-     * one of those is ask for the detail -- which is a telephone call and a
-     * week, for a file that already exists. */
-    if (!detailed) {
-        y -= 6;
-        for (const text of wrap(
-            `Priced from ${view.lines.length.toLocaleString()} `
-            + `${view.lines.length === 1 ? 'delivery' : 'deliveries'}, each listed with its date, `
-            + 'pharmacy, destination ZIP, zone, service level and outcome in the accompanying '
-            + 'spreadsheet. Available on request in any format you prefer.',
-            'Helvetica', 9, PAGE.width - MARGIN * 2,
-        )) {
-            page.text(text, MARGIN, y, { size: 9, grey: 0.35 });
+        newPage();
+        page.text('Attachment 2 - Deliveries', MARGIN, y, { font: 'Helvetica-Bold', size: 11, rgb: NAVY });
+        y -= 20;
+        const columns: Array<{ label: string; x: number; right?: boolean }> = [
+            { label: 'Date', x: MARGIN },
+            { label: 'Reference', x: MARGIN + 62 },
+            { label: 'Pharmacy', x: MARGIN + 150 },
+            { label: 'Zone', x: MARGIN + 300 },
+            { label: 'Service', x: MARGIN + 340 },
+            { label: 'Outcome', x: MARGIN + 392 },
+            { label: 'Amount', x: RIGHT, right: true },
+        ];
+        const headerRow = (): void => {
+            for (const c of columns) {
+                if (c.right) page.textRight(c.label, c.x, y, { font: 'Helvetica-Bold', size: 8 });
+                else page.text(c.label, c.x, y, { font: 'Helvetica-Bold', size: 8 });
+            }
+            y -= 4;
+            page.line(MARGIN, y, RIGHT, y, { grey: 0.75 });
+            y -= 11;
+        };
+        headerRow();
+        for (const line of view.lines) {
+            if (y < MARGIN + 60) { newPage(); headerRow(); }
+            page.text(line.serviceDate, columns[0]!.x, y, { size: 8 });
+            page.text(line.reference || `#${line.orderId}`, columns[1]!.x, y, { size: 8 });
+            /* Truncation says so. A silently cut pharmacy name on an invoice
+               is a line somebody has to go and look up to be sure of. */
+            const fitted = wrap(line.pharmacy, 'Helvetica', 8, 140);
+            const pharmacy = fitted.length > 1
+                ? `${wrap(line.pharmacy, 'Helvetica', 8, 134)[0] ?? ''}...`
+                : (fitted[0] ?? '');
+            page.text(pharmacy, columns[2]!.x, y, { size: 8 });
+            page.text(line.zone === null ? 'out' : String(line.zone), columns[3]!.x, y, { size: 8 });
+            page.text(line.serviceType, columns[4]!.x, y, { size: 8 });
+            page.text(line.dryRun ? `undelivered x${line.items}` : 'delivered', columns[5]!.x, y, { size: 8 });
+            page.textRight(money(line.amountCents), columns[6]!.x, y, { size: 8 });
             y -= 11;
         }
     }
 
-    /* What was left off, on the invoice itself. An exclusion a reader cannot
-     * see is an exclusion that gets discovered by somebody else later. */
-    if (view.excludedCount > 0) {
-        y -= 6;
-        for (const text of wrap(view.excludedNote, 'Helvetica', 9, PAGE.width - MARGIN * 2)) {
-            page.text(text, MARGIN, y, { size: 9, grey: 0.35 });
-            y -= 11;
-        }
-    }
-    if (view.notes) {
-        y -= 6;
-        for (const text of wrap(view.notes, 'Helvetica', 9, PAGE.width - MARGIN * 2)) {
-            page.text(text, MARGIN, y, { size: 9, grey: 0.35 });
-            y -= 11;
-        }
-    }
+    /* ── the foot of every page ─────────────────────────────────────── */
 
     for (const [index, p] of pages.entries()) {
-        p.line(MARGIN, MARGIN + 22, PAGE.width - MARGIN, MARGIN + 22, { grey: 0.8 });
-        p.text(
-            `${view.number}   ${view.issuedAt ? `issued ${dateIn(new Date(view.issuedAt), view.timezone)}` : 'draft, not issued'}`,
-            MARGIN, MARGIN + 10, { size: 8, grey: 0.45 },
-        );
-        p.textRight(`Page ${index + 1} of ${pages.length}`, PAGE.width - MARGIN, MARGIN + 10, { size: 8, grey: 0.45 });
+        p.line(MARGIN, MARGIN + 22, RIGHT, MARGIN + 22, { grey: 0.85 });
+        p.text(reference, MARGIN, MARGIN + 10, { size: 7.5, grey: 0.45 });
+        p.textRight(`Page ${index + 1} of ${pages.length}`, RIGHT, MARGIN + 10, { size: 7.5, grey: 0.45 });
     }
 
     return buildPdf(pages, {

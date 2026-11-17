@@ -24,6 +24,33 @@ let discharge;
 const FROM = '2026-06-01';
 const TO = '2026-06-07';
 
+
+/* What the renderer now needs beyond the money: who the document is
+   addressed to, the references University Health quote back, and the rate
+   card the attachment states. Held on the project in real life -- this
+   repository is public -- so the test supplies its own. */
+const DOC = {
+    billing: {
+        billToName: 'Test Hospital',
+        billToLines: ['Attn: Accounts Payable', '1 Test Plaza', 'San Antonio, TX 78229'],
+        contractNo: 'TEST-CONTRACT-1',
+        poNo: 'TEST-PO-1',
+        rfp: 'TEST-RFP-1',
+        terms: 'Per contract TEST-CONTRACT-1',
+        taxNote: 'Tax exempt - no tax charged',
+        remitToName: 'Izy Global Services LLC',
+        remitToLines: ['12411 King Olaf Dr', 'Houston, TX 77044'],
+        letterhead: ['12411 King Olaf Dr, Houston, TX 77044', 'contracts@izyglobalservices.com'],
+    },
+    rates: {
+        zone: { 1: 12.5, 2: 14.5, 3: 22, 4: 36, 5: 52 },
+        stat: 22,
+        afterHours: 18,
+        dryRun: 9,
+        outOfAreaPerMile: 1.95,
+    },
+};
+
 const asBuffer = (res, cb) => {
     const chunks = [];
     res.on('data', (c) => chunks.push(c));
@@ -469,13 +496,16 @@ describe('the documents', () => {
             byServiceType: [{ serviceType: 'scheduled', count: 120, cents: 150000 }],
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 150000, totalCents: 150000, excludedCount: 0, excludedNote: '', notes: '',
-            issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago',
+            issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago', ...DOC,
         }, new Date(), { detail: 'lines' });
         const body = pdf.toString('latin1');
         expect(body).toMatch(/\/Count [2-9]/);
         const text = pdfText(body);
+        /* Every page is numbered in the footer now; "(continued)" went
+           with the old running header. Page 3 because the detailed
+           document is the invoice, Attachment 1, then the deliveries. */
         expect(text).toContain('Page 1 of');
-        expect(text).toContain('(continued)');
+        expect(text).toMatch(/Page 3 of \d/);
         expect(text).toContain('$1,500.00');
     });
 
@@ -490,11 +520,15 @@ describe('the documents', () => {
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 0, totalCents: 0, excludedCount: 0, excludedNote: '', notes: '',
             issuedAt: '2026-09-15T01:05:00.000Z',
-            timezone: 'America/Chicago',
+            timezone: 'America/Chicago', ...DOC,
         });
         const text = pdfText(pdf.toString('latin1'));
-        expect(text).toContain('issued 2026-09-14');
-        expect(text).not.toContain('issued 2026-09-15');
+        /* 01:05 UTC on the 15th is 8:05pm on the 14th in Chicago, and the
+           date on a document sent to a hospital is their date. Written out
+           in full now, under "Invoice Date", rather than as an ISO string
+           in the footer. */
+        expect(text).toContain('September 14, 2026');
+        expect(text).not.toContain('September 15, 2026');
     });
 
     it('says when a pharmacy name was too long for its column', () => {
@@ -512,7 +546,7 @@ describe('the documents', () => {
             adjustments: [], byZone: [], byServiceType: [],
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 1250, totalCents: 1250, excludedCount: 0, excludedNote: '', notes: '',
-            issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago',
+            issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago', ...DOC,
         }, new Date(), { detail: 'lines' });
         expect(pdfText(pdf.toString('latin1'))).toMatch(/University Health Medical Center\.\.\./);
     });
@@ -521,8 +555,11 @@ describe('the documents', () => {
         const stillDraft = await draft({ from: '2026-08-31', to: '2026-09-06' });
         const res = await admin.get(`${INVOICES}/${stillDraft.id}/invoice.pdf`);
         const text = pdfText(Buffer.from(res.body).toString('latin1'));
+        /* Top right, where the status sits on the new template. The
+           footer now carries the invoice and contract references, which a
+           hospital's accounts payable quote back, rather than our own note
+           about what stage it is at. */
         expect(text).toContain('DRAFT');
-        expect(text).toMatch(/draft, not issued/);
     });
 
     it('is never cached', async () => {
@@ -898,12 +935,23 @@ describe('the standard invoice document', () => {
         const res = await admin.get(`${INVOICES}/${invoice.id}/invoice.pdf`);
         const text = pdfText(Buffer.from(res.body).toString('latin1'));
 
-        expect(text).toContain('BY ZONE');
-        expect(text).toContain('BY SERVICE');
+        /* The zone table is the body of the invoice now, under
+           "Description", and the service-level breakdown sits under it. */
+        expect(text).toContain('INVOICE');
+        expect(text).toContain('Description');
+        expect(text).toContain('By service level');
+        expect(text).toContain('TOTAL DUE');
+        /* And the attachment that states what each zone was charged at. */
+        expect(text).toContain('Attachment 1 - Rates Applied and Summary');
         /* A summary with no word about its backing is the thing a hospital
-           telephones about, so it says where the per-delivery list lives. */
-        expect(text).toMatch(/listed with its date/);
-        expect(text).toMatch(/spreadsheet/);
+           telephones about, so it says where the per-delivery list lives.
+           Matched against the text with its line breaks collapsed: the
+           note is wrapped to the page, so any phrase in it can be split
+           across two lines and an assertion that forgets this fails on
+           the margin rather than on the meaning. */
+        const flat = text.replace(/\s+/g, ' ');
+        expect(flat).toMatch(/every delivery listed with date, pharmacy, destination ZIP/);
+        expect(flat).toMatch(/spreadsheet/);
     });
 
     it('leaves the per-delivery table out of it', async () => {
@@ -928,5 +976,126 @@ describe('the standard invoice document', () => {
         expect(text).toContain('Total');
         expect(text).toContain(invoice.number);
         expect(text).toContain(`$${view.total.toFixed(2)}`);
+    });
+});
+
+describe('the invoice template', () => {
+    /* Agreed 17 November 2026 from a PDF University Health were shown. The
+       document is the invoice on page 1 and the rates behind it on page 2,
+       so the arithmetic can be checked without asking us for anything. */
+
+    const render = (over = {}) => renderInvoice({
+        number: 'IZY-UH-2026-11-0001', status: 'issued',
+        periodFrom: '2026-11-02', periodTo: '2026-11-14',
+        lines: [], adjustments: [],
+        byZone: [
+            { zone: 'zone 1', count: 2280, cents: 3701650 },
+            { zone: 'zone 5', count: 4, cents: 21900 },
+        ],
+        byServiceType: [
+            { serviceType: 'scheduled', count: 3312, cents: 6028350 },
+            { serviceType: 'stat', count: 7, cents: 27950 },
+            { serviceType: 'adhoc', count: 2, cents: 2700 },
+        ],
+        dryRuns: { count: 308, items: 654, cents: 588600 },
+        subtotalCents: 6059000, totalCents: 6059000,
+        excludedCount: 0, excludedNote: '', notes: '',
+        issuedAt: '2026-11-16T18:00:00.000Z', timezone: 'America/Chicago',
+        ...DOC, ...over,
+    }, new Date('2026-11-17T12:00:00Z'));
+
+    const textOf = (pdf) => pdfText(pdf.toString('latin1'));
+
+    it('carries the references a hospital quotes back', async () => {
+        /* An invoice missing the PO sits in somebody's queue unpaid. */
+        const text = textOf(render());
+        expect(text).toContain('TEST-PO-1');
+        expect(text).toContain('TEST-CONTRACT-1');
+        expect(text).toContain('TEST-RFP-1');
+        /* And on the foot of every page, which is where a filing clerk
+           looks when the first page has been separated from the second. */
+        expect(text.match(/TEST-PO-1/g).length).toBeGreaterThan(1);
+    });
+
+    it('addresses it to them and remits to us', async () => {
+        const text = textOf(render());
+        expect(text).toContain('BILL TO');
+        expect(text).toContain('Test Hospital');
+        expect(text).toContain('FROM / REMIT TO');
+        expect(text).toContain('Izy Global Services LLC');
+    });
+
+    it('leaves a block out rather than printing an empty reference', async () => {
+        /* The defaults are empty because this repository is public, and
+           "PO No.:" with nothing after it reads as an omission on our part
+           rather than a field nobody has set. */
+        const bare = { ...DOC.billing, billToName: '', billToLines: [], poNo: '', contractNo: '', rfp: '' };
+        const text = textOf(render({ billing: bare }));
+
+        expect(text).not.toContain('BILL TO');
+        expect(text).not.toContain('PO No.');
+        expect(text).not.toContain('Contract No.');
+        /* Ours still prints: an invoice with no sender on it is useless. */
+        expect(text).toContain('FROM / REMIT TO');
+        expect(text).toContain('IZY-UH-2026-11-0001');
+    });
+
+    it('shows the zero tax line rather than leaving tax unmentioned', async () => {
+        /* A reader has to see the exemption was applied on purpose. */
+        const text = textOf(render());
+        expect(text).toContain('Sales / use tax (exempt)');
+        expect(text).toContain('Tax exempt - no tax charged');
+        expect(text).toContain('TOTAL DUE');
+    });
+
+    it('writes the zones and service levels the way the contract does', async () => {
+        /* The rows come back as `zone 1` and `adhoc`, which is right for a
+           column name and wrong on a document going to a hospital. */
+        const text = textOf(render());
+        expect(text).toContain('Zone 1 delivery');
+        expect(text).toContain('Scheduled');
+        expect(text).toContain('STAT');
+        expect(text).toContain('Ad hoc');
+        expect(text).not.toContain('adhoc');
+    });
+
+    it('states every contract rate on the attachment', async () => {
+        /* So page 1 can be checked without asking us for the bid table. */
+        const text = textOf(render());
+        expect(text).toContain('Attachment 1 - Rates Applied and Summary');
+        expect(text).toContain('$12.50');
+        expect(text).toContain('$52.00');
+        expect(text).toContain('Surcharge (contract, flat per delivery)');
+        expect(text).toContain('$22.00');
+        expect(text).toContain('$18.00');
+        expect(text).toContain('$1.95 / mile');
+    });
+
+    it('leaves the rate column off when no schedule covers the period', async () => {
+        /* Rather than printing zeroes that look like agreed rates. */
+        const text = textOf(render({ rates: null }));
+        expect(text).not.toContain('Contract rate per delivery*');
+        expect(text).not.toContain('Surcharge (contract, flat per delivery)');
+        /* The amounts are still real and still stated. */
+        expect(text).toContain('$60,590.00');
+    });
+
+    it('collapses a period inside one month, and spells out one that is not', async () => {
+        expect(textOf(render())).toContain('November 2 - 14, 2026');
+        const across = textOf(render({ periodFrom: '2026-10-28', periodTo: '2026-11-03' }));
+        expect(across).toContain('October 28, 2026 - November 3, 2026');
+    });
+
+    it('says the undelivered figure is already inside the zone amounts', async () => {
+        /* Otherwise it reads as a charge on top and the total looks wrong. */
+        const flat = textOf(render()).replace(/\s+/g, ' ');
+        expect(flat).toMatch(/Included above: undelivered deliveries priced at the dry run rate/);
+        expect(flat).toMatch(/308 deliveries, 654 items, \$5,886\.00/);
+        expect(flat).toMatch(/included in the zone amounts above/);
+    });
+
+    it('puts no patient on the document, and says so', async () => {
+        const flat = textOf(render()).replace(/\s+/g, ' ');
+        expect(flat).toMatch(/Patient names and addresses are not shown on invoices or attachments/);
     });
 });

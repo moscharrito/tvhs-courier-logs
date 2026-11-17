@@ -260,6 +260,47 @@ export interface DriverPaySettings {
     currency: string;
 }
 
+/**
+ * WHAT AN INVOICE SAYS ABOUT ITSELF, beyond the money.
+ *
+ * The references a hospital's accounts payable quote back at us -- the
+ * purchase order, the contract, the RFP -- and who the document is
+ * addressed to. They are not pricing and they are not ours to invent: UH
+ * issue the PO and the contract number, and an invoice carrying the wrong
+ * one is an invoice that sits in somebody's queue unpaid.
+ *
+ * HELD IN SETTINGS RATHER THAN IN SOURCE, DELIBERATELY. This repository is
+ * public. A customer's purchase order number, contract number and accounts
+ * payable mailbox are theirs, not ours to publish, and the defaults below
+ * are therefore EMPTY. The invoice omits a block it has no values for
+ * rather than printing a placeholder that looks like a real reference.
+ *
+ * `remitTo` and `letterhead` are our own published details and do default,
+ * because an invoice with no sender on it is useless and those are already
+ * on our website.
+ */
+export interface BillingSection {
+    /** "University Health". Empty means the BILL TO block is left off. */
+    billToName: string;
+    /** Attention line, street, city, and a mailbox. One line each. */
+    billToLines: string[];
+    /** UH's own references. Empty ones are simply not printed. */
+    contractNo: string;
+    poNo: string;
+    rfp: string;
+    /** Payment terms as agreed, e.g. "Per contract". Free text: this is
+     *  printed, not parsed. */
+    terms: string;
+    /** Printed beside the zero tax line, which is itself always shown: a
+     *  reader has to see that the exemption was applied on purpose. */
+    taxNote: string;
+    /** Us, under FROM / REMIT TO. */
+    remitToName: string;
+    remitToLines: string[];
+    /** The right-aligned block at the top of every page. */
+    letterhead: string[];
+}
+
 export interface PricingSection {
     /** 24-hour HH:MM in the project timezone. */
     afterHoursStart: string;
@@ -493,6 +534,7 @@ export interface ProjectSettings {
     checkIn: CheckInSettings;
     dayStart: DayStartSettings;
     pricing: PricingSection;
+    billing: BillingSection;
     dispatch: DispatchSettings;
     returns: ReturnSettings;
     reporting: ReportingSettings;
@@ -550,6 +592,27 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         /* THE CONTRACT'S OWN BASIS, and the only one Addendum 2 clause 2
            supports. 'distance' exists and is off: see the field's note. */
         zoneBasis: 'zip',
+    },
+    /* OURS DEFAULT, THEIRS DO NOT. See BillingSection: this repository is
+       public, so a customer's PO, contract and AP mailbox are set on the
+       project and never committed. An empty block is left off the document
+       rather than printed as a placeholder. */
+    billing: {
+        billToName: '',
+        billToLines: [],
+        contractNo: '',
+        poNo: '',
+        rfp: '',
+        terms: '',
+        taxNote: 'Tax exempt - no tax charged',
+        remitToName: 'Izy Global Services LLC',
+        remitToLines: ['12411 King Olaf Dr', 'Houston, TX 77044'],
+        letterhead: [
+            '12411 King Olaf Dr, Houston, TX 77044',
+            '500 Navarro St, 2nd Floor, San Antonio, TX 78205',
+            '+1 (832) 715 8986',
+            'contracts@izyglobalservices.com',
+        ],
     },
     /* No default number: a wrong one is worse than none, because a courier
        standing at a door with a problem would dial it and reach a stranger.
@@ -672,6 +735,18 @@ export const SettingsPatch = z.object({
         afterHoursEnd: hhmm.optional(),
         dryRunReplacesBase: z.boolean().optional(),
         zoneBasis: z.enum(['zip', 'distance']).optional(),
+    }).strict().optional(),
+    billing: z.object({
+        billToName: z.string().trim().max(120).optional(),
+        billToLines: z.array(z.string().trim().max(120)).max(8).optional(),
+        contractNo: z.string().trim().max(60).optional(),
+        poNo: z.string().trim().max(60).optional(),
+        rfp: z.string().trim().max(60).optional(),
+        terms: z.string().trim().max(120).optional(),
+        taxNote: z.string().trim().max(120).optional(),
+        remitToName: z.string().trim().max(120).optional(),
+        remitToLines: z.array(z.string().trim().max(120)).max(8).optional(),
+        letterhead: z.array(z.string().trim().max(120)).max(6).optional(),
     }).strict().optional(),
     dispatch: z.object({
         /* Deliberately permissive: numbers are written a dozen ways and a
@@ -904,6 +979,7 @@ export function resolveSettings(raw: Record<string, unknown> | null | undefined)
         checkIn: section(stored['checkIn'], DEFAULT_PROJECT_SETTINGS.checkIn),
         dayStart: section(stored['dayStart'], DEFAULT_PROJECT_SETTINGS.dayStart),
         pricing: section(stored['pricing'], DEFAULT_PROJECT_SETTINGS.pricing),
+        billing: section(stored['billing'], DEFAULT_PROJECT_SETTINGS.billing),
         dispatch: section(stored['dispatch'], DEFAULT_PROJECT_SETTINGS.dispatch),
         returns: section(stored['returns'], DEFAULT_PROJECT_SETTINGS.returns),
         reporting: section(stored['reporting'], DEFAULT_PROJECT_SETTINGS.reporting),
