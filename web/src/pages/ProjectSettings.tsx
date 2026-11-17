@@ -328,10 +328,39 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                                 <option value="add">adds to the delivery charge</option>
                             </select>
                         </label>
+                        {/* THE ROW ON THIS FORM THAT MOVES THE MOST MONEY.
+                            Beside the dry-run rule because they are the two
+                            controls here that change what University Health
+                            is billed, and a reader who has found one should
+                            see the other. The warning under the row is not
+                            decoration: measured over 1-15 November this is
+                            about six per cent of the invoice. */}
+                        <label className="izy-field">Billing zone
+                            <select
+                                value={draft.pricing.zoneBasis}
+                                onChange={(e) => setDraft({
+                                    ...draft,
+                                    pricing: { ...draft.pricing, zoneBasis: e.target.value as 'zip' | 'distance' },
+                                })}
+                            >
+                                <option value="zip">University Health&rsquo;s ZIP table (the contract)</option>
+                                <option value="distance">road miles from the dispatching pharmacy</option>
+                            </select>
+                        </label>
                         <label className="izy-field">Timezone
                             <input value={draft.timezone} onChange={(e) => setDraft({ ...draft, timezone: e.target.value })} placeholder="America/Chicago" />
                         </label>
                     </div>
+
+                    {draft.pricing.zoneBasis === 'distance' && (
+                        <p className="izy-alert warn" role="status">
+                            <b>That is not the basis the contract prices by.</b> Addendum 2 clause 2 prices by
+                            destination ZIP. Measured over 1 to 15 November, road miles bill about 6% less than
+                            the ZIP table &mdash; roughly $62,000 a year &mdash; and a delivery zone then depends
+                            on which counter dispatched, so our own routing moves University Health&rsquo;s bill.
+                            Every open draft re-prices the moment this is saved; issued invoices do not move.
+                        </p>
+                    )}
 
                     {/* Not a contract parameter, which is why it sat unset with
                         no way to set it: the courier app has had a call button
@@ -360,7 +389,7 @@ export function ProjectSettings({ projectCode }: { projectCode: string }) {
                     </p>
 
                     <p className="izy-muted">
-                        Changing the after-hours window or the dry-run rule changes what UH is billed.
+                        Changing the after-hours window, the dry-run rule or the billing zone changes what UH is billed.
                         Every change is recorded in the audit log with its old and new value.
                     </p>
                     <div className="izy-row">

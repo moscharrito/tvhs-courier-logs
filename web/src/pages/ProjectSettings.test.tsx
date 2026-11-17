@@ -11,7 +11,7 @@ const defaults = {
     sla: { clockStart: 'receipt', scheduledMinutes: 120, statMinutes: 120, statFromPickupMinutes: 60, adhocMinutes: 240 },
     businessHours: { start: '08:00', end: '20:00', days: [0, 1, 2, 3, 4, 5, 6] },
     listRelease: { earliest: '12:00', latest: '14:00' },
-    pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true },
+    pricing: { afterHoursStart: '20:00', afterHoursEnd: '07:00', dryRunReplacesBase: true, zoneBasis: 'zip' },
     dispatch: { phone: '', name: 'Dispatch' },
 };
 
@@ -148,5 +148,93 @@ describe('ProjectSettings', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent('Invalid request');
         expect(screen.getByText('pricing.afterHoursEnd: expected HH:MM, 24-hour')).toBeInTheDocument();
         await waitFor(() => expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled());
+    });
+});
+
+describe('the billing zone', () => {
+    /* The row on this card that moves the most money. It shipped as a
+       read-only row with no way to change it, which is a setting somebody
+       can see and cannot use; the select below is the fix. */
+
+    const open = async () => {
+        const toggle = await screen.findByRole('button', { name: /Operating settings/ });
+        fireEvent.click(toggle);
+    };
+
+    it('reads as the contract basis when nobody has changed it', async () => {
+        mockFetch({ 'GET /api/projects/uh/settings': payload() });
+        render(<ProjectSettings projectCode="uh" />);
+        await open();
+
+        const row = screen.getByText(/Billing zone/).closest('tr')!;
+        expect(within(row).getByText(/University Health's ZIP table/)).toBeInTheDocument();
+        expect(screen.queryByText('changed')).not.toBeInTheDocument();
+    });
+
+    it('is offered on the form, so it can actually be set', async () => {
+        mockFetch({ 'GET /api/projects/uh/settings': payload() });
+        render(<ProjectSettings projectCode="uh" />);
+        await open();
+        fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+        const select = await screen.findByLabelText('Billing zone');
+        expect(select).toHaveValue('zip');
+    });
+
+    it('says what choosing distance costs, before it is saved', async () => {
+        /* The warning is not decoration. It is about six per cent of the
+           invoice and a basis Addendum 2 clause 2 does not price by. */
+        mockFetch({ 'GET /api/projects/uh/settings': payload() });
+        render(<ProjectSettings projectCode="uh" />);
+        await open();
+        fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+        fireEvent.change(await screen.findByLabelText('Billing zone'), { target: { value: 'distance' } });
+
+        const warned = await screen.findByText(/not the basis the contract prices by/);
+        expect(warned).toBeInTheDocument();
+        expect(screen.getByText(/Addendum 2 clause 2/)).toBeInTheDocument();
+        expect(screen.getByText(/issued invoices do not move/)).toBeInTheDocument();
+    });
+
+    it('sends the choice, and nothing else about pricing changes with it', async () => {
+        const { bodies } = mockFetch({
+            'GET /api/projects/uh/settings': payload(),
+            'PATCH /api/projects/uh/settings': payload({
+                settings: { ...defaults, pricing: { ...defaults.pricing, zoneBasis: 'distance' } },
+            }),
+        });
+        render(<ProjectSettings projectCode="uh" />);
+        await open();
+        fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+        fireEvent.change(await screen.findByLabelText('Billing zone'), { target: { value: 'distance' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+        await waitFor(() => expect(bodies['PATCH /api/projects/uh/settings']).toBeDefined());
+        const sent = bodies['PATCH /api/projects/uh/settings'] as { pricing: Record<string, unknown> };
+        expect(sent.pricing.zoneBasis).toBe('distance');
+        /* The dry-run rule sits beside it on the same row and is the other
+           control here that changes what UH is billed. Moving one must not
+           move the other. */
+        expect(sent.pricing.dryRunReplacesBase).toBe(true);
+        expect(sent.pricing.afterHoursStart).toBe('20:00');
+    });
+
+    it('shows the warning colour on the read row once it is set', async () => {
+        /* A reader checking a figure has to know the basis is not the
+           contract's before they quote it. */
+        mockFetch({
+            'GET /api/projects/uh/settings': payload({
+                settings: { ...defaults, pricing: { ...defaults.pricing, zoneBasis: 'distance' } },
+                overridden: ['pricing.zoneBasis'],
+            }),
+        });
+        render(<ProjectSettings projectCode="uh" />);
+        await open();
+
+        const row = screen.getByText(/Billing zone/).closest('tr')!;
+        expect(within(row).getByText(/road miles from the dispatching pharmacy/)).toBeInTheDocument();
+        expect(within(row).getByText(/road miles/).closest('.izy-stat-warn')).not.toBeNull();
+        expect(within(row).getByText('changed')).toBeInTheDocument();
     });
 });
