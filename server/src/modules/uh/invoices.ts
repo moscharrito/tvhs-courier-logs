@@ -876,17 +876,8 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         const number = String(invoice['number']);
         const status = String(invoice['status']);
 
-        if (invoice['issued_at'] !== null && invoice['issued_at'] !== undefined && String(invoice['issued_at']) !== '') {
-            res.status(409).json({
-                error: `${number} has been issued, so it cannot be deleted. `
-                    + 'Void it instead: the number stays used and the reason stays on the record, '
-                    + 'which is what makes a figure somebody was sent answerable later.',
-                code: 'invoice.issued',
-                status,
-                issuedAt: String(invoice['issued_at']),
-            });
-            return;
-        }
+    const wasIssued = invoice['issued_at'] !== null && invoice['issued_at'] !== undefined
+            && String(invoice['issued_at']) !== '';
 
         /* READ BEFORE IT GOES. Once the row is gone the audit line below is
            the only thing left that says what was here, and the number it
@@ -906,6 +897,51 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         const lineCount = Number(lines.rows[0]?.['n'] ?? 0);
 
         const why = (body.reason ?? '').trim();
+
+        /* ──────────────── AN ISSUED INVOICE COSTS MORE TO DELETE ─────────
+         *
+         * It used to be refused outright, and the reasoning was sound: a
+         * number that has gone out has to stay answerable, which is what
+         * /void is for. What that reasoning missed is that this system
+         * cannot tell an invoice SENT to University Health from one issued
+         * by somebody checking the screen worked. Both have an issued_at.
+         * So a refusal did not protect a sent invoice; it stranded a
+         * mistake, permanently, in the one list that is supposed to be the
+         * record of what we billed.
+         *
+         * Opened for deletion on 17 November on instruction. The protection
+         * moves from "you cannot" to "you must say which one, and why",
+         * which is the shape imports.ts already uses for deleting a day of
+         * real work: type the thing back, and say why, because the audit
+         * row is the only thing that survives.
+         *
+         * THE NUMBER IS TYPED BACK, not a count. Here the number IS the
+         * thing at stake -- it is what a hospital's accounts payable would
+         * quote back at us -- and typing it is the one confirmation that
+         * cannot be given by clicking the wrong row.
+         *
+         * VOID IS STILL THE RIGHT ANSWER FOR ANYTHING ACTUALLY SENT, and
+         * the error below says so rather than leaving it to be remembered. */
+        if (wasIssued) {
+            const typed = String((req.body as Record<string, unknown> | undefined)?.['confirm'] ?? '').trim();
+            if (typed !== number || why.length < DELETE_REASON_MIN) {
+                res.status(409).json({
+                    error: `${number} has been issued${status === 'paid' ? ' and marked paid' : ''}, `
+                        + `and it totals ${money(Number(invoice['total_cents']))}. Deleting it destroys a `
+                        + 'numbered record of what we billed, and it cannot be undone. If this invoice was '
+                        + 'ever sent to University Health, void it instead so the number stays answerable. '
+                        + `To delete it anyway, type the number back and say why.`,
+                    code: 'invoice.issued',
+                    status,
+                    issuedAt: String(invoice['issued_at']),
+                    totalCents: Number(invoice['total_cents']),
+                    confirmWith: number,
+                    reasonMin: DELETE_REASON_MIN,
+                });
+                return;
+            }
+        }
+
         if (adjustments > 0 && why.length < DELETE_REASON_MIN) {
             res.status(409).json({
                 error: `${number} carries ${adjustments} ${adjustments === 1 ? 'adjustment' : 'adjustments'} `
@@ -940,9 +976,12 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             adjustmentCents,
             lineCount,
             reason: why.slice(0, 200),
-            /* Said plainly, because a reader a year from now needs to know
-               this was never a bill that was withdrawn. */
-            wasIssued: false,
+            /* The difference a reader a year from now actually needs: was
+               this a bill that existed, or a period nobody opened on
+               purpose. An issued one carries what it was worth. */
+            wasIssued,
+            totalCents: wasIssued ? Number(invoice['total_cents']) : 0,
+            issuedAt: wasIssued ? String(invoice['issued_at']) : '',
             permanent: true,
         });
 
@@ -1029,8 +1068,15 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         if (!invoice) return;
         const view = await present(req, invoice);
 
-        await req.audit('invoice.export', 'invoice', view.number, { format: 'pdf', lines: view.lines.length });
-        const pdf = renderInvoice(view);
+        /* Summary unless asked otherwise. See renderInvoice: ninety pages of
+           deliveries is a ledger with an invoice on the front of it. */
+        const detail = String((req.query as Record<string, unknown>)['detail'] ?? '') === 'lines'
+            ? 'lines' as const
+            : 'summary' as const;
+        await req.audit('invoice.export', 'invoice', view.number, {
+            format: 'pdf', lines: view.lines.length, detail,
+        });
+        const pdf = renderInvoice(view, new Date(), { detail });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Length', String(pdf.length));
         res.setHeader('Content-Disposition', `inline; filename="${view.number}.pdf"`);
@@ -1068,7 +1114,26 @@ export interface RenderableInvoice {
 const MARGIN = 48;
 
 /** The invoice, on paper. Same writer as the proof of delivery. */
-export function renderInvoice(view: RenderableInvoice, now: Date = new Date()): Buffer {
+/**
+ * THE STANDARD INVOICE IS THE SUMMARY ONE, and that is the default.
+ *
+ * This document listed every delivery, always. For a fortnight of this
+ * contract that is 3,321 lines over about ninety pages, which is not an
+ * invoice -- it is a ledger with an invoice on the front of it. A hospital's
+ * accounts payable wants what they owe and what it is made of: by zone, by
+ * service level, what was undelivered, the adjustments, the total.
+ *
+ * The per-delivery detail has not gone anywhere. It is every line of the
+ * Excel export, which is the format somebody reconciling against their own
+ * records actually wants, and `detail: 'lines'` still renders the long PDF
+ * for anybody who wants it on paper.
+ */
+export function renderInvoice(
+    view: RenderableInvoice,
+    now: Date = new Date(),
+    opts: { detail?: 'summary' | 'lines' } = {},
+): Buffer {
+    const detailed = opts.detail === 'lines';
     const pages: Page[] = [];
     let page = new Page();
     pages.push(page);
@@ -1110,9 +1175,9 @@ export function renderInvoice(view: RenderableInvoice, now: Date = new Date()): 
         page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.75 });
         y -= 11;
     };
-    headerRow();
+    if (detailed) headerRow();
 
-    for (const line of view.lines) {
+    for (const line of detailed ? view.lines : []) {
         if (y < MARGIN + 120) {
             page = new Page();
             pages.push(page);
@@ -1129,14 +1194,16 @@ export function renderInvoice(view: RenderableInvoice, now: Date = new Date()): 
         page.text(pharmacy, columns[2]!.x, y, { size: 8 });
         page.text(line.zone === null ? 'out' : String(line.zone), columns[3]!.x, y, { size: 8 });
         page.text(line.serviceType, columns[4]!.x, y, { size: 8 });
-        page.text(line.dryRun ? `dry run x${line.items}` : 'delivered', columns[5]!.x, y, { size: 8 });
+        page.text(line.dryRun ? `undelivered x${line.items}` : 'delivered', columns[5]!.x, y, { size: 8 });
         page.textRight(money(line.amountCents), columns[6]!.x, y, { size: 8 });
         y -= 11;
     }
 
-    y -= 4;
-    page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.75 });
-    y -= 14;
+    if (detailed) {
+        y -= 4;
+        page.line(MARGIN, y, PAGE.width - MARGIN, y, { grey: 0.75 });
+        y -= 14;
+    }
 
     const totalLine = (label: string, amount: string, bold = false) => {
         page.textRight(label, PAGE.width - MARGIN - 90, y, { font: bold ? 'Helvetica-Bold' : 'Helvetica', size: 10 });
@@ -1183,6 +1250,26 @@ export function renderInvoice(view: RenderableInvoice, now: Date = new Date()): 
             MARGIN, y, { size: 9, grey: 0.3 },
         );
         y -= 12;
+    }
+
+    /* WHERE THE PER-DELIVERY DETAIL WENT, said on the invoice.
+     *
+     * Without this line a summary reads as an invoice with its backing
+     * omitted, and the first thing a hospital's accounts payable does with
+     * one of those is ask for the detail -- which is a telephone call and a
+     * week, for a file that already exists. */
+    if (!detailed) {
+        y -= 6;
+        for (const text of wrap(
+            `Priced from ${view.lines.length.toLocaleString()} `
+            + `${view.lines.length === 1 ? 'delivery' : 'deliveries'}, each listed with its date, `
+            + 'pharmacy, destination ZIP, zone, service level and outcome in the accompanying '
+            + 'spreadsheet. Available on request in any format you prefer.',
+            'Helvetica', 9, PAGE.width - MARGIN * 2,
+        )) {
+            page.text(text, MARGIN, y, { size: 9, grey: 0.35 });
+            y -= 11;
+        }
     }
 
     /* What was left off, on the invoice itself. An exclusion a reader cannot

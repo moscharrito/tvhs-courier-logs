@@ -49,6 +49,13 @@ interface Summary {
     issuedAt: string | null; paidAt: string | null;
 }
 
+/** The blank line between paragraphs of a prompt. A template literal
+ *  spanning two lines, because an escape here has to survive every tool
+ *  that touches this file and one of them already ate it. */
+const NL2 = `
+
+`;
+
 const money = (dollars: number) =>
     `${dollars < 0 ? '-' : ''}$${Math.abs(dollars).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -111,11 +118,14 @@ export function Invoices() {
      * it just worked on and there is no longer one to reopen: the panel has
      * to close, and the list behind it is the confirmation.
      */
-    async function remove(id: number, number: string, reason: string) {
+    async function remove(id: number, number: string, reason: string, confirmWith?: string) {
         setBusy(true);
         setMsg(null);
         try {
-            await api(`${base}/${id}`, { method: 'DELETE', json: { reason } });
+            await api(`${base}/${id}`, {
+                method: 'DELETE',
+                json: confirmWith === undefined ? { reason } : { reason, confirm: confirmWith },
+            });
             setOpen(null);
             setMsg({ kind: 'ok', text: `${number} deleted. The number is recorded in the audit trail.` });
             await load();
@@ -310,7 +320,12 @@ export function Invoices() {
                     </div>
 
                     <div className="izy-row">
-                        <a className="izy-btn secondary" href={`${base}/${open.id}/invoice.pdf`} target="_blank" rel="noreferrer">PDF</a>
+                        {/* The standard invoice is the summary. The long
+                            one is still here for anybody who wants every
+                            delivery on paper; the spreadsheet beside it is
+                            the format somebody reconciling actually wants. */}
+                        <a className="izy-btn secondary" href={`${base}/${open.id}/invoice.pdf`} target="_blank" rel="noreferrer">Invoice PDF</a>
+                        <a className="izy-btn secondary" href={`${base}/${open.id}/invoice.pdf?detail=lines`} target="_blank" rel="noreferrer">PDF with every delivery</a>
                         <a className="izy-btn secondary" href={`${base}/${open.id}/invoice.xlsx`}>Excel</a>
                         {open.status === 'draft' && (
                             <button
@@ -349,14 +364,18 @@ export function Invoices() {
                                 Void
                             </button>
                         )}
-                        {open.issuedAt === null && (
-                            /* NEVER ISSUED, so nobody outside this office has
-                               seen it and no figure was sent. Void is the
-                               button beside this one and stays the answer for
-                               everything else -- see the DELETE route in
-                               server/src/modules/uh/invoices.ts, which refuses
-                               anything carrying an issued_at whatever its
-                               status now says. */
+                        {(
+                            /* ONCE REFUSED FOR AN ISSUED INVOICE, OPENED ON
+                               17 NOVEMBER ON INSTRUCTION. The old reasoning
+                               was that a number which has gone out must stay
+                               answerable, and that is still true -- but this
+                               system cannot tell an invoice SENT to
+                               University Health from one issued by somebody
+                               checking the screen worked. Refusing did not
+                               protect a sent invoice; it stranded a mistake
+                               in the list that is meant to be the record of
+                               what we billed. The protection moved to "say
+                               which one, and why". */
                             <button className="izy-btn danger" type="button" disabled={busy}
                                 onClick={() => {
                                     /* ASKED FOR HERE AS WELL AS ON THE SERVER.
@@ -366,6 +385,26 @@ export function Invoices() {
                                        person hears of it, and the box is open
                                        while they can still see what is on the
                                        invoice. */
+                                    if (open.issuedAt !== null) {
+                                        /* The NUMBER typed back, not a count.
+                                           It is what is at stake and what a
+                                           hospital would quote at us, and it
+                                           cannot be given by clicking the
+                                           wrong row. */
+                                        const typed = prompt(
+                                            `Delete ${open.number}?` + NL2
+                                            + `It was issued on ${issuedDate(open.issuedAt)} and totals ${money(open.total)}. `
+                                            + 'Deleting it destroys a numbered record of what we billed, and cannot be undone.' + NL2
+                                            + 'If this invoice was ever sent to University Health, press Cancel and Void it '
+                                            + 'instead, so the number stays answerable.' + NL2
+                                            + `To delete it anyway, type ${open.number}:`,
+                                        );
+                                        if (typed === null || typed.trim() !== open.number) return;
+                                        const why = prompt('Why is it being deleted? (at least 10 characters)');
+                                        if (why === null || why.trim().length < 10) return;
+                                        void remove(open.id, open.number, why, open.number);
+                                        return;
+                                    }
                                     if (open.adjustments.length > 0) {
                                         const n = open.adjustments.length;
                                         const reason = prompt(

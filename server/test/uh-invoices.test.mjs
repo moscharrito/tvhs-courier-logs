@@ -452,9 +452,11 @@ describe('the documents', () => {
         expect(text).not.toContain('Test Street');
     });
 
-    it('paginates rather than running off the page', () => {
+    it('paginates the detailed document rather than running off the page', () => {
         /* A month of a nine-pharmacy contract is thousands of lines. Fifty is
-           enough to prove the break happens and the totals still land. */
+           enough to prove the break happens and the totals still land.
+           `detail: 'lines'` because the STANDARD invoice is the summary and
+           has no per-delivery table to break. */
         const lines = Array.from({ length: 120 }, (_, i) => ({
             orderId: i + 1, serviceDate: '2026-08-24', reference: `RX-${i}`, pharmacy: 'Discharge Pharmacy',
             deliveryZip: '78215', zone: 1, serviceType: 'scheduled', dryRun: false, items: 1,
@@ -468,7 +470,7 @@ describe('the documents', () => {
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 150000, totalCents: 150000, excludedCount: 0, excludedNote: '', notes: '',
             issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago',
-        });
+        }, new Date(), { detail: 'lines' });
         const body = pdf.toString('latin1');
         expect(body).toMatch(/\/Count [2-9]/);
         const text = pdfText(body);
@@ -497,6 +499,7 @@ describe('the documents', () => {
 
     it('says when a pharmacy name was too long for its column', () => {
         // A silently cut name is a line somebody has to go and look up.
+        // Only the detailed document has a column to be too long for.
         const pdf = renderInvoice({
             number: 'IZY-UH-2026-08-0002', status: 'issued', periodFrom: '2026-08-24', periodTo: '2026-08-30',
             lines: [{
@@ -510,7 +513,7 @@ describe('the documents', () => {
             dryRuns: { count: 0, items: 0, cents: 0 },
             subtotalCents: 1250, totalCents: 1250, excludedCount: 0, excludedNote: '', notes: '',
             issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago',
-        });
+        }, new Date(), { detail: 'lines' });
         expect(pdfText(pdf.toString('latin1'))).toMatch(/University Health Medical Center\.\.\./);
     });
 
@@ -778,5 +781,152 @@ describe('deleting an invoice', () => {
         expect(res.status).toBe(403);
 
         expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(200);
+    });
+});
+
+describe('deleting an invoice that has been issued', () => {
+    /* Opened on 17 November. The refusal it replaced did not protect an
+       invoice that had been SENT -- nothing here can tell that from one
+       issued by somebody checking the screen worked -- it only stranded the
+       mistake in the list that is meant to be the record of what we billed.
+       The protection is now the number typed back and a reason. */
+
+    const issuedOne = async (from, to, serviceDate) => {
+        await billable('delivered', { serviceDate });
+        const invoice = await draft({ from, to });
+        const issued = await admin.post(`${INVOICES}/${invoice.id}/issue`).send({ excludeUnpriceable: true });
+        expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+        return invoice;
+    };
+
+    it('refuses without the number typed back, and says what it would destroy', async () => {
+        const invoice = await issuedOne('2026-06-15', '2026-06-21', '2026-06-16');
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`)
+            .send({ reason: 'Opened against the wrong pharmacy entirely' });
+
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('invoice.issued');
+        expect(res.body.confirmWith).toBe(invoice.number);
+        /* The total is in the refusal because it is the figure that makes a
+           person stop and check they have the right row. */
+        expect(res.body.totalCents).toBeGreaterThan(0);
+        expect(res.body.error).toMatch(/void it instead/i);
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(200);
+    });
+
+    it('refuses the wrong number, which is the point of typing it', async () => {
+        const invoice = await issuedOne('2026-06-22', '2026-06-28', '2026-06-23');
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`)
+            .send({ confirm: 'IZY-UH-2026-10-9999', reason: 'Opened against the wrong pharmacy entirely' });
+
+        expect(res.status).toBe(409);
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(200);
+    });
+
+    it('refuses the right number with no reason', async () => {
+        const invoice = await issuedOne('2026-06-29', '2026-07-05', '2026-06-30');
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`).send({ confirm: invoice.number });
+
+        expect(res.status).toBe(409);
+        expect(res.body.reasonMin).toBe(10);
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(200);
+    });
+
+    it('deletes it when both are given', async () => {
+        const invoice = await issuedOne('2026-07-13', '2026-07-19', '2026-07-14');
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`)
+            .send({ confirm: invoice.number, reason: 'Issued by mistake while checking the screen' });
+
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(404);
+    });
+
+    it('frees the period it covered', async () => {
+        const invoice = await issuedOne('2026-07-20', '2026-07-26', '2026-07-21');
+        const blocked = await admin.post(INVOICES).send({ from: '2026-07-20', to: '2026-07-26' });
+        expect(blocked.status).toBe(409);
+
+        await admin.delete(`${INVOICES}/${invoice.id}`)
+            .send({ confirm: invoice.number, reason: 'Wrong dates, reopening for the right week' });
+
+        const again = await admin.post(INVOICES).send({ from: '2026-07-20', to: '2026-07-26' });
+        expect(again.status, JSON.stringify(again.body)).toBe(201);
+    });
+
+    it('records what it was worth, because that is all that survives', async () => {
+        const invoice = await issuedOne('2026-07-27', '2026-08-02', '2026-07-28');
+        const before = (await admin.get(`${INVOICES}/${invoice.id}`)).body.totalCents;
+
+        await admin.delete(`${INVOICES}/${invoice.id}`)
+            .send({ confirm: invoice.number, reason: 'Issued twice for the same week' });
+
+        const trail = await sql(
+            "SELECT * FROM audit_events WHERE action = 'invoice.delete' AND entity_id = ? ORDER BY id DESC LIMIT 1",
+            [invoice.number],
+        );
+        const meta = JSON.parse(String(trail.rows[0].detail ?? '{}'));
+        expect(meta.wasIssued).toBe(true);
+        expect(meta.totalCents).toBe(before);
+        expect(meta.issuedAt).not.toBe('');
+        expect(meta.reason).toMatch(/Issued twice/);
+        expect(meta.permanent).toBe(true);
+    });
+
+    it('still takes a never-issued draft with no number typed at all', async () => {
+        /* The easy path must not have got harder on the way. */
+        await billable('delivered', { serviceDate: '2026-09-08' });
+        const invoice = await draft({ from: '2026-09-07', to: '2026-09-13' });
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`).send({});
+
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+    });
+});
+
+describe('the standard invoice document', () => {
+    /* It listed every delivery, always. A fortnight of this contract is
+       3,321 lines over about ninety pages, which is not an invoice. */
+
+    it('is the summary, and says where the detail is', async () => {
+        await billable('delivered', { serviceDate: '2026-09-15' });
+        const invoice = await draft({ from: '2026-09-14', to: '2026-09-20' });
+
+        const res = await admin.get(`${INVOICES}/${invoice.id}/invoice.pdf`);
+        const text = pdfText(Buffer.from(res.body).toString('latin1'));
+
+        expect(text).toContain('BY ZONE');
+        expect(text).toContain('BY SERVICE');
+        /* A summary with no word about its backing is the thing a hospital
+           telephones about, so it says where the per-delivery list lives. */
+        expect(text).toMatch(/listed with its date/);
+        expect(text).toMatch(/spreadsheet/);
+    });
+
+    it('leaves the per-delivery table out of it', async () => {
+        await billable('delivered', { serviceDate: '2026-09-22', externalRef: 'RX-SUMMARY-1' });
+        const invoice = await draft({ from: '2026-09-21', to: '2026-09-27' });
+
+        const summary = await admin.get(`${INVOICES}/${invoice.id}/invoice.pdf`);
+        const detailed = await admin.get(`${INVOICES}/${invoice.id}/invoice.pdf?detail=lines`);
+
+        expect(pdfText(Buffer.from(summary.body).toString('latin1'))).not.toContain('RX-SUMMARY-1');
+        expect(pdfText(Buffer.from(detailed.body).toString('latin1'))).toContain('RX-SUMMARY-1');
+    });
+
+    it('still carries the totals a hospital has to pay against', async () => {
+        await billable('delivered', { serviceDate: '2026-11-16' });
+        const invoice = await draft({ from: '2026-11-16', to: '2026-11-16' });
+        const view = (await admin.get(`${INVOICES}/${invoice.id}`)).body;
+
+        const res = await admin.get(`${INVOICES}/${invoice.id}/invoice.pdf`);
+        const text = pdfText(Buffer.from(res.body).toString('latin1'));
+
+        expect(text).toContain('Total');
+        expect(text).toContain(invoice.number);
+        expect(text).toContain(`$${view.total.toFixed(2)}`);
     });
 });

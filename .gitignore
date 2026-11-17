@@ -223,3 +223,7 @@ bonus.ps1
 basis.ps1
 *-basis.csv
 *-basis.txt
+
+# Takes a production database snapshot. Prompts for the Turso URL and
+# token and clears them; never holds either.
+snapshot.ps1

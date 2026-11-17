@@ -154,10 +154,18 @@ describe('Invoices', () => {
         await waitFor(() => expect(calls.some((c) => c.includes('/void'))).toBe(false));
     });
 
-    it('offers both documents for the invoice on screen', async () => {
+    it('offers the documents for the invoice on screen', async () => {
+        /* THE STANDARD INVOICE IS THE SUMMARY, and it is the plain "Invoice
+           PDF". Listing 3,321 deliveries is a ledger with an invoice on the
+           front of it; that document still exists for anybody who wants it
+           on paper, and the spreadsheet beside it is what somebody
+           reconciling against their own records actually wants. */
         renderInvoices();
         const panel = await openFirst();
-        expect(within(panel).getByRole('link', { name: 'PDF' })).toHaveAttribute('href', `${BASE}/3/invoice.pdf`);
+        expect(within(panel).getByRole('link', { name: 'Invoice PDF' }))
+            .toHaveAttribute('href', `${BASE}/3/invoice.pdf`);
+        expect(within(panel).getByRole('link', { name: 'PDF with every delivery' }))
+            .toHaveAttribute('href', `${BASE}/3/invoice.pdf?detail=lines`);
         expect(within(panel).getByRole('link', { name: 'Excel' })).toHaveAttribute('href', `${BASE}/3/invoice.xlsx`);
     });
 
@@ -284,9 +292,12 @@ describe('deleting one that never went out', () => {
         expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
     });
 
-    it('does not offer it once the invoice has been issued', async () => {
-        /* The line the whole thing is drawn around: a figure that has been
-           sent stays answerable, so Void is the only way out. */
+    it('offers it on an issued invoice too, since 17 November', async () => {
+        /* It used to refuse. The refusal did not protect an invoice that had
+           been SENT -- nothing here can tell that from one issued by
+           somebody checking the screen worked -- it only stranded the
+           mistake. The protection is now the typed number and the reason,
+           asserted below. */
         renderInvoices(routes({
             [`GET ${BASE}/3`]: invoice({ status: 'issued', issuedAt: '2026-09-01T12:00:00.000Z' }),
             [`GET ${BASE}`]: { invoices: [summary({ status: 'issued', issuedAt: '2026-09-01T12:00:00.000Z' })] },
@@ -294,12 +305,15 @@ describe('deleting one that never went out', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
         await screen.findByRole('button', { name: 'Mark paid' });
 
-        expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+        /* And Void is still beside it, because it is still the right answer
+           for anything University Health has actually seen. */
         expect(screen.getByRole('button', { name: 'Void' })).toBeInTheDocument();
     });
 
-    it('does not offer it on one that was issued and then voided', async () => {
-        /* issued_at, not the status word: the number went out. */
+    it('offers it on one that was issued and then voided', async () => {
+        /* Void then delete is a real sequence: void it so the record is
+           right, then remove it once it is clear nobody ever saw it. */
         renderInvoices(routes({
             [`GET ${BASE}/3`]: invoice({
                 status: 'void', issuedAt: '2026-09-01T12:00:00.000Z', voidReason: 'Billed to the wrong pharmacy',
@@ -309,7 +323,7 @@ describe('deleting one that never went out', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
         await screen.findByText(/Billed to the wrong pharmacy/);
 
-        expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
     });
 
     it('asks before it goes, and names what is going', async () => {
