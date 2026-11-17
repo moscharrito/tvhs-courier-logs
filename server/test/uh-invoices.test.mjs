@@ -346,6 +346,101 @@ describe('issuing', () => {
     });
 });
 
+
+/* ------------------------------------------------- issuing a real period */
+
+describe('issuing a period the size of a real one', () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * Found on production, 17 November. Issuing was an awaited INSERT per
+     * line, each its own round trip. The suite never caught it because
+     * every invoice in it has one or two lines; a fortnight for nine
+     * pharmacies has some three thousand, which took the request past the
+     * proxy's hundred-second ceiling.
+     *
+     * The timeout was not the damage. The lines already written stayed
+     * behind while the invoice stayed a draft, and the unique index on
+     * (invoice_id, order_id) meant every retry from then on died on a line
+     * the abandoned attempt had already written -- a 500, permanently, with
+     * no way out from the screen.
+     *
+     * So these two: one invoice larger than a single INSERT statement can
+     * carry, and one already in the state production was left in. */
+
+    /** The same delivery over again, cheaply. Going through the API would be
+     *  five requests each and this needs hundreds; what is being tested is
+     *  the write path out of buildDraft, which reads the orders table. */
+    const cloneOrder = async (id, times) => {
+        const cols = (await sql('PRAGMA table_info(orders)')).rows
+            .map((r) => String(r['name']))
+            .filter((n) => n !== 'id');
+        const list = cols.map((c) => `"${c}"`).join(', ');
+        for (let i = 0; i < times; i += 1) {
+            await sql(`INSERT INTO orders (${list}) SELECT ${list} FROM orders WHERE id = ?`, [id]);
+        }
+    };
+
+    it('writes more lines than one statement holds, in one transaction', async () => {
+        const seed = await billable('delivered', { serviceDate: '2026-09-28' });
+        /* Past ROWS_PER_STATEMENT (200), so the boundary itself is crossed
+           and an off-by-one in the slicing would drop or duplicate a line. */
+        await cloneOrder(seed.id, 250);
+
+        /* A single day, in the one gap no other period in this file covers.
+           250 clones inside somebody else's week would rewrite their
+           totals. */
+        const invoice = await draft({ from: '2026-09-28', to: '2026-09-28' });
+        const res = await admin.post(`${INVOICES}/${invoice.id}/issue`).send({});
+        expect(res.status, JSON.stringify(res.body).slice(0, 400)).toBe(200);
+        expect(res.body.lineCount).toBe(251);
+
+        const stored = await sql('SELECT COUNT(*) AS n FROM invoice_lines WHERE invoice_id = ?', [invoice.id]);
+        expect(Number(stored.rows[0]['n'])).toBe(251);
+        /* Every line, not just the count: a chunk silently lost would still
+           leave a plausible total. */
+        expect(res.body.totalCents).toBe(251 * (res.body.lines[0].amountCents));
+    });
+
+    it('issues one that a failed attempt left lines on', async () => {
+        /* Exactly the state production was in: status still draft, lines
+           already written. It used to be a 500 for ever. */
+        const seed = await billable('delivered', { serviceDate: '2026-09-29' });
+        const invoice = await draft({ from: '2026-09-29', to: '2026-09-29' });
+
+        await sql(
+            `INSERT INTO invoice_lines (project_id, invoice_id, order_id, service_date, reference, pharmacy,
+                 delivery_zip, zone, service_type, dry_run, items, base_cents, stat_cents, after_hours_cents,
+                 dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note, performed_at)
+             VALUES ((SELECT project_id FROM invoices WHERE id = ?), ?, ?, '2026-09-29', 'STALE', 'Discharge',
+                 '78215', 1, 'scheduled', 0, 1, 1250, 0, 0, 0, NULL, 0, 1250, '', '2026-09-29T17:05:00.000Z')`,
+            [invoice.id, invoice.id, seed.id],
+        );
+
+        const res = await admin.post(`${INVOICES}/${invoice.id}/issue`).send({});
+        expect(res.status, JSON.stringify(res.body).slice(0, 400)).toBe(200);
+
+        /* The wreckage is gone rather than sitting alongside the real line. */
+        const refs = (await sql('SELECT reference FROM invoice_lines WHERE invoice_id = ?', [invoice.id])).rows
+            .map((r) => String(r['reference']));
+        expect(refs).toHaveLength(1);
+        expect(refs).not.toContain('STALE');
+    });
+
+    it('leaves nothing behind when the write is refused', async () => {
+        /* All of it in one transaction, so a batch that fails rolls the
+           lines back with it rather than poisoning the next attempt. */
+        const seed = await billable('delivered', { serviceDate: '2026-09-30' });
+        expect(seed.id).toBeTruthy();
+        const invoice = await draft({ from: '2026-09-30', to: '2026-09-30' });
+
+        await sql('UPDATE invoices SET status = ? WHERE id = ?', ['void', invoice.id]);
+        const res = await admin.post(`${INVOICES}/${invoice.id}/issue`).send({});
+        expect(res.status).toBe(409);
+
+        const stored = await sql('SELECT COUNT(*) AS n FROM invoice_lines WHERE invoice_id = ?', [invoice.id]);
+        expect(Number(stored.rows[0]['n'])).toBe(0);
+    });
+});
+
 /* -------------------------------------------------------- adjustments */
 
 describe('an adjustment', () => {

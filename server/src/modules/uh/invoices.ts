@@ -779,21 +779,6 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         }
 
         const now = new Date().toISOString();
-        for (const line of draft.lines) {
-            await client.execute({
-                sql: `INSERT INTO invoice_lines (project_id, invoice_id, order_id, service_date, reference, pharmacy,
-                          delivery_zip, zone, service_type, dry_run, items, base_cents, stat_cents, after_hours_cents,
-                          dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note, performed_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                args: [
-                    project.id, Number(invoice['id']), line.orderId, line.serviceDate, line.reference, line.pharmacy,
-                    line.deliveryZip, line.zone, line.serviceType, line.dryRun ? 1 : 0, line.items,
-                    line.baseCents, line.statCents, line.afterHoursCents, line.dryRunCents,
-                    line.outOfAreaMiles, line.outOfAreaCents, line.amountCents, line.note, line.performedAt,
-                ],
-            });
-        }
-
         const adjustments = (await adjustmentsFor(project.id, Number(invoice['id'])))
             .reduce((n, a) => n + a.amountCents, 0);
         const excludedNote = draft.exceptions.length === 0
@@ -803,7 +788,62 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
               + `${draft.exceptions.length === 1 ? 'was' : 'were'} left off this invoice: `
               + `${[...new Set(draft.exceptions.map((e) => e.reason))].join(' ')}`;
 
-        await client.execute({
+        /* ───────────────── ONE WRITE, NOT ONE PER DELIVERY ──────────────
+         *
+         * This was a loop: an awaited INSERT per line, each its own round
+         * trip to Turso. A fortnight for nine pharmacies is some three
+         * thousand of them, so issuing spent minutes on the network and
+         * went past the proxy's hundred-second ceiling. The client gave up;
+         * the handler did not, and kept inserting.
+         *
+         * What that left is worse than the timeout. The lines already
+         * written stayed, the invoice stayed a draft, and
+         * `invoice_lines_invoice_order_unique` meant the next attempt hit a
+         * constraint on the first line it had already written -- so issuing
+         * returned 500 from then on, and no amount of retrying could clear
+         * it. Meanwhile each abandoned attempt still held the write lock,
+         * which is why deleting the invoice appeared to hang as well.
+         *
+         * So: every statement in ONE batch, which libSQL runs as a single
+         * transaction. It either all lands or none of it does, there is no
+         * half-issued state left behind, and it is one round trip rather
+         * than three thousand.
+         *
+         * THE DELETE IN FRONT makes it idempotent -- it clears the wreckage
+         * of any earlier attempt, which is what lets an invoice already in
+         * that state be issued rather than needing a hand in the database.
+         * The invoice is still `draft` here, checked above, so there are no
+         * lines of its own to lose.
+         *
+         * ROWS PER STATEMENT is bounded by SQLite's variable limit (32766),
+         * not by taste: twenty columns puts the ceiling near 1,600 and 200
+         * leaves room to spare. Seventeen statements for a fortnight. */
+        const LINE_COLUMNS = `project_id, invoice_id, order_id, service_date, reference, pharmacy,
+                      delivery_zip, zone, service_type, dry_run, items, base_cents, stat_cents, after_hours_cents,
+                      dry_run_cents, out_of_area_miles, out_of_area_cents, amount_cents, note, performed_at`;
+        const LINE_TUPLE = `(${new Array(20).fill('?').join(', ')})`;
+        const ROWS_PER_STATEMENT = 200;
+
+        const writes: Array<{ sql: string; args: InValue[] }> = [{
+            sql: 'DELETE FROM invoice_lines WHERE project_id = ? AND invoice_id = ?',
+            args: [project.id, Number(invoice['id'])],
+        }];
+        for (let at = 0; at < draft.lines.length; at += ROWS_PER_STATEMENT) {
+            const slice = draft.lines.slice(at, at + ROWS_PER_STATEMENT);
+            writes.push({
+                sql: `INSERT INTO invoice_lines (${LINE_COLUMNS}) VALUES ${slice.map(() => LINE_TUPLE).join(', ')}`,
+                args: slice.flatMap((line) => [
+                    project.id, Number(invoice['id']), line.orderId, line.serviceDate, line.reference, line.pharmacy,
+                    line.deliveryZip, line.zone, line.serviceType, line.dryRun ? 1 : 0, line.items,
+                    line.baseCents, line.statCents, line.afterHoursCents, line.dryRunCents,
+                    line.outOfAreaMiles, line.outOfAreaCents, line.amountCents, line.note, line.performedAt,
+                ] as InValue[]),
+            });
+        }
+        /* LAST, and in the same transaction. The status is what every other
+           route reads to decide whether this invoice has lines of its own;
+           flipping it in a separate write is how the two disagree. */
+        writes.push({
             sql: `UPDATE invoices SET status = 'issued', subtotal_cents = ?, adjustments_cents = ?, total_cents = ?,
                       line_count = ?, excluded_count = ?, excluded_note = ?, issued_at = ?, issued_by = ?
                   WHERE project_id = ? AND id = ?`,
@@ -813,6 +853,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
                 project.id, Number(invoice['id']),
             ],
         });
+        await client.batch(writes, 'write');
         await req.audit('invoice.issue', 'invoice', String(invoice['number']), {
             lines: draft.lines.length, excluded: draft.exceptions.length, totalCents: draft.subtotalCents + adjustments,
         });
