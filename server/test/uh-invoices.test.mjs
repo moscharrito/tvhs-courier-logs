@@ -647,3 +647,136 @@ describe('exporting a range that is not an invoice', () => {
         expect(res.headers['cache-control']).toMatch(/no-store/);
     });
 });
+
+describe('deleting an invoice', () => {
+    /* Void stays the answer for anything University Health has seen. What
+       this is for is the invoice opened on the wrong dates and noticed a
+       minute later: nobody has seen it, no figure was sent, and voiding it
+       leaves a permanent row whose only content is that somebody mistyped. */
+
+    it('removes a draft nobody ever saw, with no reason needed', async () => {
+        await billable('delivered', { serviceDate: '2026-10-01' });
+        const invoice = await draft({ from: '2026-10-01', to: '2026-10-04' });
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`).send({});
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        expect(res.body.ok).toBe(true);
+        expect(res.body.number).toBe(invoice.number);
+
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(404);
+    });
+
+    it('frees the period, so the month can be billed properly afterwards', async () => {
+        /* The whole point. An overlapping draft blocks a correct invoice
+           for the same dates, and until now the only way past it was to
+           void it and leave it in the list for ever. */
+        await billable('delivered', { serviceDate: '2026-10-05' });
+        const wrong = await draft({ from: '2026-10-05', to: '2026-10-11' });
+
+        const blocked = await admin.post(INVOICES).send({ from: '2026-10-05', to: '2026-10-11' });
+        expect(blocked.status).toBe(409);
+        expect(blocked.body.code).toBe('invoice.overlaps');
+
+        await admin.delete(`${INVOICES}/${wrong.id}`).send({});
+
+        const again = await admin.post(INVOICES).send({ from: '2026-10-05', to: '2026-10-11' });
+        expect(again.status, JSON.stringify(again.body)).toBe(201);
+    });
+
+    it('refuses once it has been issued, and says to void it instead', async () => {
+        /* A figure that has been sent has to stay answerable. This is the
+           line the whole route is drawn around. */
+        await billable('delivered', { serviceDate: '2026-10-12' });
+        const invoice = await draft({ from: '2026-10-12', to: '2026-10-18' });
+        const issued = await admin.post(`${INVOICES}/${invoice.id}/issue`).send({ excludeUnpriceable: true });
+        expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`).send({ reason: 'opened on the wrong dates entirely' });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('invoice.issued');
+        expect(res.body.error).toMatch(/[Vv]oid it instead/);
+
+        // And it is still there.
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(200);
+    });
+
+    it('refuses an invoice that was issued and then voided', async () => {
+        /* Void does not make it deletable again: the number went out. The
+           test is issued_at, not the status word. */
+        await billable('delivered', { serviceDate: '2026-10-19' });
+        const invoice = await draft({ from: '2026-10-19', to: '2026-10-25' });
+        await admin.post(`${INVOICES}/${invoice.id}/issue`).send({ excludeUnpriceable: true });
+        const voided = await admin.post(`${INVOICES}/${invoice.id}/void`).send({ reason: 'Billed to the wrong pharmacy' });
+        expect(voided.status, JSON.stringify(voided.body)).toBe(200);
+
+        const res = await admin.delete(`${INVOICES}/${invoice.id}`).send({ reason: 'tidying the list up for the quarter' });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('invoice.issued');
+    });
+
+    it('makes a draft carrying adjustments say why, because that money is nowhere else', async () => {
+        await billable('delivered', { serviceDate: '2026-10-26' });
+        const invoice = await draft({ from: '2026-10-26', to: '2026-10-31' });
+        await admin.post(`${INVOICES}/${invoice.id}/adjustments`).send({
+            description: 'Goodwill credit', amount: -25, reason: 'Late delivery agreed on the telephone',
+        });
+
+        const bare = await admin.delete(`${INVOICES}/${invoice.id}`).send({});
+        expect(bare.status).toBe(409);
+        expect(bare.body.code).toBe('invoice.hasAdjustments');
+        expect(bare.body.adjustments).toBe(1);
+
+        const said = await admin.delete(`${INVOICES}/${invoice.id}`)
+            .send({ reason: 'Opened against the wrong pharmacy, reissuing against Wheatley' });
+        expect(said.status, JSON.stringify(said.body)).toBe(200);
+        expect(said.body.deleted.adjustments).toBe(1);
+    });
+
+    it('takes the adjustments and lines with it, leaving nothing pointing at it', async () => {
+        await billable('delivered', { serviceDate: '2026-05-18' });
+        const invoice = await draft({ from: '2026-05-18', to: '2026-05-24' });
+        await admin.post(`${INVOICES}/${invoice.id}/adjustments`).send({
+            description: 'Credit', amount: -10, reason: 'Agreed with the contract manager',
+        });
+
+        await admin.delete(`${INVOICES}/${invoice.id}`).send({ reason: 'Duplicate of the invoice already open' });
+
+        const adj = await sql('SELECT COUNT(*) AS n FROM invoice_adjustments WHERE invoice_id = ?', [invoice.id]);
+        const lines = await sql('SELECT COUNT(*) AS n FROM invoice_lines WHERE invoice_id = ?', [invoice.id]);
+        expect(Number(adj.rows[0].n)).toBe(0);
+        expect(Number(lines.rows[0].n)).toBe(0);
+    });
+
+    it('leaves the number answerable in the audit trail', async () => {
+        /* The row is gone and its number shows as a gap in the month's
+           sequence. This line is the only thing that can answer it. */
+        await billable('delivered', { serviceDate: '2026-05-25' });
+        const invoice = await draft({ from: '2026-05-25', to: '2026-05-31' });
+
+        await admin.delete(`${INVOICES}/${invoice.id}`).send({ reason: 'Wrong period, reopening for June' });
+
+        const trail = await sql(
+            "SELECT * FROM audit_events WHERE action = 'invoice.delete' AND entity_id = ? ORDER BY id DESC LIMIT 1",
+            [invoice.number],
+        );
+        const row = trail.rows[0];
+        expect(row, 'no audit row for the deleted invoice').toBeTruthy();
+        const meta = JSON.parse(String(row.detail ?? "{}"));
+        expect(meta.permanent).toBe(true);
+        expect(meta.wasIssued).toBe(false);
+        expect(meta.periodFrom).toBe('2026-05-25');
+        expect(meta.reason).toMatch(/Wrong period/);
+    });
+
+    it('is not a dispatcher’s to do', async () => {
+        await billable('delivered', { serviceDate: '2026-11-02' });
+        const invoice = await draft({ from: '2026-11-02', to: '2026-11-08' });
+
+        const courier = srv.agent();
+        await courier.post('/api/login').send({ username: 'ada.courier', password: 'courier-pass-1' });
+        const res = await courier.delete(`${INVOICES}/${invoice.id}`).send({});
+        expect(res.status).toBe(403);
+
+        expect((await admin.get(`${INVOICES}/${invoice.id}`)).status).toBe(200);
+    });
+});

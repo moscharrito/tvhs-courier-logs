@@ -35,6 +35,7 @@ import type { Client, InValue } from '@libsql/client';
 import ExcelJS from 'exceljs';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { todayIn, dateIn } from '../../core/dates';
+import { DELETE_REASON_MIN } from './order-delete';
 import { priceOrder, createPricingCache, type PricedOrderRow } from './order-pricing';
 import { buildPdf, Page, PAGE, wrap } from '../../core/pdf/writer';
 
@@ -829,6 +830,123 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
         await req.audit('invoice.void', 'invoice', String(invoice['number']), { previousStatus: String(invoice['status']) });
         const reloaded = await loadOr404(req, res);
         res.json(await present(req, reloaded!));
+    }));
+
+    /* ─────────────────────── DELETING ONE THAT NEVER LEFT THE BUILDING
+     *
+     * VOID REMAINS THE ANSWER FOR ANYTHING UNIVERSITY HEALTH HAS SEEN, and
+     * nothing above this line changes. Once a figure has been sent, the
+     * number has to stay used and the reason has to stay on the record: a
+     * missing invoice number is a question nobody can answer a year later,
+     * which is what /void's own comment says and it is still true.
+     *
+     * What void is a poor answer for is an invoice opened on the wrong
+     * dates and noticed a minute later. Nobody at the hospital has seen it,
+     * no figure was sent, and voiding leaves a permanent row whose entire
+     * content is that somebody mistyped -- so a finance team reads past a
+     * column of those to find the invoices that mean anything. The list is
+     * the record of what we billed, and a row that never billed anybody is
+     * not part of that record.
+     *
+     * `issued_at IS NULL` IS THE WHOLE TEST, and it is deliberately not
+     * "status is draft". A void that was issued first still carries its
+     * issued_at and stays protected; a void that never was is a discarded
+     * draft, and deleting it is the same act under another name.
+     *
+     * THE REASON RULE IS THE ONE FROM order-delete.ts, for the reason given
+     * there. No typed confirmation: the number a dialog would ask somebody
+     * to copy is already the thing they clicked. But an invoice carrying
+     * ADJUSTMENTS has hand-entered money on it that exists nowhere else --
+     * nothing recomputes a credit somebody agreed on the telephone -- so
+     * that one has to say why. An untouched draft goes with no reason at
+     * all. The two deliveries deleted during the 9 November incident each
+     * left an audit row with an empty `reason`, and nobody now knows what
+     * either was for; this is that lesson applied to money.
+     */
+    const RemoveInvoice = z.object({ reason: z.string().trim().max(200).optional() });
+
+    router.delete('/:id', bill, wrap2(async (req, res) => {
+        const invoice = await loadOr404(req, res);
+        if (!invoice) return;
+        const body = parse(RemoveInvoice, req.body ?? {}, res);
+        if (!body) return;
+
+        const projectId = req.project!.id;
+        const id = Number(invoice['id']);
+        const number = String(invoice['number']);
+        const status = String(invoice['status']);
+
+        if (invoice['issued_at'] !== null && invoice['issued_at'] !== undefined && String(invoice['issued_at']) !== '') {
+            res.status(409).json({
+                error: `${number} has been issued, so it cannot be deleted. `
+                    + 'Void it instead: the number stays used and the reason stays on the record, '
+                    + 'which is what makes a figure somebody was sent answerable later.',
+                code: 'invoice.issued',
+                status,
+                issuedAt: String(invoice['issued_at']),
+            });
+            return;
+        }
+
+        /* READ BEFORE IT GOES. Once the row is gone the audit line below is
+           the only thing left that says what was here, and the number it
+           used will show as a gap in the month's sequence. Somebody has to
+           be able to answer that gap. */
+        const adj = await client.execute({
+            sql: `SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents), 0) AS cents
+                    FROM invoice_adjustments WHERE project_id = ? AND invoice_id = ?`,
+            args: [projectId, id],
+        });
+        const adjustments = Number(adj.rows[0]?.['n'] ?? 0);
+        const adjustmentCents = Number(adj.rows[0]?.['cents'] ?? 0);
+        const lines = await client.execute({
+            sql: 'SELECT COUNT(*) AS n FROM invoice_lines WHERE project_id = ? AND invoice_id = ?',
+            args: [projectId, id],
+        });
+        const lineCount = Number(lines.rows[0]?.['n'] ?? 0);
+
+        const why = (body.reason ?? '').trim();
+        if (adjustments > 0 && why.length < DELETE_REASON_MIN) {
+            res.status(409).json({
+                error: `${number} carries ${adjustments} ${adjustments === 1 ? 'adjustment' : 'adjustments'} `
+                    + 'that were entered by hand and are recorded nowhere else. '
+                    + 'Deleting it destroys them and it cannot be undone. Say why.',
+                code: 'invoice.hasAdjustments',
+                adjustments,
+                reasonMin: DELETE_REASON_MIN,
+            });
+            return;
+        }
+
+        /* Children first, in one write. Both tables carry a foreign key to
+           this row, and a half-finished delete leaves adjustments pointing
+           at an invoice that is not there -- which reads, to every query
+           that joins them, as money belonging to nothing. */
+        await client.batch([
+            { sql: 'DELETE FROM invoice_adjustments WHERE project_id = ? AND invoice_id = ?', args: [projectId, id] },
+            { sql: 'DELETE FROM invoice_lines WHERE project_id = ? AND invoice_id = ?', args: [projectId, id] },
+            { sql: 'DELETE FROM invoices WHERE project_id = ? AND id = ?', args: [projectId, id] },
+        ], 'write');
+
+        /* AFTER THE DELETE AND BEFORE THE REPLY. audit_events is not touched
+           by the batch above, so this outlives everything it describes --
+           and it is what answers "what was IZY-UH-2026-11-0003". */
+        await req.audit('invoice.delete', 'invoice', number, {
+            status,
+            periodFrom: String(invoice['period_from']),
+            periodTo: String(invoice['period_to']),
+            siteId: Number(invoice['site_id'] ?? 0),
+            adjustments,
+            adjustmentCents,
+            lineCount,
+            reason: why.slice(0, 200),
+            /* Said plainly, because a reader a year from now needs to know
+               this was never a bill that was withdrawn. */
+            wasIssued: false,
+            permanent: true,
+        });
+
+        res.json({ ok: true, id, number, deleted: { adjustments, lines: lineCount } });
     }));
 
     /* ------------------------------------------------------------ documents */

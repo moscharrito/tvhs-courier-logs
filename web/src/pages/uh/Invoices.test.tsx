@@ -248,3 +248,130 @@ describe('exporting a range without billing', () => {
         expect(screen.getByText(/No invoice, no number reserved/)).toBeInTheDocument();
     });
 });
+
+describe('deleting one that never went out', () => {
+    /* Void stays the answer for anything University Health has seen. The
+       delete button is for the invoice opened on the wrong dates and
+       noticed a minute later, which voiding leaves in the list for ever as
+       a row whose only content is that somebody mistyped. */
+
+
+    /** The list before the delete and after it. mockFetch calls a handler
+     *  per request, so the same URL can answer differently once the row is
+     *  gone -- which is what the screen actually sees. */
+    const emptyingList = () => {
+        let deleted = false;
+        return {
+            [`DELETE ${BASE}/3`]: () => { deleted = true; return { ok: true, id: 3, number: 'IZY-UH-2026-08-0001' }; },
+            [`GET ${BASE}`]: () => ({ invoices: deleted ? [] : [summary()] }),
+        };
+    };
+
+    const openIt = async () => {
+        fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
+        await screen.findByRole('button', { name: 'Issue' });
+    };
+
+    it('offers it on a draft nobody has seen', async () => {
+        renderInvoices();
+        await openIt();
+
+        expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    });
+
+    it('does not offer it once the invoice has been issued', async () => {
+        /* The line the whole thing is drawn around: a figure that has been
+           sent stays answerable, so Void is the only way out. */
+        renderInvoices(routes({
+            [`GET ${BASE}/3`]: invoice({ status: 'issued', issuedAt: '2026-09-01T12:00:00.000Z' }),
+            [`GET ${BASE}`]: { invoices: [summary({ status: 'issued', issuedAt: '2026-09-01T12:00:00.000Z' })] },
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
+        await screen.findByRole('button', { name: 'Mark paid' });
+
+        expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Void' })).toBeInTheDocument();
+    });
+
+    it('does not offer it on one that was issued and then voided', async () => {
+        /* issued_at, not the status word: the number went out. */
+        renderInvoices(routes({
+            [`GET ${BASE}/3`]: invoice({
+                status: 'void', issuedAt: '2026-09-01T12:00:00.000Z', voidReason: 'Billed to the wrong pharmacy',
+            }),
+            [`GET ${BASE}`]: { invoices: [summary({ status: 'void', issuedAt: '2026-09-01T12:00:00.000Z' })] },
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
+        await screen.findByText(/Billed to the wrong pharmacy/);
+
+        expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    });
+
+    it('asks before it goes, and names what is going', async () => {
+        const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const { calls } = renderInvoices(routes(emptyingList()));
+        await openIt();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(confirmed).toHaveBeenCalledWith(expect.stringContaining('IZY-UH-2026-08-0001'));
+        expect(confirmed).toHaveBeenCalledWith(expect.stringContaining('cannot be undone'));
+        await waitFor(() => expect(calls).toContain(`DELETE ${BASE}/3`));
+    });
+
+    it('does nothing at all when the question is declined', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        const { calls } = renderInvoices(routes({ [`DELETE ${BASE}/3`]: { ok: true } }));
+        await openIt();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(calls).not.toContain(`DELETE ${BASE}/3`);
+    });
+
+    it('closes the panel and says where the number went', async () => {
+        /* The panel cannot reopen onto a row that is gone, and a number
+           missing from the sequence is a question somebody will ask. */
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        renderInvoices(routes(emptyingList()));
+        await openIt();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() => expect(screen.getByText(/recorded in the audit trail/)).toBeInTheDocument());
+        expect(screen.queryByRole('button', { name: 'Issue' })).toBeNull();
+    });
+
+    it('makes a draft carrying adjustments say why, and sends what was typed', async () => {
+        const asked = vi.spyOn(window, 'prompt').mockReturnValue('Opened against the wrong pharmacy');
+        const { calls, bodies } = renderInvoices(routes({
+            [`GET ${BASE}/3`]: invoice({
+                adjustments: [{ id: 8, description: 'Goodwill', amount: -25, amountCents: -2500, reason: 'Agreed on the telephone', createdBy: 'admin' }],
+                adjustmentsTotal: -25, total: 2.5, totalCents: 250,
+            }),
+            ...emptyingList(),
+        }));
+        await openIt();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(asked).toHaveBeenCalledWith(expect.stringContaining('entered by hand'));
+        await waitFor(() => expect(calls).toContain(`DELETE ${BASE}/3`));
+        expect(bodies[`DELETE ${BASE}/3`]).toMatchObject({ reason: 'Opened against the wrong pharmacy' });
+    });
+
+    it('will not take a reason too short to mean anything', async () => {
+        vi.spyOn(window, 'prompt').mockReturnValue('oops');
+        const { calls } = renderInvoices(routes({
+            [`GET ${BASE}/3`]: invoice({
+                adjustments: [{ id: 8, description: 'Goodwill', amount: -25, amountCents: -2500, reason: 'Agreed', createdBy: 'admin' }],
+            }),
+            [`DELETE ${BASE}/3`]: { ok: true },
+        }));
+        await openIt();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(calls).not.toContain(`DELETE ${BASE}/3`);
+    });
+});

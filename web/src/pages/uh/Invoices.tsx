@@ -104,6 +104,28 @@ export function Invoices() {
         }
     }
 
+    /**
+     * Delete one that was never issued.
+     *
+     * Its own function rather than act(), because act() reopens the invoice
+     * it just worked on and there is no longer one to reopen: the panel has
+     * to close, and the list behind it is the confirmation.
+     */
+    async function remove(id: number, number: string, reason: string) {
+        setBusy(true);
+        setMsg(null);
+        try {
+            await api(`${base}/${id}`, { method: 'DELETE', json: { reason } });
+            setOpen(null);
+            setMsg({ kind: 'ok', text: `${number} deleted. The number is recorded in the audit trail.` });
+            await load();
+        } catch (err) {
+            setMsg({ kind: 'error', text: err instanceof ApiError ? err.message : 'That did not work.' });
+        } finally {
+            setBusy(false);
+        }
+    }
+
     const pagedPeriods = usePaged(list ?? []);
     const pagedLines = usePaged(open?.lines ?? []);
     /* The unpriced ones and the adjustments. Both are safe to page because
@@ -322,6 +344,43 @@ export function Invoices() {
                                     void act(() => api(`${base}/${open.id}/void`, { method: 'POST', json: { reason } }), 'Invoice voided.');
                                 }}>
                                 Void
+                            </button>
+                        )}
+                        {open.issuedAt === null && (
+                            /* NEVER ISSUED, so nobody outside this office has
+                               seen it and no figure was sent. Void is the
+                               button beside this one and stays the answer for
+                               everything else -- see the DELETE route in
+                               server/src/modules/uh/invoices.ts, which refuses
+                               anything carrying an issued_at whatever its
+                               status now says. */
+                            <button className="izy-btn danger" type="button" disabled={busy}
+                                onClick={() => {
+                                    /* ASKED FOR HERE AS WELL AS ON THE SERVER.
+                                       The server refuses a draft with
+                                       adjustments and no reason; asking first
+                                       means the refusal is not the first a
+                                       person hears of it, and the box is open
+                                       while they can still see what is on the
+                                       invoice. */
+                                    if (open.adjustments.length > 0) {
+                                        const n = open.adjustments.length;
+                                        const reason = prompt(
+                                            `${open.number} carries ${n} ${n === 1 ? 'adjustment' : 'adjustments'} entered by hand `
+                                            + 'and recorded nowhere else. Deleting it destroys them and cannot be undone.\n\n'
+                                            + 'Say why (at least 10 characters):',
+                                        );
+                                        if (reason === null || reason.trim().length < 10) return;
+                                        void remove(open.id, open.number, reason);
+                                        return;
+                                    }
+                                    if (!confirm(
+                                        `Delete ${open.number}?\n\nIt has never been issued, so nobody outside has seen it. `
+                                        + 'This cannot be undone.',
+                                    )) return;
+                                    void remove(open.id, open.number, '');
+                                }}>
+                                Delete
                             </button>
                         )}
                         <button className="izy-btn secondary" type="button" onClick={() => setOpen(null)}>Close</button>

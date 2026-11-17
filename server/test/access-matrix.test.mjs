@@ -660,6 +660,8 @@ const MATRIX = [
     ['POST', `${UH}/invoices/999999/issue`, UH_MANAGE, ''],
     ['POST', `${UH}/invoices/999999/paid`, UH_MANAGE, ''],
     ['POST', `${UH}/invoices/999999/void`, UH_MANAGE, ''],
+    ['DELETE', `${UH}/invoices/999999`, UH_MANAGE,
+        'only one that was never issued; anything the hospital has seen is voided, not removed'],
 
     /* --- doorstep photographs, which are PHI in a bucket. */
     ['POST', `${UH}/files`, UH_OPERATES, ''],
