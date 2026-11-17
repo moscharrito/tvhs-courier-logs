@@ -277,22 +277,29 @@ export function ListDrops({ projectCode, timezone, canHandle, canUpload }: {
                                         ) : <span className="izy-pill warn">Waiting</span>}
                                     </td>
                                     <td>
-                                        {/* A plain link, not a fetch and a blob: the browser
-                                            knows how to save a file, and a blob URL keeps a
-                                            copy of a pharmacy's patients alive in the tab. */}
-                                        <a className="izy-btn secondary small" href={`${base}/${d.id}/file`}>
-                                            Download
-                                        </a>
-                                        {canHandle && (
-                                            <button
-                                                className="izy-btn secondary small"
-                                                type="button"
-                                                disabled={busy}
-                                                onClick={() => void mark(d, !d.handled)}
-                                            >
-                                                {d.handled ? 'Reopen' : 'Done'}
-                                            </button>
-                                        )}
+                                        {/* The flex line is a div INSIDE the cell, not the
+                                            cell itself: display:flex on a td takes it out of
+                                            the table layout, and the column widths and the
+                                            row's bottom border go with it. */}
+                                        <div className="izy-row-actions">
+                                            {/* A plain link, not a fetch and a blob: the
+                                                browser knows how to save a file, and a blob
+                                                URL keeps a copy of a pharmacy's patients
+                                                alive in the tab. */}
+                                            <a className="izy-btn secondary small" href={`${base}/${d.id}/file`}>
+                                                Download
+                                            </a>
+                                            {canHandle && (
+                                                <button
+                                                    className="izy-btn secondary small"
+                                                    type="button"
+                                                    disabled={busy}
+                                                    onClick={() => void mark(d, !d.handled)}
+                                                >
+                                                    {d.handled ? 'Reopen' : 'Done'}
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
