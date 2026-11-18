@@ -114,7 +114,7 @@ export interface Draft {
     lines: DraftLine[];
     exceptions: Exception[];
     subtotalCents: number;
-    byZone: Array<{ zone: string; count: number; cents: number }>;
+    byZone: ZoneRow[];
     byServiceType: Array<{ serviceType: string; count: number; cents: number }>;
     dryRuns: { count: number; items: number; cents: number };
 }
@@ -270,8 +270,7 @@ export async function buildDraft(
         lines,
         exceptions,
         subtotalCents,
-        byZone: tally((l) => (l.zone === null ? 'out of area' : `zone ${l.zone}`))
-            .map(([zone, v]) => ({ zone, ...v })),
+        byZone: zoneBreakdown(lines),
         byServiceType: tally((l) => l.serviceType)
             .map(([serviceType, v]) => ({ serviceType, ...v })),
         dryRuns: {
@@ -280,6 +279,60 @@ export async function buildDraft(
             cents: dryRunLines.reduce((n, l) => n + l.dryRunCents, 0),
         },
     };
+}
+
+/**
+ * One zone's row, with the delivered and the undelivered kept apart.
+ *
+ * They are priced by different rules and one of them is charged PER ITEM,
+ * so a single count against a single amount cannot be checked by anybody
+ * -- which is what three rounds of "this multiplication is wrong" on 17
+ * and 18 November 2026 were about. Split, each half multiplies out:
+ * deliveries times the zone rate, and items times the dry run rate.
+ *
+ * `delivered.cents` is the DELIVERY CHARGE only -- the zone rate, or the
+ * mileage when out of area. Surcharges are deliberately not in it: a STAT
+ * or an after-hours fee is not part of "2,214 at $12.50" and putting it
+ * there is how the column stopped multiplying out in the first place. They
+ * are their own lines under the table, which is also where a reader looks
+ * for them.
+ */
+export interface ZoneRow {
+    zone: string;
+    /** Every delivery in the zone, delivered or not. */
+    count: number;
+    /** Everything billed for them, surcharges included. */
+    cents: number;
+    delivered: { count: number; cents: number };
+    undelivered: { count: number; items: number; cents: number };
+}
+
+/** The zone rows, off the lines. Shared so a draft and an issued invoice
+ *  cannot group the same deliveries two different ways. */
+function zoneBreakdown(lines: DraftLine[]): ZoneRow[] {
+    const groups = new Map<string, ZoneRow>();
+    for (const l of lines) {
+        const zone = l.zone === null ? 'out of area' : `zone ${l.zone}`;
+        const row = groups.get(zone) ?? {
+            zone,
+            count: 0,
+            cents: 0,
+            delivered: { count: 0, cents: 0 },
+            undelivered: { count: 0, items: 0, cents: 0 },
+        };
+        row.count += 1;
+        row.cents += l.amountCents;
+        if (l.dryRun) {
+            row.undelivered.count += 1;
+            row.undelivered.items += l.items;
+            row.undelivered.cents += l.dryRunCents;
+        } else {
+            row.delivered.count += 1;
+            row.delivered.cents += l.baseCents + l.outOfAreaCents;
+        }
+        groups.set(zone, row);
+    }
+    return [...groups.values()].sort((a, b) => a.zone.localeCompare(b.zone));
 }
 
 /** IZY-UH-2026-09-0001: readable, sortable, and unique within the project. */
@@ -399,7 +452,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
                 return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
             };
             groups = {
-                byZone: tally((l) => (l.zone === null ? 'out of area' : `zone ${l.zone}`)).map(([zone, v]) => ({ zone, ...v })),
+                byZone: zoneBreakdown(lines),
                 byServiceType: tally((l) => l.serviceType).map(([serviceType, v]) => ({ serviceType, ...v })),
                 dryRuns: {
                     count: dryRunLines.length,
@@ -1179,7 +1232,7 @@ export interface RenderableInvoice {
     periodTo: string;
     lines: DraftLine[];
     adjustments: Array<{ description: string; amount: number; reason: string }>;
-    byZone: Array<{ zone: string; count: number; cents: number }>;
+    byZone: ZoneRow[];
     byServiceType: Array<{ serviceType: string; count: number; cents: number }>;
     dryRuns: { count: number; items: number; cents: number };
     subtotalCents: number;
@@ -1479,108 +1532,116 @@ export function renderInvoice(
 
     const rates = view.rates;
 
-    /* ───────────── THE TABLE SHOWS ITS OWN ARITHMETIC ─────────────────
+    /* ─────────────── ONE TABLE, AND IT ADDS UP TO THE TOTAL ───────────────
      *
-     * It used to print a rate beside a count beside an amount that was not
-     * their product, with the reason in a footnote underneath. University
-     * Health's accounts payable would have read 2,280 deliveries at $12.50
-     * as $28,500 and queried the $29,996.50 beside it -- as Izy Global
-     * Management did, twice, on 17 and 18 November, which is how this was
-     * found.
+     * Three rounds of "this multiplication is wrong" got us here, on 17 and
+     * 18 November 2026, and each round the answer was that the figure was
+     * right and the page could not show why.
      *
-     * The multiplication they expect to see is now its own column, and the
-     * difference is its own column beside it. The two add up to the amount
-     * on the same line, so the page can be checked straight across with a
-     * calculator and nothing has to be taken on trust.
+     * The deliveries and the undelivered are PRICED BY DIFFERENT RULES and
+     * one of them is charged per ITEM, so one count against one amount can
+     * never multiply out. They are two pairs of columns now, and each pair
+     * does: deliveries times the zone rate, items times the dry run rate.
+     * Surcharges are their own lines underneath, because a STAT fee is not
+     * part of "2,214 at $12.50" and burying it there is what broke the
+     * arithmetic to begin with.
      *
-     * WHAT THE DIFFERENCE IS MADE OF, which is the part nobody could see:
-     * an undelivered item bills $9 per item INSTEAD OF the zone rate
-     * (Addendum 1), so it lifts zone 1 and lowers zones 3 to 5 -- the
-     * column goes negative, and it should, because a dry run in zone 5
-     * costs University Health $43 less than the delivery would have.
-     * Surcharges add to it. */
-    /* ITS OWN COLUMNS, not page 1's. Five numeric columns have to fit
-     * between the zone label and the right margin, and the two tables do
-     * not have the same number of them. Each x is the RIGHT edge, so the
-     * gaps below are what stops a heading running into its neighbour:
-     * "Undelivered / surcharge" is about 97pt at 8.5pt bold, which is why
-     * it gets 108. */
-    const COL_RATE = MARGIN + 142;   // 190
-    const COL_ZCOUNT = MARGIN + 214; // 262
-    const COL_FLAT = MARGIN + 304;   // 352
-    const COL_DIFF = MARGIN + 412;   // 460
+     * Read top to bottom it is the whole of what is owed: every zone, the
+     * subtotal of the work, the surcharges, the total. Nothing is carried
+     * in from another table and nothing is explained in a footnote. */
+    const COL_RATE = MARGIN + 130;   // 178
+    const COL_DCOUNT = MARGIN + 205; // 253
+    const COL_DAMT = MARGIN + 300;   // 348
+    const COL_UITEMS = MARGIN + 365; // 413
+    const COL_UAMT = MARGIN + 452;   // 500
 
-    page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
+    /* A two-line head: the pairs have to be labelled as pairs or "Amount"
+       twice over is a riddle. */
+    page.rect(MARGIN, y - 4, RIGHT - MARGIN, 30, { fill: 0.93, grey: 0.93 });
+    page.textRight('Delivered', COL_DAMT, y + 11, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Undelivered', COL_UAMT, y + 11, { font: 'Helvetica-Bold', size: 8.5 });
     page.text('Zone', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
     if (rates) page.textRight('Rate*', COL_RATE, y, { font: 'Helvetica-Bold', size: 8.5 });
-    page.textRight('Deliveries', COL_ZCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
-    if (rates) {
-        page.textRight('Rate x deliveries', COL_FLAT, y, { font: 'Helvetica-Bold', size: 8.5 });
-        page.textRight('Undelivered / surcharge', COL_DIFF, y, { font: 'Helvetica-Bold', size: 8.5 });
-    }
-    page.textRight('Amount', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Deliveries', COL_DCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Amount', COL_DAMT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Items', COL_UITEMS, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Amount', COL_UAMT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Total', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
     y -= 18;
 
-    let zoneCount = 0;
-    let flatTotal = 0;
-    let diffTotal = 0;
-    let anyNegative = false;
+    let dCount = 0;
+    let dCents = 0;
+    let uCount = 0;
+    let uItems = 0;
+    let uCents = 0;
     for (const z of view.byZone) {
-        zoneCount += z.count;
-        page.text(`${titled(z.zone)} delivery`, MARGIN + 5, y, { size: 8.5 });
-        /* The rate for the zone this row is about, read off its label. A
-           row we cannot match to a rate prints no rate rather than the
-           wrong one: "out of area" has no zone rate by definition, and
-           neither does the multiplication beside it. */
+        dCount += z.delivered.count;
+        dCents += z.delivered.cents;
+        uCount += z.undelivered.count;
+        uItems += z.undelivered.items;
+        uCents += z.undelivered.cents;
+
+        page.text(`${titled(z.zone)}`, MARGIN + 5, y, { size: 8.5 });
+        /* The rate for the zone this row is about, read off its label. Out
+           of area has no zone rate by definition and prints none rather
+           than the wrong one; it is billed per mile. */
         const n = /(\d)/.exec(z.zone)?.[1];
         const rate = rates && n ? rates.zone[Number(n) as 1 | 2 | 3 | 4 | 5] : undefined;
-        if (rate !== undefined) {
-            const flat = Math.round(rate * 100) * z.count;
-            const diff = z.cents - flat;
-            flatTotal += flat;
-            diffTotal += diff;
-            if (diff < 0) anyNegative = true;
-            page.textRight(`$${rate.toFixed(2)}`, COL_RATE, y, { size: 8.5 });
-            page.textRight(money(flat), COL_FLAT, y, { size: 8.5 });
-            /* Signed, because an unsigned figure in a column that can go
-               either way is the ambiguity this table exists to remove. */
-            page.textRight(`${diff < 0 ? '-' : '+'}${money(Math.abs(diff))}`, COL_DIFF, y, { size: 8.5 });
-        } else if (rates) {
-            /* Out of area: no zone rate, so no multiplication and nothing
-               to difference against. The amount still stands on its own. */
-            flatTotal += z.cents;
-            page.textRight(money(z.cents), COL_FLAT, y, { size: 8.5 });
-            page.textRight('-', COL_DIFF, y, { size: 8.5, grey: 0.45 });
+        if (rate !== undefined) page.textRight(`$${rate.toFixed(2)}`, COL_RATE, y, { size: 8.5 });
+        page.textRight(z.delivered.count.toLocaleString('en-US'), COL_DCOUNT, y, { size: 8.5 });
+        page.textRight(money(z.delivered.cents), COL_DAMT, y, { size: 8.5 });
+        if (z.undelivered.count > 0) {
+            page.textRight(z.undelivered.items.toLocaleString('en-US'), COL_UITEMS, y, { size: 8.5 });
+            page.textRight(money(z.undelivered.cents), COL_UAMT, y, { size: 8.5 });
+        } else {
+            page.textRight('-', COL_UITEMS, y, { size: 8.5, grey: 0.45 });
+            page.textRight('-', COL_UAMT, y, { size: 8.5, grey: 0.45 });
         }
-        page.textRight(z.count.toLocaleString('en-US'), COL_ZCOUNT, y, { size: 8.5 });
-        page.textRight(money(z.cents), COL_AMOUNT, y, { size: 8.5 });
+        page.textRight(money(z.delivered.cents + z.undelivered.cents), COL_AMOUNT, y, { size: 8.5 });
         y -= 15;
     }
+
     rule();
-    page.text('Total', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
-    page.textRight(zoneCount.toLocaleString('en-US'), COL_ZCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    const workCents = dCents + uCents;
+    page.text('Deliveries and undelivered', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight(dCount.toLocaleString('en-US'), COL_DCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight(money(dCents), COL_DAMT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight(uItems.toLocaleString('en-US'), COL_UITEMS, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight(money(uCents), COL_UAMT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight(money(workCents), COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    y -= 17;
+
+    /* The surcharges, by count and rate, on the same table rather than in
+       one of their own. They are the rest of the total and a reader should
+       not have to find them somewhere else to make the sum work. */
     if (rates) {
-        page.textRight(money(flatTotal), COL_FLAT, y, { font: 'Helvetica-Bold', size: 8.5 });
-        page.textRight(
-            `${diffTotal < 0 ? '-' : '+'}${money(Math.abs(diffTotal))}`,
-            COL_DIFF, y, { font: 'Helvetica-Bold', size: 8.5 },
-        );
+        const sur = view.surcharges;
+        const extra = (label: string, count: number, rate: number, cents: number): void => {
+            page.text(label, MARGIN + 5, y, { size: 8.5 });
+            page.textRight(count.toLocaleString('en-US'), COL_DCOUNT, y, { size: 8.5 });
+            page.textRight(`$${rate.toFixed(2)} each`, COL_DAMT, y, { size: 8.5 });
+            page.textRight(money(cents), COL_AMOUNT, y, { size: 8.5 });
+            y -= 15;
+        };
+        extra('STAT surcharge', sur.statCount, rates.stat, sur.statCents);
+        extra('After-hours surcharge', sur.afterHoursCount, rates.afterHours, sur.afterHoursCents);
     }
-    page.textRight(money(view.subtotalCents), COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
-    y -= 15;
-    y -= 8;
+
+    rule();
+    page.text('Total', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 9.5 });
+    page.textRight(money(view.subtotalCents), COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 9.5 });
+    y -= 17;
+    y -= 6;
 
     if (rates) {
-        note('Each row reads across: the rate times the deliveries, plus the column beside it, is the amount. '
-            + 'That column is what the contract charges instead of, or on top of, the zone rate -- an '
-            + `undelivered delivery bills $${rates.dryRun.toFixed(2)} per ITEM in place of the zone rate `
-            + '(Addendum No. 1), and the surcharges below are added to it.'
-            + (anyNegative
-                ? ' It is negative where undelivered items cost less than the delivery would have, which is'
-                  + ' the usual case in the higher zones.'
-                : ''));
-        note('*Zone 4 and Zone 5 rates may be set by ZIP code or community in the Bid Table, so a delivery in '
-            + 'those zones may be priced at its own rate rather than the one shown.');
+        note('Each row multiplies out: deliveries at the zone rate, and undelivered ITEMS at '
+            + `$${rates.dryRun.toFixed(2)} each. An undelivered delivery is one a courier attempted and `
+            + 'could not complete; Addendum No. 1 charges it per item INSTEAD OF the zone delivery '
+            + 'charge, not on top of it, which is why a zone can show fewer deliveries than it has '
+            + 'stops. The proof of attempt is held with the delivery record and is available on request.');
+        note('*Zone 4 and Zone 5 rates may be set by ZIP code or community in the Bid Table, so a delivery '
+            + 'in those zones may be priced at its own rate rather than the one shown. Out-of-area work is '
+            + 'billed per one-way mile and shows no zone rate.');
 
         room(120);
         page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
@@ -1609,96 +1670,6 @@ export function renderInvoice(
     row('Total', serviceCount.toLocaleString('en-US'), money(view.subtotalCents), true);
     y -= 10;
 
-    /* ─────────── WHAT THE "UNDELIVERED / SURCHARGE" COLUMN IS ───────────
-     *
-     * It was a sentence: "308 deliveries, 654 items, $5,886.00 at the dry
-     * run rate, included in the zone amounts above." True, and not enough
-     * to check anything with -- it describes one part of a column without
-     * saying what the rest of it is, so a reader who wanted to know what
-     * they were being charged for still had to ask.
-     *
-     * Asked for on 18 November: undelivered gets its own table so
-     * University Health know exactly what they are paying for. It does
-     * that and reconciles the column, which is the same thing done
-     * properly: every figure in it adds down to the total printed against
-     * the zone table above.
-     *
-     * THE REPLACED DELIVERY CHARGES ARE A RESIDUAL, deliberately. An
-     * undelivered item bills $9 INSTEAD OF the zone rate, so the column
-     * contains the fees we added and the charges they displaced. Deriving
-     * the displaced figure rather than re-deriving it from each line means
-     * the table cannot disagree with the zone table above it -- including
-     * where a zone 4 or 5 delivery was priced at its own ZIP rate, which
-     * would otherwise leave a few dollars nobody could account for.
-     *
-     * A NOUGHT IS PRINTED, not left off. "After hours  0  $0.00" tells
-     * University Health we did not charge it. */
-    if (rates && (view.dryRuns.count > 0 || view.surcharges.statCount > 0
-        || view.surcharges.afterHoursCount > 0 || diffTotal !== 0)) {
-        room(130);
-        const d = view.dryRuns;
-        const sur = view.surcharges;
-        /* What the dry run fees displaced. See the note above on why this
-           is the residual and not a second sum over the lines. */
-        const replaced = d.cents + sur.statCents + sur.afterHoursCents - diffTotal;
-
-        page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
-        page.text('Undelivered and surcharges', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
-        page.textRight('Deliveries', COL_ZCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
-        page.textRight('Items', COL_FLAT, y, { font: 'Helvetica-Bold', size: 8.5 });
-        page.textRight('Rate', COL_DIFF, y, { font: 'Helvetica-Bold', size: 8.5 });
-        page.textRight('Amount', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
-        y -= 18;
-
-        const charge = (
-            label: string, deliveries: string, items: string, rate: string, amount: string,
-        ): void => {
-            page.text(label, MARGIN + 5, y, { size: 8.5 });
-            if (deliveries) page.textRight(deliveries, COL_ZCOUNT, y, { size: 8.5 });
-            if (items) page.textRight(items, COL_FLAT, y, { size: 8.5 });
-            if (rate) page.textRight(rate, COL_DIFF, y, { size: 8.5 });
-            page.textRight(amount, COL_AMOUNT, y, { size: 8.5 });
-            y -= 15;
-        };
-
-        charge(
-            'Undelivered, charged per item',
-            d.count.toLocaleString('en-US'),
-            d.items.toLocaleString('en-US'),
-            `$${rates.dryRun.toFixed(2)}`,
-            `+${money(d.cents)}`,
-        );
-        charge(
-            'Less the delivery charges these replace', '', '', '', `-${money(replaced)}`,
-        );
-        /* A nought carries no sign: "+$0.00" reads as a rounding artefact
-           where "$0.00" reads as nothing charged, which is what it is. */
-        const signed = (cents: number): string => (cents === 0 ? money(0) : `+${money(cents)}`);
-        charge(
-            'STAT', sur.statCount.toLocaleString('en-US'), '',
-            `$${rates.stat.toFixed(2)}`, signed(sur.statCents),
-        );
-        charge(
-            'After hours', sur.afterHoursCount.toLocaleString('en-US'), '',
-            `$${rates.afterHours.toFixed(2)}`, signed(sur.afterHoursCents),
-        );
-        rule();
-        page.text(
-            'Total, as shown against the zone table above', MARGIN + 5, y,
-            { font: 'Helvetica-Bold', size: 8.5 },
-        );
-        page.textRight(
-            `${diffTotal < 0 ? '-' : '+'}${money(Math.abs(diffTotal))}`,
-            COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 },
-        );
-        y -= 15;
-        y -= 8;
-
-        note('An undelivered delivery is one a courier attempted and could not complete. It is charged at '
-            + `$${rates.dryRun.toFixed(2)} per item under Addendum No. 1 INSTEAD OF the zone delivery `
-            + 'charge, not on top of it, which is why the line above removes those delivery charges. '
-            + 'The proof of attempt is held with the delivery record and is available on request.');
-    }
     note('Each delivery has a proof-of-delivery record with the recipient signature, and the ID photo '
         + 'when ID is required, retained by Izy Global Services LLC and available on request. '
         + 'Patient names and addresses are not shown on invoices or attachments.');

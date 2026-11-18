@@ -25,6 +25,27 @@ const FROM = '2026-06-01';
 const TO = '2026-06-07';
 
 
+/**
+ * One zone row, built from what it is made of rather than from a total.
+ *
+ * `cents` and the amounts are DERIVED here, so a fixture cannot quietly
+ * assert a number the rates do not produce -- which is the whole failure
+ * the document was changed to make visible.
+ */
+const zoneRow = (zone, rate, deliveries, undeliveredItems = 0, surchargeCents = 0) => {
+    const deliveredCents = Math.round(rate * 100) * deliveries;
+    const undeliveredCents = 900 * undeliveredItems;
+    return {
+        zone: `zone ${zone}`,
+        count: deliveries + undeliveredItems === 0 ? deliveries : deliveries + (undeliveredItems > 0 ? 1 : 0),
+        cents: deliveredCents + undeliveredCents + surchargeCents,
+        delivered: { count: deliveries, cents: deliveredCents },
+        undelivered: {
+            count: undeliveredItems > 0 ? 1 : 0, items: undeliveredItems, cents: undeliveredCents,
+        },
+    };
+};
+
 /* What the renderer now needs beyond the money: who the document is
    addressed to, the references University Health quote back, and the rate
    card the attachment states. Held on the project in real life -- this
@@ -587,7 +608,11 @@ describe('the documents', () => {
         }));
         const pdf = renderInvoice({
             number: 'IZY-UH-2026-08-0001', status: 'issued', periodFrom: '2026-08-24', periodTo: '2026-08-30',
-            lines, adjustments: [], byZone: [{ zone: 'zone 1', count: 120, cents: 150000 }],
+            lines, adjustments: [], byZone: [{
+                zone: 'zone 1', count: 120, cents: 150000,
+                delivered: { count: 120, cents: 150000 },
+                undelivered: { count: 0, items: 0, cents: 0 },
+            }],
             byServiceType: [{ serviceType: 'scheduled', count: 120, cents: 150000 }],
             dryRuns: { count: 0, items: 0, cents: 0 },
             surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
@@ -1087,8 +1112,12 @@ describe('the invoice template', () => {
         periodFrom: '2026-11-02', periodTo: '2026-11-14',
         lines: [], adjustments: [],
         byZone: [
-            { zone: 'zone 1', count: 2280, cents: 3701650 },
-            { zone: 'zone 5', count: 4, cents: 21900 },
+            { zone: 'zone 1', count: 2280, cents: 3701650,
+              delivered: { count: 2214, cents: 2767500 },
+              undelivered: { count: 66, items: 140, cents: 126000 } },
+            { zone: 'zone 5', count: 4, cents: 21900,
+              delivered: { count: 2, cents: 10400 },
+              undelivered: { count: 2, items: 4, cents: 3600 } },
         ],
         byServiceType: [
             { serviceType: 'scheduled', count: 3312, cents: 6028350 },
@@ -1153,102 +1182,84 @@ describe('the invoice template', () => {
         /* The rows come back as `zone 1` and `adhoc`, which is right for a
            column name and wrong on a document going to a hospital. */
         const text = textOf(render());
-        expect(text).toContain('Zone 1 delivery');
+        expect(text).toContain('Zone 1');
         expect(text).toContain('Scheduled');
         expect(text).toContain('STAT');
         expect(text).toContain('Ad hoc');
         expect(text).not.toContain('adhoc');
     });
 
-it('shows the multiplication a reader expects, and what the rest of the amount is', async () => {
+    it('multiplies out on every row, which is what was asked for three times', async () => {
         /* ─────────────────────────────────────────────────────────────────
-         * Raised twice by Izy Global Management, on 17 and 18 November:
-         * "2,280 deliveries at $12.50 should be $28,500, not $29,996.50".
-         * It should, and it was not an error -- the amount carried the
-         * contract's undelivered rule and the surcharges, explained in a
-         * footnote nobody reads before they have decided the page is wrong.
+         * 17 and 18 November 2026, three times over: "2,280 deliveries at
+         * $12.50 should be $28,500". It should. The page could not show
+         * why it was not, because deliveries and undelivered work are
+         * priced by different rules -- one of them PER ITEM -- and were
+         * being added into one count against one amount.
          *
-         * A hospital's accounts payable would have read it the same way and
-         * queried the invoice, which is the expensive version of the same
-         * conversation. The arithmetic is on the page now.
+         * Two pairs of columns now, and each pair multiplies out.
          */
-        const text = textOf(render({
-            byZone: [
-                /* 2,280 x $12.50 = $28,500.00, billed $29,996.50. */
-                { zone: 'zone 1', count: 2280, cents: 2999650 },
-                /* 4 x $52.00 = $208.00, billed $183.00: undelivered items in
-                   an expensive zone cost University Health LESS. */
-                { zone: 'zone 5', count: 4, cents: 18300 },
-            ],
-            subtotalCents: 3017950,
-            totalCents: 3017950,
-        }));
-
-        expect(text).toContain('Rate x deliveries');
-        expect(text).toContain('Undelivered / surcharge');
-        // The multiplication itself, which was nowhere on the document.
-        expect(text).toContain('$28,500.00');
-        expect(text).toContain('$208.00');
-    });
-
-    it('signs the difference, because it goes both ways', async () => {
-        const flat = textOf(render({
-            byZone: [
-                { zone: 'zone 1', count: 2280, cents: 2999650 },
-                { zone: 'zone 5', count: 4, cents: 18300 },
-            ],
-            subtotalCents: 3017950,
-            totalCents: 3017950,
-        })).replace(/\s+/g, ' ');
-
-        // $29,996.50 - $28,500.00
-        expect(flat).toContain('+$1,496.50');
-        // $183.00 - $208.00, and a minus sign rather than a bare figure.
-        expect(flat).toContain('-$25.00');
-        /* Said in words too: a negative column looks like a mistake unless
-           the page explains that a dry run can cost less than the delivery. */
-        expect(flat).toMatch(/negative where undelivered items cost less/);
-    });
-
-    it('adds up across every row and down to the total', async () => {
-        /* The point of the columns: a calculator agrees with the page. */
         const rows = [
-            { zone: 'zone 1', count: 2280, cents: 2999650, rate: 1250 },
-            { zone: 'zone 2', count: 720, cents: 1064450, rate: 1450 },
-            { zone: 'zone 3', count: 224, cents: 489800, rate: 2200 },
-            { zone: 'zone 4', count: 93, cents: 336600, rate: 3600 },
-            { zone: 'zone 5', count: 4, cents: 18300, rate: 5200 },
+            zoneRow(1, 12.5, 2214, 140),
+            zoneRow(3, 22, 136, 187),
         ];
-        const subtotal = rows.reduce((n, r) => n + r.cents, 0);
-        const flatTotal = rows.reduce((n, r) => n + r.rate * r.count, 0);
-        const diffTotal = subtotal - flatTotal;
-        expect(subtotal).toBe(4908800);      // the November invoice
-        expect(flatTotal).toBe(4742400);
-        expect(diffTotal).toBe(166400);
-
         const text = textOf(render({
-            byZone: rows.map(({ zone, count, cents }) => ({ zone, count, cents })),
-            subtotalCents: subtotal,
-            totalCents: subtotal,
+            byZone: rows,
+            subtotalCents: rows.reduce((n, r) => n + r.cents, 0),
+            totalCents: rows.reduce((n, r) => n + r.cents, 0),
         })).replace(/\s+/g, ' ');
 
-        for (const r of rows) {
-            expect(text, `row ${r.zone}`).toContain(money(r.rate * r.count));
-        }
-        expect(text).toContain(money(flatTotal));   // $47,424.00
-        expect(text).toContain('+$1,664.00');
-        expect(text).toContain(money(subtotal));    // $49,088.00
+        expect(text).toContain('Delivered');
+        expect(text).toContain('Undelivered');
+        // 2,214 x $12.50 = $27,675.00, and 140 items x $9.00 = $1,260.00.
+        expect(text).toMatch(/Zone 1 \$12\.50 2,214 \$27,675\.00 140 \$1,260\.00 \$28,935\.00/);
+        // 136 x $22.00 = $2,992.00, and 187 items x $9.00 = $1,683.00.
+        expect(text).toMatch(/Zone 3 \$22\.00 136 \$2,992\.00 187 \$1,683\.00 \$4,675\.00/);
     });
 
-    it('prints no multiplication for out of area, which has no zone rate', async () => {
+    it('adds down to the total, with the surcharges on the same table', async () => {
+        /* The whole of what is owed, in one place: nothing carried in from
+           another table and nothing explained in a footnote. */
+        const rows = [zoneRow(1, 12.5, 2214, 140), zoneRow(3, 22, 136, 187)];
+        const work = rows.reduce((n, r) => n + r.cents, 0);
         const text = textOf(render({
-            byZone: [{ zone: 'out of area', count: 3, cents: 11700 }],
-            subtotalCents: 11700,
-            totalCents: 11700,
+            byZone: rows,
+            surcharges: { statCount: 7, statCents: 15400, afterHoursCount: 13, afterHoursCents: 23400 },
+            subtotalCents: work + 15400 + 23400,
+            totalCents: work + 15400 + 23400,
+        })).replace(/\s+/g, ' ');
+
+        expect(text).toMatch(/Deliveries and undelivered 2,350 \$30,667\.00 327 \$2,943\.00 \$33,610\.00/);
+        expect(text).toMatch(/STAT surcharge 7 \$22\.00 each \$154\.00/);
+        /* Thirteen genuine night call-outs on the November invoice, and the
+           count is printed so University Health can see how few. */
+        expect(text).toMatch(/After-hours surcharge 13 \$18\.00 each \$234\.00/);
+        expect(text).toMatch(/Total \$33,998\.00/);
+    });
+
+    it('says an undelivered item is charged instead of the delivery, not on top', async () => {
+        /* Read the other way the total looks overstated by the whole of the
+           undelivered figure, which is how this started. */
+        const text = textOf(render()).replace(/\s+/g, ' ');
+        expect(text).toMatch(/INSTEAD OF the zone delivery charge, not on top of it/);
+        expect(text).toMatch(/proof of attempt is held with the delivery record/);
+    });
+
+    it('leaves the rate and the undelivered amount off a zone that has neither', async () => {
+        /* Out of area is billed per one-way mile, so a zone rate times a
+           count there would be an invention. A zone with nothing
+           undelivered prints a dash rather than a nought, which reads as a
+           figure. */
+        const text = textOf(render({
+            byZone: [{
+                zone: 'out of area', count: 3, cents: 11700,
+                delivered: { count: 3, cents: 11700 },
+                undelivered: { count: 0, items: 0, cents: 0 },
+            }],
+            subtotalCents: 11700, totalCents: 11700,
         }));
-        /* Billed per mile, so a rate times a count would be an invention.
-           The amount still stands on its own. */
         expect(text).toContain('$117.00');
+        expect(text).toMatch(/billed per one-way mile and shows no zone rate/);
     });
 
     it('states every contract rate on the attachment', async () => {
@@ -1285,44 +1296,6 @@ it('shows the multiplication a reader expects, and what the rest of the amount i
         expect(flat).toMatch(/308 deliveries, 654 items, \$5,886\.00/);
     });
 
-    it('gives undelivered its own table, and reconciles the column it sits under', async () => {
-        /* ─────────────────────────────────────────────────────────────────
-         * Asked for on 18 November: University Health should be able to see
-         * exactly what they are being charged for. It was one sentence,
-         * which described the dry run fees and said nothing about what they
-         * displaced or what else was in the same column -- so a reader who
-         * wanted the arithmetic still had to ask us for it.
-         *
-         * Built on the real November figures so the table has to add up
-         * against numbers somebody can check against the invoice.
-         */
-        const text = textOf(render({
-            byZone: [
-                { zone: 'zone 1', count: 2280, cents: 2999650 },
-                { zone: 'zone 2', count: 720, cents: 1064450 },
-                { zone: 'zone 3', count: 224, cents: 489800 },
-                { zone: 'zone 4', count: 93, cents: 336600 },
-                { zone: 'zone 5', count: 4, cents: 18300 },
-            ],
-            subtotalCents: 4908800,
-            totalCents: 4908800,
-        })).replace(/\s+/g, ' ');
-
-        expect(text).toContain('Undelivered and surcharges');
-        expect(text).toContain('Undelivered, charged per item');
-
-        /* 654 items at $9.00, which is the figure the question was about. */
-        expect(text).toMatch(/308 654 \$9\.00 \+\$5,886\.00/);
-        /* What those fees displaced: $9 an item INSTEAD OF the zone rate. */
-        expect(text).toMatch(/Less the delivery charges these replace -\$4,376\.00/);
-        expect(text).toMatch(/STAT 7 \$22\.00 \+\$154\.00/);
-        /* Nought, printed, because after 17 November that is worth saying. */
-        expect(text).toMatch(/After hours 0 \$18\.00 \$0\.00/);
-
-        /* And it adds down to the figure printed against the zone table:
-           5,886 - 4,376 + 154 + 0 = 1,664. */
-        expect(text).toMatch(/Total, as shown against the zone table above \+\$1,664\.00/);
-    });
 
     it('explains that an undelivered item is charged instead of the delivery, not on top', async () => {
         /* Read the other way the total looks overstated by the whole of the
