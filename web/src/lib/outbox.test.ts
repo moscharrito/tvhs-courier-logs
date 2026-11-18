@@ -194,6 +194,12 @@ describe('draining', () => {
     });
 });
 
+/** The JSON the first request carried. `calls` is a list and its bodies are
+ *  `unknown`, which is right -- they are whatever was sent -- and says so
+ *  once here rather than at every assertion. */
+const sentBody = (calls: Array<{ url: string; body: unknown }>): Record<string, unknown> =>
+    (calls[0]?.body ?? {}) as Record<string, unknown>;
+
 describe('how long the phone held it', () => {
     /* ─────────────────────────────────────────────────────────────────────
      * A courier standing in a loading dock records a delivery at six. The
@@ -219,10 +225,10 @@ describe('how long the phone held it', () => {
             const { calls } = fetchReturning({ status: 201 });
             await flush();
 
-            const sent = calls[0].body;
-            expect(sent.recordedAgoMs).toBe(150 * 60 * 1000);
+            const sent = sentBody(calls);
+            expect(sent['recordedAgoMs']).toBe(150 * 60 * 1000);
             // Nothing absolute: a phone's clock may be hours out, the gap is not.
-            expect(sent.at).toBeUndefined();
+            expect(sent['at']).toBeUndefined();
         } finally {
             clock.mockRestore();
         }
@@ -234,7 +240,7 @@ describe('how long the phone held it', () => {
         setOnline(true);
         const { calls } = fetchReturning({ status: 201 });
         await flush();
-        expect(calls[0].body.recordedAgoMs).toBeLessThan(60 * 1000);
+        expect(sentBody(calls)['recordedAgoMs']).toBeLessThan(60 * 1000);
     });
 
     it('leaves a deliberate backdate alone', async () => {
@@ -246,8 +252,8 @@ describe('how long the phone held it', () => {
         setOnline(true);
         const { calls } = fetchReturning({ status: 201 });
         await flush();
-        expect(calls[0].body.at).toBe(at);
-        expect(calls[0].body.recordedAgoMs).toBeUndefined();
+        expect(sentBody(calls)['at']).toBe(at);
+        expect(sentBody(calls)['recordedAgoMs']).toBeUndefined();
     });
 });
 
