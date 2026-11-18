@@ -200,6 +200,25 @@ const LEADS = [
         sites: ALL_COUNTERS,
         note: 'the third dispatch chair; the same list, board and returns as dispatch',
     },
+    /* A FOURTH CHAIR, 18 November 2026.
+     *
+     * Same desk, same scope, same role: the reason for a separate account is
+     * the reason the other three have separate accounts, which is that
+     * order_messages and custody_events are append-only. The username on an
+     * assignment is the only record of who made it, and it cannot be
+     * corrected afterwards -- so a fourth person sharing a third person's
+     * login does not cost a login, it costs the audit trail, permanently,
+     * for every row they ever write.
+     *
+     * Named by chair rather than by person, like the others. Whoever sits
+     * here is replaced at the desk without renaming an account, and the
+     * audit rows already written keep meaning what they said. */
+    {
+        username: 'dispatch4',
+        name: 'Dispatch 4',
+        sites: ALL_COUNTERS,
+        note: 'the fourth dispatch chair; the same list, board and returns as dispatch',
+    },
 ];
 
 /* EVERY ACCOUNT MODEL THIS SCRIPT HAS HAD BEFORE THIS ONE.
