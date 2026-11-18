@@ -170,7 +170,21 @@ describe('Orders', () => {
         /* The first question anybody asks of an empty result is which rows
            it was looking at. A pending order has no photograph because it
            has not happened yet, and that belongs on the control rather than
-           in a note underneath it. */
+           in a note underneath it.
+
+           WHAT THIS TEST CANNOT DO, written down so nobody trusts it to.
+           The same label lost the space between its two halves in the real
+           browser: Chrome read out "Proof of deliverydelivered, no photo",
+           because the JSX transform drops a space at the start of a
+           wrapped line. jsdom renders that space whether or not it is
+           written, so EVERY form of this assertion passes against the
+           broken markup -- textContent, innerText and the accessible name
+           alike, all three checked on 18 November 2026. A guard that
+           cannot fail is worse than none, because it gets read as one.
+
+           So this asserts what jsdom can genuinely see, which is that the
+           word is on the control. The spacing is held by a comment in
+           Orders.tsx and by somebody having looked at the page. */
         renderOrders(baseRoutes);
         await screen.findByRole('heading', { name: 'Orders' });
         expect(screen.getByRole('checkbox', { name: /no photo/ }))

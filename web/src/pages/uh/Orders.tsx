@@ -308,14 +308,29 @@ export function Orders() {
                         underneath, because the first question anybody asks
                         of an empty result is which rows it was looking at.
                         A pending order has no photograph because it has not
-                        happened yet. */}
+                        happened yet.
+
+                        {' '} IS LOAD-BEARING. This label is a flex column,
+                        so the two halves are separate boxes and a screen
+                        reader reads their concatenation. The sibling above
+                        gets its space for free by being one line long; this
+                        one is wrapped over several, and the JSX transform
+                        drops the space at the start of the line -- Chrome
+                        read out "Proof of deliverydelivered, no photo"
+                        while the screen looked perfectly correct.
+
+                        DO NOT RELY ON THE TEST TO CATCH IT IF YOU REMOVE
+                        THIS. jsdom renders the space whether or not it is
+                        written, so the suite is green either way; this was
+                        found by looking at the real page, on 18 November
+                        2026, and only the real page can find it again. */}
                     <label className="izy-field" style={{ minWidth: 185 }}>Proof of delivery
                         <span>
                             <input
                                 type="checkbox"
                                 checked={get('noPhoto') === 'true'}
                                 onChange={(e) => set('noPhoto', e.target.checked ? 'true' : '')}
-                            /> delivered, no photo
+                            />{' '}delivered, no photo
                         </span>
                     </label>
                     <button
