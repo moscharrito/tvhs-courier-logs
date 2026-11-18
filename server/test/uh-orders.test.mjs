@@ -858,3 +858,117 @@ describe('a manual order taken by dispatch', () => {
         expect(String(rows.rows[0].actor)).toBe('stat.dispatch');
     });
 });
+
+/* ───────────────── DELIVERED, WITH NOTHING TO SHOW FOR IT ───────────────
+ *
+ * A courier whose upload will not go at the door may carry on rather than
+ * stand there holding somebody's medication. That is the right trade at
+ * the door; what it leaves behind is a delivered order with no picture,
+ * and until this filter the only thing that ever found one was University
+ * Health asking for that particular proof of delivery.
+ */
+describe('the deliveries with no proof photograph', () => {
+    const PROJECT = 'SELECT project_id FROM orders WHERE id = ?';
+    let keySeq = 0;
+
+    /** A stored file against one order, in whatever kind and state. */
+    async function photograph(orderId, { kind = 'courier_form', status = 'stored' } = {}) {
+        keySeq += 1;
+        const pid = Number((await sql(PROJECT, [orderId])).rows[0].project_id);
+        const at = new Date().toISOString();
+        await sql(
+            `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+             VALUES (?, ?, ?, ?, 'image/jpeg', 2048, ?, 'route.courier', ?, ?)`,
+            [pid, orderId, kind, `uh/test/nophoto/${keySeq}.jpg`, status, at, status === 'stored' ? at : null],
+        );
+    }
+
+    const idsWithNoPhoto = async () => {
+        const res = await admin.get(`${BASE}?noPhoto=true`);
+        expect(res.status).toBe(200);
+        return res.body.orders.map((o) => o.id);
+    };
+
+    it('lists a delivered order with no picture, and leaves out one that has it', async () => {
+        const bare = await makeOrder();
+        const photographed = await makeOrder();
+        await driveTo(bare.id, 'delivered');
+        await driveTo(photographed.id, 'delivered');
+        await photograph(photographed.id);
+
+        const ids = await idsWithNoPhoto();
+        expect(ids).toContain(bare.id);
+        expect(ids).not.toContain(photographed.id);
+    });
+
+    it('counts a doorstep picture, because that is what a doorstep drop proves', async () => {
+        /* PROOF_KINDS is courier_form AND doorstep, and the filter reads the
+           same constant the proof of delivery prints from. A filter with its
+           own idea of what counts sends somebody hunting for a photograph
+           the document shows perfectly well. */
+        const order = await makeOrder();
+        await driveTo(order.id, 'delivered');
+        await photograph(order.id, { kind: 'doorstep' });
+        expect(await idsWithNoPhoto()).not.toContain(order.id);
+    });
+
+    it('does not count an upload that never finished', async () => {
+        /* `status = 'pending'` is an upload that started and stopped. The
+           document will not print it, so the filter must not count it
+           either -- otherwise the one row that needs chasing is the one row
+           that disappears. */
+        const order = await makeOrder();
+        await driveTo(order.id, 'delivered');
+        await photograph(order.id, { status: 'pending' });
+        expect(await idsWithNoPhoto()).toContain(order.id);
+    });
+
+    it('does not count the collection form, which belongs to the whole trolley', async () => {
+        /* One sheet covers everything on the van, so its files row carries
+           order_id NULL and its id goes on every order's picked_up event.
+           It proves the PHARMACY handed over, not that anybody received
+           anything, and counting it would mark a delivery as evidenced by a
+           photograph of a different moment. */
+        const order = await makeOrder();
+        await driveTo(order.id, 'delivered');
+        const pid = Number((await sql(PROJECT, [order.id])).rows[0].project_id);
+        const at = new Date().toISOString();
+        await sql(
+            `INSERT INTO files (project_id, order_id, kind, s3_key, content_type, bytes, status, uploaded_by, created_at, stored_at)
+             VALUES (?, NULL, 'courier_form', ?, 'image/jpeg', 2048, 'stored', 'route.courier', ?, ?)`,
+            [pid, `uh/test/nophoto/batch-${Date.now()}.jpg`, at, at],
+        );
+        expect(await idsWithNoPhoto()).toContain(order.id);
+    });
+
+    it('leaves out everything that has not been delivered yet', async () => {
+        /* An order in flight has no photograph because it has not happened.
+           Listing those buries the handful that are genuinely missing one
+           under the whole day, and a filter whose output nobody can read is
+           not a filter. */
+        const waiting = await makeOrder();
+        const carried = await makeOrder();
+        await driveTo(carried.id, 'picked_up');
+
+        const ids = await idsWithNoPhoto();
+        expect(ids).not.toContain(waiting.id);
+        expect(ids).not.toContain(carried.id);
+    });
+
+    it('leaves out a failed delivery, whose evidence is a different picture', async () => {
+        /* A dry run proves a different claim and proves it with an
+           exception photograph. Mixing the two into "no proof of delivery"
+           would list rows that cannot have one by definition. */
+        const order = await makeOrder();
+        await driveTo(order.id, 'failed');
+        expect(await idsWithNoPhoto()).not.toContain(order.id);
+    });
+
+    it('narrows rather than replaces the other filters', async () => {
+        const order = await makeOrder();
+        await driveTo(order.id, 'delivered');
+        const res = await admin.get(`${BASE}?noPhoto=true&serviceType=adhoc`);
+        expect(res.status).toBe(200);
+        expect(res.body.orders.map((o) => o.id)).not.toContain(order.id);
+    });
+});

@@ -297,6 +297,27 @@ export function Orders() {
                     <label className="izy-field" style={{ minWidth: 150 }}>Late only
                         <span><input type="checkbox" checked={get('overdue') === 'true'} onChange={(e) => set('overdue', e.target.checked ? 'true' : '')} /> past due</span>
                     </label>
+                    {/* THE DELIVERIES WITH NOTHING TO SHOW FOR THEMSELVES.
+                        A courier whose upload will not go at the door may
+                        carry on rather than stand there holding medication,
+                        so a delivered order can have no picture behind it.
+                        Until this, the only thing that found one was
+                        University Health asking for that proof of delivery.
+
+                        "delivered" is in the label rather than in a note
+                        underneath, because the first question anybody asks
+                        of an empty result is which rows it was looking at.
+                        A pending order has no photograph because it has not
+                        happened yet. */}
+                    <label className="izy-field" style={{ minWidth: 185 }}>Proof of delivery
+                        <span>
+                            <input
+                                type="checkbox"
+                                checked={get('noPhoto') === 'true'}
+                                onChange={(e) => set('noPhoto', e.target.checked ? 'true' : '')}
+                            /> delivered, no photo
+                        </span>
+                    </label>
                     <button
                         className="izy-btn secondary"
                         type="button"

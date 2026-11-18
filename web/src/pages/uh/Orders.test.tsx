@@ -131,7 +131,50 @@ describe('Orders', () => {
         await screen.findByRole('heading', { name: 'Orders' });
         expect((await screen.findByLabelText('Status')).getAttribute('value') ?? (screen.getByLabelText('Status') as HTMLSelectElement).value).toBe('delivered');
         expect((screen.getByLabelText('Reference') as HTMLInputElement).value).toBe('RX-1001');
-        expect(screen.getByRole('checkbox')).toBeChecked();
+        /* NAMED, not "the checkbox". There are two on this bar since
+           18 November and getByRole('checkbox') throws on more than one --
+           which is the test telling the truth about an ambiguous query
+           rather than a thing to work around. */
+        expect(screen.getByRole('checkbox', { name: /past due/ })).toBeChecked();
+        expect(screen.getByRole('checkbox', { name: /no photo/ })).not.toBeChecked();
+    });
+
+    /* ── THE DELIVERIES WITH NOTHING TO SHOW FOR THEMSELVES ──────────────
+     *
+     * A courier whose upload will not go at the door may carry on rather
+     * than stand there holding medication, so a delivered order can end up
+     * with no picture behind it. Nothing listed those: the only thing that
+     * found one was University Health asking for that proof of delivery.
+     */
+    it('asks the server for the deliveries with no proof photograph', async () => {
+        const { calls } = mockFetch(baseRoutes);
+        render(
+            <MemoryRouter initialEntries={['/projects/uh/orders']}>
+                <AuthProvider>
+                    <Routes><Route path="/projects/:code/orders" element={<Orders />} /></Routes>
+                </AuthProvider>
+            </MemoryRouter>,
+        );
+        await screen.findByRole('heading', { name: 'Orders' });
+        fireEvent.click(screen.getByRole('checkbox', { name: /no photo/ }));
+
+        await waitFor(() => {
+            expect(calls.some((c) => c.includes('/uh/orders?') && c.includes('noPhoto=true'))).toBe(true);
+        });
+        /* The summary goes with it, or the count above the table describes
+           a different set of orders from the one underneath it. */
+        expect(calls.some((c) => c.includes('/uh/orders/summary?') && c.includes('noPhoto=true'))).toBe(true);
+    });
+
+    it('says on the control itself that it means delivered orders', async () => {
+        /* The first question anybody asks of an empty result is which rows
+           it was looking at. A pending order has no photograph because it
+           has not happened yet, and that belongs on the control rather than
+           in a note underneath it. */
+        renderOrders(baseRoutes);
+        await screen.findByRole('heading', { name: 'Orders' });
+        expect(screen.getByRole('checkbox', { name: /no photo/ }))
+            .toHaveAccessibleName(expect.stringContaining('delivered'));
     });
 
     /* ── SEARCHING BY PATIENT NAME, WITHOUT PUTTING ONE IN THE URL ────────

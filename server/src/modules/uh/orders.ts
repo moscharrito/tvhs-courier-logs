@@ -23,6 +23,7 @@ import { loadPodData, podFilename, renderPod } from './pod';
 import { namesFor, displayName } from './people';
 import {
     hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus, attemptPhoto, attemptPhotoStatus,
+    PROOF_KINDS,
 } from './pod-photos';
 import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
@@ -877,6 +878,39 @@ export function createOrdersRouter(
             where.push("o.due_at IS NOT NULL AND o.due_at < ? AND o.status NOT IN ('delivered','failed','cancelled')");
             args.push(new Date().toISOString());
             applied.push('overdue');
+        }
+
+        /* ── DELIVERED, AND NOTHING TO SHOW FOR IT ─────────────────────────
+         *
+         * Asked for on 18 November 2026, and the gap it looks for is one we
+         * put there on purpose: a courier whose upload will not go at the
+         * door is offered the choice to carry on rather than stand on a
+         * doorstep holding somebody's medication. That is the right trade
+         * at the door. It leaves a delivered order with no picture behind
+         * it, and nothing listed those -- so the only way one surfaced was
+         * University Health asking for that particular proof of delivery,
+         * which is the worst possible moment to find out.
+         *
+         * DELIVERED ROWS ONLY. An order still in flight has no photograph
+         * because it has not happened yet; including those buries the few
+         * that are genuinely missing one under the whole day's work, and a
+         * filter nobody can read the output of is not a filter. A failed
+         * delivery's evidence is its exception photograph -- a different
+         * kind, proving a different claim -- so it is not this question.
+         *
+         * PROOF_KINDS rather than the strings written out again, because
+         * this has to agree with the document. storedPhoto() picks what the
+         * proof of delivery prints, and a filter answering from its own
+         * list would eventually send somebody hunting for a missing picture
+         * that the PDF shows perfectly well. */
+        if (q['noPhoto'] === 'true') {
+            const kinds = PROOF_KINDS.map(() => '?').join(',');
+            where.push(`o.status = 'delivered' AND NOT EXISTS (
+                SELECT 1 FROM files f
+                 WHERE f.order_id = o.id AND f.project_id = o.project_id
+                   AND f.status = 'stored' AND f.kind IN (${kinds}))`);
+            args.push(...PROOF_KINDS);
+            applied.push('noPhoto');
         }
 
         /* A reference is the pharmacy's own handle for a row and is what a
