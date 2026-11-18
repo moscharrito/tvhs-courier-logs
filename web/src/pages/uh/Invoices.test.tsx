@@ -113,13 +113,20 @@ describe('Invoices', () => {
         }));
         await openFirst();
 
-        vi.stubGlobal('confirm', vi.fn(() => false));
+        /* Asked in the page, not with confirm(): Chrome lets a person turn
+           browser dialogs off, and a confirmation that can be switched off
+           is not one. */
         fireEvent.click(screen.getByRole('button', { name: 'Issue' }));
-        // Said no: nothing was sent.
-        await waitFor(() => expect(calls.some((c) => c.includes('POST') && c.includes('/issue'))).toBe(false));
+        await screen.findByRole('alertdialog');
+        expect(calls.some((c) => c.includes('POST') && c.includes('/issue'))).toBe(false);
 
-        vi.stubGlobal('confirm', vi.fn(() => true));
+        // Cancelled: still nothing sent.
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(calls.some((c) => c.includes('POST') && c.includes('/issue'))).toBe(false);
+
         fireEvent.click(screen.getByRole('button', { name: 'Issue' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Issue without them' }));
         await waitFor(() => expect(calls.some((c) => c.includes('POST') && c.includes('/issue'))).toBe(true));
     });
 
@@ -327,42 +334,47 @@ describe('deleting one that never went out', () => {
     });
 
     it('asks before it goes, and names what is going', async () => {
-        const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
         const { calls } = renderInvoices(routes(emptyingList()));
         await openIt();
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-        expect(confirmed).toHaveBeenCalledWith(expect.stringContaining('IZY-UH-2026-08-0001'));
-        expect(confirmed).toHaveBeenCalledWith(expect.stringContaining('cannot be undone'));
+        /* The question is on the page, under the invoice it is about, so
+           whoever answers can still see what they are destroying. */
+        const asked = await screen.findByRole('alertdialog');
+        expect(asked).toHaveTextContent('IZY-UH-2026-08-0001');
+        expect(asked).toHaveTextContent(/cannot be undone/);
+        expect(calls).not.toContain(`DELETE ${BASE}/3`);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete it' }));
         await waitFor(() => expect(calls).toContain(`DELETE ${BASE}/3`));
     });
 
     it('does nothing at all when the question is declined', async () => {
-        vi.spyOn(window, 'confirm').mockReturnValue(false);
         const { calls } = renderInvoices(routes({ [`DELETE ${BASE}/3`]: { ok: true } }));
         await openIt();
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
+        expect(screen.queryByRole('alertdialog')).toBeNull();
         expect(calls).not.toContain(`DELETE ${BASE}/3`);
     });
 
     it('closes the panel and says where the number went', async () => {
         /* The panel cannot reopen onto a row that is gone, and a number
            missing from the sequence is a question somebody will ask. */
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
         renderInvoices(routes(emptyingList()));
         await openIt();
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete it' }));
 
         await waitFor(() => expect(screen.getByText(/recorded in the audit trail/)).toBeInTheDocument());
         expect(screen.queryByRole('button', { name: 'Issue' })).toBeNull();
     });
 
     it('makes a draft carrying adjustments say why, and sends what was typed', async () => {
-        const asked = vi.spyOn(window, 'prompt').mockReturnValue('Opened against the wrong pharmacy');
         const { calls, bodies } = renderInvoices(routes({
             [`GET ${BASE}/3`]: invoice({
                 adjustments: [{ id: 8, description: 'Goodwill', amount: -25, amountCents: -2500, reason: 'Agreed on the telephone', createdBy: 'admin' }],
@@ -374,13 +386,24 @@ describe('deleting one that never went out', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-        expect(asked).toHaveBeenCalledWith(expect.stringContaining('entered by hand'));
+        const asked = await screen.findByRole('alertdialog');
+        expect(asked).toHaveTextContent(/entered by hand/);
+
+        /* Disabled until the answer is one the server will take, so a
+           refusal is not how somebody learns what was wanted. */
+        const go = screen.getByRole('button', { name: 'Delete it' });
+        expect(go).toBeDisabled();
+        fireEvent.change(screen.getByLabelText(/Why is it being deleted/), {
+            target: { value: 'Opened against the wrong pharmacy' },
+        });
+        expect(go).toBeEnabled();
+        fireEvent.click(go);
+
         await waitFor(() => expect(calls).toContain(`DELETE ${BASE}/3`));
         expect(bodies[`DELETE ${BASE}/3`]).toMatchObject({ reason: 'Opened against the wrong pharmacy' });
     });
 
     it('will not take a reason too short to mean anything', async () => {
-        vi.spyOn(window, 'prompt').mockReturnValue('oops');
         const { calls } = renderInvoices(routes({
             [`GET ${BASE}/3`]: invoice({
                 adjustments: [{ id: 8, description: 'Goodwill', amount: -25, amountCents: -2500, reason: 'Agreed', createdBy: 'admin' }],
@@ -390,7 +413,51 @@ describe('deleting one that never went out', () => {
         await openIt();
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        await screen.findByRole('alertdialog');
+        fireEvent.change(screen.getByLabelText(/Why is it being deleted/), { target: { value: 'oops' } });
 
+        expect(screen.getByRole('button', { name: 'Delete it' })).toBeDisabled();
         expect(calls).not.toContain(`DELETE ${BASE}/3`);
+    });
+
+    it('takes the number typed back before it will delete an issued one', async () => {
+        /* 18 November. This was two prompt() calls, and when Chrome stopped
+           allowing dialogs the button did nothing whatever -- no error, no
+           spinner. The confirmation is in the page now, where it cannot be
+           switched off by somebody else's browser. */
+        const { calls, bodies } = renderInvoices(routes({
+            [`GET ${BASE}/3`]: invoice({ status: 'issued', issuedAt: '2026-09-01T12:00:00.000Z' }),
+            [`GET ${BASE}`]: { invoices: [summary({ status: 'issued', issuedAt: '2026-09-01T12:00:00.000Z' })] },
+            [`DELETE ${BASE}/3`]: { ok: true, id: 3, number: 'IZY-UH-2026-08-0001' },
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+        const asked = await screen.findByRole('alertdialog');
+        /* Void is named as the right answer for anything actually sent. */
+        expect(asked).toHaveTextContent(/void it instead/i);
+
+        const go = screen.getByRole('button', { name: /Delete IZY-UH-2026-08-0001/ });
+        expect(go).toBeDisabled();
+
+        // The reason alone is not enough.
+        fireEvent.change(screen.getByLabelText(/Why is it being deleted/), {
+            target: { value: 'Issued on the wrong dates' },
+        });
+        expect(go).toBeDisabled();
+
+        // Nor is the wrong number.
+        fireEvent.change(screen.getByLabelText(/Type IZY-UH-2026-08-0001/), { target: { value: 'IZY-UH-2026-08-0002' } });
+        expect(go).toBeDisabled();
+        expect(calls).not.toContain(`DELETE ${BASE}/3`);
+
+        fireEvent.change(screen.getByLabelText(/Type IZY-UH-2026-08-0001/), { target: { value: 'IZY-UH-2026-08-0001' } });
+        expect(go).toBeEnabled();
+        fireEvent.click(go);
+
+        await waitFor(() => expect(calls).toContain(`DELETE ${BASE}/3`));
+        expect(bodies[`DELETE ${BASE}/3`]).toMatchObject({
+            confirm: 'IZY-UH-2026-08-0001', reason: 'Issued on the wrong dates',
+        });
     });
 });

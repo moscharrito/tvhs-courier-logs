@@ -63,6 +63,24 @@ const STATUS_TONE: Record<string, string> = {
     draft: 'muted', issued: 'warn', paid: 'ok', void: 'muted',
 };
 
+/** Which confirmation is open, if any. Null is the ordinary state. */
+type Confirming =
+    /** Issuing a draft that has deliveries on it we cannot price. */
+    | 'issue'
+    | 'void'
+    /** Never issued and carrying nothing entered by hand: one button. */
+    | 'delete'
+    /** A draft whose adjustments were typed by somebody and exist nowhere
+     *  else, so deleting it destroys them. Needs a reason. */
+    | 'delete-adjusted'
+    /** Issued. Needs the number typed back and a reason: the number is what
+     *  a hospital would quote at us, and it cannot be given by clicking the
+     *  wrong row. */
+    | 'delete-issued'
+    | null;
+
+const DELETE_REASON_MIN = 10;
+
 export function Invoices() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
@@ -77,6 +95,30 @@ export function Invoices() {
     const [busy, setBusy] = useState(false);
     const [period, setPeriod] = useState({ from: '', to: '' });
     const [adjustment, setAdjustment] = useState({ description: '', amount: '', reason: '' });
+    /* ───────────── WHY THIS IS NOT prompt() AND confirm() ─────────────
+     *
+     * It was, and on 18 November the Delete button did nothing at all when
+     * it was clicked. Not an error, not a spinner: nothing.
+     *
+     * Chrome offers "Don't allow this page to create more dialogs" once a
+     * page has shown a few in a row, and a person working through a list of
+     * invoices sees a few in a row. Tick it and every later prompt() returns
+     * null the instant it is called, so this ran:
+     *
+     *     const typed = prompt(...);
+     *     if (typed === null || ...) return;   // silently
+     *
+     * The whole safety mechanism of a destructive action became a silent
+     * no-op, decided by a checkbox in a browser we do not control and
+     * cannot read. The confirmation now lives in the page, where it can be
+     * seen, tested, and cannot be switched off. */
+    const [confirming, setConfirming] = useState<Confirming>(null);
+    const [typed, setTyped] = useState('');
+    const [why, setWhy] = useState('');
+
+    /** Open one of the confirmations, with the boxes empty. */
+    const ask = (kind: Confirming) => { setConfirming(kind); setTyped(''); setWhy(''); setMsg(null); };
+    const stopAsking = () => { setConfirming(null); setTyped(''); setWhy(''); };
 
     const load = useCallback(async () => {
         try {
@@ -333,14 +375,13 @@ export function Invoices() {
                                 type="button"
                                 disabled={busy}
                                 onClick={() => {
-                                    /* The exclusion is acknowledged here, in one
-                                       place, by a person who has just read the
-                                       list above it. */
-                                    const exclude = open.exceptions.length > 0
-                                        && confirm(`${open.exceptions.length} deliveries cannot be priced. Issue without them and bill them on a later invoice?`);
-                                    if (open.exceptions.length > 0 && !exclude) return;
+                                    /* The exclusion is acknowledged in one place
+                                       by a person who has just read the list
+                                       above it -- in the page, not in a browser
+                                       dialog that can be switched off. */
+                                    if (open.exceptions.length > 0) { ask('issue'); return; }
                                     void act(
-                                        () => api(`${base}/${open.id}/issue`, { method: 'POST', json: { excludeUnpriceable: exclude } }),
+                                        () => api(`${base}/${open.id}/issue`, { method: 'POST', json: { excludeUnpriceable: false } }),
                                         'Invoice issued. The lines are frozen now.',
                                     );
                                 }}
@@ -356,11 +397,7 @@ export function Invoices() {
                         )}
                         {open.status !== 'void' && (
                             <button className="izy-btn danger" type="button" disabled={busy}
-                                onClick={() => {
-                                    const reason = prompt('Why is this invoice being voided?');
-                                    if (!reason) return;
-                                    void act(() => api(`${base}/${open.id}/void`, { method: 'POST', json: { reason } }), 'Invoice voided.');
-                                }}>
+                                onClick={() => { ask('void'); }}>
                                 Void
                             </button>
                         )}
@@ -378,55 +415,158 @@ export function Invoices() {
                                which one, and why". */
                             <button className="izy-btn danger" type="button" disabled={busy}
                                 onClick={() => {
-                                    /* ASKED FOR HERE AS WELL AS ON THE SERVER.
-                                       The server refuses a draft with
-                                       adjustments and no reason; asking first
-                                       means the refusal is not the first a
-                                       person hears of it, and the box is open
-                                       while they can still see what is on the
-                                       invoice. */
-                                    if (open.issuedAt !== null) {
-                                        /* The NUMBER typed back, not a count.
-                                           It is what is at stake and what a
-                                           hospital would quote at us, and it
-                                           cannot be given by clicking the
-                                           wrong row. */
-                                        const typed = prompt(
-                                            `Delete ${open.number}?` + NL2
-                                            + `It was issued on ${issuedDate(open.issuedAt)} and totals ${money(open.total)}. `
-                                            + 'Deleting it destroys a numbered record of what we billed, and cannot be undone.' + NL2
-                                            + 'If this invoice was ever sent to University Health, press Cancel and Void it '
-                                            + 'instead, so the number stays answerable.' + NL2
-                                            + `To delete it anyway, type ${open.number}:`,
-                                        );
-                                        if (typed === null || typed.trim() !== open.number) return;
-                                        const why = prompt('Why is it being deleted? (at least 10 characters)');
-                                        if (why === null || why.trim().length < 10) return;
-                                        void remove(open.id, open.number, why, open.number);
-                                        return;
-                                    }
-                                    if (open.adjustments.length > 0) {
-                                        const n = open.adjustments.length;
-                                        const reason = prompt(
-                                            `${open.number} carries ${n} ${n === 1 ? 'adjustment' : 'adjustments'} entered by hand `
-                                            + 'and recorded nowhere else. Deleting it destroys them and cannot be undone.\n\n'
-                                            + 'Say why (at least 10 characters):',
-                                        );
-                                        if (reason === null || reason.trim().length < 10) return;
-                                        void remove(open.id, open.number, reason);
-                                        return;
-                                    }
-                                    if (!confirm(
-                                        `Delete ${open.number}?\n\nIt has never been issued, so nobody outside has seen it. `
-                                        + 'This cannot be undone.',
-                                    )) return;
-                                    void remove(open.id, open.number, '');
+                                    /* WHICH QUESTION, decided here because the
+                                       answer depends on what is on the invoice
+                                       and the person can still see it. The
+                                       server asks the same three things again;
+                                       this only means the refusal is not the
+                                       first anybody hears of them. */
+                                    if (open.issuedAt !== null) { ask('delete-issued'); return; }
+                                    if (open.adjustments.length > 0) { ask('delete-adjusted'); return; }
+                                    ask('delete');
                                 }}>
                                 Delete
                             </button>
                         )}
                         <button className="izy-btn secondary" type="button" onClick={() => setOpen(null)}>Close</button>
                     </div>
+
+                    {/* ───────────────────── THE CONFIRMATION ─────────────────────
+                        In the page, under the invoice it is about, so whoever is
+                        answering can still see what they are about to destroy.
+                        The primary button stays disabled until the answer is one
+                        the server will accept, so a refusal is not how somebody
+                        learns what was wanted. */}
+                    {confirming !== null && (
+                        <div className="izy-card izy-confirm" role="alertdialog" aria-label="Confirm">
+                            {confirming === 'issue' && (
+                                <>
+                                    <p>
+                                        <strong>{open.exceptions.length}</strong>{' '}
+                                        {open.exceptions.length === 1 ? 'delivery cannot' : 'deliveries cannot'} be priced.
+                                        Issuing now leaves {open.exceptions.length === 1 ? 'it' : 'them'} off this invoice,
+                                        to be billed on a later one. The reason is recorded on the invoice.
+                                    </p>
+                                    <div className="izy-row-actions">
+                                        <button className="izy-btn" type="button" disabled={busy}
+                                            onClick={() => {
+                                                stopAsking();
+                                                void act(
+                                                    () => api(`${base}/${open.id}/issue`, { method: 'POST', json: { excludeUnpriceable: true } }),
+                                                    'Invoice issued. The lines are frozen now.',
+                                                );
+                                            }}>
+                                            Issue without them
+                                        </button>
+                                        <button className="izy-btn secondary" type="button" onClick={stopAsking}>Cancel</button>
+                                    </div>
+                                </>
+                            )}
+
+                            {confirming === 'void' && (
+                                <>
+                                    <p>
+                                        Voiding keeps {open.number} and its number, with the reason against it.
+                                        That is the right answer for an invoice that has been sent.
+                                    </p>
+                                    <label className="izy-field">Why is it being voided?
+                                        <input value={why} onChange={(e) => setWhy(e.target.value)} autoFocus />
+                                    </label>
+                                    <div className="izy-row-actions">
+                                        <button className="izy-btn danger" type="button"
+                                            disabled={busy || why.trim() === ''}
+                                            onClick={() => {
+                                                const reason = why.trim();
+                                                stopAsking();
+                                                void act(() => api(`${base}/${open.id}/void`, { method: 'POST', json: { reason } }), 'Invoice voided.');
+                                            }}>
+                                            Void {open.number}
+                                        </button>
+                                        <button className="izy-btn secondary" type="button" onClick={stopAsking}>Cancel</button>
+                                    </div>
+                                </>
+                            )}
+
+                            {confirming === 'delete' && (
+                                <>
+                                    <p>
+                                        Delete {open.number}? It has never been issued, so nobody outside has seen it.
+                                        This cannot be undone.
+                                    </p>
+                                    <div className="izy-row-actions">
+                                        <button className="izy-btn danger" type="button" disabled={busy}
+                                            onClick={() => { stopAsking(); void remove(open.id, open.number, ''); }}>
+                                            Delete it
+                                        </button>
+                                        <button className="izy-btn secondary" type="button" onClick={stopAsking}>Cancel</button>
+                                    </div>
+                                </>
+                            )}
+
+                            {confirming === 'delete-adjusted' && (
+                                <>
+                                    <p>
+                                        {open.number} carries {open.adjustments.length}{' '}
+                                        {open.adjustments.length === 1 ? 'adjustment' : 'adjustments'} entered by hand and
+                                        recorded nowhere else. Deleting it destroys {open.adjustments.length === 1 ? 'it' : 'them'} and
+                                        cannot be undone.
+                                    </p>
+                                    <label className="izy-field">Why is it being deleted?
+                                        <input value={why} onChange={(e) => setWhy(e.target.value)} autoFocus />
+                                    </label>
+                                    <div className="izy-row-actions">
+                                        <button className="izy-btn danger" type="button"
+                                            disabled={busy || why.trim().length < DELETE_REASON_MIN}
+                                            onClick={() => { const reason = why.trim(); stopAsking(); void remove(open.id, open.number, reason); }}>
+                                            Delete it
+                                        </button>
+                                        <button className="izy-btn secondary" type="button" onClick={stopAsking}>Cancel</button>
+                                    </div>
+                                    <p className="izy-muted">At least {DELETE_REASON_MIN} characters.</p>
+                                </>
+                            )}
+
+                            {confirming === 'delete-issued' && open.issuedAt !== null && (
+                                <>
+                                    <p>
+                                        {open.number} was issued on {issuedDate(open.issuedAt)} and totals {money(open.total)}.
+                                        Deleting it destroys a numbered record of what we billed, and cannot be undone.
+                                    </p>
+                                    <p>
+                                        <strong>If this invoice was ever sent to University Health, cancel and void it
+                                        instead</strong>, so the number stays answerable.
+                                    </p>
+                                    {/* The NUMBER typed back, not a count. It is what is at
+                                        stake and what a hospital would quote at us, and it is
+                                        the one confirmation that cannot be given by clicking
+                                        the wrong row. */}
+                                    <label className="izy-field">Type {open.number} to confirm
+                                        <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+                                    </label>
+                                    <label className="izy-field">Why is it being deleted?
+                                        <input value={why} onChange={(e) => setWhy(e.target.value)} />
+                                    </label>
+                                    <div className="izy-row-actions">
+                                        <button className="izy-btn danger" type="button"
+                                            disabled={busy || typed.trim() !== open.number || why.trim().length < DELETE_REASON_MIN}
+                                            onClick={() => {
+                                                const reason = why.trim();
+                                                stopAsking();
+                                                void remove(open.id, open.number, reason, open.number);
+                                            }}>
+                                            Delete {open.number}
+                                        </button>
+                                        <button className="izy-btn secondary" type="button" onClick={stopAsking}>Cancel</button>
+                                    </div>
+                                    <p className="izy-muted">
+                                        The number and a reason of at least {DELETE_REASON_MIN} characters.
+                                        Both are recorded in the audit trail, which is what answers the gap this
+                                        leaves in the month's sequence.
+                                    </p>
+                                </>
+                            )}
+                        </div>
+                    )}
 
                     {open.voidReason && <p className="izy-muted">Voided: {open.voidReason}</p>}
 
