@@ -448,6 +448,16 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
                in source: this repository is public and a customer's PO and
                contract number are theirs. See BillingSection. */
             billing: resolveSettings(project.settings).billing,
+            /* Counted off the lines, which carry each surcharge in its own
+               column -- so this is what was CHARGED rather than what the
+               rate card would allow, and the two differ since the
+               after-hours rule changed on 17 November. */
+            surcharges: {
+                statCount: lines.filter((l) => l.statCents > 0).length,
+                statCents: lines.reduce((n, l) => n + l.statCents, 0),
+                afterHoursCount: lines.filter((l) => l.afterHoursCents > 0).length,
+                afterHoursCents: lines.reduce((n, l) => n + l.afterHoursCents, 0),
+            },
             /* THE RATE CARD IN FORCE AT THE END OF THE PERIOD, for the
                attachment that states what each zone was charged at. The end
                rather than the start because that is the card a reader has
@@ -1185,6 +1195,21 @@ export interface RenderableInvoice {
     /** Who it is addressed to and the references they quote back. Held on
      *  the project, never in source: see BillingSection. */
     billing: BillingSection;
+    /**
+     * The surcharges actually charged, counted and totalled.
+     *
+     * On the document so the undelivered table can reconcile the whole of
+     * the "Undelivered / surcharge" column rather than describing part of
+     * it. A count of nought is PRINTED rather than left off: "After hours
+     * 0  $0.00" tells University Health we did not charge it, which after
+     * 18 November is a thing worth saying out loud.
+     */
+    surcharges: {
+        statCount: number;
+        statCents: number;
+        afterHoursCount: number;
+        afterHoursCents: number;
+    };
     /** The rate card in force at the end of the period, for Attachment 1.
      *  Null when no schedule covers it, and the attachment then leaves the
      *  rate column out rather than printing zeroes that look agreed. */
@@ -1584,11 +1609,95 @@ export function renderInvoice(
     row('Total', serviceCount.toLocaleString('en-US'), money(view.subtotalCents), true);
     y -= 10;
 
-    if (view.dryRuns.count > 0) {
+    /* ─────────── WHAT THE "UNDELIVERED / SURCHARGE" COLUMN IS ───────────
+     *
+     * It was a sentence: "308 deliveries, 654 items, $5,886.00 at the dry
+     * run rate, included in the zone amounts above." True, and not enough
+     * to check anything with -- it describes one part of a column without
+     * saying what the rest of it is, so a reader who wanted to know what
+     * they were being charged for still had to ask.
+     *
+     * Asked for on 18 November: undelivered gets its own table so
+     * University Health know exactly what they are paying for. It does
+     * that and reconciles the column, which is the same thing done
+     * properly: every figure in it adds down to the total printed against
+     * the zone table above.
+     *
+     * THE REPLACED DELIVERY CHARGES ARE A RESIDUAL, deliberately. An
+     * undelivered item bills $9 INSTEAD OF the zone rate, so the column
+     * contains the fees we added and the charges they displaced. Deriving
+     * the displaced figure rather than re-deriving it from each line means
+     * the table cannot disagree with the zone table above it -- including
+     * where a zone 4 or 5 delivery was priced at its own ZIP rate, which
+     * would otherwise leave a few dollars nobody could account for.
+     *
+     * A NOUGHT IS PRINTED, not left off. "After hours  0  $0.00" tells
+     * University Health we did not charge it. */
+    if (rates && (view.dryRuns.count > 0 || view.surcharges.statCount > 0
+        || view.surcharges.afterHoursCount > 0 || diffTotal !== 0)) {
+        room(130);
         const d = view.dryRuns;
-        note(`Undelivered deliveries: ${d.count.toLocaleString('en-US')} deliveries, `
-            + `${d.items.toLocaleString('en-US')} items, ${money(d.cents)} at the dry run rate, `
-            + 'included in the zone amounts above.');
+        const sur = view.surcharges;
+        /* What the dry run fees displaced. See the note above on why this
+           is the residual and not a second sum over the lines. */
+        const replaced = d.cents + sur.statCents + sur.afterHoursCents - diffTotal;
+
+        page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
+        page.text('Undelivered and surcharges', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight('Deliveries', COL_ZCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight('Items', COL_FLAT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight('Rate', COL_DIFF, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight('Amount', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        y -= 18;
+
+        const charge = (
+            label: string, deliveries: string, items: string, rate: string, amount: string,
+        ): void => {
+            page.text(label, MARGIN + 5, y, { size: 8.5 });
+            if (deliveries) page.textRight(deliveries, COL_ZCOUNT, y, { size: 8.5 });
+            if (items) page.textRight(items, COL_FLAT, y, { size: 8.5 });
+            if (rate) page.textRight(rate, COL_DIFF, y, { size: 8.5 });
+            page.textRight(amount, COL_AMOUNT, y, { size: 8.5 });
+            y -= 15;
+        };
+
+        charge(
+            'Undelivered, charged per item',
+            d.count.toLocaleString('en-US'),
+            d.items.toLocaleString('en-US'),
+            `$${rates.dryRun.toFixed(2)}`,
+            `+${money(d.cents)}`,
+        );
+        charge(
+            'Less the delivery charges these replace', '', '', '', `-${money(replaced)}`,
+        );
+        /* A nought carries no sign: "+$0.00" reads as a rounding artefact
+           where "$0.00" reads as nothing charged, which is what it is. */
+        const signed = (cents: number): string => (cents === 0 ? money(0) : `+${money(cents)}`);
+        charge(
+            'STAT', sur.statCount.toLocaleString('en-US'), '',
+            `$${rates.stat.toFixed(2)}`, signed(sur.statCents),
+        );
+        charge(
+            'After hours', sur.afterHoursCount.toLocaleString('en-US'), '',
+            `$${rates.afterHours.toFixed(2)}`, signed(sur.afterHoursCents),
+        );
+        rule();
+        page.text(
+            'Total, as shown against the zone table above', MARGIN + 5, y,
+            { font: 'Helvetica-Bold', size: 8.5 },
+        );
+        page.textRight(
+            `${diffTotal < 0 ? '-' : '+'}${money(Math.abs(diffTotal))}`,
+            COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 },
+        );
+        y -= 15;
+        y -= 8;
+
+        note('An undelivered delivery is one a courier attempted and could not complete. It is charged at '
+            + `$${rates.dryRun.toFixed(2)} per item under Addendum No. 1 INSTEAD OF the zone delivery `
+            + 'charge, not on top of it, which is why the line above removes those delivery charges. '
+            + 'The proof of attempt is held with the delivery record and is available on request.');
     }
     note('Each delivery has a proof-of-delivery record with the recipient signature, and the ID photo '
         + 'when ID is required, retained by Izy Global Services LLC and available on request. '

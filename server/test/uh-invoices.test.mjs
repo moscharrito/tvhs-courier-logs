@@ -590,6 +590,7 @@ describe('the documents', () => {
             lines, adjustments: [], byZone: [{ zone: 'zone 1', count: 120, cents: 150000 }],
             byServiceType: [{ serviceType: 'scheduled', count: 120, cents: 150000 }],
             dryRuns: { count: 0, items: 0, cents: 0 },
+            surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
             subtotalCents: 150000, totalCents: 150000, excludedCount: 0, excludedNote: '', notes: '',
             issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago', ...DOC,
         }, new Date(), { detail: 'lines' });
@@ -613,6 +614,7 @@ describe('the documents', () => {
             number: 'IZY-UH-2026-09-0001', status: 'issued', periodFrom: '2026-09-01', periodTo: '2026-09-13',
             lines: [], adjustments: [], byZone: [], byServiceType: [],
             dryRuns: { count: 0, items: 0, cents: 0 },
+            surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
             subtotalCents: 0, totalCents: 0, excludedCount: 0, excludedNote: '', notes: '',
             issuedAt: '2026-09-15T01:05:00.000Z',
             timezone: 'America/Chicago', ...DOC,
@@ -640,6 +642,7 @@ describe('the documents', () => {
             }],
             adjustments: [], byZone: [], byServiceType: [],
             dryRuns: { count: 0, items: 0, cents: 0 },
+            surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
             subtotalCents: 1250, totalCents: 1250, excludedCount: 0, excludedNote: '', notes: '',
             issuedAt: '2026-09-01T12:00:00.000Z', timezone: 'America/Chicago', ...DOC,
         }, new Date(), { detail: 'lines' });
@@ -1093,6 +1096,9 @@ describe('the invoice template', () => {
             { serviceType: 'adhoc', count: 2, cents: 2700 },
         ],
         dryRuns: { count: 308, items: 654, cents: 588600 },
+        /* 7 STAT at $22. No after hours at all, which is the point since
+           17 November: every one of them was a daytime request. */
+        surcharges: { statCount: 7, statCents: 15400, afterHoursCount: 0, afterHoursCents: 0 },
         subtotalCents: 6059000, totalCents: 6059000,
         excludedCount: 0, excludedNote: '', notes: '',
         issuedAt: '2026-11-16T18:00:00.000Z', timezone: 'America/Chicago',
@@ -1272,12 +1278,58 @@ it('shows the multiplication a reader expects, and what the rest of the amount i
         expect(across).toContain('October 28, 2026 - November 3, 2026');
     });
 
-    it('says the undelivered figure is already inside the zone amounts', async () => {
+    it('says on page 1 that the undelivered figure is already inside the zone amounts', async () => {
         /* Otherwise it reads as a charge on top and the total looks wrong. */
         const flat = textOf(render()).replace(/\s+/g, ' ');
         expect(flat).toMatch(/Included above: undelivered deliveries priced at the dry run rate/);
         expect(flat).toMatch(/308 deliveries, 654 items, \$5,886\.00/);
-        expect(flat).toMatch(/included in the zone amounts above/);
+    });
+
+    it('gives undelivered its own table, and reconciles the column it sits under', async () => {
+        /* ─────────────────────────────────────────────────────────────────
+         * Asked for on 18 November: University Health should be able to see
+         * exactly what they are being charged for. It was one sentence,
+         * which described the dry run fees and said nothing about what they
+         * displaced or what else was in the same column -- so a reader who
+         * wanted the arithmetic still had to ask us for it.
+         *
+         * Built on the real November figures so the table has to add up
+         * against numbers somebody can check against the invoice.
+         */
+        const text = textOf(render({
+            byZone: [
+                { zone: 'zone 1', count: 2280, cents: 2999650 },
+                { zone: 'zone 2', count: 720, cents: 1064450 },
+                { zone: 'zone 3', count: 224, cents: 489800 },
+                { zone: 'zone 4', count: 93, cents: 336600 },
+                { zone: 'zone 5', count: 4, cents: 18300 },
+            ],
+            subtotalCents: 4908800,
+            totalCents: 4908800,
+        })).replace(/\s+/g, ' ');
+
+        expect(text).toContain('Undelivered and surcharges');
+        expect(text).toContain('Undelivered, charged per item');
+
+        /* 654 items at $9.00, which is the figure the question was about. */
+        expect(text).toMatch(/308 654 \$9\.00 \+\$5,886\.00/);
+        /* What those fees displaced: $9 an item INSTEAD OF the zone rate. */
+        expect(text).toMatch(/Less the delivery charges these replace -\$4,376\.00/);
+        expect(text).toMatch(/STAT 7 \$22\.00 \+\$154\.00/);
+        /* Nought, printed, because after 17 November that is worth saying. */
+        expect(text).toMatch(/After hours 0 \$18\.00 \$0\.00/);
+
+        /* And it adds down to the figure printed against the zone table:
+           5,886 - 4,376 + 154 + 0 = 1,664. */
+        expect(text).toMatch(/Total, as shown against the zone table above \+\$1,664\.00/);
+    });
+
+    it('explains that an undelivered item is charged instead of the delivery, not on top', async () => {
+        /* Read the other way the total looks overstated by the whole of the
+           dry run figure, which is how this conversation started. */
+        const text = textOf(render()).replace(/\s+/g, ' ');
+        expect(text).toMatch(/INSTEAD OF the zone delivery charge, not on top of it/);
+        expect(text).toMatch(/proof of attempt is held with the delivery record/);
     });
 
     it('puts no patient on the document, and says so', async () => {
