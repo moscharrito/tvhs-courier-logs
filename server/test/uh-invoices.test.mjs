@@ -614,6 +614,10 @@ describe('the documents', () => {
                 undelivered: { count: 0, items: 0, cents: 0 },
             }],
             byServiceType: [{ serviceType: 'scheduled', count: 120, cents: 150000 }],
+            byOutcome: {
+                delivered: { count: 120, cents: 150000 },
+                undelivered: { count: 0, items: 0, cents: 0 },
+            },
             dryRuns: { count: 0, items: 0, cents: 0 },
             surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
             subtotalCents: 150000, totalCents: 150000, excludedCount: 0, excludedNote: '', notes: '',
@@ -638,6 +642,10 @@ describe('the documents', () => {
         const pdf = renderInvoice({
             number: 'IZY-UH-2026-09-0001', status: 'issued', periodFrom: '2026-09-01', periodTo: '2026-09-13',
             lines: [], adjustments: [], byZone: [], byServiceType: [],
+            byOutcome: {
+                delivered: { count: 0, cents: 0 },
+                undelivered: { count: 0, items: 0, cents: 0 },
+            },
             dryRuns: { count: 0, items: 0, cents: 0 },
             surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
             subtotalCents: 0, totalCents: 0, excludedCount: 0, excludedNote: '', notes: '',
@@ -666,6 +674,10 @@ describe('the documents', () => {
                 outOfAreaMiles: null, outOfAreaCents: 0, amountCents: 1250, note: '',
             }],
             adjustments: [], byZone: [], byServiceType: [],
+            byOutcome: {
+                delivered: { count: 1, cents: 1250 },
+                undelivered: { count: 0, items: 0, cents: 0 },
+            },
             dryRuns: { count: 0, items: 0, cents: 0 },
             surcharges: { statCount: 0, statCents: 0, afterHoursCount: 0, afterHoursCents: 0 },
             subtotalCents: 1250, totalCents: 1250, excludedCount: 0, excludedNote: '', notes: '',
@@ -1119,6 +1131,12 @@ describe('the invoice template', () => {
               delivered: { count: 2, cents: 10400 },
               undelivered: { count: 2, items: 4, cents: 3600 } },
         ],
+        /* 3,013 delivered and 308 not, which adds to the 3,321 the service
+           levels add to, and to the subtotal. */
+        byOutcome: {
+            delivered: { count: 3013, cents: 5470400 },
+            undelivered: { count: 308, items: 654, cents: 588600 },
+        },
         byServiceType: [
             { serviceType: 'scheduled', count: 3312, cents: 6028350 },
             { serviceType: 'stat', count: 7, cents: 27950 },
@@ -1262,6 +1280,35 @@ describe('the invoice template', () => {
         expect(text).toMatch(/billed per one-way mile and shows no zone rate/);
     });
 
+    it('states the undelivered total on the front page, as a table and not a footnote', async () => {
+        /* ─────────────────────────────────────────────────────────────────
+         * It used to be a grey line of prose under the total -- "included
+         * above: 308 deliveries, 654 items, $5,886.00" -- which is the one
+         * figure University Health has most reason to read twice, since it
+         * is the half where nothing arrived.
+         *
+         * Now it is a table in the same shape as "By service level", and
+         * the two rows add to the subtotal. That is the property that
+         * matters: a re-cut of the total, not a second opinion about it.
+         */
+        const text = textOf(render()).replace(/\s+/g, ' ');
+
+        expect(text).toContain('By outcome');
+        expect(text).toMatch(/Delivered 3,013 \$54,704\.00/);
+        expect(text).toMatch(/Undelivered - 654 items at \$9\.00 308 \$5,886\.00/);
+        // 3,013 + 308 = 3,321, and $54,704.00 + $5,886.00 = $60,590.00.
+        expect(text).toMatch(/Total 3,321 \$60,590\.00/);
+        /* And the prose it replaced is gone, rather than sitting beside it
+           saying the same thing in a quieter voice. */
+        expect(text).not.toContain('Included above');
+    });
+
+    it('says what an undelivered delivery is, beside the figure for it', async () => {
+        const text = textOf(render()).replace(/\s+/g, ' ');
+        expect(text).toContain('attempted and could not complete');
+        expect(text).toMatch(/per item instead of the zone delivery charge, not on top of it/);
+    });
+
     it('states every contract rate on the attachment', async () => {
         /* So page 1 can be checked without asking us for the bid table. */
         const text = textOf(render());
@@ -1289,12 +1336,6 @@ describe('the invoice template', () => {
         expect(across).toContain('October 28, 2026 - November 3, 2026');
     });
 
-    it('says on page 1 that the undelivered figure is already inside the zone amounts', async () => {
-        /* Otherwise it reads as a charge on top and the total looks wrong. */
-        const flat = textOf(render()).replace(/\s+/g, ' ');
-        expect(flat).toMatch(/Included above: undelivered deliveries priced at the dry run rate/);
-        expect(flat).toMatch(/308 deliveries, 654 items, \$5,886\.00/);
-    });
 
 
     it('explains that an undelivered item is charged instead of the delivery, not on top', async () => {

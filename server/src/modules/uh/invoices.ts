@@ -115,6 +115,7 @@ export interface Draft {
     exceptions: Exception[];
     subtotalCents: number;
     byZone: ZoneRow[];
+    byOutcome: OutcomeSplit;
     byServiceType: Array<{ serviceType: string; count: number; cents: number }>;
     dryRuns: { count: number; items: number; cents: number };
 }
@@ -271,6 +272,7 @@ export async function buildDraft(
         exceptions,
         subtotalCents,
         byZone: zoneBreakdown(lines),
+        byOutcome: outcomeSplit(lines),
         byServiceType: tally((l) => l.serviceType)
             .map(([serviceType, v]) => ({ serviceType, ...v })),
         dryRuns: {
@@ -305,6 +307,43 @@ export interface ZoneRow {
     cents: number;
     delivered: { count: number; cents: number };
     undelivered: { count: number; items: number; cents: number };
+}
+
+/**
+ * Delivered against undelivered, each with what it actually costs.
+ *
+ * The front page totals by zone, which answers "where did we go" but not
+ * "what are you charging me for" -- and the undelivered work is the half
+ * University Health has every reason to want stated plainly, since it is
+ * the half where nothing arrived. It was a grey footnote under the total;
+ * a footnote is where a figure goes to be disbelieved.
+ *
+ * Both amounts are the FULL line amount, surcharges included, so the two
+ * rows add to the subtotal exactly. That is the one property this table
+ * has to have: it is a re-cut of the total, like "By service level", not
+ * a second opinion about it.
+ */
+export interface OutcomeSplit {
+    delivered: { count: number; cents: number };
+    undelivered: { count: number; items: number; cents: number };
+}
+
+function outcomeSplit(lines: DraftLine[]): OutcomeSplit {
+    const split: OutcomeSplit = {
+        delivered: { count: 0, cents: 0 },
+        undelivered: { count: 0, items: 0, cents: 0 },
+    };
+    for (const l of lines) {
+        if (l.dryRun) {
+            split.undelivered.count += 1;
+            split.undelivered.items += l.items;
+            split.undelivered.cents += l.amountCents;
+        } else {
+            split.delivered.count += 1;
+            split.delivered.cents += l.amountCents;
+        }
+    }
+    return split;
 }
 
 /** The zone rows, off the lines. Shared so a draft and an issued invoice
@@ -428,7 +467,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
 
         let lines: DraftLine[];
         let exceptions: Exception[] = [];
-        let groups: Pick<Draft, 'byZone' | 'byServiceType' | 'dryRuns'>;
+        let groups: Pick<Draft, 'byZone' | 'byOutcome' | 'byServiceType' | 'dryRuns'>;
 
         if (status === 'draft') {
             const draft = await buildDraft(client, project, {
@@ -438,7 +477,12 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             });
             lines = draft.lines;
             exceptions = draft.exceptions;
-            groups = { byZone: draft.byZone, byServiceType: draft.byServiceType, dryRuns: draft.dryRuns };
+            groups = {
+                byZone: draft.byZone,
+                byOutcome: draft.byOutcome,
+                byServiceType: draft.byServiceType,
+                dryRuns: draft.dryRuns,
+            };
         } else {
             lines = await storedLines(project.id, id);
             const dryRunLines = lines.filter((l) => l.dryRun);
@@ -453,6 +497,7 @@ export function createInvoicesRouter({ client }: { client: Client }): Router {
             };
             groups = {
                 byZone: zoneBreakdown(lines),
+                byOutcome: outcomeSplit(lines),
                 byServiceType: tally((l) => l.serviceType).map(([serviceType, v]) => ({ serviceType, ...v })),
                 dryRuns: {
                     count: dryRunLines.length,
@@ -1233,6 +1278,9 @@ export interface RenderableInvoice {
     lines: DraftLine[];
     adjustments: Array<{ description: string; amount: number; reason: string }>;
     byZone: ZoneRow[];
+    /** Delivered against undelivered. Printed under the total, because
+     *  "what are you charging me for" is not answered by a zone. */
+    byOutcome: OutcomeSplit;
     byServiceType: Array<{ serviceType: string; count: number; cents: number }>;
     dryRuns: { count: number; items: number; cents: number };
     subtotalCents: number;
@@ -1477,16 +1525,42 @@ export function renderInvoice(
     page.textRight(money(view.totalCents), COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 10.5, rgb: NAVY });
     y -= 22;
 
-    if (view.dryRuns.count > 0) {
-        const d = view.dryRuns;
-        page.text(
-            `Included above: undelivered deliveries priced at the dry run rate - `
-            + `${d.count.toLocaleString('en-US')} ${d.count === 1 ? 'delivery' : 'deliveries'}, `
-            + `${d.items.toLocaleString('en-US')} ${d.items === 1 ? 'item' : 'items'}, ${money(d.cents)}.`,
-            MARGIN, y, { size: 8, grey: 0.35 },
-        );
-        y -= 20;
+    /* ── delivered against undelivered ──────────────────────────────────
+     *
+     * This was a grey line of prose under the total: "included above,
+     * 308 deliveries, 654 items, $5,886.00". A footnote is where a figure
+     * goes to be disbelieved, and the undelivered half is precisely the
+     * half University Health has reason to look at twice, since it is the
+     * half where nothing arrived.
+     *
+     * So it is a table, in the same shape as "By service level" below it
+     * and adding to the same subtotal. Two rows, and the second one says
+     * what it is priced on: ITEMS, not deliveries. */
+    room(110);
+    const out = view.byOutcome;
+    const items = out.undelivered.items.toLocaleString('en-US');
+    const unit = out.undelivered.items === 1 ? 'item' : 'items';
+    const undeliveredLabel = view.rates
+        ? `Undelivered - ${items} ${unit} at $${view.rates.dryRun.toFixed(2)}`
+        : `Undelivered - ${items} ${unit}`;
+    tableHead('By outcome', 'Deliveries', 'Amount');
+    row('Delivered', out.delivered.count.toLocaleString('en-US'), money(out.delivered.cents));
+    row(undeliveredLabel, out.undelivered.count.toLocaleString('en-US'), money(out.undelivered.cents));
+    rule();
+    row('Total', (out.delivered.count + out.undelivered.count).toLocaleString('en-US'),
+        money(view.subtotalCents), true);
+    y -= 8;
+
+    for (const t of wrap(
+        'An undelivered delivery is one a courier attempted and could not complete. Addendum No. 1 '
+        + 'prices it per item instead of the zone delivery charge, not on top of it; the proof of '
+        + 'attempt is held with the delivery record. Attachment 1 splits both by zone.',
+        'Helvetica', 7.5, RIGHT - MARGIN,
+    )) {
+        page.text(t, MARGIN, y, { size: 7.5, grey: 0.4 });
+        y -= 10;
     }
+    y -= 12;
 
     room(120);
     tableHead('By service level', 'Deliveries', 'Amount');
