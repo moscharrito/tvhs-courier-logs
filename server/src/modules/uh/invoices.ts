@@ -1453,36 +1453,109 @@ export function renderInvoice(
     y -= 22;
 
     const rates = view.rates;
-    const COL_RATE = MARGIN + 250;
+
+    /* ───────────── THE TABLE SHOWS ITS OWN ARITHMETIC ─────────────────
+     *
+     * It used to print a rate beside a count beside an amount that was not
+     * their product, with the reason in a footnote underneath. University
+     * Health's accounts payable would have read 2,280 deliveries at $12.50
+     * as $28,500 and queried the $29,996.50 beside it -- as Izy Global
+     * Management did, twice, on 17 and 18 November, which is how this was
+     * found.
+     *
+     * The multiplication they expect to see is now its own column, and the
+     * difference is its own column beside it. The two add up to the amount
+     * on the same line, so the page can be checked straight across with a
+     * calculator and nothing has to be taken on trust.
+     *
+     * WHAT THE DIFFERENCE IS MADE OF, which is the part nobody could see:
+     * an undelivered item bills $9 per item INSTEAD OF the zone rate
+     * (Addendum 1), so it lifts zone 1 and lowers zones 3 to 5 -- the
+     * column goes negative, and it should, because a dry run in zone 5
+     * costs University Health $43 less than the delivery would have.
+     * Surcharges add to it. */
+    /* ITS OWN COLUMNS, not page 1's. Five numeric columns have to fit
+     * between the zone label and the right margin, and the two tables do
+     * not have the same number of them. Each x is the RIGHT edge, so the
+     * gaps below are what stops a heading running into its neighbour:
+     * "Undelivered / surcharge" is about 97pt at 8.5pt bold, which is why
+     * it gets 108. */
+    const COL_RATE = MARGIN + 142;   // 190
+    const COL_ZCOUNT = MARGIN + 214; // 262
+    const COL_FLAT = MARGIN + 304;   // 352
+    const COL_DIFF = MARGIN + 412;   // 460
 
     page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });
     page.text('Zone', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
-    if (rates) page.textRight('Contract rate per delivery*', COL_RATE, y, { font: 'Helvetica-Bold', size: 8.5 });
-    page.textRight('Deliveries', COL_COUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    if (rates) page.textRight('Rate*', COL_RATE, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight('Deliveries', COL_ZCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    if (rates) {
+        page.textRight('Rate x deliveries', COL_FLAT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight('Undelivered / surcharge', COL_DIFF, y, { font: 'Helvetica-Bold', size: 8.5 });
+    }
     page.textRight('Amount', COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
     y -= 18;
 
     let zoneCount = 0;
+    let flatTotal = 0;
+    let diffTotal = 0;
+    let anyNegative = false;
     for (const z of view.byZone) {
         zoneCount += z.count;
         page.text(`${titled(z.zone)} delivery`, MARGIN + 5, y, { size: 8.5 });
         /* The rate for the zone this row is about, read off its label. A
            row we cannot match to a rate prints no rate rather than the
-           wrong one: "out of area" has no zone rate by definition. */
+           wrong one: "out of area" has no zone rate by definition, and
+           neither does the multiplication beside it. */
         const n = /(\d)/.exec(z.zone)?.[1];
         const rate = rates && n ? rates.zone[Number(n) as 1 | 2 | 3 | 4 | 5] : undefined;
-        if (rate !== undefined) page.textRight(`$${rate.toFixed(2)}`, COL_RATE, y, { size: 8.5 });
-        page.textRight(z.count.toLocaleString('en-US'), COL_COUNT, y, { size: 8.5 });
+        if (rate !== undefined) {
+            const flat = Math.round(rate * 100) * z.count;
+            const diff = z.cents - flat;
+            flatTotal += flat;
+            diffTotal += diff;
+            if (diff < 0) anyNegative = true;
+            page.textRight(`$${rate.toFixed(2)}`, COL_RATE, y, { size: 8.5 });
+            page.textRight(money(flat), COL_FLAT, y, { size: 8.5 });
+            /* Signed, because an unsigned figure in a column that can go
+               either way is the ambiguity this table exists to remove. */
+            page.textRight(`${diff < 0 ? '-' : '+'}${money(Math.abs(diff))}`, COL_DIFF, y, { size: 8.5 });
+        } else if (rates) {
+            /* Out of area: no zone rate, so no multiplication and nothing
+               to difference against. The amount still stands on its own. */
+            flatTotal += z.cents;
+            page.textRight(money(z.cents), COL_FLAT, y, { size: 8.5 });
+            page.textRight('-', COL_DIFF, y, { size: 8.5, grey: 0.45 });
+        }
+        page.textRight(z.count.toLocaleString('en-US'), COL_ZCOUNT, y, { size: 8.5 });
         page.textRight(money(z.cents), COL_AMOUNT, y, { size: 8.5 });
         y -= 15;
     }
     rule();
-    row('Total', zoneCount.toLocaleString('en-US'), money(view.subtotalCents), true);
+    page.text('Total', MARGIN + 5, y, { font: 'Helvetica-Bold', size: 8.5 });
+    page.textRight(zoneCount.toLocaleString('en-US'), COL_ZCOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    if (rates) {
+        page.textRight(money(flatTotal), COL_FLAT, y, { font: 'Helvetica-Bold', size: 8.5 });
+        page.textRight(
+            `${diffTotal < 0 ? '-' : '+'}${money(Math.abs(diffTotal))}`,
+            COL_DIFF, y, { font: 'Helvetica-Bold', size: 8.5 },
+        );
+    }
+    page.textRight(money(view.subtotalCents), COL_AMOUNT, y, { font: 'Helvetica-Bold', size: 8.5 });
+    y -= 15;
     y -= 8;
 
     if (rates) {
-        note('*Zone 4 and Zone 5 rates are set by ZIP code or community in the Bid Table. Amounts are the '
-            + "sum of each delivery's price, including any surcharge below.");
+        note('Each row reads across: the rate times the deliveries, plus the column beside it, is the amount. '
+            + 'That column is what the contract charges instead of, or on top of, the zone rate -- an '
+            + `undelivered delivery bills $${rates.dryRun.toFixed(2)} per ITEM in place of the zone rate `
+            + '(Addendum No. 1), and the surcharges below are added to it.'
+            + (anyNegative
+                ? ' It is negative where undelivered items cost less than the delivery would have, which is'
+                  + ' the usual case in the higher zones.'
+                : ''));
+        note('*Zone 4 and Zone 5 rates may be set by ZIP code or community in the Bid Table, so a delivery in '
+            + 'those zones may be priced at its own rate rather than the one shown.');
 
         room(120);
         page.rect(MARGIN, y - 4, RIGHT - MARGIN, 15, { fill: 0.93, grey: 0.93 });

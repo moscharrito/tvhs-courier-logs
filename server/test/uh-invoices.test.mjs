@@ -1154,6 +1154,97 @@ describe('the invoice template', () => {
         expect(text).not.toContain('adhoc');
     });
 
+it('shows the multiplication a reader expects, and what the rest of the amount is', async () => {
+        /* ─────────────────────────────────────────────────────────────────
+         * Raised twice by Izy Global Management, on 17 and 18 November:
+         * "2,280 deliveries at $12.50 should be $28,500, not $29,996.50".
+         * It should, and it was not an error -- the amount carried the
+         * contract's undelivered rule and the surcharges, explained in a
+         * footnote nobody reads before they have decided the page is wrong.
+         *
+         * A hospital's accounts payable would have read it the same way and
+         * queried the invoice, which is the expensive version of the same
+         * conversation. The arithmetic is on the page now.
+         */
+        const text = textOf(render({
+            byZone: [
+                /* 2,280 x $12.50 = $28,500.00, billed $29,996.50. */
+                { zone: 'zone 1', count: 2280, cents: 2999650 },
+                /* 4 x $52.00 = $208.00, billed $183.00: undelivered items in
+                   an expensive zone cost University Health LESS. */
+                { zone: 'zone 5', count: 4, cents: 18300 },
+            ],
+            subtotalCents: 3017950,
+            totalCents: 3017950,
+        }));
+
+        expect(text).toContain('Rate x deliveries');
+        expect(text).toContain('Undelivered / surcharge');
+        // The multiplication itself, which was nowhere on the document.
+        expect(text).toContain('$28,500.00');
+        expect(text).toContain('$208.00');
+    });
+
+    it('signs the difference, because it goes both ways', async () => {
+        const flat = textOf(render({
+            byZone: [
+                { zone: 'zone 1', count: 2280, cents: 2999650 },
+                { zone: 'zone 5', count: 4, cents: 18300 },
+            ],
+            subtotalCents: 3017950,
+            totalCents: 3017950,
+        })).replace(/\s+/g, ' ');
+
+        // $29,996.50 - $28,500.00
+        expect(flat).toContain('+$1,496.50');
+        // $183.00 - $208.00, and a minus sign rather than a bare figure.
+        expect(flat).toContain('-$25.00');
+        /* Said in words too: a negative column looks like a mistake unless
+           the page explains that a dry run can cost less than the delivery. */
+        expect(flat).toMatch(/negative where undelivered items cost less/);
+    });
+
+    it('adds up across every row and down to the total', async () => {
+        /* The point of the columns: a calculator agrees with the page. */
+        const rows = [
+            { zone: 'zone 1', count: 2280, cents: 2999650, rate: 1250 },
+            { zone: 'zone 2', count: 720, cents: 1064450, rate: 1450 },
+            { zone: 'zone 3', count: 224, cents: 489800, rate: 2200 },
+            { zone: 'zone 4', count: 93, cents: 336600, rate: 3600 },
+            { zone: 'zone 5', count: 4, cents: 18300, rate: 5200 },
+        ];
+        const subtotal = rows.reduce((n, r) => n + r.cents, 0);
+        const flatTotal = rows.reduce((n, r) => n + r.rate * r.count, 0);
+        const diffTotal = subtotal - flatTotal;
+        expect(subtotal).toBe(4908800);      // the November invoice
+        expect(flatTotal).toBe(4742400);
+        expect(diffTotal).toBe(166400);
+
+        const text = textOf(render({
+            byZone: rows.map(({ zone, count, cents }) => ({ zone, count, cents })),
+            subtotalCents: subtotal,
+            totalCents: subtotal,
+        })).replace(/\s+/g, ' ');
+
+        for (const r of rows) {
+            expect(text, `row ${r.zone}`).toContain(money(r.rate * r.count));
+        }
+        expect(text).toContain(money(flatTotal));   // $47,424.00
+        expect(text).toContain('+$1,664.00');
+        expect(text).toContain(money(subtotal));    // $49,088.00
+    });
+
+    it('prints no multiplication for out of area, which has no zone rate', async () => {
+        const text = textOf(render({
+            byZone: [{ zone: 'out of area', count: 3, cents: 11700 }],
+            subtotalCents: 11700,
+            totalCents: 11700,
+        }));
+        /* Billed per mile, so a rate times a count would be an invention.
+           The amount still stands on its own. */
+        expect(text).toContain('$117.00');
+    });
+
     it('states every contract rate on the attachment', async () => {
         /* So page 1 can be checked without asking us for the bid table. */
         const text = textOf(render());
