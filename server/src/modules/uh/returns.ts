@@ -326,7 +326,11 @@ export function createReturnsRouter({ client }: { client: Client }): Router {
         const names = await namesFor(client, rows.map((r) => r.username));
 
         res.json({
-            couriers: rows.map((r) => ({ ...r, name: names.get(r.username) ?? r.username })),
+            couriers: rows.map((r) => ({
+                ...r,
+                name: names.get(r.username)?.name || r.username,
+                phone: names.get(r.username)?.phone ?? '',
+            })),
             totals: {
                 couriers: rows.length,
                 orders: rows.reduce((n, r) => n + r.orders, 0),

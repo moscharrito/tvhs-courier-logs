@@ -20,6 +20,7 @@ import { Section } from '../../app/Section';
 import { slaLabel, type OrderRow, type Sla } from './Orders';
 import { CardAnchor, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
 import { displayName, handleUnder } from '../../lib/people';
+import { CourierPhone } from '../../lib/CourierPhone';
 
 interface Package { id: number; description: string; quantity: number; signatureRequired: boolean; outcome: string }
 
@@ -354,6 +355,7 @@ export function OrderDetail() {
                                 ? <span className="izy-muted">unassigned</span>
                                 : <>
                                     {displayName({ name: order.assignedToName ?? '', username: order.assignedTo })}
+                                    <CourierPhone phone={order.assignedToPhone} />
                                     {handleUnder({ name: order.assignedToName ?? '', username: order.assignedTo }) !== null && (
                                         <div className="izy-muted">{handleUnder({ name: order.assignedToName ?? '', username: order.assignedTo })}</div>
                                     )}

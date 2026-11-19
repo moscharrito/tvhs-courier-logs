@@ -70,6 +70,87 @@ async function delivered(over = {}) {
     return order;
 }
 
+/* ───────────────── A NUMBER TO RING THE COURIER ON ──────────────────────
+ *
+ * Asked for on 19 November 2026 by the people doing the ringing. A
+ * pharmacist with a question about a delivery in progress was given a first
+ * name and nothing else, so the call came to us, and we looked the number
+ * up and read it back -- a telephone game with a prescription in the middle
+ * of it.
+ *
+ * WHAT MUST NOT TRAVEL WITH IT. This file's whole subject is that a client
+ * sees their own deliveries and nothing of ours, and a telephone number is
+ * the most personal thing on a user row. Everybody who is not a courier is
+ * already "Dispatch" to a client rather than a person; handing out a number
+ * under that label would publish one of our office staff's phones to a
+ * hospital under a name that is not even theirs.
+ */
+describe('the courier\'s telephone number', () => {
+    it('reaches the pharmacy, because that is who rings it', async () => {
+        await admin.put('/api/projects/uh/uh/roster/ada.courier/contact').send({ phone: '(210) 555-0143' });
+        const order = await delivered();
+        const client = await agentFor('uh.pharmacist', 'client-pass-1');
+
+        const list = await client.get(`${CLIENT}/orders?serviceDate=${today}`);
+        expect(list.status).toBe(200);
+        const row = list.body.orders.find((o) => o.id === order.id);
+        expect(row.courier).toBe('Ada');
+        expect(row.courierPhone).toBe('(210) 555-0143');
+
+        /* And on the delivery itself, which is the page somebody is looking
+           at when they decide to ring. */
+        const detail = await client.get(`${CLIENT}/orders/${order.id}`);
+        expect(detail.status).toBe(200);
+        expect(detail.body.courierPhone).toBe('(210) 555-0143');
+    });
+
+    it('is empty for a driver the roster has no number for', async () => {
+        /* The screen says "N/A" to this, rather than nothing: a bare name
+           leaves a reader unable to tell "we have no number" from "this
+           page is not showing it", and they ring us to find out -- which is
+           the call the whole feature exists to stop. */
+        await admin.post('/api/users').send({ username: 'unlisted.courier', name: 'Unlisted Driver', password: 'courier-pass-9', role: 'driver' });
+        await admin.put('/api/users/unlisted.courier/memberships/uh').send({ role: 'courier', settings: {} });
+
+        const created = await admin.post(ORDERS).send({
+            siteId: discharge.id, serviceType: 'stat', recipientName: 'Nobody Here',
+            addressLine: '9 Test Street', zip: '78215', description: 'Oral solids', quantity: 1,
+        });
+        expect(created.status).toBe(201);
+        await admin.post(`${ORDERS}/${created.body.id}/events`).send({ type: 'assigned', courierUsername: 'unlisted.courier' });
+
+        const client = await agentFor('uh.pharmacist', 'client-pass-1');
+        const detail = await client.get(`${CLIENT}/orders/${created.body.id}`);
+        expect(detail.status).toBe(200);
+        expect(detail.body.courier).toBe('Unlisted');
+        expect(detail.body.courierPhone).toBe('');
+    });
+
+    it('is never given out for one of OUR staff, who are not a person here at all', async () => {
+        /* A dispatcher records an event when a courier's phone dies, and
+           the client sees "Dispatch" rather than a name -- deliberately.
+           A number under that label would be a personal telephone of ours
+           published to a hospital under a label that is not even theirs.
+           So the office's own number is not here: the client rings us the
+           way they always have, which is what "Dispatch" means. */
+        await admin.put('/api/projects/uh/uh/roster/ada.courier/contact').send({ phone: '(210) 555-0143' });
+        const order = await delivered();
+
+        /* The admin IS a member of this project and has a number on file,
+           and is not a courier. */
+        await admin.post(`${ORDERS}/${order.id}/events`).send({ type: 'returned', signedName: 'Pharmacy Tech' });
+
+        const client = await agentFor('uh.pharmacist', 'client-pass-1');
+        const detail = await client.get(`${CLIENT}/orders/${order.id}`);
+        expect(detail.status).toBe(200);
+        for (const event of detail.body.timeline) {
+            expect(event).not.toHaveProperty('byPhone');
+        }
+        /* And the one number on the document belongs to the courier. */
+        expect(detail.body.courierPhone).toBe('(210) 555-0143');
+    });
+});
+
 /* ------------------------------------------------------------------ rules */
 
 describe('a courier first name', () => {

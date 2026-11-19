@@ -24,6 +24,7 @@ import { useLive, agoLabel } from '../../app/useLive';
 import { describeFilter } from '../../lib/drilldown';
 import { slaLabel, type Sla } from './Orders';
 import { ListDrops } from './ListDrops';
+import { CourierPhone } from '../../lib/CourierPhone';
 
 interface Pharmacy { id: number; code: string; name: string }
 
@@ -71,7 +72,12 @@ interface ClientOrder {
     status: string; receivedAt: string; dueAt: string | null; pickedUpAt: string | null;
     arrivedAt: string | null; deliveredAt: string | null; returnedAt: string | null;
     receivedBy: string; noSignatureReason: string; failureReason: string;
-    courier: string; sla: Sla;
+    courier: string;
+    /* A number to ring the courier on. Optional: a browser holding a cached
+       bundle can outlive the server that grew this field, and the component
+       below renders "N/A" for an absence either way. */
+    courierPhone?: string | null;
+    sla: Sla;
     /** How far away it is. See the Eta note above; absent on an older server. */
     eta?: Eta | null;
     /* How the pharmacy sent it (drizzle/0051). Optional so a page served by
@@ -831,7 +837,15 @@ function DeliveryTable({ rows, clock, open, setOpen, showPharmacy = false }: {
                             {o.deliveredAt && <>delivered {clock(o.deliveredAt)}</>}
                             {!o.pickedUpAt && <>due {clock(o.dueAt)}</>}
                         </td>
-                        <td>{o.courier || <span className="izy-muted">not yet</span>}</td>
+                        {/* A first name and a number. The pharmacy ringing the
+                            person holding their medication used to ring us, and
+                            we looked it up and read it back -- a telephone game
+                            with a prescription in the middle of it. Couriers
+                            only: everybody else here is "Dispatch" rather than a
+                            person, and the server sends no number for them. */}
+                        <td>{o.courier
+                            ? <>{o.courier}<CourierPhone phone={o.courierPhone} /></>
+                            : <span className="izy-muted">not yet</span>}</td>
                         <td>
                             <button className="izy-btn secondary small" type="button" onClick={() => setOpen(o.id === open ? null : o.id)}>
                                 {o.id === open ? 'Hide' : 'Proof'}
@@ -885,7 +899,9 @@ function ProofOfDelivery({ code, order, onClose }: { code: string; order: Client
                             <tr><th>Status</th><td>{STATUS_LABEL[detail.status] ?? detail.status}</td></tr>
                             {detail.receivedBy && <tr><th>Signed for by</th><td>{detail.receivedBy}</td></tr>}
                             {detail.noSignatureReason && <tr><th>Left without a signature</th><td>{detail.noSignatureReason}</td></tr>}
-                            <tr><th>Courier</th><td>{detail.courier || 'not yet assigned'}</td></tr>
+                            <tr><th>Courier</th><td>{detail.courier
+                                ? <>{detail.courier}<CourierPhone phone={detail.courierPhone} /></>
+                                : 'not yet assigned'}</td></tr>
                             {/* ON THE SCREEN AT LAST. The server has computed
                                 this for a single delivery since it was built
                                 and no page ever read it, so "estimated

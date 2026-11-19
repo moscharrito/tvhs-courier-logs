@@ -311,11 +311,14 @@ export async function sweepUnclaimed(client: Client, input: SweepInput): Promise
         ...assigned.map((a) => a.courierUsername),
         ...couriers.map((c) => c.courierUsername),
     ]);
-    const named = (u: string) => names.get(u) ?? u;
+    const named = (u: string) => names.get(u)?.name || u;
+    const ring = (u: string) => names.get(u)?.phone ?? '';
     /* MANUAL MODE REPORTS, IT DOES NOT CLAIM. Everything the sweep would
        have handed out moves to needsAssigning and `assigned` comes back
        empty, because nothing was. See the field's own note. */
-    const previewed = assigned.map((a) => ({ ...a, courierName: named(a.courierUsername) }));
+    const previewed = assigned.map((a) => ({
+        ...a, courierName: named(a.courierUsername), courierPhone: ring(a.courierUsername),
+    }));
     return {
         serviceDate,
         autoAssign,

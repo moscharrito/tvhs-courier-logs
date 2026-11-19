@@ -40,18 +40,45 @@ import type { Client } from '@libsql/client';
  * username, which is the honest thing to show for somebody who is no longer
  * in the system.
  */
-export async function namesFor(client: Client, usernames: Iterable<string>): Promise<Map<string, string>> {
+export interface Person {
+    /** What they are called. Empty when nobody recorded one. */
+    name: string;
+    /**
+     * A number to ring, as the roster recorded it. Empty when there is none.
+     *
+     * ON THE ROW BECAUSE OF WHAT THE ROW IS FOR. A dispatcher looking at a
+     * late delivery and a pharmacist looking at their own are asking the
+     * same question -- who has it and how do I reach them -- and were
+     * answered with a first name and nothing else. The number was on the
+     * roster screen, two pages away, behind a role most of them do not
+     * have.
+     *
+     * It is a personal telephone, so it travels no further than the screen
+     * that needs it: it is never written to the audit trail (see
+     * roster.ts, which records only WHETHER a number is on file) and the
+     * client portal hands it out for COURIERS ONLY, never for our office
+     * staff, who are "Dispatch" to a client and not a person at all.
+     */
+    phone: string;
+}
+
+export async function namesFor(client: Client, usernames: Iterable<string>): Promise<Map<string, Person>> {
     const wanted = [...new Set([...usernames].filter((u) => typeof u === 'string' && u !== ''))];
     if (wanted.length === 0) return new Map();
 
     const rs = await client.execute({
-        sql: `SELECT username, name FROM users WHERE username IN (${wanted.map(() => '?').join(',')})`,
+        sql: `SELECT username, name, phone FROM users WHERE username IN (${wanted.map(() => '?').join(',')})`,
         args: wanted,
     });
-    const out = new Map<string, string>();
+    const out = new Map<string, Person>();
     for (const r of rs.rows) {
         const name = String(r['name'] ?? '').trim();
-        if (name !== '') out.set(String(r['username']), name);
+        const phone = String(r['phone'] ?? '').trim();
+        /* A row with neither is the same as no row: the caller falls back
+           to the username, which is what it did before this carried two
+           fields. A row with ONLY a number is kept, because the number is
+           the half somebody is trying to use. */
+        if (name !== '' || phone !== '') out.set(String(r['username']), { name, phone });
     }
     return out;
 }
@@ -63,5 +90,15 @@ export async function namesFor(client: Client, usernames: Iterable<string>): Pro
  * nobody can act on -- an address is worse than a name and better than a
  * blank.
  */
-export const displayName = (username: string | null, names: Map<string, string>): string | null =>
-    username === null ? null : (names.get(username) ?? username);
+export const displayName = (username: string | null, names: Map<string, Person>): string | null =>
+    username === null ? null : (names.get(username)?.name || username);
+
+/**
+ * The number to ring, or '' when there is none on file.
+ *
+ * Never falls back to anything. A name has a sensible stand-in -- the
+ * username says WHO, badly -- and a telephone number does not: a wrong
+ * number is worse than a blank, because somebody will dial it.
+ */
+export const displayPhone = (username: string | null, names: Map<string, Person>): string =>
+    username === null ? '' : (names.get(username)?.phone ?? '');

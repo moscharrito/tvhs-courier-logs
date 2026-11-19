@@ -18,6 +18,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import type { Site } from './Sites';
 import { displayName } from '../../lib/people';
+import { CourierPhone } from '../../lib/CourierPhone';
 
 export interface Sla {
     state: 'open' | 'due_soon' | 'overdue' | 'met' | 'missed' | 'not_applicable';
@@ -58,6 +59,9 @@ export interface OrderRow {
     /** The courier's name. Optional: a server older than this build does
      *  not send it, and the row falls back to the username. */
     assignedToName?: string | null;
+    /** A number to ring them on, as the roster typed it. Optional for the
+     *  same reason, and empty for most of the roster until it is filled in. */
+    assignedToPhone?: string | null;
     sla: Sla;
 }
 
@@ -509,9 +513,14 @@ export function Orders() {
                                         <td>{o.zone === null ? <span className="izy-pill warn">out of area</span> : o.zone}</td>
                                         <td>{o.serviceType}</td>
                                         <td>{STATUS_LABEL[o.status] ?? o.status}</td>
-                                        {/* By name. The username behind it is an email address. */}
+                                        {/* By name, with a number under it. The username
+                                            behind it is an email address, which is why it is
+                                            not the second line -- see lib/people.ts. */}
                                         <td>{o.assignedTo
-                                            ? displayName({ name: o.assignedToName ?? '', username: o.assignedTo })
+                                            ? <>
+                                                {displayName({ name: o.assignedToName ?? '', username: o.assignedTo })}
+                                                <CourierPhone phone={o.assignedToPhone} />
+                                            </>
                                             : <span className="izy-muted">unassigned</span>}</td>
                                     </tr>
                                 );

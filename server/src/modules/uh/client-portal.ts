@@ -177,7 +177,7 @@ interface OrderRow {
 }
 
 /** One delivery, as the pharmacy that sent it should see it. */
-function present(o: OrderRow, siteName: string, courierName: string) {
+function present(o: OrderRow, siteName: string, courierName: string, courierPhone: string) {
     return {
         id: Number(o.id),
         reference: o.external_ref,
@@ -221,6 +221,9 @@ function present(o: OrderRow, siteName: string, courierName: string) {
         handlingFlags: handlingFlags(presentHandling(o)),
         /* A first name. See the header. */
         courier: courierName,
+        /* And a number to ring them on, for a courier and nobody else.
+           Empty is the normal case for an order nobody is carrying yet. */
+        courierPhone,
         sla: evaluateSla({
             status: o.status as OrderStatus,
             dueAt: o.due_at ? new Date(o.due_at) : null,
@@ -248,11 +251,18 @@ interface WorkbookInput {
     from: string;
     to: string;
     rows: Array<OrderRow & { site_name: string }>;
-    names: Map<string, string>;
+    names: Map<string, PortalPerson>;
     /** Where this delivery's proof sits in the bundle, or why there is none.
      *  Null when the spreadsheet travels alone and the column is left off. */
     proof: ((row: OrderRow & { site_name: string }) => string) | null;
 }
+
+/**
+ * How one person reads to a client: what they are called, and -- for a
+ * courier, and only a courier -- a number to ring them on. See
+ * displayNames() in the router for why the asymmetry is deliberate.
+ */
+export interface PortalPerson { label: string; phone: string }
 
 function buildWorkbook(input: WorkbookInput): ExcelJS.Workbook {
     const { timezone, sites, from, to, rows, names, proof } = input;
@@ -292,7 +302,8 @@ function buildWorkbook(input: WorkbookInput): ExcelJS.Workbook {
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
     for (const r of rows) {
-        const view = present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? '');
+        const view = present(r, r.site_name, names.get(r.assigned_to_username ?? '')?.label ?? '',
+            names.get(r.assigned_to_username ?? '')?.phone ?? '');
         sheet.addRow({
             serviceDate: view.serviceDate,
             pharmacy: view.pharmacy,
@@ -485,29 +496,46 @@ export function createClientPortalRouter(
     }
 
     /**
-     * How each person in these rows is named to the client.
+     * How each person in these rows is named to the client, and how to
+     * reach them.
      *
      * A courier becomes their first name. Anybody else becomes "Dispatch":
      * when a dispatcher records an event because a courier's phone died, the
      * client's question is still "who handled my medication", and the answer
      * is our office, not a named employee of ours. Our staff's names are not
      * the client's business at all.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * THE NUMBER GOES TO COURIERS ONLY, and the asymmetry is the point.
+     *
+     * A pharmacist with a question about a delivery in progress needs the
+     * person holding it, and was being given a first name and nothing else
+     * -- so the call went to our office, who looked up the number and read
+     * it out. That is a telephone game with a patient's medication in the
+     * middle of it.
+     *
+     * Everybody who is not a courier is already "Dispatch" here rather than
+     * a person, and giving a number to a label that is not a person would
+     * be publishing one of our staff's personal telephones to a client
+     * under a name that is not theirs. They get '' and the client rings the
+     * office, which is what "Dispatch" means.
      */
-    async function displayNames(projectId: number, usernames: Array<string | null>): Promise<Map<string, string>> {
+    async function displayNames(projectId: number, usernames: Array<string | null>): Promise<Map<string, PortalPerson>> {
         const wanted = [...new Set(usernames.filter((u): u is string => typeof u === 'string' && u !== ''))];
         if (wanted.length === 0) return new Map();
         const rs = await client.execute({
-            sql: `SELECT u.username, u.name, m.role FROM users u
+            sql: `SELECT u.username, u.name, u.phone, m.role FROM users u
                   LEFT JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
                   WHERE u.username IN (${wanted.map(() => '?').join(',')})`,
             args: [projectId, ...wanted],
         });
-        const out = new Map<string, string>();
+        const out = new Map<string, PortalPerson>();
         for (const r of rs.rows) {
-            out.set(
-                String(r['username']),
-                String(r['role']) === 'courier' ? courierFirstName(String(r['name'])) : 'Dispatch',
-            );
+            const courier = String(r['role']) === 'courier';
+            out.set(String(r['username']), {
+                label: courier ? courierFirstName(String(r['name'])) : 'Dispatch',
+                phone: courier ? String(r['phone'] ?? '').trim() : '',
+            });
         }
         return out;
     }
@@ -771,7 +799,8 @@ export function createClientPortalRouter(
             to,
             pharmacies: sites,
             orders: rows.map((r) => ({
-                ...present(r, r.site_name, names.get(r.assigned_to_username ?? '') ?? ''),
+                ...present(r, r.site_name, names.get(r.assigned_to_username ?? '')?.label ?? '',
+            names.get(r.assigned_to_username ?? '')?.phone ?? ''),
                 eta: etas.get(Number(r.id)) ?? null,
             })),
             truncated,
@@ -1090,7 +1119,7 @@ export function createClientPortalRouter(
                     orderId: id,
                     timezone: project.timezone,
                     hasPhoto,
-                    courierName: (username) => courierNames.get(username) ?? '',
+                    courierName: (username) => courierNames.get(username)?.label ?? '',
                     photoAvailable: storage.available,
                 });
                 if (!data) return { id, pdf: null, why: 'the delivery could not be read' };
@@ -1308,7 +1337,8 @@ export function createClientPortalRouter(
         await req.audit('client.read', 'order', String(id), { events: events.rows.length });
 
         res.json({
-            ...present(order, order.site_name, names.get(order.assigned_to_username ?? '') ?? ''),
+            ...present(order, order.site_name, names.get(order.assigned_to_username ?? '')?.label ?? '',
+                names.get(order.assigned_to_username ?? '')?.phone ?? ''),
             packages: packages.rows.map((p) => ({
                 description: String(p['description']),
                 quantity: Number(p['quantity']),
@@ -1323,7 +1353,7 @@ export function createClientPortalRouter(
             timeline: events.rows.map((e) => ({
                 type: String(e['type']),
                 at: String(e['at']),
-                by: names.get(String(e['actor'])) ?? '',
+                by: names.get(String(e['actor']))?.label ?? '',
                 signedName: String(e['signed_name']),
                 reason: String(e['reason']),
             })),
@@ -1566,7 +1596,7 @@ export function createClientPortalRouter(
             orderId: id,
             timezone: project.timezone,
             hasPhoto,
-            courierName: (username) => names.get(username) ?? '',
+            courierName: (username) => names.get(username)?.label ?? '',
             /* Was hardcoded false, which was true before there was a file
                service and became a lie the moment one was configured. The
                document now says what is actually so. */

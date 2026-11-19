@@ -63,3 +63,36 @@ export function displayName(person: { name?: string | undefined; username: strin
     const name = (person.name ?? '').trim();
     return name === '' ? person.username : name;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * AND A NUMBER TO RING, UNDER THE NAME.
+ *
+ * Asked for on 19 November 2026 by the people doing the ringing. A
+ * dispatcher looking at a late delivery and a pharmacist looking at their
+ * own were both given a first name and nothing else, so the call went to
+ * our office, who looked the number up and read it back. That is a
+ * telephone game with somebody's medication in the middle of it.
+ *
+ * The number is stored as the roster typed it -- it is a free text field,
+ * because a driver may write down an extension, a second number, or
+ * somebody else's phone for the week -- so it is PRINTED AS TYPED and not
+ * reformatted. Tidying "(210) 555-0190 after 6" into a canonical number
+ * would throw away the half that matters.
+ *
+ * tel: for the dialling, though, so a tap on a phone or a click in a soft
+ * phone calls it. The digits for the href are the digits the string
+ * contains; the label is still what was typed.
+ */
+
+/** Just enough of a number to dial: digits, and a leading + if there is one. */
+export function dialable(phone: string): string | null {
+    const trimmed = phone.trim();
+    if (trimmed === '') return null;
+    const plus = trimmed.startsWith('+');
+    const digits = trimmed.replace(/\D/g, '');
+    /* Seven is the shortest thing that is a telephone number anywhere we
+       operate. Below that it is an extension or a typo, and a tel: link to
+       either is a wrong number somebody will dial. */
+    if (digits.length < 7) return null;
+    return `${plus ? '+' : ''}${digits}`;
+}

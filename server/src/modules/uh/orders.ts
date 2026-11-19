@@ -20,7 +20,7 @@ import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../../core/projects/middleware';
 import { loadPodData, podFilename, renderPod } from './pod';
-import { namesFor, displayName } from './people';
+import { namesFor, displayName, displayPhone } from './people';
 import {
     hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus, attemptPhoto, attemptPhotoStatus,
     PROOF_KINDS, ATTEMPT_KIND,
@@ -1114,6 +1114,11 @@ export function createOrdersRouter(
         const listNames = await namesFor(client, rows.map((r) => r.assignedTo ?? ''));
         for (const r of rows) {
             (r as Record<string, unknown>)['assignedToName'] = displayName(r.assignedTo ?? null, listNames);
+            /* AND A NUMBER TO RING. The Courier column answered "who has
+               it" and left "how do I reach them" to the roster screen, two
+               pages away behind a role half the people asking do not have.
+               Same query, one more column. */
+            (r as Record<string, unknown>)['assignedToPhone'] = displayPhone(r.assignedTo ?? null, listNames);
         }
 
         await req.audit('order.list', 'order', null, {
@@ -1557,6 +1562,7 @@ export function createOrdersRouter(
             /** The courier's name, for the screen. `assignedTo` beside it is
              *  still the username, which is the key everything joins on. */
             assignedToName: displayName(order.assigned_to_username ?? null, courierNames),
+            assignedToPhone: displayPhone(order.assigned_to_username ?? null, courierNames),
             packages: pkgs.rows.map((p) => ({
                 id: Number(p['id']),
                 description: String(p['description']),
