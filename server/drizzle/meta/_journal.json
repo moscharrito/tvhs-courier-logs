@@ -484,6 +484,13 @@
       "when": 1794277599000,
       "tag": "0068_invoice_requested_at",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "6",
+      "when": 1794363999000,
+      "tag": "0069_files_proof_index",
+      "breakpoints": true
     }
   ]
 }

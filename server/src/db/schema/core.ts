@@ -268,6 +268,21 @@ export const files = sqliteTable(
         unique('files_key_unique').on(t.s3Key),
         index('files_order_idx').on(t.orderId),
         index('files_project_status_idx').on(t.projectId, t.status),
+        /* "HAS THIS DELIVERY GOT ITS PHOTOGRAPH", which is a different
+           question from either of the two above and was being answered by
+           the wrong one of them.
+
+           The Orders filter asks it once per order. SQLite picked
+           files_project_status_idx, because a project and a status look
+           selective until you notice that every stored photograph in the
+           contract matches both -- so each order scanned the whole range
+           hunting for its own id. 22 seconds on production; 7,386 ms
+           against a local copy the same size; 7 ms with this.
+
+           The column order is the lookup, and project_id is last on
+           purpose: it adds nothing to the seek and makes the index
+           COVERING, so the subquery never reaches the table. */
+        index('files_proof_idx').on(t.orderId, t.kind, t.status, t.projectId),
         /* Kept in step with FILE_KINDS above and with drizzle/0038,
            drizzle/0062 and drizzle/0065, which rebuilt the table to widen
            this. The migration is what the database

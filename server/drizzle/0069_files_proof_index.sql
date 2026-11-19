@@ -1,0 +1,33 @@
+-- "Which of these deliveries has no photograph", in seven milliseconds
+-- instead of twenty-two seconds.
+--
+-- The Orders page grew that filter on 18 November 2026 and it was reported
+-- the same day as doing nothing: ticking it left six thousand orders and the
+-- same counts on screen. It was not doing nothing. It was taking 22 SECONDS
+-- on production -- twice, because the table and the header above it are two
+-- requests -- and the page was simply still showing the previous answer when
+-- anybody looked up. A feature that slow is indistinguishable from a feature
+-- that is broken, and it was reported as broken.
+--
+-- WHAT THE PLANNER WAS DOING. The filter asks, for each order, whether any
+-- file is bound to it with the right kind. SQLite had two indexes to choose
+-- from and chose `files_project_status_idx (project_id, status)`, because a
+-- project and a status look selective -- except that EVERY stored photograph
+-- in this contract matches both. So each of the six thousand orders scanned
+-- the whole range looking for its own id. `files_order_idx (order_id)` would
+-- have been the right one and was never picked.
+--
+-- Measured against a database the size of the real one, 6,000 orders and
+-- 5,700 photographs:
+--
+--      files_project_status_idx     7,386 ms
+--      this index                       7 ms
+--
+-- The column order is the lookup: seek the order, then the kind, then the
+-- state of the upload. project_id is last and carries no weight in the seek
+-- -- it is there to make the index COVERING, so the subquery never touches
+-- the table at all.
+--
+-- Nothing is dropped. files_order_idx still serves "every photograph on this
+-- delivery", which is what the proof of delivery itself asks.
+CREATE INDEX IF NOT EXISTS `files_proof_idx` ON `files` (`order_id`,`kind`,`status`,`project_id`);
