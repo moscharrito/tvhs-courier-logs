@@ -29,7 +29,10 @@ afterAll(async () => { await srv?.stop(); });
 describe('namesFor', () => {
     it('answers with the name for a username that is an address', () => {
         return namesFor(srv.core.client, ['names.driver@example.invalid']).then((m) => {
-            expect(m.get('names.driver@example.invalid')).toBe('Named Driver');
+            /* A person rather than a string since 19 November: the number is
+               read in the same query as the name, so no screen can show a
+               name the number does not belong to. */
+            expect(m.get('names.driver@example.invalid').name).toBe('Named Driver');
         });
     });
 
@@ -58,7 +61,7 @@ describe('namesFor', () => {
 
 describe('displayName', () => {
     it('falls back to the username, never to nothing', () => {
-        const m = new Map([['a.known', 'A Known']]);
+        const m = new Map([['a.known', { name: 'A Known', phone: '' }]]);
         expect(displayName('a.known', m)).toBe('A Known');
         expect(displayName('a.stranger', m)).toBe('a.stranger');
         expect(displayName(null, m)).toBeNull();

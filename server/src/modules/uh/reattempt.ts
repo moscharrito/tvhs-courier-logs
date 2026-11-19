@@ -305,16 +305,50 @@ export function createReattemptRouter({ client }: { client: Client }): Router {
 
     /** The 409 the partial unique index asks for, named for its reader. */
     async function alreadyOpen(projectId: number, id: number, res: Response, message: string) {
-        const open = await client.execute({
-            sql: `SELECT id FROM orders WHERE project_id = ? AND reattempt_of_order_id = ?
-                    AND status NOT IN ('delivered','failed','cancelled') LIMIT 1`,
-            args: [projectId, id],
-        });
+        const open = await existingAttempt(projectId, id);
         res.status(409).json({
             error: message,
             code: 'reattempt.alreadyOpen',
-            orderId: open.rows[0] ? Number(open.rows[0]['id']) : null,
+            orderId: open ? open.id : null,
         });
+    }
+
+    /* ───────── HAS THIS DELIVERY ALREADY GONE OUT AGAIN, IN ANY STATE?
+     *
+     * This used to ask only for a reattempt that was still OPEN -- the same
+     * predicate as the partial unique index, `status NOT IN
+     * ('delivered','failed','cancelled')` -- and that is the hole the three
+     * duplicate deliveries of 18 November went through.
+     *
+     * The index released the moment the first reattempt was delivered, so a
+     * second became legal; and when a caller then hit the 409 path, this
+     * query could find nothing to name, so the driver was told "already
+     * going out again" with no delivery to go and look at.
+     *
+     * Returns the LATEST attempt in any state but cancelled, and the two
+     * callers want different things from it, which is why the judgement is
+     * theirs and not this function's:
+     *
+     *   The dispatch route refuses only a DELIVERED one -- the medication
+     *   is with the patient -- and lets a dispatcher try again after one
+     *   that failed, which is what the index's predicate was written for.
+     *
+     *   `redeliver` refuses any of them, because a driver reopening the
+     *   original while a separate second delivery exists is the same
+     *   two-deliveries-one-package shape arriving by another road. It names
+     *   the one to open instead.
+     *
+     * A cancelled attempt never went out, and is ignored by both.
+     */
+    async function existingAttempt(projectId: number, id: number): Promise<{ id: number; status: string } | null> {
+        const rs = await client.execute({
+            sql: `SELECT id, status FROM orders
+                   WHERE project_id = ? AND reattempt_of_order_id = ? AND status != 'cancelled'
+                   ORDER BY id DESC LIMIT 1`,
+            args: [projectId, id],
+        });
+        const row = rs.rows[0];
+        return row ? { id: Number(row['id']), status: String(row['status']) } : null;
     }
 
     /* ────────────────────────────────────── dispatch sends somebody back */
@@ -333,6 +367,43 @@ export function createReattemptRouter({ client }: { client: Client }): Router {
         const original = await failedOrderOr404(req, res, { mine: false });
         if (!original) return;
         const id = Number(original['id']);
+
+        /* ─── THE HOLE IN THE LOCK, CLOSED WHERE IT ACTUALLY WAS.
+         *
+         * The partial unique index below is still the lock against two
+         * dispatchers clicking at the same instant, and it stays. What it
+         * cannot do is hold once the second attempt has FINISHED: its
+         * predicate is `status NOT IN ('delivered','failed','cancelled')`,
+         * so a completed reattempt leaves the index entirely and a third
+         * delivery becomes legal. That is how one package became three
+         * deliveries on 18 November.
+         *
+         * Only `delivered` is refused here, and the distinction is the
+         * whole point rather than a shortcut:
+         *
+         *   DELIVERED  the medication is with the patient. Sending anybody
+         *              again is sending them for nothing, and recording it
+         *              is inventing a delivery. Refused, with the order to
+         *              go and look at.
+         *
+         *   FAILED     two trips, nothing delivered, and a dispatcher who
+         *              wants a third is right to want one. Allowed, and
+         *              always was -- this is the behaviour the index's
+         *              predicate was written for, and the reason it cannot
+         *              simply be tightened to cover `delivered` as well.
+         *
+         *   OPEN       somebody is already on their way. Still the index's
+         *              job, and it still does it. */
+        const settled = await existingAttempt(project.id, id);
+        if (settled && settled.status === 'delivered') {
+            res.status(409).json({
+                error: `This delivery was already completed on the second attempt, #${settled.id}.`
+                    + ' There is nothing left to send out.',
+                code: 'reattempt.alreadyDelivered',
+                orderId: settled.id,
+            });
+            return;
+        }
 
         let attempt;
         try {
@@ -372,12 +443,53 @@ export function createReattemptRouter({ client }: { client: Client }): Router {
 
     /* ──────────────────────────────── the driver got back to the door
      *
-     * One call, and then the ordinary delivery screen. It does not record
-     * a delivery and deliberately does not: whatever the pharmacy stamped
-     * on this order -- a signature, a photographed form, identification,
-     * patient-only -- is enforced by stop.ts and has to go on being
-     * enforced on the second attempt exactly as on the first. All this
-     * does is give the driver something they are allowed to deliver.
+     * THE BUTTON ON A FAILED STOP. The driver taps it when they are back at
+     * a door they already wrote off, and then records the delivery through
+     * the ordinary screen: whatever the pharmacy stamped on this order -- a
+     * signature, a photographed form, identification, patient-only -- is
+     * enforced by stop.ts and goes on being enforced on the second trip
+     * exactly as on the first. Nothing about what proves a delivery is
+     * softened. What is softened is getting to the point of proving one.
+     *
+     * ──────────────────────────────────────────────────────────────────
+     * IT NO LONGER CREATES AN ORDER. 19 November 2026, and this is the
+     * change the duplicate deliveries were about.
+     *
+     * WHAT HAPPENED. A driver recorded a dry run at 2:41pm. The patient
+     * rang the pharmacy back; the driver returned at 3:29 and tapped this.
+     * It built a second delivery, 6939. They delivered it at 3:30. Then --
+     * for whatever reason a person taps a button twice on a phone, and the
+     * screen behind them still showed the original stop failed with this
+     * control live on it -- it was tapped again, and it built a THIRD
+     * delivery, 6960, which they also delivered.
+     *
+     * One package. One patient. Three rows on the pharmacy's screen, two of
+     * them billable deliveries that never happened, and a driver paid twice
+     * for one trip.
+     *
+     * The partial unique index was supposed to make the second impossible.
+     * Its predicate excluded `delivered` -- which looks reasonable and is
+     * the exact hole: the instant 6939 completed it left the index, and
+     * 6960 became legal. A lock that releases the moment the thing it
+     * protects succeeds is not a lock.
+     *
+     * THE FIX IS NOT A BETTER INDEX. It is that there was never a second
+     * delivery to create. The same package went to the same door twice and
+     * arrived the second time, which is one delivery that took two trips --
+     * so `delivered` is now reachable from `failed` (see lifecycle.ts) and
+     * this route hands the driver back the stop they already have.
+     *
+     * SO IT IS IDEMPOTENT BY CONSTRUCTION, not by a check that could be
+     * forgotten. Tapped once, twice or twelve times it answers with the
+     * same order id, because there is nothing here for it to create. The
+     * second tap that made 6960 can no longer make anything.
+     *
+     * DISPATCH'S OWN /reattempt STILL CREATES AN ORDER, and should: that is
+     * a desk decision to send somebody back on a LATER DAY, with its own
+     * service date, its own SLA clock and its own invoice line. A delivery
+     * that failed on Monday and succeeded on Monday is one delivery that
+     * took two trips; one that failed on Monday and succeeded on Thursday
+     * is two days' work and the record should say so.
      *
      * IT DOES NOT MARK THE PACKAGES COLLECTED EITHER. recordOrderEvent
      * writes the missing `picked_up` link itself the moment a courier does
@@ -405,100 +517,108 @@ export function createReattemptRouter({ client }: { client: Client }): Router {
             ? 'The driver returned to the door and completed the delivery.'
             : body.data.reason;
 
-        let attempt;
-        try {
-            attempt = await createSecondAttempt(client, {
-                projectId: project.id,
-                timezone: project.timezone,
-                settings: resolveSettings(project.settings),
-                original,
-                actor,
-                reason,
+        /* --- THE PACKAGES HAVE TO STILL BE IN THE VAN.
+         *
+         * `returned` is the driver handing the undelivered medication back
+         * over a pharmacy counter. It moves no status -- the delivery still
+         * failed -- so a failed stop goes on looking reattemptable long
+         * after the packages have gone. A driver who no longer has them
+         * cannot deliver them. lifecycle.ts refuses the delivery itself;
+         * this refuses the trip, which is a better place to find out than
+         * at a door.
+         *
+         * Dispatch's /reattempt is the way back from here, and it is the
+         * honest record of it: packages collected again, taken out again,
+         * on a new delivery. */
+        if (original['returned_at'] !== null) {
+            res.status(409).json({
+                error: 'These packages went back to the pharmacy, so this delivery cannot be reopened.'
+                    + ' Ask dispatch to send it out again as a new delivery.',
+                code: 'reattempt.alreadyReturned',
+                orderId: id,
             });
-        } catch (err) {
-            if (isUniqueViolation(err)) {
-                await alreadyOpen(
-                    project.id, id, res,
-                    'This delivery is already going out again. Open that stop instead of this one.',
-                );
-                return;
-            }
-            throw err;
+            return;
         }
 
-        /* ─── ONTO A RUN, OR THE DRIVER CANNOT SEE IT.
+        /* --- AND IT MUST NOT ALREADY HAVE GONE OUT AGAIN AS ITS OWN ORDER.
          *
-         * /runs/mine builds the phone's list from run_stops, so a new order
-         * that is merely assigned exists everywhere except the one screen
-         * the person who created it is looking at. The run that carried the
-         * original is the right home when it is still open and still
-         * theirs; otherwise whichever of their runs is open today.
+         * Dispatch may have reattempted this at a desk before the driver got
+         * back to the door. That second delivery is a real row with its own
+         * courier and its own clock, and completing the original as well
+         * would produce exactly the two-deliveries-one-package shape this
+         * change exists to remove, by a different route.
          *
-         * NO RUN IS NOT A FAILURE. The delivery is still created and still
-         * assigned, and the response says runId is null so the app can send
-         * them to the stop directly rather than to a list it is not on. */
+         * Counts delivered and failed reattempts too, which is precisely
+         * what the partial unique index did not: a reattempt that has
+         * already completed is the strongest reason there is not to reopen
+         * the original. A cancelled one never went out and does not count. */
+        const already = await client.execute({
+            sql: `SELECT id, status FROM orders
+                   WHERE project_id = ? AND reattempt_of_order_id = ? AND status != 'cancelled'
+                   ORDER BY id DESC LIMIT 1`,
+            args: [project.id, id],
+        });
+        const other = already.rows[0];
+        if (other) {
+            res.status(409).json({
+                error: `This delivery has already gone out again as #${Number(other['id'])}.`
+                    + ' Open that stop instead of this one.',
+                code: 'reattempt.alreadyOpen',
+                orderId: Number(other['id']),
+            });
+            return;
+        }
+
+        /* --- THE RECORD OF THE SECOND TRIP.
+         *
+         * A note, and not a status change: the order stays failed until the
+         * driver records the handover through the ordinary delivery screen.
+         *
+         * Written on every call, including a second tap that used to create
+         * a duplicate. Two notes a minute apart are a true record of a
+         * button pressed twice and they cost nothing; a second delivery was
+         * neither true nor free. */
+        await recordOrderEvent(client, {
+            projectId: project.id,
+            order: Object.fromEntries(Object.entries(original)) as unknown as OrderStateRow,
+            actor,
+            settings: resolveSettings(project.settings),
+            timezone: project.timezone,
+            event: { type: 'note', at: new Date(), reason: `Back at the door. ${reason}` },
+        });
+
+        /* Which run it is on, so the app can send the driver to the right
+           list. Already theirs -- the stop has been on it since the first
+           attempt -- so nothing is inserted and nothing is resequenced. */
         const carrying = await client.execute({
             sql: `SELECT r.id FROM run_stops s JOIN runs r ON r.id = s.run_id
                    WHERE s.project_id = ? AND s.order_id = ? AND r.courier_username = ?
                      AND r.status NOT IN ('completed','cancelled') LIMIT 1`,
             args: [project.id, id, actor],
         });
-        const theirs = carrying.rows[0] ?? (await client.execute({
-            sql: `SELECT id FROM runs
-                   WHERE project_id = ? AND courier_username = ? AND service_date = ?
-                     AND status NOT IN ('completed','cancelled')
-                   ORDER BY id DESC LIMIT 1`,
-            args: [project.id, actor, attempt.serviceDate],
-        })).rows[0];
-        const runId = theirs ? Number(theirs['id']) : null;
+        const runId = carrying.rows[0] ? Number(carrying.rows[0]['id']) : null;
 
-        try {
-            await recordOrderEvent(client, {
-                projectId: project.id,
-                order: attempt.row,
-                actor,
-                settings: resolveSettings(project.settings),
-                timezone: project.timezone,
-                event: {
-                    type: 'assigned', at: new Date(), courierUsername: actor,
-                    reason: `Second attempt, taken by the driver who made the first. ${reason}`,
-                },
-            });
-        } catch (err) {
-            /* 'assigned' is legal from 'ready' and the row was just created
-               as 'ready', so this is unreachable short of a schema change.
-               Answered rather than thrown anyway: a 500 here would leave a
-               created delivery and a driver with no idea it exists. */
-            if (err instanceof TransitionError) {
-                res.status(409).json({ error: err.message, code: err.code, orderId: attempt.id });
-                return;
-            }
-            throw err;
-        }
-
-        if (runId !== null) {
-            const last = await client.execute({
-                sql: 'SELECT COALESCE(MAX(sequence), 0) AS n FROM run_stops WHERE project_id = ? AND run_id = ?',
-                args: [project.id, runId],
-            });
-            await client.execute({
-                sql: 'INSERT INTO run_stops (project_id, run_id, order_id, sequence) VALUES (?, ?, ?, ?)',
-                args: [project.id, runId, attempt.id, Number(last.rows[0]?.['n'] ?? 0) + 1],
-            });
-        }
-
-        await req.audit('order.redeliver', 'order', String(attempt.id), {
-            reattemptOf: id, runId: runId ?? 0, courier: actor,
+        await req.audit('order.redeliver', 'order', String(id), {
+            reopened: true, runId: runId ?? 0, courier: actor,
         });
 
-        res.status(201).json({
-            id: attempt.id,
-            reattemptOf: id,
+        /* 200 AND THE SAME ID, where this used to answer 201 and a new one.
+         *
+         * The app takes `id` and opens that stop, which is now a stop it is
+         * allowed to deliver -- so the driver's journey through the screens
+         * is unchanged and no client had to be rewritten for this.
+         * `reattemptOf` is null because nothing was created: a client that
+         * reads it is told the truth rather than handed the original's own
+         * id pretending to be its parent. */
+        res.status(200).json({
+            id,
+            reattemptOf: null,
+            reopened: true,
             runId,
-            serviceType: attempt.serviceType,
-            serviceDate: attempt.serviceDate,
-            dueAt: attempt.dueAt,
-            status: 'assigned',
+            serviceType: String(original['service_type']),
+            serviceDate: String(original['service_date']),
+            dueAt: original['due_at'] === null ? null : String(original['due_at']),
+            status: 'failed',
         });
     }));
 

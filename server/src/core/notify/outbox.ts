@@ -93,6 +93,68 @@ export async function dispatchersOf(client: Client, projectId: number): Promise<
     }
 }
 
+/**
+ * The same people, narrowed to the ones whose patch covers this counter.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NOT dispatchersOf WITH A FILTER BOLTED ON.
+ *
+ * `dispatchersOf` answers "who could act on a dispatch problem anywhere on
+ * this contract", which is the right question for email failing or a day
+ * that never started -- those are facts about the whole operation. The three
+ * kinds added with the bell are facts about ONE COUNTER: a list landed at
+ * Wheatley, a driver arrived at a Vida stop.
+ *
+ * On this contract that distinction currently changes nothing, because all
+ * four dispatch chairs are leads on all nine counters. It will the first
+ * time somebody is given two counters and a shift -- and the failure then is
+ * silent and in the wrong direction: a person reading a bell full of other
+ * people's counters stops reading the bell.
+ *
+ * THE SCOPE IS THE MEMBERSHIP, read the same way every other scoped answer
+ * in this codebase reads it. An admin sees the whole project; a lead sees
+ * the counters their membership names; a lead whose settings are unparseable
+ * or empty sees NOTHING rather than everything, because silently widening a
+ * broken scope is how one pharmacy's work ends up in front of somebody who
+ * was never given it. Same decision, and the same reasoning, as
+ * modules/uh/delivery-notices.ts.
+ *
+ * Never throws, and returns [] rather than a guess. See the file header.
+ */
+export async function dispatchersForSite(client: Client, projectId: number, siteId: number): Promise<string[]> {
+    try {
+        const rs = await client.execute({
+            sql: `SELECT u.username, m.role, m.settings FROM memberships m
+                   JOIN users u ON u.id = m.user_id
+                   WHERE m.project_id = ? AND m.role IN ('admin', 'lead') AND u.status = 'active'
+                   ORDER BY u.username`,
+            args: [projectId],
+        });
+        const out: string[] = [];
+        for (const row of rs.rows) {
+            if (String(row['role']) === 'admin') { out.push(String(row['username'])); continue; }
+            let settings: Record<string, unknown> = {};
+            try {
+                const raw = row['settings'];
+                /* Only a string is parsed. libSQL can hand back a blob for a
+                   column somebody wrote oddly, and coercing one of those
+                   would produce a scope with no siteIds -- which reads as
+                   "assigned to nothing" and quietly stops telling somebody
+                   anything. The catch below is the honest version of that. */
+                settings = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {};
+            } catch {
+                continue;
+            }
+            const raw = settings['siteIds'];
+            const siteIds = Array.isArray(raw) ? raw.map((v) => Number(v)) : [];
+            if (siteIds.includes(siteId)) out.push(String(row['username']));
+        }
+        return out;
+    } catch {
+        return [];
+    }
+}
+
 /* ------------------------------------------------------------- delivery */
 
 /**

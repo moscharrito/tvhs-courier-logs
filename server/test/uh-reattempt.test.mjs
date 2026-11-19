@@ -236,30 +236,53 @@ describe('a driver who got back to the door', () => {
      * a telephone call to somebody holding the admin role -- so the
      * delivery that really happened went unrecorded.
      *
-     * It gives them something they are allowed to deliver and then gets out
-     * of the way. It does NOT record a delivery: the signature, the
-     * photographed form and the identification are stop.ts's job on the
-     * second attempt exactly as on the first.
+     * IT REOPENS THE DELIVERY RATHER THAN CREATING ONE, from 19 November
+     * 2026, and every expectation in here moved with it.
+     *
+     * It used to create a second order. On 18 November that produced three
+     * deliveries for one package -- the failed original and two complete
+     * duplicates, both billable, both payable -- because the control was
+     * tapped twice and the partial unique index meant to stop the second
+     * one released as soon as the first was delivered.
+     *
+     * The same package went to the same door twice and arrived the second
+     * time. That is ONE delivery that took two trips, so the status moves
+     * failed -> delivered on the order that already exists, the custody
+     * chain keeps the attempt because the attempt happened, and there is
+     * nothing for a second tap to create.
+     *
+     * What has NOT changed is the only thing that matters as much: this
+     * records no delivery. The signature, the photographed form and the
+     * identification are stop.ts's job on the second trip exactly as on the
+     * first.
      * ───────────────────────────────────────────────────────────────────── */
 
     let ada;
     beforeAll(async () => { ada = await agentFor('ada.courier', 'courier-pass-1'); });
 
-    it('gives the driver a delivery they can actually complete', async () => {
+    it('hands back the delivery they already have, and creates nothing', async () => {
         const order = await failedOrder();
         const again = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
-        expect(again.status, JSON.stringify(again.body)).toBe(201);
-        expect(again.body.reattemptOf).toBe(order.id);
+        expect(again.status, JSON.stringify(again.body)).toBe(200);
+        /* The same id. The app opens it and the driver carries on down the
+           ordinary screen, which is why no client had to change. */
+        expect(again.body.id).toBe(order.id);
+        expect(again.body.reattemptOf).toBeNull();
+        expect(again.body.reopened).toBe(true);
 
-        const second = await get(again.body.id);
-        expect(second.status).toBe('assigned');
-        expect(second.assignedTo).toBe('ada.courier');
+        const made = await rows('SELECT COUNT(*) AS n FROM orders WHERE reattempt_of_order_id = ?', [order.id]);
+        expect(Number(made[0].n)).toBe(0);
+
+        const same = await get(order.id);
+        expect(same.status).toBe('failed');
+        expect(same.assignedTo).toBe('ada.courier');
     });
 
-    it('puts it on their own run, because that is the only list the phone shows', async () => {
-        /* /runs/mine builds the phone's list from run_stops. An order that
-           is merely assigned exists everywhere except the screen belonging
-           to the person who just created it. */
+    it('is already on their run, because it never left it', async () => {
+        /* This used to insert a run_stop for the order it had just created.
+           There is nothing to insert now: the stop has been on the driver's
+           list since the first attempt, which is how they got to the door.
+           The run is reported so the app knows where to send them back to. */
         const order = await failedOrder();
         const again = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
         expect(again.body.runId).not.toBeNull();
@@ -267,30 +290,33 @@ describe('a driver who got back to the door', () => {
         const mine = await ada.get(`${RUNS}/mine`);
         expect(mine.status, mine.text).toBe(200);
         const stops = mine.body.runs.flatMap((r) => r.stops ?? []);
-        expect(stops.map((st) => st.orderId)).toContain(again.body.id);
+        expect(stops.filter((st) => st.orderId === order.id)).toHaveLength(1);
     });
 
-    it('leaves the first attempt failed, which is the whole argument of this file', async () => {
+    it('stays failed until the delivery is actually recorded', async () => {
+        /* Reopening is not delivering. The order is still a dry run on
+           every screen and every report until the driver proves a handover
+           through the ordinary route. */
         const order = await failedOrder();
         await ada.post(`${ORDERS}/${order.id}/redeliver`).send({ reason: 'Patient came back to the door' });
 
         const first = await get(order.id);
         expect(first.status).toBe('failed');
-        /* And says on its own record where to look next. */
+        /* And the trip back is on the record, in the driver's own words. */
         const chain = await rows(
             "SELECT reason FROM custody_events WHERE order_id = ? AND type = 'note' ORDER BY id DESC LIMIT 1",
             [order.id],
         );
-        expect(String(chain[0].reason)).toMatch(/Reattempted as delivery/);
+        expect(String(chain[0].reason)).toMatch(/Back at the door\. Patient came back to the door/);
     });
 
     it('does not record a delivery, so the proof rules still apply', async () => {
         /* The softening is getting TO the delivery screen. What proves a
-           delivery is untouched: a second attempt that arrived already
+           delivery is untouched: a reopened stop that arrived already
            delivered would be a handover with no signature and no photo. */
         const order = await failedOrder();
-        const again = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
-        const second = await get(again.body.id);
+        await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
+        const second = await get(order.id);
         expect(second.status).not.toBe('delivered');
         expect(second.deliveredAt ?? null).toBeNull();
     });
@@ -301,28 +327,43 @@ describe('a driver who got back to the door', () => {
            that could be completed without the photograph would be a way
            round the rule rather than a way back to the door. */
         const order = await failedOrder();
-        const again = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
-        const bare = await ada.post(`${ORDERS}/${again.body.id}/deliver`).send({ signedName: 'A Neighbour' });
+        await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
+        const bare = await ada.post(`${ORDERS}/${order.id}/deliver`).send({ signedName: 'A Neighbour' });
         expect(bare.status, bare.text).toBe(400);
         expect(bare.body.code).toBe('deliver.formPhotographRequired');
     });
 
-    it('then takes the ordinary delivery, and both attempts stay true', async () => {
+    it('then takes the ordinary delivery, and both trips stay true', async () => {
         const order = await failedOrder();
-        const again = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
-        const done = await ada.post(`${ORDERS}/${again.body.id}/deliver`).send({
+        await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
+        const done = await ada.post(`${ORDERS}/${order.id}/deliver`).send({
             signedName: 'A Neighbour', courierFormFileId: await storedForm(),
         });
         expect(done.status, JSON.stringify(done.body)).toBe(201);
-        expect((await get(again.body.id)).status).toBe('delivered');
-        /* One miss and one delivery, which is what happened. */
-        expect((await get(order.id)).status).toBe('failed');
+        /* ONE delivery, which is what happened: one package, one patient,
+           one door, reached on the second trip. */
+        expect((await get(order.id)).status).toBe('delivered');
+        const all = await rows('SELECT COUNT(*) AS n FROM orders WHERE reattempt_of_order_id = ?', [order.id]);
+        expect(Number(all[0].n)).toBe(0);
+
+        /* And the trip that failed is still on the record, because it
+           happened and the chain is append-only. */
+        const chain = await rows(
+            'SELECT type, from_status, to_status FROM custody_events WHERE order_id = ? ORDER BY id', [order.id],
+        );
+        const shape = chain.map((e) => `${String(e.type)}:${String(e.from_status)}>${String(e.to_status)}`);
+        expect(shape).toContain('attempted:picked_up>failed');
+        expect(shape).toContain('delivered:failed>delivered');
     });
 
-    it('carries the handling rules too, by the same path dispatch uses', async () => {
+    it('keeps the handling rules, because it is the same delivery', async () => {
+        /* This used to copy them onto a new order, which is a list of
+           columns one of the two copies could forget. Nothing is copied
+           now: what the pharmacy stamped on this delivery is still stamped
+           on it, because it IS it. */
         const order = await failedOrder({ signatureRule: 'patient_only', idRequired: true, controlled: true });
-        const again = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
-        const second = await get(again.body.id);
+        await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
+        const second = await get(order.id);
         expect(second.signatureRule).toBe('patient_only');
         expect(second.idRequired).toBe(true);
         expect(second.controlled).toBe(true);
@@ -356,13 +397,21 @@ describe('a driver who got back to the door', () => {
         expect(res.body.code).toBe('reattempt.notFailed');
     });
 
-    it('refuses the second tap, rather than sending two couriers to one door', async () => {
+    it('answers the second tap the same way, because there is nothing to create', async () => {
+        /* THE TAP THAT MADE THE THIRD DELIVERY on 18 November. It used to
+           be refused by a partial unique index, which worked right up until
+           the first reattempt was delivered and the index let go of it.
+           Now it is not refused at all -- it is simply idempotent, which is
+           a guarantee rather than a lock somebody has to keep correct. */
         const order = await failedOrder();
-        expect((await ada.post(`${ORDERS}/${order.id}/redeliver`).send({})).status).toBe(201);
+        const once = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
+        expect(once.status).toBe(200);
         const twice = await ada.post(`${ORDERS}/${order.id}/redeliver`).send({});
-        expect(twice.status, twice.text).toBe(409);
-        expect(twice.body.code).toBe('reattempt.alreadyOpen');
-        expect(twice.body.orderId).toBeGreaterThan(0);
+        expect(twice.status, twice.text).toBe(200);
+        expect(twice.body.id).toBe(order.id);
+
+        const made = await rows('SELECT COUNT(*) AS n FROM orders WHERE reattempt_of_order_id = ?', [order.id]);
+        expect(Number(made[0].n)).toBe(0);
     });
 });
 

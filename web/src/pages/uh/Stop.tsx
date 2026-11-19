@@ -144,6 +144,22 @@ export function Stop() {
        it loads, and the button stays hidden until the answer arrives: better
        a control that appears a moment late than one that cannot work. */
     const [handoverOnly, setHandoverOnly] = useState<boolean | null>(null);
+    /* THE DRIVER IS BACK AT THE DOOR, on a stop they already wrote off.
+     *
+     * Until 19 November tapping "Handed over" built a SECOND delivery and
+     * sent them to it, and the stop they were standing on stayed failed for
+     * ever. On 18 November that produced three orders for one package --
+     * the failed original and two complete duplicates -- because the button
+     * was tapped twice and the server's guard against the second one had a
+     * hole in it.
+     *
+     * The same package went to the same door twice and arrived the second
+     * time, so there is one delivery and this is the screen for it. The
+     * order is still `failed` while they fill the form in -- it is not a
+     * delivery until it is proved -- which means `closed` below has to know
+     * the difference between a stop that is finished and a stop somebody
+     * has come back to. */
+    const [reopened, setReopened] = useState(false);
     const [params, setParams] = useSearchParams();
     const [choice, setChoice] = useState<Choice>(null);
     const [signedName, setSignedName] = useState('');
@@ -219,6 +235,10 @@ export function Stop() {
     useEffect(() => {
         if (params.get('handover') !== '1') return;
         setChoice('deliver');
+        /* And on a stop that is still failed, open it: the flag arrives by
+           URL from a driver who tapped Handed over, which is now the same
+           stop rather than a new one. */
+        setReopened(true);
         setParams(new URLSearchParams(), { replace: true });
     }, [params, setParams]);
     /* EACH OF THESE THREE GUARDS AGAINST RESOLVING AFTER UNMOUNT, and that
@@ -308,7 +328,12 @@ export function Stop() {
     }
 
     const needsSignature = order.signatureRequired || order.packages.some((p) => p.signatureRequired);
-    const closed = ['delivered', 'failed', 'cancelled'].includes(order.status);
+    /* A reopened stop is not closed, even though it is still failed: the
+       driver is standing at the door with the form in front of them. It
+       closes again by itself the moment the delivery lands, because then
+       the status is `delivered` and this is false on its own. */
+    const closed = ['delivered', 'failed', 'cancelled'].includes(order.status)
+        && !(reopened && order.status === 'failed');
     /* Cancelled is not amendable: it was called off before anybody had the
        package, so there is no photograph of a handover to improve and no
        door to have gone back to. The server refuses both routes for it. */
@@ -507,22 +532,32 @@ export function Stop() {
         ).then(() => { setAmend(null); setAmendPhoto(null); });
     };
 
-    /* NOT THROUGH post(), which queues. A queued second attempt that fired
-       twice would be two couriers sent to one door, and the server's own
-       guard against that answers 409 -- which a driver should see now,
-       standing there, rather than three streets later. The photograph
-       amendment above does queue, because appending a picture twice is
-       harmless and losing it to a basement is not. */
+    /* NOT THROUGH post(), which queues. A queued reopen is a reopen the
+       driver cannot see the answer to, and the answers that matter are the
+       refusals -- these packages went back to the pharmacy, dispatch already
+       sent this out again -- which a driver should read standing there
+       rather than three streets later. The photograph amendment above does
+       queue, because appending a picture twice is harmless and losing it to
+       a basement is not. */
     const redeliver = async () => {
         setBusy(true);
         setMsg(null);
         try {
             const made = await api<{ id: number }>(`${base}/redeliver`, { method: 'POST', json: {} });
-            /* Straight onto the second attempt rather than back to the
-               list: the stop they are looking at is the first one and is
-               finished, and hunting a round for a row that was not there a
-               moment ago is how the wrong stop gets recorded. */
-            navigate(`/projects/${code}/orders/${made.id}/stop?handover=1`);
+            if (made.id === order.id) {
+                /* THE ORDINARY CASE SINCE 19 NOVEMBER: the same delivery,
+                   handed back. No navigation -- they are already on it --
+                   so the form simply appears under their thumb. */
+                setReopened(true);
+                setChoice('deliver');
+            } else {
+                /* A server still on the old build, which answers with an
+                   order it created. Kept so a deploy in progress does not
+                   strand a driver mid-round on a screen that does nothing:
+                   the app in their hand updates when they reload it, and
+                   the one in the van may not have. */
+                navigate(`/projects/${code}/orders/${made.id}/stop?handover=1`);
+            }
         } catch (err) {
             setMsg({
                 kind: 'error',

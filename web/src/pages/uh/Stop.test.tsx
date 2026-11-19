@@ -623,18 +623,46 @@ describe('Stop', () => {
         expect(screen.queryByRole('button', { name: 'Handed over' })).not.toBeInTheDocument();
     });
 
-    it('asks the server for the second attempt and lands on the handover form', async () => {
-        /* Not back to the round: the stop they are looking at is the
-           first attempt and is finished, and hunting a list for a row
-           that was not there a moment ago is how the wrong stop gets
-           recorded. It lands on ?handover=1, which opens the form
-           directly -- they have already said what they are doing. */
+    it('opens the handover form on the stop they are already standing on', async () => {
+        /* ─────────────────────────────────────────────────────────────────
+         * THIS USED TO NAVIGATE TO A DELIVERY THE SERVER HAD JUST CREATED.
+         *
+         * On 18 November that made three orders for one package: the failed
+         * original and two complete duplicates, because the button was
+         * tapped twice and the server's guard against the second one
+         * released as soon as the first was delivered.
+         *
+         * The same package went to the same door twice and arrived the
+         * second time. That is one delivery that took two trips, so the
+         * server hands back the SAME id and the form opens where the driver
+         * already is -- no navigation, nothing created, and nothing for a
+         * second tap to duplicate.
+         */
+        const { fn } = renderStop({
+            ...finished('failed'),
+            [`POST ${ORDER}/redeliver`]: { status: 200, body: { id: 21, reattemptOf: null, reopened: true, runId: 7 } },
+        });
+        await screen.findByRole('heading', { name: 'Not delivered' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
+        await waitFor(() => expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/redeliver'))).toBe(true));
+
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: 'Handed over' })).toBeInTheDocument();
+        }, { timeout: 5000 });
+        /* Still the same stop. A driver who looks up from the form is
+           looking at the delivery they came back to, not at a row that did
+           not exist a moment ago. */
+        expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/21/stop');
+    });
+
+    it('still follows a server that creates one, so a deploy does not strand a driver', async () => {
+        /* The app in a driver's hand updates when they reload it, and the
+           one in the van may not have. An old build answering 201 with a
+           new id is followed exactly as it was. */
         const { fn } = renderStop({
             ...finished('failed'),
             [`POST ${ORDER}/redeliver`]: { status: 201, body: { id: 99, reattemptOf: 21, runId: 7 } },
-            /* The delivery it made. Without this the screen it lands on
-               has nothing to render and the assertion below would be
-               about an error page. */
             'GET /api/projects/uh/uh/orders/99': order({ id: 99, status: 'picked_up' }),
         });
         await screen.findByRole('heading', { name: 'Not delivered' });
@@ -642,18 +670,6 @@ describe('Stop', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Handed over' }));
         await waitFor(() => expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/redeliver'))).toBe(true));
 
-        /* ON THE FORM, not on the menu above it. ?handover=1 carried them
-           there and was then stripped, so the assertion is what is on
-           screen rather than what is in the URL -- and stripping it is
-           the point: Back out of the form must not read the flag again
-           and put them straight back in.
-
-           ONE waitFor FOR THE WHOLE LANDING, with room to breathe. The
-           click starts a POST, a navigation, a GET for the new order and
-           an effect that opens the form -- four turns of the loop. Three
-           separate one-second waits in a row flaked about once in forty
-           full-suite runs, which is often enough to teach somebody that a
-           red suite means nothing. */
         await waitFor(() => {
             expect(screen.getByTestId('location')).toHaveTextContent('/projects/uh/orders/99/stop');
             expect(screen.getByRole('heading', { name: 'Handed over' })).toBeInTheDocument();
@@ -662,10 +678,13 @@ describe('Stop', () => {
     });
 
     it('says what went wrong rather than moving on, when the server refuses', async () => {
-        /* 409 is the one that matters: the delivery is already going out
-           again, because somebody tapped twice or dispatch got there
-           first. Sending them to a second attempt that is not theirs would
-           be worse than saying so. */
+        /* 409 is the one that matters, and since 19 November it is not a
+           double tap -- that is idempotent now and answers 200 twice. It is
+           the two the driver genuinely cannot work around: these packages
+           already went back over a pharmacy counter, or dispatch sent this
+           out again as its own delivery while they were driving. Opening a
+           form for either would be offering to record something that did
+           not happen. */
         renderStop({
             ...finished('failed'),
             [`POST ${ORDER}/redeliver`]: {

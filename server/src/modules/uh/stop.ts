@@ -445,6 +445,37 @@ export function createStopRouter({ client, storage }: { client: Client; storage:
             },
         });
         order.arrived_at = at.toISOString();
+        /* ─────────── AND THE STATUS, WHICH IS WHAT WAS MISSING.
+         *
+         * THE DUPLICATE PICKED-UP. Every chain of custody on this contract
+         * that has an inferred arrival on it carries the same wrong row:
+         *
+         *     Picked up   assigned to picked_up   (recorded automatically)
+         *     Arrived                             (recorded automatically)
+         *     Picked up   assigned to picked_up   (recorded automatically)
+         *     Delivered   picked_up to delivered
+         *
+         * The package is received at the pharmacy twice, a minute after it
+         * was already in the van, on an append-only document that exists to
+         * be read by an auditor.
+         *
+         * Nothing wrote it twice on purpose. recordOrderEvent writes the
+         * missing `picked_up` link whenever it is handed an order whose
+         * status is 'assigned' -- see its own comment on why that is the
+         * right place for it -- and it re-reads the row afterwards so its
+         * OWN work is done against the truth. What it cannot do is reach
+         * back into the caller's copy. So this function recorded the
+         * arrival, which moved the order to picked_up in the database, and
+         * then handed the SAME object, still saying 'assigned', to the
+         * outcome below. The second call inferred the collection all over
+         * again.
+         *
+         * One line, and it is exact rather than hopeful: the only way the
+         * call above writes an automatic collection is from 'assigned', and
+         * what it leaves behind is 'picked_up'. Three routes share this
+         * function -- delivered, attempted, and the batch outcome -- which
+         * is three chains of custody that stop saying something untrue. */
+        if (order.status === 'assigned') order.status = 'picked_up';
         return true;
     }
 

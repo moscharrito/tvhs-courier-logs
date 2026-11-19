@@ -25,6 +25,8 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Client, InValue } from '@libsql/client';
 import { requireProjectRole } from '../projects/middleware';
+import { catalogueFor, overridesFor, setPref } from './prefs';
+import { NOTIFICATION_KINDS, type NotificationKind } from '../../db/schema/core';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -40,6 +42,17 @@ const MarkRead = z.object({
     /** Empty means everything unread. Marking one at a time is what an app
      *  tapping a row does; marking all is what a dispatcher does. */
     ids: z.array(z.number().int().positive()).max(500).default([]),
+});
+
+const SetPrefs = z.object({
+    /* A batch, because the screen has a dozen switches and a person who
+       changes three of them and then leaves should not have left two of
+       them changed. Capped at the whole catalogue: there is no request
+       anybody can make that legitimately names more kinds than exist. */
+    prefs: z.array(z.object({
+        kind: z.enum(NOTIFICATION_KINDS),
+        enabled: z.boolean(),
+    })).min(1).max(NOTIFICATION_KINDS.length),
 });
 
 const RegisterDevice = z.object({
@@ -88,6 +101,76 @@ export function createNotificationsRouter({ client }: { client: Client }): Route
                 dispatchResult: String(r['dispatch_result'] ?? ''),
             })),
         });
+    }));
+
+    /* ───────────────── WHAT YOU WANT TO BE TOLD, AND WHAT IT COSTS
+     *
+     *   GET /notifications/prefs   the switches for YOUR role, with yours set
+     *   PUT /notifications/prefs   change some of them
+     *
+     * THE CATALOGUE COMES FROM THE SERVER, not from a list in the web app.
+     * The defaults live in core/notify/prefs.ts next to the reason for each
+     * one, and a label in the browser that disagrees with the behaviour on
+     * the server is how somebody switches on the wrong thing. It also means
+     * a kind added later appears on the screen without a second deploy.
+     *
+     * FOR YOUR ROLE. A pharmacist offered a switch for "a driver never came
+     * on shift" would reasonably conclude they were going to be told about
+     * it, and they are not: every fan-out in the system picks its own
+     * audience, and a switch that cannot change anything is a lie about what
+     * the software does.
+     *
+     * MINE MEANS MINE, as above. Keyed on the session's username with no id
+     * in the path, so there is no shape of request that reads or changes
+     * somebody else's. A dispatcher is not special here either. */
+    router.get('/prefs', members, wrap(async (req, res) => {
+        const role = req.membership?.role ?? '';
+        const catalogue = catalogueFor(role);
+        const overrides = await overridesFor(client, req.project!.id, meOf(req));
+        res.json({
+            kinds: catalogue.map((k) => ({
+                ...k,
+                /* What is actually in force for this person, which is their
+                   override when they have one and the default when they do
+                   not. The screen draws the switch from this and shows
+                   `enabledByDefault` beside it, so "I have changed this" and
+                   "this is how it comes" are distinguishable -- otherwise
+                   somebody who turns a thing off cannot tell later whether
+                   they did it or we did. */
+                enabled: overrides.get(k.kind) ?? k.enabledByDefault,
+                chosen: overrides.has(k.kind),
+            })),
+        });
+    }));
+
+    router.put('/prefs', members, wrap(async (req, res) => {
+        const body = parse(SetPrefs, req.body, res);
+        if (!body) return;
+        const role = req.membership?.role ?? '';
+        const offerable = new Set(catalogueFor(role).map((k) => k.kind as string));
+        /* A kind this role is never sent is refused rather than stored.
+           Storing it would be harmless and it would also be a row that
+           looks like a setting and does nothing, which is worse than an
+           error that says so. */
+        const unknown = body.prefs.filter((p) => !offerable.has(p.kind));
+        if (unknown.length > 0) {
+            res.status(400).json({
+                error: 'Those notifications are not sent to this account, so there is nothing to switch.',
+                code: 'notify.notYours',
+                kinds: unknown.map((p) => p.kind),
+            });
+            return;
+        }
+        let written = 0;
+        for (const pref of body.prefs) {
+            if (await setPref(client, req.project!.id, meOf(req), pref.kind as NotificationKind, pref.enabled)) written += 1;
+        }
+        await req.audit('notify.prefs', 'user', meOf(req), {
+            /* The kinds and the answers, which are a preference and not
+               personal data. No bodies, no counts of anybody's work. */
+            changed: body.prefs.map((p) => `${p.kind}=${p.enabled ? 'on' : 'off'}`),
+        });
+        res.json({ ok: true, written });
     }));
 
     router.post('/read', members, wrap(async (req, res) => {

@@ -47,6 +47,7 @@ import { requireProjectRole } from '../../core/projects/middleware';
 import { codeOf } from '../../core/files/probe';
 import { buildKey, type FileStorage } from '../../core/files/storage';
 import { scopeFor } from './client-portal';
+import { notifyDispatchOfListDrop } from './dispatch-notices';
 
 /** The same ceiling the import route uses. A daily list is a spreadsheet,
  *  not a scan, and 8 MB is already far past any of the nine. */
@@ -281,6 +282,29 @@ export function createListDropsRouter(
         await req.audit('list.drop', 'list_drop', String(id), {
             siteId: options.data.siteId, serviceDate: options.data.serviceDate,
             filename, bytes: body.length, sha256,
+        });
+
+        /* ───────── AND TELL DISPATCH, which is what this box was missing.
+         *
+         * A pharmacy handed a spreadsheet over and the only thing that knew
+         * was this table. Dispatch found out by opening the drop box and
+         * looking, so a list that landed at 11:40 and one that landed at
+         * 13:55 were indistinguishable until somebody refreshed a page --
+         * and the whole day's work waits behind the earliest one.
+         *
+         * AFTER THE ROW AND THE AUDIT, NEVER BEFORE THEM. A notification
+         * saying a list arrived, for a list that was not recorded, sends
+         * somebody to look for a file that is not there.
+         *
+         * Never throws: see modules/uh/dispatch-notices.ts. A list that was
+         * handed over was handed over, whatever happens here. */
+        await notifyDispatchOfListDrop(client, {
+            projectId: req.project!.id,
+            dropId: id,
+            siteId: options.data.siteId,
+            siteName: site.name,
+            serviceDate: options.data.serviceDate,
+            uploadedBy: actor(req),
         });
 
         res.status(201).json({

@@ -14,6 +14,7 @@
 
 import type { Client, InValue } from '@libsql/client';
 import { notifyPharmacyOfOutcome } from './delivery-notices';
+import { notifyDispatchOfStop } from './dispatch-notices';
 import { queueStageNotice } from './patient-sms';
 import { EVENT_STAGES, type Stage } from '../../core/notify/sms-template';
 import type { ProjectSettings } from '../../core/projects/settings';
@@ -31,6 +32,11 @@ export interface OrderStateRow {
     pickup_at: string | null;
     arrived_at: string | null;
     due_at: string | null;
+    /** When the undelivered packages went back over a counter. Optional: a
+     *  row read with SELECT * has it, and the handful of callers that build
+     *  this object by hand do not. See OrderState.returnedAt in
+     *  lifecycle.ts for why a missing value is safe. */
+    returned_at?: string | null | undefined;
 }
 
 export interface RecordOptions {
@@ -213,6 +219,7 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
             receivedAt: new Date(order.received_at),
             pickupAt: order.pickup_at ? new Date(order.pickup_at) : null,
             arrivedAt: order.arrived_at ? new Date(order.arrived_at) : null,
+            returnedAt: order.returned_at ? new Date(order.returned_at) : null,
             dueAt: order.due_at ? new Date(order.due_at) : null,
         },
         event,
@@ -283,6 +290,51 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
             status: applied.toStatus,
             at: event.at,
             timezone: opts.timezone ?? 'UTC',
+        });
+    }
+
+    /* And tell whoever asked to hear about every arrival or every ending.
+     *
+     * Here with the other two for the same reason they are here: every
+     * status change in the system passes through this function, so a route
+     * added later cannot quietly notify nobody.
+     *
+     * NOT GATED ON statusChanged for `arrived`, which does not move the
+     * status at all -- and gated on it for `delivered`, because a courier
+     * tapping the button twice is one delivery and the second tap has
+     * statusChanged false. A `failed` ending is deliberately not here: the
+     * pharmacy is told, and dispatch sees it on the board and in the
+     * discrepancies screen, which is where somebody acts on one.
+     *
+     * COSTS ONE INDEXED READ WHEN NOBODY HAS OPTED IN, which is the state
+     * this ships in and the state it will stay in for most people: both
+     * kinds are off by default. See modules/uh/dispatch-notices.ts on why
+     * the counter and the courier are a callback rather than two arguments. */
+    const isArrival = event.type === 'arrived';
+    const isEnding = applied.statusChanged && applied.toStatus === 'delivered';
+    if (isArrival || isEnding) {
+        await notifyDispatchOfStop(client, {
+            projectId,
+            orderId,
+            what: isArrival ? 'arrived' : 'delivered',
+            at: new Intl.DateTimeFormat('en-US', {
+                timeZone: opts.timezone ?? 'UTC', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+            }).format(event.at),
+            where: async () => {
+                const rs = await client.execute({
+                    sql: `SELECT s.id AS site_id, s.name AS site_name, o.assigned_to_username AS courier
+                           FROM orders o JOIN sites s ON s.id = o.site_id
+                          WHERE o.project_id = ? AND o.id = ?`,
+                    args: [projectId, orderId],
+                });
+                const row = rs.rows[0];
+                if (!row) return null;
+                return {
+                    siteId: Number(row['site_id']),
+                    siteName: String(row['site_name']),
+                    courierUsername: row['courier'] === null ? null : String(row['courier']),
+                };
+            },
         });
     }
 

@@ -97,7 +97,47 @@ export const EVENT_RULES: Record<CustodyEventType, EventRule> = {
         describes: 'The courier reached the delivery location.',
     },
     delivered: {
-        from: ['picked_up'], to: 'delivered', roles: COURIER_AND_STAFF, requires: ['signedName'],
+        /* ─────────── FROM 'failed' TOO, FROM 19 NOVEMBER 2026.
+         *
+         * THE DAY THIS WAS WRONG. A driver recorded a dry run at a door at
+         * 2:41pm. The patient rang the pharmacy back, the driver returned at
+         * 3:30 and handed the medication over. What the system produced was
+         * THREE deliveries for one package: the original, still failed, and
+         * two complete duplicates -- same patient, same address, same
+         * courier, both marked delivered, both billable, both payable.
+         *
+         * The duplicates came from `redeliver` creating a NEW order every
+         * time it was called, and a partial unique index that was supposed
+         * to stop a second one but excluded delivered rows from its
+         * predicate -- so the moment the first reattempt completed, a second
+         * became legal. Those are fixed where they live. This is the reason
+         * either of them could happen at all: `delivered` was reachable
+         * only from `picked_up`, so a driver standing at a door they had
+         * already written off had no way to record the delivery they had
+         * just made, and everything built to work around that invented a
+         * second delivery to hang it on.
+         *
+         * SO THE SAME DELIVERY ENDS AS WHAT IT ACTUALLY WAS. One order, one
+         * patient, one package, one invoice line -- and a custody chain that
+         * still carries the attempt, because it is append-only and the dry
+         * run genuinely happened. Nothing is rewritten: `attempted` stays on
+         * the record with its reason and its time, and the row above it says
+         * the driver went back.
+         *
+         * WHAT THIS MOVES, SAID PLAINLY: an order that failed and was then
+         * delivered now bills as one delivery rather than as a dry run plus
+         * a delivery, because there is one order where there were two. That
+         * is the reading that cannot over-bill University Health, which is
+         * the same choice modules/uh/pricing.ts makes everywhere else it is
+         * asked an unsettled question. Open item 10 is still open.
+         *
+         * NOT AFTER A RETURN. `returned` means the packages are back at a
+         * pharmacy counter; a driver who has handed them back cannot then
+         * hand them to a patient, and a system that lets them record it is
+         * offering to write down something that did not happen. Enforced in
+         * applyEvent rather than here, because `returned` does not move the
+         * status and so cannot be expressed as a `from`. */
+        from: ['picked_up', 'failed'], to: 'delivered', roles: COURIER_AND_STAFF, requires: ['signedName'],
         describes: 'Handed over and signed for.',
     },
     attempted: {
@@ -166,6 +206,21 @@ export interface OrderState {
     arrivedAt: Date | null;
     /** Null only when the clock could not start until pickup. */
     dueAt: Date | null;
+    /**
+     * When the undelivered packages went back over a pharmacy counter.
+     *
+     * Here only so that `delivered` can be refused after it. A `returned`
+     * event moves no status -- the delivery still failed -- so "has this
+     * been returned" cannot be expressed as a `from` on the rule, and
+     * without it a driver who handed the medication back at four o'clock
+     * could record a delivery of it at five.
+     *
+     * Optional because every caller that existed before 19 November 2026
+     * builds this object by hand, and a delivery that is merely missing
+     * this field must still be recordable. Undefined reads as "no return
+     * recorded", which is what it was before the column was consulted.
+     */
+    returnedAt?: Date | null | undefined;
 }
 
 export interface Applied {
@@ -249,6 +304,28 @@ export function applyEvent(order: OrderState, event: EventInput, settings: Proje
         throw new TransitionError(
             `Cannot record "${event.type}" while the order is ${order.status}: ${expected}.`,
             'transition.illegal',
+        );
+    }
+
+    /* ─────────── DELIVERED, AFTER THE PACKAGES WENT BACK.
+     *
+     * `returned` is the driver handing the undelivered medication over a
+     * pharmacy counter. It deliberately moves no status, because the
+     * delivery still failed -- which is exactly why this cannot be a `from`
+     * on the rule above and has to be its own check.
+     *
+     * A driver who has handed the packages back does not have them. Letting
+     * them then record a delivery is offering to write down something that
+     * did not happen, on an append-only chain that a regulator reads. The
+     * same-day return to the door, which is the case this whole change is
+     * about, happens BEFORE the van goes back to the pharmacy and is
+     * untouched by this.
+     */
+    if (event.type === 'delivered' && order.status === 'failed' && (order.returnedAt ?? null) !== null) {
+        throw new TransitionError(
+            'These packages were returned to the pharmacy, so this delivery cannot be completed.'
+            + ' Dispatch can send it out again as a new delivery.',
+            'transition.alreadyReturned',
         );
     }
 

@@ -533,7 +533,7 @@ describe('a delivery from end to end', () => {
         expect(res.body.code).toBe('transition.illegal');
         expect(res.body.status).toBe('ready');
         // Read by a dispatcher, so it reads as a sentence.
-        expect(res.body.error).toMatch(/the order must be picked_up\./);
+        expect(res.body.error).toMatch(/the order must be picked_up or failed\./);
         expect(res.body.allowed).toEqual(expect.arrayContaining(['assigned', 'cancelled']));
     });
 

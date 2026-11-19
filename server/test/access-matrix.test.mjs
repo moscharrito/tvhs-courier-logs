@@ -537,6 +537,18 @@ const MATRIX = [
        a project at all. */
     ['GET', `${UH}/notifications`, UH_MEMBER, 'what I was told'],
     ['POST', `${UH}/notifications/read`, UH_MEMBER, 'mark mine read'],
+    /* Which kinds I want. Mine, keyed on the session with no id in the path,
+       so there is no shape of request that reads or changes somebody else's
+       -- and the catalogue offered is the one for the caller's own role, so
+       nobody is shown a switch that cannot change anything. */
+    ['GET', `${UH}/notifications/prefs`, UH_MEMBER, 'the switches for my role'],
+    ['PUT', `${UH}/notifications/prefs`, UH_MEMBER, 'change some of them'],
+
+    /* The live feed behind the bell. A window onto nine counters and every
+       courier, so it is staff only: a pharmacy sees their own deliveries in
+       their own portal and a courier has their own run. A lead sees the
+       counters their membership names. */
+    ['GET', `${UH}/activity`, UH_LEAD_BOARD, 'what has just happened'],
     ['POST', '/api/me/push-devices', SIGNED_IN, 'this phone will take push'],
     ['DELETE', '/api/me/push-devices/999999', SIGNED_IN, 'it will not any more'],
     /* No role row: the check is per order, inside, because a pharmacy may

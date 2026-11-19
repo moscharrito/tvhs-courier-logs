@@ -711,6 +711,30 @@ export const NOTIFICATION_KINDS = [
      * carries who and which delivery, by its reference, and never the
      * patient, the address or the message. It is read on a lock screen. */
     'thread.mention',
+    /* ─────────── THE THREE THE BELL WAS BUILT FOR, 19 November 2026
+     *
+     * Asked for as "notify me when the pharmacy uploads their daily list,
+     * when a driver arrives, and when one completes an order". The first of
+     * those was the real gap: a pharmacy hands a spreadsheet to the drop box
+     * and the only thing that knew was the drop box, so dispatch found out by
+     * going and looking. Nine counters, every morning, and the whole day's
+     * work waits behind it.
+     *
+     * The other two are not a gap in the same way -- the board has shown a
+     * live feed of arrivals and deliveries since it was built -- and they are
+     * the two highest-volume facts in the system: between five hundred and
+     * fifteen hundred a day, times four dispatch chairs. So they exist as
+     * kinds a person may switch on for themselves, and they are off until
+     * somebody does. See core/notify/prefs.ts for the defaults and the
+     * arithmetic behind them.
+     *
+     * The body carries a counter, a delivery's reference and a courier's
+     * first name. Never a patient, an address or a telephone number: these
+     * are read on a lock screen, which is the one place a notification is
+     * seen by whoever is holding the phone rather than by whoever owns it. */
+    'list.dropped',
+    'stop.arrived',
+    'stop.delivered',
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -791,6 +815,51 @@ export const pushDevices = sqliteTable(
 );
 
 export type PushDevice = typeof pushDevices.$inferSelect;
+
+/* Which kinds a person wants, per contract (drizzle/0070).
+ *
+ * A ROW IS AN OVERRIDE AND NOT A SETTING. No row means "the default for this
+ * kind", which lives in core/notify/prefs.ts beside the reason for it. Two
+ * things follow from that, and both were the point:
+ *
+ *   A kind added next month behaves sensibly for everybody who signed up
+ *   before it existed, instead of being silently off for them because
+ *   nobody wrote them a row.
+ *
+ *   Changing our mind about a default is a one-line change rather than a
+ *   migration over everybody's rows -- and it does not overwrite the
+ *   choices of the people who had already decided for themselves.
+ *
+ * SCOPED TO THE PROJECT. Somebody can be a lead on UH and a courier on TVHS,
+ * and "tell me about every delivery" is a reasonable thing to want on one
+ * contract and not the other. */
+export const notificationPrefs = sqliteTable(
+    'notification_prefs',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        projectId: integer('project_id').notNull().references(() => projects.id),
+        username: text('username').notNull(),
+        /** One of NOTIFICATION_KINDS. Text rather than a check constraint so
+         *  a kind retired from the list leaves a dead row rather than a table
+         *  that can no longer be written to. */
+        kind: text('kind').notNull(),
+        enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+        updatedAt: text('updated_at').notNull(),
+    },
+    (t) => [
+        /* The upsert depends on this. Without it, switching a kind off twice
+           makes two rows and which one wins is whichever the reader sees
+           first -- which is a setting that works until it does not. */
+        unique('notification_prefs_unique').on(t.projectId, t.username, t.kind),
+        index('notification_prefs_user_idx').on(t.projectId, t.username),
+        /* The hot one: "has ANYBODY asked for this kind." A courier tapping
+           delivered on a phone on bad signal waits for that read, so it is
+           an index and not a scan even though the table is tiny today. */
+        index('notification_prefs_kind_idx').on(t.projectId, t.kind, t.enabled),
+    ],
+);
+
+export type NotificationPref = typeof notificationPrefs.$inferSelect;
 
 /* A code emailed to somebody who cannot sign in. See drizzle/0055.
  *
