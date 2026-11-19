@@ -45,6 +45,16 @@
  * recipient, same address, more than one delivered -- that catches a
  * duplicate however it arose, including an operator entering a list twice.
  *
+* WHAT IT CANNOT SEE: A DUPLICATE DATED TO ANOTHER DAY. The grouping is
+ * per service date, so two deliveries to one door on one day are a
+ * candidate and two on different days are two deliveries. That is right for
+ * the bug this was written for -- the driver button is same-day by
+ * construction, and the duplicates it made carried the original date -- and
+ * it is a genuine blind spot for a reattempt dispatch dated forward and
+ * then delivered alongside the original. Widening it to the whole period
+ * would flag every repeat patient on the contract, which is most of them,
+ * and a report nobody can read finds nothing.
+ *
  * FALSE POSITIVES ARE POSSIBLE AND ARE THE POINT. Two genuine deliveries to
  * one address on one day happen: a care home, a family, a split consignment
  * a pharmacy sent as two lines. So this reports CANDIDATES, with everything
@@ -65,6 +75,11 @@ const PROJECT = flag('project', 'uh');
 const USER = flag('user', process.env['TAG_USER'] ?? 'admin');
 const FROM = flag('from');
 const TO = flag('to');
+/* The page size. Exists so the cursor loop can be exercised with a handful
+   of deliveries instead of a thousand: the paging fault this script shipped
+   with was invisible under a period that fitted in one page, which is every
+   period anybody would test by hand. */
+const PAGE = Math.min(1000, Math.max(1, Number(flag('page', '1000')) || 1000));
 
 if (!FROM || !TO) {
     console.error('Give a period: --from YYYY-MM-DD --to YYYY-MM-DD');
@@ -103,22 +118,77 @@ cookie = (login.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join
 
 const UH = `/api/projects/${PROJECT}/uh`;
 
-/* Every delivery in the period, a page at a time. */
+/* ───────────────────────── EVERY DELIVERY IN THE PERIOD, A PAGE AT A TIME.
+ *
+ * BY CURSOR, AND THE FIRST VERSION OF THIS SENT `offset`, WHICH THE LIST
+ * ENDPOINT DOES NOT TAKE.
+ *
+ * It was not rejected. An unknown query parameter is ignored, so every
+ * request returned the SAME first five hundred rows, the loop never saw a
+ * short page, and it ran to its own page cap appending the same orders
+ * forty-one times. The report then counted each of them as forty other
+ * deliveries to the same address on the same day and announced 17,840
+ * duplicate delivery lines on a contract that had one.
+ *
+ * Which is the failure mode this whole script exists to avoid: a number
+ * that is wrong in the alarming direction, produced confidently, about
+ * money. modules/uh/orders.ts says why the endpoint is a cursor and not an
+ * offset -- with OFFSET a delivery completed during the paging pushes an
+ * order off the next page and nobody ever sees it -- and `nextCursor` is
+ * what it hands back.
+ *
+ * THE LOOP IS GUARDED THREE WAYS NOW, because the thing that made the bad
+ * number possible was a loop that could not tell it was not advancing:
+ *
+ *   it stops when the server says there is no next page, which is the
+ *   real condition and the one the old code never had;
+ *
+ *   it refuses to accept the same cursor twice, so a server that stopped
+ *   advancing could not be mistaken for one with more to give;
+ *
+ *   it still has a hard cap, and if it hits it, it SAYS SO instead of
+ *   quietly reporting on a slice.
+ */
 const orders = [];
-let page = 0;
+const seenCursors = new Set();
+let cursor = null;
+let pages = 0;
+let truncated = false;
 for (;;) {
-    const q = new URLSearchParams({
-        from: FROM, to: TO, limit: '500', offset: String(page * 500),
-    });
+    const q = new URLSearchParams({ from: FROM, to: TO, limit: String(PAGE) });
+    if (cursor) q.set('cursor', cursor);
     const body = await call(`${UH}/orders?${q.toString()}`);
-    const batch = body.orders ?? [];
-    orders.push(...batch);
-    if (batch.length < 500) break;
-    page += 1;
-    if (page > 40) break;   // 20,000 rows is far past any real period
+    orders.push(...(body.orders ?? []));
+
+    const next = body.nextCursor ?? null;
+    if (!next) break;
+    if (seenCursors.has(next)) {
+        console.error('The server returned a cursor it had already given. Stopping rather than');
+        console.error('counting the same rows twice -- see the note above this loop.');
+        truncated = true;
+        break;
+    }
+    seenCursors.add(next);
+    cursor = next;
+    pages += 1;
+    if (pages > 60) { truncated = true; break; }
 }
 
-console.log(`${orders.length} deliveries between ${FROM} and ${TO}.\n`);
+/* Every id, once. A second line of defence against the bug above: if paging
+   ever repeats itself again, this is where it stops being arithmetic. */
+const byId = new Map();
+for (const o of orders) byId.set(o.id, o);
+const unique = [...byId.values()];
+if (unique.length !== orders.length) {
+    console.error(`The server returned ${orders.length} rows covering ${unique.length} deliveries.`);
+    console.error('Paging repeated itself. Counting each delivery once; tell whoever owns this script.\n');
+}
+
+if (truncated) {
+    console.log('NOTE: stopped before the end of the period. What follows covers only part of it.\n');
+}
+
+console.log(`${unique.length} deliveries between ${FROM} and ${TO}.\n`);
 
 /* Same counter, same day, same person, same door. */
 const key = (o) => [
@@ -129,14 +199,21 @@ const key = (o) => [
 ].join(' | ');
 
 const groups = new Map();
-for (const o of orders) {
+for (const o of unique) {
     const k = key(o);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(o);
 }
 
 const suspects = [...groups.entries()]
-    .map(([k, rows]) => ({ k, rows, delivered: rows.filter((r) => r.status === 'delivered') }))
+    .map(([k, rows]) => ({
+        k,
+        rows,
+        /* Distinct ids, stated rather than assumed. One order listed twice is
+           a paging fault; two orders is a duplicate delivery, and the whole
+           report turns on the difference. */
+        delivered: [...new Map(rows.filter((r) => r.status === 'delivered').map((r) => [r.id, r])).values()],
+    }))
     .filter((g) => g.delivered.length > 1)
     .sort((a, b) => b.delivered.length - a.delivered.length);
 
