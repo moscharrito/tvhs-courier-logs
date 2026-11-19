@@ -23,7 +23,7 @@ import { loadPodData, podFilename, renderPod } from './pod';
 import { namesFor, displayName } from './people';
 import {
     hasProofPhoto, attachPhotos, returnPhoto, returnFormStatus, attemptPhoto, attemptPhotoStatus,
-    PROOF_KINDS,
+    PROOF_KINDS, ATTEMPT_KIND,
 } from './pod-photos';
 import { leadScope, leadMaySee } from './lead-scope';
 import type { FileStorage } from '../../core/files/storage';
@@ -880,36 +880,48 @@ export function createOrdersRouter(
             applied.push('overdue');
         }
 
-        /* ── DELIVERED, AND NOTHING TO SHOW FOR IT ─────────────────────────
+        /* ── SETTLED, AND NOTHING TO SHOW FOR IT ──────────────────────────
          *
-         * Asked for on 18 November 2026, and the gap it looks for is one we
-         * put there on purpose: a courier whose upload will not go at the
-         * door is offered the choice to carry on rather than stand on a
-         * doorstep holding somebody's medication. That is the right trade
-         * at the door. It leaves a delivered order with no picture behind
-         * it, and nothing listed those -- so the only way one surfaced was
-         * University Health asking for that particular proof of delivery,
-         * which is the worst possible moment to find out.
+         * Every delivery that reached an end and has no photograph of that
+         * end. Asked for on 18 November 2026, widened the same day: the
+         * first cut was delivered orders only, and the question somebody
+         * actually has is "what cannot be evidenced", which a failed stop
+         * answers just as badly.
          *
-         * DELIVERED ROWS ONLY. An order still in flight has no photograph
-         * because it has not happened yet; including those buries the few
-         * that are genuinely missing one under the whole day's work, and a
-         * filter nobody can read the output of is not a filter. A failed
-         * delivery's evidence is its exception photograph -- a different
-         * kind, proving a different claim -- so it is not this question.
+         * The gap is one we put there on purpose. A courier whose upload
+         * will not go at the door is offered the choice to carry on rather
+         * than stand on a doorstep holding somebody's medication. That is
+         * the right trade at the door; what it leaves behind is a settled
+         * order with nothing behind it, and until this nothing listed them.
+         * They surfaced when University Health asked for that particular
+         * proof, which is the worst possible moment.
          *
-         * PROOF_KINDS rather than the strings written out again, because
-         * this has to agree with the document. storedPhoto() picks what the
-         * proof of delivery prints, and a filter answering from its own
-         * list would eventually send somebody hunting for a missing picture
-         * that the PDF shows perfectly well. */
+         * EACH OUTCOME IS ASKED FOR ITS OWN PROOF, not for "a photograph".
+         * A delivery is evidenced by the signed form or the doorstep
+         * picture; a failed stop is evidenced by the exception photograph
+         * taken at the door. They prove different claims, and a delivered
+         * order carrying only an exception picture has no proof of
+         * delivery -- so one list of kinds across both statuses would call
+         * that one evidenced and quietly drop it.
+         *
+         * STILL ONLY delivered AND failed. An order in flight has no
+         * photograph because it has not happened yet, and listing those
+         * buries the handful genuinely missing one under the whole day.
+         * Cancelled never reached a door at all.
+         *
+         * The kinds come from pod-photos rather than being written out
+         * again, because this has to agree with the document: storedPhoto()
+         * picks what the proof of delivery prints, and a filter with its
+         * own idea of what counts would send somebody hunting for a picture
+         * the PDF shows perfectly well. */
         if (q['noPhoto'] === 'true') {
-            const kinds = PROOF_KINDS.map(() => '?').join(',');
-            where.push(`o.status = 'delivered' AND NOT EXISTS (
+            const missing = (kinds: readonly string[]): string => `NOT EXISTS (
                 SELECT 1 FROM files f
                  WHERE f.order_id = o.id AND f.project_id = o.project_id
-                   AND f.status = 'stored' AND f.kind IN (${kinds}))`);
-            args.push(...PROOF_KINDS);
+                   AND f.status = 'stored' AND f.kind IN (${kinds.map(() => '?').join(',')}))`;
+            where.push(`((o.status = 'delivered' AND ${missing(PROOF_KINDS)})`
+                + ` OR (o.status = 'failed' AND ${missing(ATTEMPT_KIND)}))`);
+            args.push(...PROOF_KINDS, ...ATTEMPT_KIND);
             applied.push('noPhoto');
         }
 

@@ -89,7 +89,19 @@ export function ProjectHome() {
                     loads at its own URL. This row is a shortcut list, and a
                     shortcut nobody uses is clutter on the screen somebody
                     opens forty times a day. */}
-                {canManage && (
+                {/* PERFORMANCE IS BACK ON DISPATCH'S ROW, 18 November 2026,
+                    at the owner's direction -- the same direction that took
+                    it off on 7 November, reversed with eleven days of the
+                    contract actually running behind it.
+
+                    It was never an access change in either direction: the
+                    endpoint has admitted a lead throughout and the page has
+                    always loaded at its own URL. What was removed was the
+                    shortcut, on the argument that reporting is read while
+                    answering a question about the contract rather than
+                    while running a day. In practice the people answering
+                    those questions are the people on the desk. */}
+                {canDispatch && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
                 )}
                 {canManage && (

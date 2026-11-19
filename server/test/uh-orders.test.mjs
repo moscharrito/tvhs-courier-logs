@@ -941,11 +941,53 @@ describe('the deliveries with no proof photograph', () => {
         expect(await idsWithNoPhoto()).toContain(order.id);
     });
 
-    it('leaves out everything that has not been delivered yet', async () => {
-        /* An order in flight has no photograph because it has not happened.
-           Listing those buries the handful that are genuinely missing one
-           under the whole day, and a filter whose output nobody can read is
-           not a filter. */
+
+    it('lists a failed stop with no exception photograph', async () => {
+        /* Widened on 18 November 2026. The first cut was delivered orders
+           only; the question somebody actually has is "what cannot be
+           evidenced", and a stop that failed with no picture of the door
+           answers it just as badly as a delivery with no signed form. */
+        const order = await makeOrder();
+        await driveTo(order.id, 'failed');
+        expect(await idsWithNoPhoto()).toContain(order.id);
+    });
+
+    it('leaves out a failed stop that was photographed at the door', async () => {
+        const order = await makeOrder();
+        await driveTo(order.id, 'failed');
+        await photograph(order.id, { kind: 'exception' });
+        expect(await idsWithNoPhoto()).not.toContain(order.id);
+    });
+
+    it('asks each outcome for its OWN proof, not for "a photograph"', async () => {
+        /* ─────────────────────────────────────────────────────────────────
+         * The two endings prove different claims. A delivery is evidenced
+         * by the signed form or the doorstep picture; a failed stop by the
+         * exception photograph taken at the door.
+         *
+         * One list of kinds across both statuses would be shorter code and
+         * would call a DELIVERED order evidenced by the picture of why it
+         * did not happen -- dropping from the list the one row where the
+         * evidence contradicts the status, which is precisely the row worth
+         * looking at.
+         */
+        const deliveredWithExcuse = await makeOrder();
+        await driveTo(deliveredWithExcuse.id, 'delivered');
+        await photograph(deliveredWithExcuse.id, { kind: 'exception' });
+
+        const failedWithForm = await makeOrder();
+        await driveTo(failedWithForm.id, 'failed');
+        await photograph(failedWithForm.id, { kind: 'courier_form' });
+
+        const ids = await idsWithNoPhoto();
+        expect(ids).toContain(deliveredWithExcuse.id);
+        expect(ids).toContain(failedWithForm.id);
+    });
+
+    it('still leaves out everything that has not reached a door', async () => {
+        /* Two statuses are in now, which makes it worth saying which are
+           not: an order in flight has no photograph because it has not
+           happened yet, and a cancelled one never reached a door at all. */
         const waiting = await makeOrder();
         const carried = await makeOrder();
         await driveTo(carried.id, 'picked_up');
@@ -955,19 +997,10 @@ describe('the deliveries with no proof photograph', () => {
         expect(ids).not.toContain(carried.id);
     });
 
-    it('leaves out a failed delivery, whose evidence is a different picture', async () => {
-        /* A dry run proves a different claim and proves it with an
-           exception photograph. Mixing the two into "no proof of delivery"
-           would list rows that cannot have one by definition. */
-        const order = await makeOrder();
-        await driveTo(order.id, 'failed');
-        expect(await idsWithNoPhoto()).not.toContain(order.id);
-    });
-
     it('narrows rather than replaces the other filters', async () => {
         const order = await makeOrder();
         await driveTo(order.id, 'delivered');
-        const res = await admin.get(`${BASE}?noPhoto=true&serviceType=adhoc`);
+        const res = await admin.get(`${BASE}?noPhoto=true&status=cancelled`);
         expect(res.status).toBe(200);
         expect(res.body.orders.map((o) => o.id)).not.toContain(order.id);
     });

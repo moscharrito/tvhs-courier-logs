@@ -194,6 +194,11 @@ settings-check.ps1
 geocode-sites.ps1
 geocode-sites.txt
 rates.ps1
+# Names the production host and takes an admin password at the prompt. Read
+# only -- pod-gaps.mjs has no method but GET -- and ignored for the habit
+# rather than for anything in it.
+podcheck.ps1
+
 # Names the production host and takes an admin password at the prompt.
 recover.ps1
 recover-*.json

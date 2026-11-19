@@ -297,14 +297,21 @@ export function Orders() {
                     <label className="izy-field" style={{ minWidth: 150 }}>Late only
                         <span><input type="checkbox" checked={get('overdue') === 'true'} onChange={(e) => set('overdue', e.target.checked ? 'true' : '')} /> past due</span>
                     </label>
-                    {/* THE DELIVERIES WITH NOTHING TO SHOW FOR THEMSELVES.
+                    {/* THE STOPS WITH NOTHING TO SHOW FOR THEMSELVES.
                         A courier whose upload will not go at the door may
                         carry on rather than stand there holding medication,
-                        so a delivered order can have no picture behind it.
+                        so a settled order can have no picture behind it.
                         Until this, the only thing that found one was
-                        University Health asking for that proof of delivery.
+                        University Health asking for that proof.
 
-                        "delivered" is in the label rather than in a note
+                        BOTH ENDINGS, since 18 November: a delivery wants
+                        its signed form or doorstep picture, a failed stop
+                        wants its exception photograph. The server asks each
+                        outcome for its own proof rather than for "a
+                        photograph", which would call a delivery evidenced
+                        by the picture of why it did not happen.
+
+                        THE STATUSES ARE IN THE LABEL rather than in a note
                         underneath, because the first question anybody asks
                         of an empty result is which rows it was looking at.
                         A pending order has no photograph because it has not
@@ -324,13 +331,13 @@ export function Orders() {
                         written, so the suite is green either way; this was
                         found by looking at the real page, on 18 November
                         2026, and only the real page can find it again. */}
-                    <label className="izy-field" style={{ minWidth: 185 }}>Proof of delivery
+                    <label className="izy-field" style={{ minWidth: 215 }}>Proof of delivery
                         <span>
                             <input
                                 type="checkbox"
                                 checked={get('noPhoto') === 'true'}
                                 onChange={(e) => set('noPhoto', e.target.checked ? 'true' : '')}
-                            />{' '}delivered, no photo
+                            />{' '}delivered or failed, no photo
                         </span>
                     </label>
                     <button

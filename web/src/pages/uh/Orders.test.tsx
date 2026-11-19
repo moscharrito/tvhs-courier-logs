@@ -166,7 +166,7 @@ describe('Orders', () => {
         expect(calls.some((c) => c.includes('/uh/orders/summary?') && c.includes('noPhoto=true'))).toBe(true);
     });
 
-    it('says on the control itself that it means delivered orders', async () => {
+    it('names both endings on the control, so an empty result is readable', async () => {
         /* The first question anybody asks of an empty result is which rows
            it was looking at. A pending order has no photograph because it
            has not happened yet, and that belongs on the control rather than
@@ -187,8 +187,11 @@ describe('Orders', () => {
            Orders.tsx and by somebody having looked at the page. */
         renderOrders(baseRoutes);
         await screen.findByRole('heading', { name: 'Orders' });
-        expect(screen.getByRole('checkbox', { name: /no photo/ }))
-            .toHaveAccessibleName(expect.stringContaining('delivered'));
+        const box = screen.getByRole('checkbox', { name: /no photo/ });
+        expect(box).toHaveAccessibleName(expect.stringContaining('delivered'));
+        /* Both, since 18 November: a failed stop with no picture of the door
+           is as unevidenced as a delivery with no signed form. */
+        expect(box).toHaveAccessibleName(expect.stringContaining('failed'));
     });
 
     /* ── SEARCHING BY PATIENT NAME, WITHOUT PUTTING ONE IN THE URL ────────

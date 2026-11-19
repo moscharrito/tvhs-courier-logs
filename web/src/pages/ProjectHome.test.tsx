@@ -103,18 +103,24 @@ describe('the site manager, who is dispatch', () => {
     });
 
     it('gets the row it actually works from, and nothing else', async () => {
-        /* Set on 7 November at the owner's direction. Performance,
-           Discrepancies, Returns and the client's view are reporting and
-           client-facing screens -- read when answering a question about the
-           contract, not while running a day -- so they came off the row of
-           the person running the day. */
+        /* Set on 7 November at the owner's direction. Discrepancies,
+           Returns and the client's view are client-facing screens -- read
+           when answering a question about the contract, not while running a
+           day -- so they came off the row of the person running the day.
+
+           PERFORMANCE CAME BACK ON 18 NOVEMBER, same direction, reversed
+           with eleven days of the contract actually running behind it: the
+           people answering questions about how it is going turned out to be
+           the people on the desk. Neither move was an access change. The
+           endpoint has admitted a lead throughout and the page has always
+           loaded at its own URL; only the shortcut moved. */
         renderAs('lead');
         await screen.findByRole('heading', { name: /daily list/i });
 
-        for (const name of ['Open the board', 'Search orders', 'Drivers record', 'Driver roster']) {
+        for (const name of ['Open the board', 'Search orders', 'Drivers record', 'Driver roster', 'Performance']) {
             expect(screen.getByRole('link', { name }), name).toBeInTheDocument();
         }
-        for (const name of ['Performance', 'Discrepancies', 'Returns', "The client's view"]) {
+        for (const name of ['Discrepancies', 'Returns', "The client's view"]) {
             expect(screen.queryByRole('link', { name }), name).toBeNull();
         }
     });
