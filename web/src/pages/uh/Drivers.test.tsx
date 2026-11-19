@@ -379,7 +379,9 @@ describe('the drivers record without the money', () => {
 });
 
 describe('who may open it at all', () => {
-    /* The project page offers a site manager the Drivers record link. This
+    /* The project page USED TO offer a site manager the Drivers record
+       link -- it came off that row on 18 November 2026, and this page still
+       admits them, which is the whole point of the test below. This
        guard read `role !== 'admin'`, so following that link landed them on
        "Not available" -- and it read that way because
        ProjectMembership['role'] did not contain 'lead', so `=== 'lead'`

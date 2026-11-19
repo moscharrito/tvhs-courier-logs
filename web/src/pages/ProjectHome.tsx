@@ -116,8 +116,24 @@ export function ProjectHome() {
                 {/* What each driver delivered, and -- for an administrator --
                     what it comes to. The site manager gets the same page with
                     the money stripped out by the server, not hidden by the
-                    screen. */}
-                <Link className="izy-btn secondary" to={`/projects/${project.code}/drivers`}>Drivers record</Link>
+                    screen.
+
+                    OFF DISPATCH'S ROW, 18 November 2026, at the owner's
+                    direction, the same way Discrepancies and Returns came
+                    off on 7 November: this row is a shortcut list, and a
+                    shortcut nobody uses is clutter on the screen somebody
+                    opens forty times a day.
+
+                    IT IS NOT AN ACCESS CHANGE, and that distinction is the
+                    one to keep straight here. GET /uh/drivers and
+                    /uh/drivers/:username are `dispatchOnly` -- admin plus
+                    lead -- so the page still loads at its own URL for
+                    anybody on the desk who has the link. Closing that is a
+                    change to the server, not to this file, and nobody has
+                    asked for it. */}
+                {canManage && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/drivers`}>Drivers record</Link>
+                )}
                 {/* Which pharmacy each driver works from. Read before a wave
                     rather than during one: it is what lets the board offer
                     each proposed run to somebody who drives that counter,

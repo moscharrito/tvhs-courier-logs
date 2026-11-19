@@ -117,10 +117,15 @@ describe('the site manager, who is dispatch', () => {
         renderAs('lead');
         await screen.findByRole('heading', { name: /daily list/i });
 
-        for (const name of ['Open the board', 'Search orders', 'Drivers record', 'Driver roster', 'Performance']) {
+        for (const name of ['Open the board', 'Search orders', 'Driver roster', 'Performance']) {
             expect(screen.getByRole('link', { name }), name).toBeInTheDocument();
         }
-        for (const name of ['Discrepancies', 'Returns', "The client's view"]) {
+        /* Drivers record came off on 18 November, same direction and same
+           reasoning. Note what stays: the ROSTER does, because it is read
+           before a wave to see which pharmacy each driver works from, and
+           that is what lets the board offer a proposed run to somebody who
+           drives that counter. The record is a report of what they did. */
+        for (const name of ['Discrepancies', 'Returns', "The client's view", 'Drivers record']) {
             expect(screen.queryByRole('link', { name }), name).toBeNull();
         }
     });
