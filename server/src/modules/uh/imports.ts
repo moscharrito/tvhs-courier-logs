@@ -76,7 +76,7 @@ import { payZoneForMiles } from './driver-pay';
 import { handlingFlags } from './handling';
 import {
     readSheet, autoMap, parseRows, headerFingerprint, missingRequiredMappings,
-    sha256, ImportError, IMPORT_FIELDS,
+    sha256, ImportError, IMPORT_FIELDS, dedupeKeyFor,
     type Mapping, type Issue, type RowResult,
 } from './import-parse';
 
@@ -379,6 +379,26 @@ export function createImportsRouter(
      * it, resolve zones and due times, and check it against what is already
      * imported for that site and day.
      */
+/**
+ * The same person at the same door, whatever reference came with them.
+ *
+ * Built by dedupeKeyFor with the reference blanked, so the normalising --
+ * case, spacing, punctuation, the leading-number rule for an address -- is
+ * the one function and not a second copy of it that drifts. See the two-key
+ * note in analyse() for the nine deliveries this exists to catch.
+ *
+ * Null when there is not enough to be sure: a row with no name or no
+ * address is not matched against anything, because a blank matching a blank
+ * would hold back every incomplete row in the file as a duplicate of the
+ * first one.
+ */
+function personKey(recipientName: unknown, addressLine: unknown, zip: unknown): string | null {
+    const name = String(recipientName ?? '').trim();
+    const address = String(addressLine ?? '').trim();
+    if (name === '' || address === '') return null;
+    return dedupeKeyFor({ externalRef: '', recipientName: name, addressLine: address, zip: String(zip ?? '').trim() });
+}
+
     async function analyse(req: Request, res: Response, options: Options, bytes: Buffer) {
         const project = req.project!;
         const site = await siteOr404(project.id, options.siteId, res);
@@ -425,14 +445,63 @@ export function createImportsRouter(
            does not change while it is being read. */
         const payMiles = await siteZipMileMap(client, project.id, serviceDate);
 
-        // Duplicates against orders already imported for this site and day.
+        /* ───────── DUPLICATES AGAINST WHAT IS ALREADY IMPORTED FOR THIS DAY
+         *
+         * TWO KEYS, AND THE SECOND ONE IS WHY.
+         *
+         * `dedupe_key` treats a pharmacy reference as authoritative when
+         * there is one -- see dedupeKeyFor in import-parse.ts -- which is
+         * right nearly always and has one hole worth a second query.
+         *
+         * On 5 November nine deliveries were imported twice. The same nine
+         * patients, the same nine addresses, the same day, the same
+         * courier: once from the counter's own sheet as PAV1105B-04 and
+         * again from their numbered sheet as 20068343. Two references, two
+         * keys, two orders, no warning -- and nine invoice lines to
+         * University Health for work that happened once. Four more went the
+         * same way on the 9th.
+         *
+         * That was not the list deletions, though that is when it happened.
+         * It is what this check does when one day's work arrives under two
+         * reference schemes, and it will do it again on the next list
+         * somebody imports twice from two sources.
+         *
+         * SO THE SECOND KEY IGNORES THE REFERENCE: the same person at the
+         * same address on the same day, which is the question an operator
+         * would ask if they were reading the sheet. It is built by the same
+         * function with the reference blanked, so there is no second copy
+         * of the normalising rules to drift from the first.
+         *
+         * IT WARNS, IT DOES NOT REFUSE. One patient really can have two
+         * deliveries in a day -- two prescriptions the pharmacy sent as two
+         * lines, a split consignment -- and those are exactly the rows this
+         * will land on. They go in the same holding pen every other
+         * duplicate goes in: the operator sees which order it matches and
+         * ticks it through, or does not. Refusing them would be a worse
+         * mistake than the one being fixed, because a delivery that never
+         * gets imported is a patient who never gets their medication.
+         *
+         * A DIFFERENT PERSON AT ONE ADDRESS IS NOT FLAGGED, which matters
+         * on this contract: a care home, a family, a block of flats. The
+         * key carries the name.
+         */
         const existing = new Map<string, number>();
+        const existingByPerson = new Map<string, number>();
         if (parsed.length > 0) {
             const rs = await client.execute({
-                sql: `SELECT id, dedupe_key FROM orders WHERE site_id = ? AND service_date = ? AND status != 'cancelled'`,
+                sql: `SELECT id, dedupe_key, recipient_name, address_line, zip
+                        FROM orders WHERE site_id = ? AND service_date = ? AND status != 'cancelled'`,
                 args: [options.siteId, serviceDate],
             });
-            for (const r of rs.rows) existing.set(String(r['dedupe_key']), Number(r['id']));
+            for (const r of rs.rows) {
+                const id = Number(r['id']);
+                existing.set(String(r['dedupe_key']), id);
+                /* Oldest wins, so the warning names the order that was there
+                   first -- which is the one an operator should be looking
+                   at when deciding whether this row is the same work. */
+                const key = personKey(r['recipient_name'], r['address_line'], r['zip']);
+                if (key !== null && !existingByPerson.has(key)) existingByPerson.set(key, id);
+            }
         }
 
         const skip = new Set(options.skipRows);
@@ -450,13 +519,38 @@ export function createImportsRouter(
                 });
             }
 
-            const duplicateOfOrderId = existing.get(p.row.dedupeKey) ?? null;
-            if (duplicateOfOrderId !== null && !p.issues.some((i) => i.code === 'duplicate.inFile')) {
+            const byReference = existing.get(p.row.dedupeKey) ?? null;
+            if (byReference !== null && !p.issues.some((i) => i.code === 'duplicate.inFile')) {
                 issues.push({
                     row: p.row.row, field: 'row', code: 'duplicate.imported', severity: 'warning',
-                    message: `Already imported for this site and date as order ${duplicateOfOrderId}.`,
+                    message: `Already imported for this site and date as order ${byReference}.`,
                 });
             }
+
+            /* And the same person at the same door under a DIFFERENT
+               reference, which the key above cannot see. See the two-key
+               note on `existingByPerson`: this is the nine of 5 November.
+               Only when the reference did not already match, so one row
+               never carries two duplicate warnings about one order. */
+            const byPerson = byReference === null
+                ? (existingByPerson.get(personKey(p.row.recipientName, p.row.addressLine, p.row.zip) ?? '\u0000') ?? null)
+                : null;
+            if (byPerson !== null && !p.issues.some((i) => i.code === 'duplicate.inFile')) {
+                issues.push({
+                    row: p.row.row, field: 'row', code: 'duplicate.samePatient', severity: 'warning',
+                    message: `Order ${byPerson} is already going to this patient at this address today, `
+                        + 'under a different reference. Tick it through if this is a second delivery.',
+                });
+            }
+
+            /* ONE FIELD FOR "WHICH ORDER THIS DUPLICATES", however it was
+               found. The screen reads this to decide whether its checkbox
+               accepts a duplicate or skips a row -- see ListImport.tsx --
+               so a match it could not see would draw a tick box that can
+               never be ticked, and the operator would be stuck with a row
+               they cannot import and no way to say it is real. The issue
+               code beside it says WHICH kind of match it was. */
+            const duplicateOfOrderId = byReference ?? byPerson;
 
             const isDuplicate = p.duplicateOfRow !== null || duplicateOfOrderId !== null;
             const blocked = issues.some((i) => i.severity === 'error');
