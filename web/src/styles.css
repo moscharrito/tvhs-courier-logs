@@ -1787,3 +1787,138 @@ body {
 /* The one moment a plaintext credential is on screen. */
 .izy-issued .izy-secret { font-family: Consolas, ui-monospace, monospace; font-size: 15px; font-weight: 700; letter-spacing: 0.04em; }
 .izy-issued p { margin: 0 0 8px; }
+
+
+/* ══════════════════════ THE BELL AND ITS PANEL
+ *
+ * It lives in the rail, which is green, and in the courier's top bar, which
+ * is not. So the BUTTON inherits its colour from whatever it is sitting in,
+ * and only the panel sets its own -- a white bell hard-coded here would be
+ * invisible the moment it appeared anywhere else.
+ *
+ * THE PANEL IS A CARD, NOT A DRAWER. It is anchored to the button and capped
+ * in height, because the list behind it is every notification this account
+ * has had for 200 rows, and a panel that grows to fit would run off the
+ * bottom of a laptop screen with the controls at the end of it.
+ *
+ * ON A PHONE IT IS PINNED TO BOTH EDGES. Anchored to a button 40px from the
+ * right of a 375px screen, a 380px panel hangs off the side; the media query
+ * at the end makes it a sheet the width of the screen less a margin.
+ */
+.izy-bell { position: relative; flex: 0 0 auto; }
+.izy-bell-btn {
+    display: grid; place-items: center; position: relative;
+    width: 32px; height: 32px; margin-top: 5px;
+    background: none; border: 0; border-radius: 8px; padding: 0;
+    color: inherit; opacity: 0.85; cursor: pointer;
+}
+.izy-bell-btn:hover { background: rgba(255, 255, 255, 0.12); opacity: 1; }
+.izy-bell-btn:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: 2px; }
+/* The count, as a disc on the glyph. aria-hidden in the markup: the number
+   is in the button's accessible name, so a screen reader hears it once. */
+.izy-bell-count {
+    position: absolute; top: -1px; right: -3px;
+    min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 999px; background: var(--izy-danger); color: #fff;
+    font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+}
+/* A ring in the rail's own colour, so the disc reads as a badge rather than
+   as part of the glyph. */
+.izy-side .izy-bell-count { box-shadow: 0 0 0 2px var(--izy-green); }
+
+.izy-bell-panel {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+    width: 380px; max-height: min(70vh, 560px); overflow: auto;
+    display: flex; flex-direction: column;
+    background: var(--izy-card); color: var(--izy-ink);
+    border: 1px solid var(--izy-line); border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(16, 24, 40, 0.18);
+    text-align: left;
+}
+/* In the rail the button is near the LEFT edge, so a panel aligned to its
+   right edge would open back over the rail itself. */
+.izy-side .izy-bell-panel { left: 0; right: auto; }
+
+.izy-bell-tabs {
+    display: flex; align-items: center; gap: 2px; padding: 8px 8px 0;
+    border-bottom: 1px solid var(--izy-line); position: sticky; top: 0;
+    background: var(--izy-card); z-index: 1;
+}
+.izy-bell-tabs button {
+    background: none; border: 0; padding: 8px 10px; font: inherit; font-size: 13px;
+    color: var(--izy-muted); cursor: pointer; border-bottom: 2px solid transparent;
+}
+.izy-bell-tabs button.active { color: var(--izy-green); font-weight: 600; border-bottom-color: var(--izy-green-2); }
+.izy-bell-tabs button:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: -2px; }
+.izy-bell-tabn {
+    display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 999px;
+    background: var(--izy-danger); color: #fff; font-size: 10px; font-weight: 700;
+}
+.izy-bell-clear { margin-left: auto; font-size: 12px; }
+
+.izy-bell-list { list-style: none; margin: 0; padding: 0; }
+.izy-bell-list li { display: flex; align-items: flex-start; border-bottom: 1px solid var(--izy-line); }
+.izy-bell-list li:last-child { border-bottom: 0; }
+.izy-bell-row {
+    flex: 1; min-width: 0; display: block; text-align: left;
+    background: none; border: 0; padding: 10px 12px; font: inherit; color: inherit;
+    text-decoration: none; cursor: pointer;
+}
+.izy-bell-row.as-text { cursor: default; }
+.izy-bell-row:hover { background: var(--izy-bg); }
+.izy-bell-row:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: -2px; }
+.izy-bell-body { display: block; font-size: 13px; line-height: 1.45; }
+.izy-bell-meta { display: block; margin-top: 3px; font-size: 11.5px; color: var(--izy-muted); }
+/* Unread is a bar down the left rather than a colour wash: the wash made the
+   body text harder to read, which is backwards for the rows that matter. */
+.izy-bell-list li.is-unread { box-shadow: inset 3px 0 0 var(--izy-green-2); }
+.izy-bell-list li.is-unread .izy-bell-body { font-weight: 600; }
+.izy-bell-tick {
+    flex: 0 0 auto; align-self: center; width: 28px; height: 28px; margin-right: 6px;
+    background: none; border: 0; border-radius: 6px; color: var(--izy-muted); cursor: pointer;
+}
+.izy-bell-tick:hover { background: var(--izy-green-soft); color: var(--izy-green); }
+.izy-bell-tick:focus-visible { outline: 2px solid var(--izy-green-2); outline-offset: -1px; }
+/* The feed is denser than the For you list: it is scanned, not read. */
+.izy-bell-feed .izy-bell-row { padding: 7px 12px; }
+.izy-bell-feed .izy-bell-body { font-size: 12.5px; }
+
+.izy-bell-empty { margin: 0; padding: 22px 16px; font-size: 13px; color: var(--izy-muted); text-align: center; }
+.izy-bell-stale { display: block; padding: 8px 12px; font-size: 12px; color: #92400e; background: var(--izy-warn-soft); }
+.izy-bell-foot-note { margin: 0; padding: 8px 12px; font-size: 11.5px; color: var(--izy-muted); border-top: 1px solid var(--izy-line); }
+.izy-bell-foot {
+    position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 10px 12px; border-top: 1px solid var(--izy-line); background: var(--izy-card);
+}
+.izy-bell-foot .izy-bell-stale { padding: 0; background: none; }
+.izy-bell-ok { font-size: 12px; color: var(--izy-muted); }
+.izy-bell-settings { margin-left: auto; font-size: 12px; color: var(--izy-green); }
+
+/* Beside Sign out rather than stranded in the middle of the bar, which is
+   where space-between puts a third child. */
+.izy-courier-top .izy-bell { margin-left: auto; }
+.izy-courier-top .izy-bell-btn { margin-top: 0; color: var(--izy-soft); }
+.izy-courier-top .izy-bell-btn:hover { background: rgba(16, 24, 40, 0.06); }
+
+@media (max-width: 900px) {
+    /* Anchored to a button near the right edge of a 375px screen, a 380px
+       panel hangs off the side. Pinned to both margins instead. */
+    .izy-bell { position: static; }
+    .izy-bell-panel,
+    .izy-side .izy-bell-panel {
+        position: fixed; top: auto; left: 8px; right: 8px; width: auto;
+        max-height: 68vh;
+    }
+}
+
+/* ─────────────── the notification settings screen */
+.izy-prefs { list-style: none; margin: 0; padding: 0; }
+.izy-prefs li { border-top: 1px solid var(--izy-line); }
+.izy-prefs li:first-child { border-top: 0; }
+.izy-pref { display: flex; align-items: flex-start; gap: 12px; padding: 12px 2px; cursor: pointer; }
+.izy-pref input { margin-top: 3px; width: 18px; height: 18px; flex: 0 0 auto; }
+.izy-pref-text { min-width: 0; }
+.izy-pref-text b { display: block; font-size: 14px; }
+.izy-pref-about { display: block; margin-top: 2px; font-size: 13px; color: var(--izy-muted); line-height: 1.45; }
+.izy-pref-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.izy-prefs-save { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 13px; }

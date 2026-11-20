@@ -94,6 +94,46 @@ export const displayName = (username: string | null, names: Map<string, Person>)
     username === null ? null : (names.get(username)?.name || username);
 
 /**
+ * What to call somebody inside a NOTIFICATION BODY.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NOT displayName.
+ *
+ * displayName falls back to the username, and on this contract a driver's
+ * username IS their personal email address. That is a reasonable trade in a
+ * table on a dispatcher's screen, which is the only place it was ever used.
+ *
+ * A notification body is not that place. Since the bell shipped, a body is:
+ * rendered by the operating system in the corner of a laptop screen, over
+ * whatever is on it, on a machine that is quite often on a pharmacy counter
+ * with members of the public on the other side. It is the least private
+ * surface this application has. A driver's own email address followed by
+ * how long they had been off shift is a working personal address on that
+ * counter, and it was the first row in the bell the first time anybody
+ * opened one.
+ *
+ * Everything else that composes a body had already worked this out --
+ * dispatch-notices.ts says "A driver" rather than a username, and
+ * order-messages.ts says "the reference, never the patient and never the
+ * body. This is read on a lock screen". The two sweeps had not, because
+ * nothing rendered what they wrote.
+ *
+ * SO: THE REAL NAME, WHICH IS ON EVERY DRIVER ON THIS ROSTER. Failing that
+ * the handle in front of the `@` -- which still says who, to a dispatcher
+ * who knows their drivers, without putting a deliverable address on a
+ * screen in a corridor. "A driver" is not good enough here and that is the
+ * difference from dispatch-notices: these are the messages whose entire
+ * content is WHICH person has not done something.
+ */
+export const noticeName = (username: string | null, names: Map<string, Person>): string => {
+    if (username === null || username.trim() === '') return 'A driver';
+    const name = names.get(username)?.name?.trim();
+    if (name) return name;
+    const at = username.indexOf('@');
+    return at <= 0 ? username : username.slice(0, at);
+};
+
+/**
  * The number to ring, or '' when there is none on file.
  *
  * Never falls back to anything. A name has a sensible stand-in -- the

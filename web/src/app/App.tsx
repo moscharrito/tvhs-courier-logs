@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { useAuth } from './auth';
+import { NoticesProvider } from './useNotices';
 import { Layout } from './Layout';
 import { Loading } from './Loading';
 import { Login } from '../pages/Login';
@@ -29,6 +30,7 @@ import { Invoices } from '../pages/uh/Invoices';
 import { OrderDetail } from '../pages/uh/OrderDetail';
 import { Applications } from '../pages/uh/Applications';
 import { CameraCheck } from '../pages/CameraCheck';
+import { Notifications } from '../pages/Notifications';
 
 function AdminOnly({ children }: { children: JSX.Element }) {
     const { user } = useAuth();
@@ -94,8 +96,16 @@ export function App() {
         );
     }
 
-    // Everyone lands on the project picker after sign-in and chooses where to go.
+    /* Everyone lands on the project picker after sign-in and chooses where to
+       go.
+
+       INSIDE THE SIGNED-IN BRANCH, so the notification poll starts when
+       somebody signs in and stops when they sign out, rather than running
+       against the login page. It wraps the routes rather than sitting in
+       Layout because a courier's shell and a dispatcher's rail are two
+       different trees and the count has to be the same one in both. */
     return (
+        <NoticesProvider>
         <Routes>
             <Route path="/projects/tvhs/tvhs/*" element={<LegacyTvhs />} />
             <Route element={<Layout />}>
@@ -145,6 +155,11 @@ export function App() {
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />
                 <Route path="/projects/:code/*" element={<DriverRoutesOnly><ProjectHome /></DriverRoutesOnly>} />
                 <Route path="/devices" element={<Devices />} />
+                {/* Every role, like /devices: a courier chooses whether their
+                    phone buzzes for new work exactly as a dispatcher chooses
+                    whether the desk does. The server decides WHICH switches
+                    each role is offered -- see core/notify/prefs.ts. */}
+                <Route path="/notifications" element={<Notifications />} />
                 <Route path="/camera-check" element={<CameraCheck />} />
                 <Route path="/users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="/users/:username" element={<AdminOnly><UserDetail /></AdminOnly>} />
@@ -153,5 +168,6 @@ export function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
         </Routes>
+        </NoticesProvider>
     );
 }

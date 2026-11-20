@@ -8,6 +8,7 @@ import { counterName, isCourierOnly, isPharmacyOnly, projectHref } from '../lib/
 import { displayName, handleUnder } from '../lib/people';
 import { rememberedFlag, rememberFlag } from '../lib/remember';
 import { DriverBrowserNotice, DriverTabs, DriverTopBar } from './DriverShell';
+import { Bell } from './Bell';
 
 /* ROLE_LABEL used to sit here, declared and never read. It was left behind
    when the NavLink's title attribute went (see the comment on the project
@@ -100,6 +101,15 @@ export function Layout() {
                     <div className="izy-brand">
                         TAG<small>{pharmacy && user ? counterName(user.name) : 'Izy Global Services LLC'}</small>
                     </div>
+                    {/* IN THE RAIL, WHICH IS ON EVERY SCREEN AT EVERY WIDTH.
+                        A bell that lives on one page is a page somebody has
+                        to be standing on, and the whole point of the thing
+                        is to reach a dispatcher who is on the board, in the
+                        invoices, or in a spreadsheet. It survives the rail
+                        being collapsed for the same reason -- see the
+                        comment at the top of this file on why collapsing
+                        goes to initials rather than to nothing. */}
+                    <Bell />
                     <button
                         type="button"
                         className="izy-rail-toggle"

@@ -40,6 +40,7 @@
 import { NavLink, useLocation, useParams } from 'react-router-dom';
 import { iosWrapper } from '../lib/browser';
 import { HistoryIcon, ProfileIcon, RouteIcon, SignOutIcon } from './Icons';
+import { Bell } from './Bell';
 
 /* The tab roots. A back control on one of these would point at the screen
    you are already on, which is the kind of dead control that teaches people
@@ -82,6 +83,12 @@ export function DriverTopBar({ code, contract, onSignOut }: {
                     <span>Today</span>
                 </NavLink>
             )}
+            {/* Between the two, because the right-hand corner is Sign out and
+                a courier reaching past a bell for the way out would find the
+                bell. Work assigned mid-round is the one thing a driver needs
+                told while they are looking at a map, so it is in the shell
+                rather than on the run screen. */}
+            <Bell />
             <button type="button" className="izy-courier-out" onClick={onSignOut}>
                 <SignOutIcon size={19} />
                 <span>Sign out</span>

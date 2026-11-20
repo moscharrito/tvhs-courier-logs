@@ -105,3 +105,60 @@ self.addEventListener('message', (event) => {
         event.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))));
     }
 });
+
+/* ─────────────────────────────────────────── clicking a desktop notification
+ *
+ * The banner is shown by this worker rather than by the page (see
+ * web/src/lib/desktop.ts for why), so the click arrives here and the worker
+ * decides where it goes.
+ *
+ * IT FOCUSES THE TAB THAT IS ALREADY OPEN. A dispatcher has this application
+ * open all day; a notification that opened a second copy of it would leave
+ * them with two, then three, then a browser they have to tidy up, and the
+ * pharmacy's own system somewhere behind them. So: look for a window on this
+ * origin, focus it, and tell it where to go. Only when there is genuinely
+ * none -- the laptop was shut, the tab was closed -- is a new one opened.
+ *
+ * THE NAVIGATION IS A MESSAGE, NOT A RELOAD, when a tab exists. This is a
+ * single-page application: navigating the window would throw away the
+ * React tree, re-authenticate, re-fetch the board and lose anything half
+ * typed. `navigate()` on a WindowClient is tried first because it is the
+ * standard way, and the message is the fallback for browsers that do not
+ * implement it. The app listens for that message in
+ * web/src/app/useNotices.ts and routes it, rather than setting
+ * location.href, so the React tree survives the trip.
+ *
+ * NOTHING HERE IS CACHED AND NOTHING IS STORED. The href is a path this
+ * application already routes; the notification itself is discarded on click.
+ */
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const href = (event.notification.data && event.notification.data.href) || '/';
+    const target = new URL(href, self.location.origin).href;
+
+    event.waitUntil((async () => {
+        const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const client of windows) {
+            if (new URL(client.url).origin !== self.location.origin) continue;
+            await client.focus();
+            if ('navigate' in client) {
+                try {
+                    await client.navigate(target);
+                    return;
+                } catch {
+                    /* Some browsers refuse navigate() on a client they did
+                       not open. The message below is the way through. */
+                }
+            }
+            client.postMessage({ type: 'tag:open', href });
+            return;
+        }
+        await self.clients.openWindow(target);
+    })());
+});
+
+/* A notification dismissed rather than clicked. Nothing to do -- it stays
+ * unread in the bell, which is the correct outcome: swiping a banner away is
+ * not the same as dealing with the thing. Declared so that the absence is a
+ * decision somebody wrote down rather than an oversight. */
+self.addEventListener('notificationclose', () => {});

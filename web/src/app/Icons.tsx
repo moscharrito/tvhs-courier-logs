@@ -165,3 +165,20 @@ export function FlagIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 
         </svg>
     );
 }
+
+/* The bell, and the one shape here with no twin in the app yet: phase 7 will
+   use the platform's own notification centre rather than drawing one. Same
+   24-unit grid and 1.8 stroke so it sits level with the rest. */
+export function BellIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <svg {...frame(size)}>
+            <path
+                d="M12 3.5a5.5 5.5 0 0 0-5.5 5.5v3.2L5 15.5h14l-1.5-3.3V9A5.5 5.5 0 0 0 12 3.5z"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinejoin="round"
+            />
+            <path d="M10 18a2 2 0 0 0 4 0" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        </svg>
+    );
+}

@@ -87,7 +87,15 @@ describe('when it must say something', () => {
         const rows = await missedRows();
         /* One per person who runs the board. */
         expect(rows.map((r) => String(r.username)).sort()).toEqual(['admin', 'watch.lead']);
-        expect(String(rows[0].body)).toContain('late.courier');
+        /* THEIR NAME, NOT THEIR USERNAME, and this assertion was the other
+           way round until the bell shipped. On this contract a driver's
+           username is their personal email address, and this sentence is now
+           drawn by the operating system over whatever is on a dispatcher's
+           screen -- often a laptop on a pharmacy counter. See noticeName in
+           modules/uh/people.ts, and notice-bodies-are-public.test.mjs for
+           the rule it belongs to. */
+        expect(String(rows[0].body)).toContain('Late Courier');
+        expect(String(rows[0].body), 'never the handle').not.toContain('late.courier');
         expect(String(rows[0].body), 'the deadline it missed').toContain('10:00');
     });
 
@@ -105,8 +113,10 @@ describe('when it must say something', () => {
         const out = await sweep();
         expect(out).toMatchObject({ expected: 2, missing: 2 });
         const bodies = (await missedRows()).map((r) => String(r.body));
-        expect(bodies.some((b) => b.includes('late.courier'))).toBe(true);
-        expect(bodies.some((b) => b.includes('keen.courier'))).toBe(true);
+        /* By name, as above. Two couriers, two sentences, and a dispatcher
+           who can tell which is which without reading an address. */
+        expect(bodies.some((b) => b.includes('Late Courier'))).toBe(true);
+        expect(bodies.some((b) => b.includes('Keen Courier'))).toBe(true);
     });
 });
 

@@ -51,6 +51,7 @@
 
 import type { Client } from '@libsql/client';
 import { notifyAll, dispatchersOf } from '../../core/notify/outbox';
+import { namesFor, noticeName } from './people';
 
 /** Past this, an open shift is a row nobody closed. */
 export const STALE_AFTER_HOURS = 16;
@@ -148,10 +149,22 @@ export async function sweepStaleShifts(deps: {
         });
         const already = new Set(said.rows.map((r) => String(r['body'])));
 
+        /* THEIR NAME, NOT THEIR USERNAME, which on this contract is their
+           personal email address -- and since the bell shipped this sentence
+           is rendered by the operating system over whatever is on a
+           dispatcher's screen, which is often a laptop on a pharmacy
+           counter. See noticeName in people.ts.
+
+           One lookup for the sweep. Changing the wording re-reports each
+           affected shift once, because `already` is keyed on the body text;
+           it then settles, and the shift id in the sentence keeps it quiet
+           from there. */
+        const names = await namesFor(client, carrying.map((c) => c.courier));
+
         const fresh = carrying
             .map((c) => ({
                 ...c,
-                body: `${c.courier} has been on shift for ${c.hours} hours and is still carrying `
+                body: `${noticeName(c.courier, names)} has been on shift for ${c.hours} hours and is still carrying `
                     + `${c.packages} package${c.packages === 1 ? '' : 's'} (shift ${c.shiftId}). `
                     + 'The shift was left open rather than closed, because those packages are '
                     + 'unaccounted for. Ring them.',

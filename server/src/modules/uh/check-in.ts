@@ -47,6 +47,7 @@ import type { Client } from '@libsql/client';
 import { dateIn, instantAt } from '../../core/dates';
 import { notifyAll, dispatchersOf } from '../../core/notify/outbox';
 import { resolveSettings, DEFAULT_PROJECT_SETTINGS } from '../../core/projects/settings';
+import { namesFor, noticeName } from './people';
 
 export interface CheckInResult {
     /** Couriers with a run today. */
@@ -166,14 +167,30 @@ export async function sweepCheckIn(deps: {
         const dispatchers = await dispatchersOf(client, projectId);
         if (dispatchers.length === 0) return { expected, missing: missing.length, told: 0 };
 
+        /* One lookup for the whole sweep: a morning with three drivers
+           missing is three names, not three queries. */
+        const names = await namesFor(client, missing.map((r) => String(r['username'])));
+
         let told = 0;
         for (const row of missing) {
             const username = String(row['username']);
             const runs = Number(row['runs']);
             /* The name is in the body because a notification is read a week
-               later, when "the courier on run 12" means nothing. */
-            const body = `${username} has ${runs} run${runs === 1 ? '' : 's'} on ${today} and had not come on shift `
-                + `by ${deadlineText}.`;
+               later, when "the courier on run 12" means nothing.
+
+               THEIR NAME, NOT THEIR USERNAME, which on this contract is
+               their personal email address -- and since the bell shipped
+               this sentence is rendered by the operating system over
+               whatever is on a dispatcher's screen, which is often a
+               laptop on a pharmacy counter. See noticeName in people.ts.
+
+               CHANGING THIS RE-REPORTS ONCE. The `alreadySaid` set above is
+               keyed on the exact body text, so every driver already reported
+               under the old wording is reported once more and then settles.
+               One extra line per affected driver, one morning, against an
+               email address on a counter. */
+            const body = `${noticeName(username, names)} has ${runs} run${runs === 1 ? '' : 's'} on ${today} `
+                + `and had not come on shift by ${deadlineText}.`;
             if (alreadySaid.has(body)) continue;
             const written = await notifyAll(client, dispatchers, { projectId, kind: 'shift.missed', body });
             if (written > 0) told += 1;
