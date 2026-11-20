@@ -245,8 +245,26 @@ describe('what may not be reopened', () => {
            delivery of it is offering to write down something that did not
            happen. */
         const id = await failedAtTheDoor();
+        /* THE NOTE IS NOT DECORATION, IT IS WHAT MAKES THIS TEST ABOUT WHAT
+           IT SAYS IT IS ABOUT.
+        
+           Returns are routed by the hour: destinationFor() sends them to the
+           originating counter during opening hours and to the after-hours
+           site outside them, and a load that arrives anywhere else is
+           refused with returns.offRule unless somebody explains why.
+        
+           Without the note this test passed all afternoon and failed on CI
+           at 02:04 UTC -- 20:04 in Chicago, four minutes after the counters
+           close. Green on a developer's machine, red after eight in the
+           evening, for a test about something else entirely.
+        
+           What is being proved here is that a RETURNED order cannot be
+           reopened. The routing of the return is modules/uh/returns.ts's
+           business and has its own tests, so this one says why it is coming
+           here and stops depending on the clock. */
         const back = await driver.post(`${UH}/returns`).send({
             siteId, signedName: 'Pharmacy Tech', orderIds: [id], countedPackages: 1,
+            note: 'Brought back to the counter it came from.',
         });
         expect(back.status, back.text).toBeLessThan(300);
 
