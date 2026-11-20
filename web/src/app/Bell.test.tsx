@@ -81,7 +81,7 @@ beforeEach(() => {
                     status: activityStatus, headers: { 'Content-Type': 'application/json' },
                 });
             }
-            return new Response(JSON.stringify({ activity: FEED, newCount: 1, latest: FEED[0].at, scope: 'all' }), {
+            return new Response(JSON.stringify({ activity: FEED, newCount: 1, latest: FEED[0]!.at, scope: 'all' }), {
                 status: 200, headers: { 'Content-Type': 'application/json' },
             });
         }
