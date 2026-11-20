@@ -147,13 +147,54 @@ describe('signing out when the queue is not empty', () => {
         Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
     };
 
+    /* ───── OFFLINE BEFORE THE RENDER, AND THIS WAS A REAL FLAKE ─────────
+     *
+     * Both tests here used to go offline AFTER renderAt, and both failed
+     * perhaps half the time -- on CI, and locally when this file was run
+     * with -t so that this was the first render in it.
+     *
+     * Mounting the app starts the outbox (lib/outbox.ts, startOutbox) and
+     * the first thing it does is flush. flush() reads navigator.onLine ONCE
+     * at the top, and at that moment the connection was still up, so it took
+     * the sending lock and carried on -- then awaited. The enqueue below
+     * landed inside that await, so the flush that had already decided it was
+     * online picked the new entry up and posted it. The route is not in this
+     * file's mock table, so it came back 404, and a 4xx is a PERMANENT
+     * rejection: the entry is discarded rather than retried.
+     *
+     * By the time Sign out was clicked the queue was empty, so
+     * confirmSignOut had nothing to warn about and went straight through,
+     * and the assertion that it asks first failed. Whether it raced was
+     * decided by whether an earlier test in the file had already started the
+     * outbox -- which is to say, by the order the tests happened to run in.
+     *
+     * NOTHING IS WRONG WITH THE PRODUCT HERE. On a phone this is correct
+     * behaviour: a flush that began while the signal was there sends what it
+     * finds, and real failures come back as network errors and are retried
+     * rather than discarded. It is the fixture that was racing, so the
+     * fixture is what is fixed -- the connection is down before anything is
+     * mounted, so no flush ever passes its own check. */
+    const renderOffline = (routes: Record<string, unknown> = {}) => {
+        offline();
+        return renderAt('/', routes);
+    };
+
     it('asks first, and a refusal signs nobody out', async () => {
-        const { calls } = renderAt('/', { 'POST /api/logout': { ok: true } });
+        const { calls } = renderOffline({ 'POST /api/logout': { ok: true } });
         await screen.findByRole('button', { name: 'Sign out' });
 
-        offline();
         setOutboxUser('dee.dispatch');
         await enqueue({ url: '/api/projects/uh/uh/orders/1/arrive', body: {}, label: 'Delivery for Ines Vargas', orderId: 1 });
+        /* The whole premise of the test. Asserted rather than assumed,
+           because when this raced the queue was silently empty and the
+           failure pointed at the confirm instead of at the cause.
+        
+           NOT a count: the test below runs after this one and the first
+           test's record is still there by design -- refusing the sign-out
+           is what keeps it. A count here would pass today and fail the day
+           somebody adds a third case or reorders the file, which is the
+           same class of mistake this assertion exists to catch. */
+        expect(await queued(), 'the record must still be waiting').not.toHaveLength(0);
 
         const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
         fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
@@ -169,12 +210,12 @@ describe('signing out when the queue is not empty', () => {
     it('still signs out when the courier accepts the loss', async () => {
         /* A guard that cannot be got past is a courier stuck in a session on
            a phone they are handing back. */
-        const { calls } = renderAt('/', { 'POST /api/logout': { ok: true } });
+        const { calls } = renderOffline({ 'POST /api/logout': { ok: true } });
         await screen.findByRole('button', { name: 'Sign out' });
 
-        offline();
         setOutboxUser('dee.dispatch');
         await enqueue({ url: '/api/projects/uh/uh/orders/2/arrive', body: {}, label: 'Delivery', orderId: 2 });
+        expect(await queued(), 'the record must still be waiting').not.toHaveLength(0);
 
         vi.spyOn(window, 'confirm').mockReturnValue(true);
         fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
