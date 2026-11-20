@@ -96,9 +96,6 @@ export interface Notices {
     /** Newest first, across every contract. */
     notices: Notice[];
     unread: number;
-    /** Null until the first successful load; a stale bell that says it is
-     *  stale beats a confident wrong count. */
-    updatedAt: Date | null;
     /** True while the very first load is in flight, so the panel can say
      *  "looking" rather than "nothing". */
     loading: boolean;
@@ -110,7 +107,7 @@ export interface Notices {
 }
 
 const EMPTY: Notices = {
-    notices: [], unread: 0, updatedAt: null, loading: true, failing: false,
+    notices: [], unread: 0, loading: true, failing: false,
     markRead: async () => {}, markAllRead: async () => {}, refresh: () => {},
 };
 
@@ -157,7 +154,6 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
     const navigate = useNavigate();
     const [notices, setNotices] = useState<Notice[]>([]);
     const [unread, setUnread] = useState(0);
-    const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
     const [loading, setLoading] = useState(true);
     const [failing, setFailing] = useState(false);
 
@@ -179,6 +175,9 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
     names.current = new Map(projects.map((p) => [p.code, p.name]));
 
     const inFlight = useRef(false);
+    /* What the last poll returned, as id-and-read-state. See the note in
+       load() on why a provider this high in the tree must stay quiet. */
+    const lastSignature = useRef<string | null>(null);
     /* The high-water mark, held in a ref as well as storage: the poll reads
        it on every cycle and a state update per cycle would re-render the
        whole application shell twenty-four times an hour for nothing. */
@@ -199,9 +198,33 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
                 a.createdAt === b.createdAt ? b.id - a.id : (a.createdAt < b.createdAt ? 1 : -1)
             ));
 
-            setNotices(all);
-            setUnread(all.filter((n) => n.readAt === null).length);
-            setUpdatedAt(new Date());
+            /* ───── A POLL THAT FOUND NOTHING NEW CHANGES NOTHING ────────
+             *
+             * This provider wraps every route in the application, so when
+             * its value changes identity React reconciles the whole tree --
+             * the rail, the board, a counter's delivery list, whatever is
+             * open. `all` is a fresh array on every poll, so handing it
+             * straight to setNotices did that every twenty-five seconds on
+             * a screen where nothing had happened, for ever, on a machine
+             * that has the board open all day.
+             *
+             * The signature is id-and-read-state, which is exactly what the
+             * bell renders. Bodies never change after they are written, and
+             * nothing else here is shown, so two polls with the same
+             * signature have nothing to say.
+             *
+             * IT ALSO SHOWED UP AS TEST FAILURES, which is how it was
+             * found: three CI runs in a row timed out at three seconds, in
+             * a different file each time, because every test that mounts
+             * <App /> was paying for this. See web/src/test/setup.ts on the
+             * budget those tests run under. */
+            const signature = all.map((n) => `${n.id}:${n.readAt ?? ''}`).join(',');
+            if (signature !== lastSignature.current) {
+                lastSignature.current = signature;
+                setNotices(all);
+                setUnread(all.filter((n) => n.readAt === null).length);
+            }
+            /* Booleans, so React bails out when they have not moved. */
             setFailing(false);
             setLoading(false);
 
@@ -241,9 +264,9 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
        the next person to sign in on the same machine. */
     useEffect(() => {
         mark.current = null;
+        lastSignature.current = null;
         setNotices([]);
         setUnread(0);
-        setUpdatedAt(null);
         setLoading(username !== '');
     }, [username]);
 
@@ -306,12 +329,21 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
         return () => navigator.serviceWorker.removeEventListener('message', onMessage);
     }, [navigate]);
 
+    /* Read through a ref rather than closed over, so this callback keeps its
+       identity across polls. It is part of the context value, and a new
+       function every twenty-five seconds is the same whole-tree reconcile
+       the signature check above exists to prevent. */
+    const latest = useRef<Notice[]>([]);
+    latest.current = notices;
+
     const markRead = useCallback(async (ids: number[]) => {
         if (ids.length === 0) return;
-        const mine = notices.filter((n) => ids.includes(n.id));
+        const mine = latest.current.filter((n) => ids.includes(n.id));
         /* Optimistic, because the bell has to answer a click instantly and
-           the next poll corrects anything that did not take. */
+           the next poll corrects anything that did not take. The signature
+           is cleared so the next poll is not mistaken for a no-op. */
         const at = new Date().toISOString();
+        lastSignature.current = null;
         setNotices((was) => was.map((n) => (ids.includes(n.id) && n.readAt === null ? { ...n, readAt: at } : n)));
         setUnread((was) => Math.max(0, was - mine.filter((n) => n.readAt === null).length));
         /* Grouped by contract: the ids are per project and sending one
@@ -323,10 +355,11 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
                 await api(`/api/projects/${code}/uh/notifications/read`, { method: 'POST', json: { ids: list } });
             } catch { /* The next poll will put it back, which is the honest end. */ }
         }));
-    }, [notices]);
+    }, []);
 
     const markAllRead = useCallback(async () => {
         const at = new Date().toISOString();
+        lastSignature.current = null;
         setNotices((was) => was.map((n) => (n.readAt === null ? { ...n, readAt: at } : n)));
         setUnread(0);
         await Promise.all(codes.split(',').filter(Boolean).map(async (code) => {
@@ -337,8 +370,8 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
     }, [codes]);
 
     const value = useMemo<Notices>(() => ({
-        notices, unread, updatedAt, loading, failing, markRead, markAllRead, refresh: () => { void load(); },
-    }), [notices, unread, updatedAt, loading, failing, markRead, markAllRead, load]);
+        notices, unread, loading, failing, markRead, markAllRead, refresh: () => { void load(); },
+    }), [notices, unread, loading, failing, markRead, markAllRead, load]);
 
     /* createElement rather than JSX so this file stays .ts beside the other
        hooks, which is where somebody looks for it. */

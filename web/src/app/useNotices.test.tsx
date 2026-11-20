@@ -73,10 +73,14 @@ function stubFetch() {
 }
 
 /** A window onto the context, so a test can read the count and press things. */
+let renders = 0;
+
 function Probe() {
     const { notices, unread, markRead, markAllRead } = useNotices();
+    renders += 1;
     return (
         <div>
+            <span data-testid="renders">{renders}</span>
             <span data-testid="unread">{unread}</span>
             <span data-testid="count">{notices.length}</span>
             <button type="button" onClick={() => { void markRead([notices[0]!.id]); }}>one</button>
@@ -93,6 +97,7 @@ const hidden = (is: boolean) => Object.defineProperty(document, 'hidden', { conf
 
 beforeEach(() => {
     shown.mockClear();
+    renders = 0;
     posted.length = 0;
     rows = [];
     permission = 'granted';
@@ -188,6 +193,60 @@ describe('the first load of the day', () => {
         await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
         await waitFor(() => expect(screen.getByTestId('count')).toHaveTextContent('2'));
         expect(shown).not.toHaveBeenCalled();
+    });
+});
+
+describe('what a poll costs when nothing has happened', () => {
+    it('does not re-render the application', async () => {
+        /* This provider wraps every route, so a change to its value
+           reconciles the whole tree -- the rail, the board, whatever is
+           open. `all` is a fresh array every poll, so handing it straight to
+           setNotices did that every twenty-five seconds on a quiet screen,
+           for ever, on a machine that has the board open all day.
+        
+           It surfaced as test failures first: three CI runs in a row timed
+           out at three seconds, in a DIFFERENT FILE each time, because every
+           test that mounts <App /> was paying for this. */
+        rows = [row(1), row(2)];
+        mount();
+        await waitFor(() => expect(screen.getByTestId('unread')).toHaveTextContent('2'));
+        const before = Number(screen.getByTestId('renders').textContent);
+
+        /* Three polls, same answer. */
+        for (let i = 0; i < 3; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+        }
+
+        expect(Number(screen.getByTestId('renders').textContent)).toBe(before);
+    });
+
+    it('still re-renders the moment something is new', async () => {
+        /* The check must not be so eager that it stops the bell working. */
+        rows = [row(1)];
+        mount();
+        await waitFor(() => expect(screen.getByTestId('unread')).toHaveTextContent('1'));
+        const before = Number(screen.getByTestId('renders').textContent);
+
+        rows = [row(1), row(2)];
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+
+        await waitFor(() => expect(screen.getByTestId('unread')).toHaveTextContent('2'));
+        expect(Number(screen.getByTestId('renders').textContent)).toBeGreaterThan(before);
+    });
+
+    it('notices a row that was read somewhere else', async () => {
+        /* The signature is id AND read state, because "nothing new" must not
+           mean "nothing changed": a dispatcher who clears the bell on their
+           other screen should see the count fall here. */
+        rows = [row(1)];
+        mount();
+        await waitFor(() => expect(screen.getByTestId('unread')).toHaveTextContent('1'));
+
+        rows = [row(1, { readAt: new Date().toISOString() })];
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+
+        await waitFor(() => expect(screen.getByTestId('unread')).toHaveTextContent('0'));
     });
 });
 
