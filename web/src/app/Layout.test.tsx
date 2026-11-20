@@ -12,7 +12,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from './auth';
 import { App } from './App';
 import { mockFetch } from '../test/setup';
-import { enqueue, queued, setOutboxUser } from '../lib/outbox';
+import { clearOutbox, enqueue, queued, resetOutboxForTests, setOutboxUser } from '../lib/outbox';
 
 const session = { id: 1, username: 'dee.dispatch', name: 'Dee Dispatch', role: 'staff', route: null };
 const projects = [{ id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin' }];
@@ -41,7 +41,40 @@ function renderAt(path: string, routes: Record<string, unknown> = {}) {
 const rail = () => document.querySelector('.izy') as HTMLElement;
 const toggle = () => screen.getByRole('button', { name: /the menu/ });
 
-beforeEach(() => { window.localStorage.clear(); });
+beforeEach(async () => {
+    window.localStorage.clear();
+    /* ───── A CLEAN OUTBOX PER TEST, AND WHY IT IS NOT HOUSEKEEPING ──────
+     *
+     * The two sign-out tests below failed about half the time, and on the CI
+     * runner they failed EVERY time. A probe on a branch said why.
+     *
+     * The record was enqueued, navigator.onLine was false, and it was posted
+     * and rejected anyway. So the sender was not a flush of this test's --
+     * every one of those bails on the offline check. It was a flush still in
+     * flight from an EARLIER TEST IN THIS FILE, which passed that check
+     * while the connection was still up and then awaited. cleanup() unmounts
+     * the app between tests, and `sending` is module state that survives it,
+     * so the loop simply carried on and picked up a record written by a test
+     * that had not existed when it started. The route is not in this file's
+     * mock table, so it 404'd, and a 4xx is a PERMANENT rejection: the entry
+     * is discarded rather than retried.
+     *
+     * Then confirmSignOut found an empty queue, had nothing to warn about,
+     * and signed out without asking -- which is the thing the test exists to
+     * prove it does not do.
+     *
+     * WHETHER IT RACED WAS DECIDED BY NODE. v24 locally finished that flush
+     * before the next test; v20 on the runner did not. Hence green on one
+     * machine, red on every run of the other, for a file nobody had touched.
+     *
+     * resetOutboxForTests is the seam that already exists for this -- see
+     * SyncStatus.test.tsx, which has needed it since it was written -- and
+     * it drops `sending` along with the open database, so no loop crosses a
+     * test boundary. Clearing the store as well means each test starts from
+     * a queue it put there itself rather than one the file left behind. */
+    resetOutboxForTests();
+    await clearOutbox().catch(() => { /* no IndexedDB, nothing queued */ });
+});
 
 describe('the side rail', () => {
     it('collapses and expands, and says which the button will do', async () => {
