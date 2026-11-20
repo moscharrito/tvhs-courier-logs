@@ -248,6 +248,21 @@ const OVERSEERS = [
         capabilities: { ...OVERSIGHT },
         note: 'pharmacy billing: every counter, the reports, and the bulk export with proof of delivery',
     },
+    /* A THIRD BILLING SEAT, asked for on 20 November 2026. Same capabilities
+       as the other two and deliberately NOT the manager's reset verb: that
+       stays with uh.manager alone, and portal-reset.ts skips any account
+       which can itself reset, so nothing holding it can be taken over by
+       something else holding it.
+
+       The name, like the other two, is supplied at run time and is not in
+       this public repository. */
+    {
+        key: 'billing3',
+        username: 'uh.billing3',
+        fallbackName: 'UH Pharmacy Billing 3',
+        capabilities: { ...OVERSIGHT },
+        note: 'pharmacy billing: every counter, the reports, and the bulk export with proof of delivery',
+    },
 ];
 
 const PORTALS = [
@@ -499,7 +514,7 @@ async function main() {
         say('  would be created with a generic one and whoever reads the portal logins');
         say('  screen cannot tell them apart. Supply it with --name key="Full Name".');
         for (const p of unnamed) say(`      ${p.key.padEnd(12)} would be "${displayName(p)}"`);
-        say('  (An account that already exists keeps the name it has either way.)');
+        say('  (--name also CORRECTS the name on an account that already exists.)');
     }
 
     insist('login', await call('/api/login', {
@@ -550,6 +565,42 @@ async function main() {
                 method: 'POST',
                 body: JSON.stringify({ password: pass }),
             }));
+        }
+
+        /* THE NAME ON AN ACCOUNT THAT ALREADY EXISTED.
+         *
+         * Until 20 November 2026 --name was read only when an account was
+         * being created, and the help said so: "an account that already
+         * exists keeps the name it has either way". That left the two
+         * billing logins sitting on production under the generic
+         * fallbackName they were born with, with no way to correct them
+         * short of a database edit -- and the portal logins screen, the
+         * audit trail and every reset notice show that name to the person
+         * whose account it is.
+         *
+         * NO --replace GUARD HERE, UNLIKE THE ADDRESS BELOW, and the
+         * difference is worth stating because the two blocks otherwise look
+         * alike. An address is where a reset code goes, so repointing one in
+         * silence hands somebody the means to take the account over; that
+         * earns a refusal. A name is a label. Getting it wrong puts the
+         * wrong words on a screen, is visible the moment anybody looks, and
+         * is undone by running this again. So it is changed when asked and
+         * the old one is printed, rather than guarded.
+         *
+         * WHAT PROTECTS THE MAPPING is the address block underneath: point
+         * a --name at the wrong account and the --set beside it collides
+         * with the address already on file, and the whole run stops before
+         * anything is written. */
+        if (existing.status === 200 && givenNames.has(portal.key)) {
+            const had = String(existing.body?.name ?? '').trim();
+            const want = displayName(portal);
+            if (had !== want) {
+                insist(`name ${portal.username}`, await call(`/api/users/${portal.username}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ name: want }),
+                }));
+                say(`  ${portal.username.padEnd(18)} was "${had}", now "${want}"`);
+            }
         }
 
         /* THE ADDRESS ON AN ACCOUNT THAT ALREADY EXISTED, which is the case
