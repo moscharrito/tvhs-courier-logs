@@ -508,18 +508,24 @@ describe('taking a list back off', () => {
         expect(alert).toHaveTextContent(/already started on this list \(3 picked up\)/);
     });
 
-    it('keeps a withdrawn list on the screen, marked, with its sheet still downloadable', async () => {
+    it('keeps a withdrawn list on the screen, marked, with nothing to cluster', async () => {
         /* Somebody reconciling a day needs to see that a list was sent and
            taken back off. A row that vanished would turn that into a
-           mystery, which is the opposite of what this screen is for. */
+           mystery, which is the opposite of what this screen is for.
+
+           IT USED TO END "with its sheet still downloadable". The sheet is
+           gone from this screen on purpose -- see the note on the cell --
+           and what matters about a withdrawn row now is that it offers no
+           cluster. Its deliveries have been taken back; a dialog opened on
+           them would have nothing to divide. */
         stub(withRecent([aList({ status: 'cancelled' })]));
         render(<ListImport projectCode="uh" timezone="America/Chicago" canImport canWithdraw />);
         await screen.findByText('Courier and fedex 11.02.xlsx');
 
         expect(screen.getByText('taken off')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /Take the .* list off/ })).not.toBeInTheDocument();
-        expect(screen.getByRole('link', { name: /Download the deliveries/ }))
-            .toHaveAttribute('href', '/api/projects/uh/uh/imports/41/export.xlsx');
+        expect(screen.queryByRole('button', { name: /^Cluster the/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: /Download/ })).not.toBeInTheDocument();
     });
 });
 
@@ -593,7 +599,7 @@ describe('ListImport', () => {
             driver({ username: 'far.courier', name: 'Far Away', homeSiteId: 9 }),
         ]));
 
-        const pick = await screen.findByLabelText('Give it to');
+        const pick = await screen.findByLabelText('Cluster to');
         expect(within(pick).getByRole('option', { name: 'Ada Fitzgerald' })).toBeInTheDocument();
         /* Off shift today, and based at another counter: neither can take
            this list, so neither is offered. */
@@ -607,14 +613,14 @@ describe('ListImport', () => {
            dropdown. The board's own assignment control reads the same two
            fields for the same reason. */
         await reviewed(withRoster([driver({ username: 'cov.courier', name: 'Cov Er', homeSiteId: 9, alsoCovers: [7] })]));
-        const pick = await screen.findByLabelText('Give it to');
+        const pick = await screen.findByLabelText('Cluster to');
         expect(within(pick).getByRole('option', { name: 'Cov Er' })).toBeInTheDocument();
     });
 
     it('defaults to nobody, so the upload is still one button', async () => {
         await reviewed(withRoster([driver()]));
-        expect(await screen.findByLabelText('Give it to')).toHaveValue('');
-        expect(within(screen.getByLabelText('Give it to')).getByRole('option', { name: 'Nobody yet' })).toBeInTheDocument();
+        expect(await screen.findByLabelText('Cluster to')).toHaveValue('');
+        expect(within(screen.getByLabelText('Cluster to')).getByRole('option', { name: 'Nobody yet' })).toBeInTheDocument();
     });
 
     it('imports without a run when nobody is chosen', async () => {
@@ -658,7 +664,7 @@ describe('ListImport', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
         await screen.findByText('1 of 3 rows will be imported');
         if (driverUsername !== null) {
-            fireEvent.change(await screen.findByLabelText('Give it to'), { target: { value: driverUsername } });
+            fireEvent.change(await screen.findByLabelText('Cluster to'), { target: { value: driverUsername } });
         }
         fireEvent.click(screen.getByRole('button', { name: /^Import 1 orders?$/ }));
         return { calls, fn };
@@ -697,7 +703,7 @@ describe('ListImport', () => {
            The import is unaffected either way. */
         await reviewed(withRoster([driver({ onShift: false })]));
         expect(await screen.findByText(/Nobody mapped to this pharmacy is on shift/)).toBeInTheDocument();
-        expect(screen.queryByLabelText('Give it to')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Cluster to')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: /^Import 1 orders?$/ })).toBeEnabled();
     });
 
@@ -875,12 +881,17 @@ describe('ListImport', () => {
         expect(within(row3).getByText('5')).toBeInTheDocument();
     });
 
-    it('offers each list as a download, pointed at that list and no other', async () => {
-        /* "Send me the list the pharmacy sent" used to mean filtering the
-           orders export to a date and a pharmacy, which is wrong twice: a
-           pharmacy can send two lists for one day, and an order added by
-           hand afterwards falls inside the same filter. The link is keyed on
-           the list id so it cannot pick up either. */
+    it('replaces the whole-list download with a cluster, on every row that has deliveries', async () => {
+        /* WHAT WENT AND WHY. This used to assert a download link per row,
+           keyed on the list id. Download was the first move in the routine
+           this feature exists to end: export the day, paste it into an
+           outside assistant, ask for ZIP clusters. So the link came off the
+           screen rather than sitting next to its replacement.
+
+           Two lists, one pharmacy, one day -- the case that forced the link
+           to be keyed on the list id in the first place. A cluster is keyed
+           on the pharmacy and the day instead, because that is what it
+           divides, so both rows legitimately offer the same one. */
         stub({
             ...baseRoutes,
             'GET /api/projects/uh/uh/imports': [{
@@ -895,14 +906,32 @@ describe('ListImport', () => {
         });
         render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
 
-        /* TWO LISTS, ONE PHARMACY, ONE DAY -- the case a filtered export
-           cannot tell apart. Each row's link must carry its own id. */
         const first = (await screen.findByText('manifest.xlsx')).closest('tr')!;
         const second = (await screen.findByText('second-run.xlsx')).closest('tr')!;
-        expect(within(first).getByRole('link', { name: /Download/ }))
-            .toHaveAttribute('href', '/api/projects/uh/uh/imports/3/export.xlsx');
-        expect(within(second).getByRole('link', { name: /Download/ }))
-            .toHaveAttribute('href', '/api/projects/uh/uh/imports/4/export.xlsx');
+
+        expect(screen.queryByRole('link', { name: /Download/ })).not.toBeInTheDocument();
+        for (const row of [first, second]) {
+            expect(within(row).getByRole('button', {
+                name: 'Cluster the 2026-09-14 University Hospital Discharge Pharmacy list between drivers',
+            })).toBeInTheDocument();
+        }
+    });
+
+    it('offers no cluster on a list that created no deliveries', async () => {
+        /* A file can import nothing at all -- every row a duplicate, or
+           every row blocked. The row stays, so the morning is on the
+           record, but there is nothing behind it to divide. */
+        stub({
+            ...baseRoutes,
+            'GET /api/projects/uh/uh/imports': [{
+                id: 9, site: { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+                serviceDate: '2026-09-14', status: 'released', receivedAt: '2026-09-14T17:00:00.000Z',
+                sourceFilename: 'all-dupes.xlsx', rowCount: 4, orderCount: 0, skippedCount: 4, importedBy: 'admin',
+            }],
+        });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        const row = (await screen.findByText('all-dupes.xlsx')).closest('tr')!;
+        expect(within(row).queryByRole('button', { name: /^Cluster the/ })).not.toBeInTheDocument();
     });
     /* ───────── the preview and the import disagreeing (28 October 2026) */
 

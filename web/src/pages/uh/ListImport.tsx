@@ -189,7 +189,7 @@ export function importOutcome(done: { id: number; summary: Summary & { imported:
     const named = duplicates + blocked;
     if (missing > named) {
         why.push(`${missing - named} did not import and the reasons above do not cover ${missing - named === 1 ? 'it' : 'them'}. `
-            + 'Download the sheet and compare it against what you sent.');
+            + 'Open the day on the board and compare it against what you sent.');
     }
 
     return {
@@ -649,7 +649,7 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
             {clusterable && (
                 <p className="izy-cluster-offer">
                     <button type="button" className="izy-btn" onClick={() => setClustering(true)}>
-                        Split this list between drivers
+                        Cluster this list between drivers
                     </button>
                     <span className="izy-muted">
                         Groups it by zone and ZIP so each driver stays in one part of the city,
@@ -889,7 +889,7 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                     about importing depends on this. */}
                                 {canImport === true && candidates.length > 0 && (
                                     <label className="izy-field izy-assign-on-import">
-                                        Give it to
+                                        Cluster to
                                         <select
                                             value={assignTo}
                                             disabled={busy !== null}
@@ -919,8 +919,8 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                 unaffected either way. */}
                             {canImport === true && roster !== null && candidates.length === 0 && (
                                 <p className="izy-muted">
-                                    Nobody mapped to this pharmacy is on shift, so there is no one to give it to
-                                    here. Import it and assign it from the board.
+                                    Nobody mapped to this pharmacy is on shift, so there is no one to
+                                    cluster it to here. Import it and assign it from the board.
                                 </p>
                             )}
                         </>
@@ -991,7 +991,7 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                 <>
                 <table className="izy-table">
                     <thead><tr>
-                        <th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Sheet &amp; split</th>
+                        <th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Cluster</th>
                         {canWithdraw === true && <th>Remove</th>}
                     </tr></thead>
                     <tbody>
@@ -1017,55 +1017,37 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                 <td className="izy-muted">
                                     {displayName({ name: l.importedByName ?? '', username: l.importedBy })}
                                 </td>
-                                {/* THE DELIVERIES THIS UPLOAD MADE, as a sheet.
-                                    NOT the uploaded file: nothing keeps that,
-                                    because preview and commit take the same
-                                    bytes and nothing is staged between them, so
-                                    an operator who walks away leaves no patient
-                                    addresses behind. The column is headed Sheet
-                                    rather than File for that reason -- the
-                                    column to its left is already the name of
-                                    something we do not have.
+                                {/* ─── CLUSTER, WHERE DOWNLOAD USED TO BE.
+                                    Not beside it. Instead of it.
 
-                                    A plain link, not a fetch: the browser
-                                    handles the download, carries the session
-                                    cookie, and needs no JavaScript to hold a
-                                    spreadsheet of patient addresses in memory
-                                    on the way past. */}
+                                    Download was the first move in a routine
+                                    that ended with a day of patient names,
+                                    addresses and telephone numbers pasted
+                                    into an outside chat assistant to be
+                                    grouped by ZIP. The grouping now happens
+                                    here and nothing leaves the building, so
+                                    the button that started the old routine
+                                    comes off the screen. Leaving it next to
+                                    the new one, which is how this first
+                                    shipped, leaves the old path one click
+                                    away and asks a dispatcher under time
+                                    pressure to choose the longer one.
+
+                                    The per-driver spreadsheets are inside
+                                    the dialog, which is the only place a
+                                    list of patients is still worth having
+                                    as a file -- it goes to the driver
+                                    carrying it. The whole-list export is
+                                    gone from the screen. GET
+                                    /imports/:id/export.xlsx still answers,
+                                    so nothing is lost that cannot be put
+                                    back by putting a link here again.
+
+                                    NOT ON A WITHDRAWN LIST, and not on one
+                                    that created nothing: both would open a
+                                    dialog with no deliveries behind it. */}
                                 <td>
-                                    <a
-                                        className="izy-btn secondary small"
-                                        href={`${base}/${l.id}/export.xlsx`}
-                                        aria-label={`Download the deliveries from the ${l.serviceDate} ${l.site.name} list`}
-                                    >
-                                        Download
-                                    </a>
-                                    {/* ─── AND SPLITTING IT, FROM THE ROW.
-
-                                        This started life only on the import
-                                        outcome, which was the moment the
-                                        orders came into being and therefore
-                                        looked like the right place. In
-                                        practice it meant the control existed
-                                        for about thirty seconds: reload the
-                                        page, or come back to a list imported
-                                        an hour ago, and there was no way in
-                                        at all. Reported as "I cannot see the
-                                        Cluster button, still see Download".
-
-                                        The row carries the pharmacy, the day
-                                        and the order count, which is exactly
-                                        what a split needs, so it is also
-                                        where the control belongs -- next to
-                                        Download, which is what dispatch used
-                                        to press before pasting the list into
-                                        an outside assistant.
-
-                                        NOT ON A WITHDRAWN LIST, and not on
-                                        one that created nothing: both would
-                                        open a dialog with no deliveries
-                                        behind it. */}
-                                    {l.status !== 'cancelled' && l.orderCount > 0 && (
+                                    {l.status !== 'cancelled' && l.orderCount > 0 ? (
                                         <button
                                             type="button"
                                             className="izy-btn small"
@@ -1073,11 +1055,11 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                                 setClusterable({ site: l.site, serviceDate: l.serviceDate });
                                                 setClustering(true);
                                             }}
-                                            aria-label={`Split the ${l.serviceDate} ${l.site.name} list between drivers`}
+                                            aria-label={`Cluster the ${l.serviceDate} ${l.site.name} list between drivers`}
                                         >
-                                            Split
+                                            Cluster
                                         </button>
-                                    )}
+                                    ) : <span className="izy-muted">—</span>}
                                 </td>
                                 {canWithdraw === true && (
                                     <td>

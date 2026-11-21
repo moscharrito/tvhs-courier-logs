@@ -1975,9 +1975,6 @@ body {
 /* The ZIP list is the widest thing in the table and the least urgent, so it
    wraps rather than pushing the width and the driver name off the screen. */
 .izy-cluster-zips { font-size: 12.5px; color: var(--izy-soft); overflow-wrap: anywhere; }
-/* Download and Split share one cell, side by side rather than stacked. */
-.izy-table td > .izy-btn + .izy-btn { margin-left: 6px; }
-
 /* The offer under the import outcome. A row on a laptop, stacked on a
    phone, so the sentence never squeezes the button to two words. */
 .izy-cluster-offer {
