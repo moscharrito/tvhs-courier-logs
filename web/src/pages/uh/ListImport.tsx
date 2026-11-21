@@ -991,7 +991,7 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                 <>
                 <table className="izy-table">
                     <thead><tr>
-                        <th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Sheet</th>
+                        <th>Date</th><th>Pharmacy</th><th>Orders</th><th>Skipped</th><th>File</th><th>By</th><th>Sheet &amp; split</th>
                         {canWithdraw === true && <th>Remove</th>}
                     </tr></thead>
                     <tbody>
@@ -1040,6 +1040,44 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                     >
                                         Download
                                     </a>
+                                    {/* ─── AND SPLITTING IT, FROM THE ROW.
+
+                                        This started life only on the import
+                                        outcome, which was the moment the
+                                        orders came into being and therefore
+                                        looked like the right place. In
+                                        practice it meant the control existed
+                                        for about thirty seconds: reload the
+                                        page, or come back to a list imported
+                                        an hour ago, and there was no way in
+                                        at all. Reported as "I cannot see the
+                                        Cluster button, still see Download".
+
+                                        The row carries the pharmacy, the day
+                                        and the order count, which is exactly
+                                        what a split needs, so it is also
+                                        where the control belongs -- next to
+                                        Download, which is what dispatch used
+                                        to press before pasting the list into
+                                        an outside assistant.
+
+                                        NOT ON A WITHDRAWN LIST, and not on
+                                        one that created nothing: both would
+                                        open a dialog with no deliveries
+                                        behind it. */}
+                                    {l.status !== 'cancelled' && l.orderCount > 0 && (
+                                        <button
+                                            type="button"
+                                            className="izy-btn small"
+                                            onClick={() => {
+                                                setClusterable({ site: l.site, serviceDate: l.serviceDate });
+                                                setClustering(true);
+                                            }}
+                                            aria-label={`Split the ${l.serviceDate} ${l.site.name} list between drivers`}
+                                        >
+                                            Split
+                                        </button>
+                                    )}
                                 </td>
                                 {canWithdraw === true && (
                                     <td>
