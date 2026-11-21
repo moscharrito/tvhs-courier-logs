@@ -7,25 +7,40 @@
  *   POST /api/projects/:pid/uh/geocode/mileage  measure out-of-area distances from
  *                                               our own arrival positions (ticket 1.9)
  *
- * SITES ONLY, AND THAT IS THE WHOLE SHAPE OF THIS TICKET. A pharmacy's street
- * address is a business address. A patient's delivery address is protected
- * health information, and the provider this is wired to has no business
- * associate agreement covering it (see src/core/geo/provider.ts). So there is
- * no endpoint here that geocodes orders, and the provider would refuse one if
- * there were.
+ *   POST /api/projects/:pid/uh/geocode/orders   look up the DELIVERY addresses
+ *                                               on a service date (20 November)
  *
- * What that unblocks, and what it does not:
+ * IT WAS SITES ONLY, AND FOR TWO YEARS THAT WAS THE RIGHT SHAPE. A
+ * pharmacy's street address is a business address. A patient's delivery
+ * address is protected health information, and the provider this was
+ * wired to had no business associate agreement covering it, so there was
+ * no endpoint here that geocoded orders and the provider would have
+ * refused one if there were.
  *
- *   UNBLOCKED: a run can be sequenced from a real origin, because the origin
- *   is a pharmacy. The great-circle ordering in sequencing.ts needs a point
- *   for the origin and a point for each stop, so it stays blocked, but the
- *   error it gives changes from "nothing has coordinates" to "the stops do
- *   not", which is a smaller and more honest problem.
+ * WHAT CHANGED, 20 NOVEMBER 2026: a signed BAA covering Amazon Location.
+ * `/orders` exists because of that agreement and nothing else. It is
+ * gated three deep and every gate is somewhere different on purpose:
  *
- *   STILL BLOCKED: out-of-area mileage on an invoice, which needs a road
- *   distance from the origin to a PATIENT address, and therefore needs the
- *   vendor decision. 323 deliveries in the simulated month could not be
- *   priced for this reason and they still cannot.
+ *   1. GEO_BAA_COVERS_PATIENT_ADDRESSES, a deployment decision, read here
+ *      as `patientAddresses`. Without it this route answers 409 and makes
+ *      no call.
+ *   2. scopedTo() in legacy.ts, which refuses the 'patient' scope to any
+ *      provider the deployment has not been permitted to send it to.
+ *   3. config.ts, which refuses to boot with the BAA flag set while
+ *      Google is the only geocoder configured -- Google's own terms
+ *      exclude PHI.
+ *
+ * A comment does not stop a loop, so none of these is a comment.
+ *
+ * WHAT IT UNBLOCKS: nearest-neighbour ordering of a run. sequencing.ts
+ * needs a point for the origin and a point for every stop; the origin has
+ * been a real pharmacy since ticket 1.4 and the stops were the missing
+ * half. The split dialog sequences each round the moment the addresses on
+ * it have coordinates, and falls back to deadline order where they do not.
+ *
+ * STILL NOT DONE HERE: out-of-area mileage on an invoice. That needs a
+ * ROAD distance, not a great-circle one, and it bills money. It stays on
+ * the GPS basis in mileage.ts until somebody decides that deliberately.
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -41,6 +56,9 @@ interface Deps {
     /** Whether a provider is configured at all, for the status endpoint. */
     providerName: string;
     providerReason: string | null;
+    /** config.geo.patientGeocodeAllowed. The gate on /orders, and nothing
+     *  defaults it to true: an older caller gets the old behaviour. */
+    patientAddresses?: boolean;
 }
 
 type Handler = (req: Request, res: Response) => Promise<void>;
@@ -56,7 +74,9 @@ const addressOf = (s: SiteRow): Address => ({
     line1: s.address_line, city: s.city, state: s.state, zip: s.zip,
 });
 
-export function createGeocodeRouter({ client, lookup, providerName, providerReason }: Deps): Router {
+export function createGeocodeRouter(
+    { client, lookup, providerName, providerReason, patientAddresses = false }: Deps,
+): Router {
     const router = Router({ mergeParams: true });
     const manage = requireProjectRole('admin');
     const read = requireProjectRole('admin');
@@ -78,14 +98,25 @@ export function createGeocodeRouter({ client, lookup, providerName, providerReas
                 located: s.lat !== null && s.lng !== null,
                 status: s.geocode_status,
             })),
-            /* Said in the response rather than only in a comment, because the
-             * screen that calls this is where somebody would otherwise ask
-             * for patient addresses to be looked up too. */
-            patientAddresses: {
-                lookedUp: false,
-                why: 'A delivery address is protected health information and the configured provider has no business '
-                    + 'associate agreement covering it, so no delivery address is ever sent anywhere.',
-            },
+            /* Said in the response rather than only in a comment, because
+             * this is the screen where somebody would otherwise ask. */
+            patientAddresses: patientAddresses
+                ? {
+                    lookedUp: true,
+                    why: 'A business associate agreement covers the configured provider for delivery addresses. '
+                        + 'Look them up with POST /uh/geocode/orders.',
+                    located: Number((await client.execute({
+                        sql: `SELECT COUNT(*) AS n FROM orders
+                               WHERE project_id = ? AND lat IS NOT NULL AND lng IS NOT NULL`,
+                        args: [req.project!.id],
+                    })).rows[0]?.['n'] ?? 0),
+                }
+                : {
+                    lookedUp: false,
+                    why: 'A delivery address is protected health information and this deployment is not permitted to '
+                        + 'send one anywhere, so none is sent. Set GEO_BAA_COVERS_PATIENT_ADDRESSES only with a '
+                        + 'provider the agreement names.',
+                },
             /* The answer that needs nobody: the courier was there and the
              * phone recorded where (ticket 1.9). */
             outOfAreaMileage: {
@@ -158,6 +189,117 @@ export function createGeocodeRouter({ client, lookup, providerName, providerReas
         });
 
         res.status(201).json({
+            pending: pending.length,
+            located,
+            failed,
+            stopped,
+            usage: await lookup.usage(),
+        });
+    }));
+
+    /**
+     * Put coordinates on the DELIVERY addresses for one service date.
+     *
+     * ONE DAY AT A TIME, and the day must be named. "Geocode everything"
+     * over a contract this size is tens of thousands of disclosures on one
+     * click, and nobody pressing a button has that in mind. A dispatcher
+     * wants this morning's list routable, so this morning's list is the
+     * unit.
+     *
+     * ALREADY-LOCATED ORDERS ARE SKIPPED, so pressing it twice costs
+     * nothing and discloses nothing. The lookup cache means a repeated
+     * address costs nothing either, which matters on a contract that
+     * delivers to the same addresses week after week.
+     *
+     * THE DAILY CEILING STOPS THE JOB rather than failing the rest one at
+     * a time, exactly as it does for sites: a list of four hundred
+     * identical refusals tells nobody anything.
+     */
+    router.post('/orders', manage, wrap(async (req, res) => {
+        if (!patientAddresses) {
+            res.status(409).json({
+                error: 'This deployment is not permitted to send delivery addresses to an address lookup service. '
+                    + 'A delivery address is protected health information, and the permission is a deployment '
+                    + 'decision backed by an agreement with the provider, not a setting on this screen.',
+                code: 'geocode.patientAddressesRefused',
+            });
+            return;
+        }
+
+        const serviceDate = String(req.query['serviceDate'] ?? req.body?.serviceDate ?? '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) {
+            res.status(400).json({
+                error: 'Name the service date to look up, as YYYY-MM-DD.',
+                code: 'geocode.noServiceDate',
+            });
+            return;
+        }
+
+        const rs = await client.execute({
+            sql: `SELECT id, address_line, address_line2, city, state, zip
+                    FROM orders
+                   WHERE project_id = ? AND service_date = ?
+                     AND (lat IS NULL OR lng IS NULL)
+                     AND status != 'cancelled'
+                     AND TRIM(address_line) != ''
+                   ORDER BY id`,
+            args: [req.project!.id, serviceDate],
+        });
+        const pending = rs.rows.map((r) => ({
+            id: Number(r['id']),
+            address: {
+                line1: String(r['address_line']),
+                line2: String(r['address_line2'] ?? '') || undefined,
+                city: String(r['city'] ?? ''),
+                state: String(r['state'] ?? 'TX'),
+                zip: String(r['zip'] ?? ''),
+            } satisfies Address,
+        }));
+
+        /* IDS AND REASONS, NEVER ADDRESSES. This response is read in a
+           browser, logged by proxies and pasted into chats. The order id
+           is enough to find the row; the street is not ours to repeat. */
+        const located: Array<{ orderId: number; cached: boolean; quality: string }> = [];
+        const failed: Array<{ orderId: number; reason: string }> = [];
+        let stopped: string | null = null;
+
+        for (const order of pending) {
+            try {
+                const result = await lookup.geocode(order.address, 'patient');
+                await client.execute({
+                    sql: `UPDATE orders SET lat = ?, lng = ?, geocode_status = 'ok' WHERE id = ?`,
+                    args: [result.point.lat, result.point.lng, order.id],
+                });
+                located.push({ orderId: order.id, cached: result.cached, quality: result.quality });
+            } catch (err) {
+                if (err instanceof GeoQuotaError) { stopped = err.message; break; }
+                if (err instanceof GeoUnavailableError) {
+                    await client.execute({
+                        sql: `UPDATE orders SET geocode_status = 'failed' WHERE id = ?`,
+                        args: [order.id],
+                    });
+                    failed.push({ orderId: order.id, reason: err.message });
+                    continue;
+                }
+                throw err;
+            }
+        }
+
+        /* COUNTS, AND THE DAY. The audit trail has to be able to answer
+           "how many delivery addresses were disclosed, and when" without
+           itself becoming a second copy of them. */
+        await req.audit('order.geocode', 'project', String(req.project!.id), {
+            serviceDate,
+            pending: pending.length,
+            located: located.length,
+            failed: failed.length,
+            /* A cache hit disclosed nothing: it never left this database.
+               That is the number an auditor actually wants. */
+            disclosed: located.filter((l) => !l.cached).length,
+        });
+
+        res.status(201).json({
+            serviceDate,
             pending: pending.length,
             located,
             failed,

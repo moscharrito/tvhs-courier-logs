@@ -266,7 +266,13 @@ describe('over HTTP', () => {
         expect(res.body.provider.available).toBe(false);
         expect(res.body.provider.reason).toMatch(/GOOGLE_MAPS_API_KEY/);
         expect(res.body.patientAddresses.lookedUp).toBe(false);
-        expect(res.body.patientAddresses.why).toMatch(/business associate agreement/);
+        /* THE REASON CHANGED ON 21 NOVEMBER and the assertion with it. It
+           used to be "no agreement covers the provider"; a signed BAA now
+           exists, so the reason a deployment does not look them up is that
+           this deployment has not been given the permission. Same answer,
+           different sentence. */
+        expect(res.body.patientAddresses.why).toMatch(/not permitted to send one anywhere/);
+        expect(res.body.patientAddresses.why).toMatch(/GEO_BAA_COVERS_PATIENT_ADDRESSES/);
         // Every site is still waiting for a point.
         expect(res.body.sites.every((s) => s.located === false)).toBe(true);
     });
@@ -347,5 +353,39 @@ describe('over HTTP', () => {
         const north = await srv.login('north');
         expect((await north.get('/api/projects/uh/uh/geocode')).status).toBe(403);
         expect((await srv.agent().get('/api/projects/uh/uh/geocode')).status).toBe(401);
+    });
+});
+
+/* ───────────────────────── delivery addresses, when nobody said yes
+ *
+ * The gate that matters. A deployment without GEO_BAA_COVERS_PATIENT_ADDRESSES
+ * must not send a patient's street address anywhere, and the only thing that
+ * reliably stops somebody writing a loop over orders is a route that refuses.
+ * The permitted path is a separate file, because the flag is read at boot.
+ */
+describe('looking up delivery addresses', () => {
+    it('refuses without the deployment permission, and says it is not a screen setting', async () => {
+        const res = await admin.post('/api/projects/uh/uh/geocode/orders')
+            .send({ serviceDate: '2026-09-14' });
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('geocode.patientAddressesRefused');
+        expect(res.body.error).toMatch(/protected health information/i);
+    });
+
+    it('refuses before it reads the date, so a bad date cannot look like the reason', async () => {
+        const res = await admin.post('/api/projects/uh/uh/geocode/orders').send({});
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('geocode.patientAddressesRefused');
+    });
+
+    it('says so on the status endpoint rather than leaving it to be discovered', async () => {
+        const res = await admin.get('/api/projects/uh/uh/geocode');
+        expect(res.body.patientAddresses.lookedUp).toBe(false);
+        expect(res.body.patientAddresses.why).toMatch(/not permitted/i);
+    });
+
+    it('is closed to couriers', async () => {
+        const north = await srv.login('north');
+        expect((await north.post('/api/projects/uh/uh/geocode/orders').send({})).status).toBe(403);
     });
 });

@@ -369,6 +369,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         lookup: geoLookup,
         providerName: geoProvider.name,
         providerReason: geoProvider.reason,
+        /* The gate on POST /geocode/orders. Passed rather than read from
+           config inside the router so the router stays a pure function of
+           its deps and a test can set it either way. */
+        patientAddresses: config.geo.patientGeocodeAllowed,
     }));
 
     /* The shadow week's log of what did not match (ticket 5.2). */

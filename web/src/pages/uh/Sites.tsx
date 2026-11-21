@@ -38,6 +38,10 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
     const [form, setForm] = useState(EMPTY);
     const [adding, setAdding] = useState(false);
     const [busy, setBusy] = useState(false);
+    /** Null until the status endpoint answers; false on an older server. */
+    const [deliveryLookup, setDeliveryLookup] = useState<boolean | null>(null);
+    const [deliveryDate, setDeliveryDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [deliveryBusy, setDeliveryBusy] = useState(false);
 
     const load = useCallback(async () => {
         try {
@@ -48,6 +52,26 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
         }
     }, [base]);
     useEffect(() => { void load(); }, [load]);
+
+    /* WHETHER THIS DEPLOYMENT MAY LOOK UP DELIVERY ADDRESSES AT ALL.
+       Asked rather than assumed, because the answer is an environment
+       variable on the server and a button that always refuses is worse
+       than no button. A failure here means "no", which is the safe way
+       round. */
+    useEffect(() => {
+        let gone = false;
+        (async () => {
+            try {
+                const got = await api<{ patientAddresses?: { lookedUp?: boolean } }>(
+                    `/api/projects/${projectCode}/uh/geocode`,
+                );
+                if (!gone) setDeliveryLookup(got.patientAddresses?.lookedUp === true);
+            } catch {
+                if (!gone) setDeliveryLookup(false);
+            }
+        })();
+        return () => { gone = true; };
+    }, [projectCode]);
 
     const create = async (e: FormEvent) => {
         e.preventDefault();
@@ -146,6 +170,65 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
         }
     };
 
+    /* ───────────────── LOOKING THE DELIVERY ADDRESSES UP
+     *
+     * A DIFFERENT THING FROM THE BUTTON ABOVE, under different rules, and
+     * that is why it is a separate control with its own sentence rather
+     * than a second mode of the same one. A pharmacy is a business
+     * address. A patient's delivery address is protected health
+     * information, and sending one anywhere is permitted only by the
+     * business associate agreement signed on 20 November 2026.
+     *
+     * ONE DAY AT A TIME. The server insists on it and so does this: over
+     * this contract "look up everything" is tens of thousands of
+     * disclosures on one click, and nobody pressing a button has that in
+     * mind. A dispatcher wants tomorrow's list routable.
+     *
+     * WHAT IT UNBLOCKS: the Cluster dialog puts each round in driving
+     * order -- nearest stop first from the counter -- as soon as every
+     * stop on it has a point. Until then it falls back to deadline order
+     * and says so on the round.
+     */
+    const locateDeliveries = async () => {
+        setDeliveryBusy(true);
+        setMsg(null);
+        try {
+            const out = await api<{
+                pending: number;
+                located: Array<{ orderId: number; cached: boolean }>;
+                failed: Array<{ orderId: number; reason: string }>;
+                stopped: string | null;
+            }>(`/api/projects/${projectCode}/uh/geocode/orders?serviceDate=${deliveryDate}`, { method: 'POST' });
+
+            const done = out.located.length;
+            if (out.stopped) {
+                setMsg({ kind: 'warn', text: `${done} located, then the lookup stopped: ${out.stopped}` });
+            } else if (out.pending === 0) {
+                setMsg({ kind: 'ok', text: `Every delivery on ${deliveryDate} already has a point.` });
+            } else if (out.failed.length > 0) {
+                /* COUNTED, NOT NAMED. The sites version lists which ones
+                   and why, because a pharmacy code is not somebody's
+                   address. Here the reason is the same for all of them
+                   and the identifiers are patients'. */
+                setMsg({
+                    kind: done > 0 ? 'warn' : 'error',
+                    text: `${done} of ${out.pending} located. ${out.failed.length} could not be: `
+                        + `${out.failed[0]?.reason ?? 'the lookup refused.'}`,
+                });
+            } else {
+                setMsg({
+                    kind: 'ok',
+                    text: `${done} ${done === 1 ? 'delivery' : 'deliveries'} located. Rounds for `
+                        + `${deliveryDate} can be put in driving order now.`,
+                });
+            }
+        } catch (e) {
+            setMsg({ kind: 'error', text: why(e, 'The delivery lookup could not be run.') });
+        } finally {
+            setDeliveryBusy(false);
+        }
+    };
+
     return (
         <Section
             id="uh.sites"
@@ -187,6 +270,34 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
                         {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
                     </div>
                 )}
+            {/* Delivery addresses, which are not what this panel is about
+                and sit at the bottom for that reason. Admins only, and
+                only where the deployment is permitted at all. */}
+            {canManage && deliveryLookup === true && (
+                <form
+                    className="izy-row"
+                    style={{ marginTop: 12, alignItems: 'flex-end' }}
+                    onSubmit={(e) => { e.preventDefault(); void locateDeliveries(); }}
+                >
+                    <label className="izy-field">
+                        Delivery addresses for
+                        <input
+                            type="date"
+                            value={deliveryDate}
+                            onChange={(e) => setDeliveryDate(e.target.value)}
+                            required
+                        />
+                    </label>
+                    <button className="izy-btn secondary" type="submit" disabled={deliveryBusy}>
+                        {deliveryBusy ? 'Looking them up…' : 'Look up that day'}
+                    </button>
+                    <span className="izy-muted">
+                        Patient addresses, under the agreement signed with the provider. Doing this lets
+                        the Cluster dialog put each round in driving order instead of deadline order.
+                    </span>
+                </form>
+            )}
+
             {/* Directly under the header, because the button that opens it
                is on the header. Below a nine-row table it would look like
                nothing had happened. */}
