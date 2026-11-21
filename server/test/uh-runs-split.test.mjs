@@ -331,3 +331,111 @@ describe('accepting it', () => {
         expect(out.body.code).toBe('split.stale');
     });
 });
+
+/* ───────────────────── the order each round is driven in (21 November)
+ *
+ * Clustering answers who carries which stops. Until the BAA landed on
+ * 20 November nothing answered what order they drive them in: rounds came
+ * out sorted by deadline and the spreadsheet a driver was handed zig-zagged
+ * across the city. These are about the other half of "cluster by nearest
+ * neighbour to reduce drive time".
+ */
+describe('the order each round is driven in', () => {
+    /** Put a point on the pickup counter, which is the route's origin. */
+    const originAt = (lat, lng) =>
+        sql('UPDATE sites SET lat = ?, lng = ? WHERE id = ?', [lat, lng, siteId]);
+    const pointAt = (orderId, lat, lng) =>
+        sql('UPDATE orders SET lat = ?, lng = ?, geocode_status = ? WHERE id = ?',
+            [lat, lng, 'ok', orderId]);
+
+    it('falls back to deadline order when the stops have no coordinates', async () => {
+        /* THE STATE OF THE CONTRACT TODAY. Nothing is geocoded, so this is
+           what every split currently does, and it has to say so rather than
+           implying the drive was solved. */
+        await originAt(29.5077, -98.5764);
+        const made = await orders(siteId, '78207', 4);
+        const r = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+
+        expect(r.status, r.text).toBe(200);
+        expect(r.body.rounds[0].ordering).toBe('due');
+        expect(r.body.rounds[0].driveMiles).toBeNull();
+        expect(r.body.rounds[0].orderIds).toHaveLength(made.length);
+        expect(r.body.notes.join(' ')).toMatch(/deadline order instead of driving order/i);
+    });
+
+    it('puts the stops in nearest-neighbour order from the pharmacy', async () => {
+        /* Three stops due north of the counter at increasing distance, made
+           in an order that is NOT the driving order, so a pass-through
+           cannot pass by accident. */
+        await originAt(29.50, -98.50);
+        const [far, near, middle] = await orders(siteId, '78207', 3);
+        await pointAt(far, 29.60, -98.50);
+        await pointAt(near, 29.51, -98.50);
+        await pointAt(middle, 29.55, -98.50);
+
+        const r = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+        expect(r.status, r.text).toBe(200);
+        expect(r.body.rounds).toHaveLength(1);
+        expect(r.body.rounds[0].ordering).toBe('nearest');
+        expect(r.body.rounds[0].orderIds).toEqual([near, middle, far]);
+        expect(r.body.rounds[0].driveMiles).toBeGreaterThan(0);
+        expect(r.body.notes.join(' ')).toMatch(/takes no account of deadlines/i);
+    });
+
+    it('sends a whole round back to deadline order if one stop has no coordinates', async () => {
+        /* REFUSES RATHER THAN DEGRADES, which is sequencing.ts's rule and
+           not this endpoint's to overrule. A route that is geographic for
+           two stops out of three is worse than one that is not: the
+           dispatcher believes the drive is solved and it is not. */
+        await originAt(29.50, -98.50);
+        const [a, b, c] = await orders(siteId, '78207', 3);
+        await pointAt(a, 29.51, -98.50);
+        await pointAt(b, 29.55, -98.50);
+        void c;
+
+        const r = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+        expect(r.body.rounds[0].ordering).toBe('due');
+        expect(r.body.rounds[0].driveMiles).toBeNull();
+        expect(r.body.rounds[0].orderIds).toHaveLength(3);
+    });
+
+    it('falls back when the pharmacy itself has never been looked up', async () => {
+        /* There is no point to measure a route FROM. Ticket 1.4's button is
+           on the Pickup locations panel and may simply not have been
+           pressed. */
+        await sql('UPDATE sites SET lat = NULL, lng = NULL WHERE id = ?', [siteId]);
+        const made = await orders(siteId, '78207', 2);
+        await pointAt(made[0], 29.51, -98.50);
+        await pointAt(made[1], 29.55, -98.50);
+
+        const r = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+        expect(r.body.rounds[0].ordering).toBe('due');
+        expect(r.body.notes.join(' ')).toMatch(/pharmacy addresses have not been looked up/i);
+    });
+
+    it('writes the stops in that order, so the phone and the sheet agree with the screen', async () => {
+        /* The apply honours the array it is given rather than re-deriving
+           it. If it did not, the dispatcher would accept one route and the
+           driver would be handed another. */
+        await originAt(29.50, -98.50);
+        const [far, near, middle] = await orders(siteId, '78207', 3);
+        await pointAt(far, 29.60, -98.50);
+        await pointAt(near, 29.51, -98.50);
+        await pointAt(middle, 29.55, -98.50);
+
+        const seen = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+        const round = seen.body.rounds[0];
+        const out = await admin.post(`${UH}/runs/split/apply`).send({
+            serviceDate: DAY,
+            siteId,
+            rounds: [{ courierUsername: round.courier.username, orderIds: round.orderIds }],
+        });
+        expect(out.status, out.text).toBe(201);
+
+        const stops = await sql(
+            'SELECT order_id FROM run_stops WHERE run_id = ? ORDER BY sequence',
+            [out.body.runs[0].id],
+        );
+        expect(stops.rows.map((x) => Number(x.order_id))).toEqual([near, middle, far]);
+    });
+});

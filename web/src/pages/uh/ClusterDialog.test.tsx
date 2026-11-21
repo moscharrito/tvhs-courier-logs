@@ -153,3 +153,83 @@ describe('what it asks the server', () => {
         });
     });
 });
+
+/* ─────────────────── which rounds are in driving order (21 November)
+ *
+ * Nearest-neighbour refuses rather than degrades: one stop without
+ * coordinates sends its whole round back to deadline order. So two rounds
+ * from the same split can differ, and the screen has to say so per round. A
+ * banner at the top claiming "driving order" while one driver gets a zig-zag
+ * is how a dispatcher stops believing the number.
+ */
+describe('the order each round is driven in', () => {
+    const round = (over: Record<string, unknown> = {}) => ({
+        orderIds: [1, 2, 3],
+        stops: 3,
+        ordering: 'nearest',
+        driveMiles: 12.4,
+        zips: ['78207'],
+        siteIds: [7],
+        earliestDueAt: null,
+        spreadMiles: 2.1,
+        stretched: false,
+        courier: { username: 'ana', name: 'Ana Driver', why: 'home' },
+        ...over,
+    });
+
+    const clusterInto = (rounds: unknown[]) => mockFetch({
+        'GET /api/projects/uh/uh/runs/split*': (url: string) => (
+            url.includes('couriers=')
+                ? { serviceDate: DAY, site, rounds, urgent: [], notes: [] }
+                : {
+                    serviceDate: DAY,
+                    site,
+                    rounds: [],
+                    urgent: [],
+                    notes: [],
+                    drivers: [driver('ana', 'Ana Driver'), driver('ben', 'Ben Driver')],
+                    unmapped: false,
+                    restingHere: 0,
+                }
+        ),
+    });
+
+    const clusterNow = async () => {
+        open();
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: /^Cluster between/ }));
+    };
+
+    it('shows the miles on a round that is in driving order', async () => {
+        clusterInto([round()]);
+        await clusterNow();
+
+        await screen.findByText('Driving');
+        expect(screen.getByText(/12\.4 mi/)).toBeInTheDocument();
+    });
+
+    it('says so plainly on a round that fell back to deadline order', async () => {
+        clusterInto([round({ ordering: 'due', driveMiles: null })]);
+        await clusterNow();
+
+        await screen.findByText('By deadline');
+        expect(screen.queryByText('Driving')).not.toBeInTheDocument();
+    });
+
+    it('labels each round on its own, because they can differ', async () => {
+        clusterInto([
+            round({ courier: { username: 'ana', name: 'Ana Driver', why: 'home' } }),
+            round({
+                ordering: 'due',
+                driveMiles: null,
+                courier: { username: 'ben', name: 'Ben Driver', why: 'home' },
+            }),
+        ]);
+        await clusterNow();
+
+        const ana = (await screen.findByText('Ana Driver', { selector: 'td' })).closest('tr')!;
+        const ben = screen.getByText('Ben Driver', { selector: 'td' }).closest('tr')!;
+        expect(within(ana).getByText('Driving')).toBeInTheDocument();
+        expect(within(ben).getByText('By deadline')).toBeInTheDocument();
+    });
+});

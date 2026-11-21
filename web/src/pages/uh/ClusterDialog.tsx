@@ -54,6 +54,10 @@ interface Driver {
 interface Round {
     orderIds: number[];
     stops: number;
+    /** 'nearest' = driving order from the pharmacy. 'due' = by deadline. */
+    ordering?: 'nearest' | 'due';
+    /** Straight-line miles for the whole round. Null in deadline order. */
+    driveMiles?: number | null;
     zips: string[];
     siteIds: number[];
     earliestDueAt: string | null;
@@ -284,7 +288,8 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                     + `${ticked.length === 1 ? 'driver' : 'drivers'}`}
                             </button>
                             <p className="izy-muted izy-cluster-note">
-                                Grouped by zone and ZIP so each driver stays in one part of the city.
+                                Grouped by ZIP so each driver stays in one part of the city, then each
+                                round is put in driving order where the addresses allow it.
                                 Nothing is assigned until you press Assign.
                             </p>
                         </div>
@@ -301,7 +306,7 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                     <table>
                                         <thead>
                                             <tr>
-                                                <th>Driver</th><th>Stops</th><th>ZIPs</th>
+                                                <th>Driver</th><th>Stops</th><th>Order</th><th>ZIPs</th>
                                                 <th>Width</th><th>{assigned ? 'Spreadsheet' : ''}</th>
                                             </tr>
                                         </thead>
@@ -315,6 +320,23 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                                         )}
                                                     </td>
                                                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>{r.stops}</td>
+                                                    {/* WHICH KIND OF ORDER, per round and not once for
+                                                        the dialog: one round can be in driving order
+                                                        while the one beside it falls back, because a
+                                                        single address without coordinates sends its
+                                                        whole round back to deadline order. A dispatcher
+                                                        reading "driving order" at the top and getting a
+                                                        zig-zag on one driver would stop believing it. */}
+                                                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                                                        {r.ordering === 'nearest' ? (
+                                                            <>
+                                                                Driving
+                                                                {typeof r.driveMiles === 'number' && (
+                                                                    <span className="izy-muted"> · {r.driveMiles} mi</span>
+                                                                )}
+                                                            </>
+                                                        ) : <span className="izy-muted">By deadline</span>}
+                                                    </td>
                                                     <td className="izy-cluster-zips">{r.zips.join(', ')}</td>
                                                     <td style={{ fontVariantNumeric: 'tabular-nums' }}>
                                                         {r.spreadMiles === null

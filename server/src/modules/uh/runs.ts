@@ -1208,7 +1208,7 @@ export function createRunsRouter({ client }: { client: Client }): Router {
            and handing it to somebody else is how a package ends up in two
            places. */
         const rs = await client.execute({
-            sql: `SELECT o.id, o.site_id, o.zip, o.zone, o.due_at, o.service_type
+            sql: `SELECT o.id, o.site_id, o.zip, o.zone, o.due_at, o.service_type, o.lat, o.lng
                     FROM orders o
                    WHERE o.project_id = ? AND o.service_date = ? AND o.site_id = ?
                      AND ${SPLITTABLE}
@@ -1260,7 +1260,86 @@ export function createRunsRouter({ client }: { client: Client }): Router {
            uses, so "whose pharmacy is this" is decided in one place. */
         const staffing = staffProposal(balance.rounds.map((r) => r.run), drivers);
 
+        /* ─── AND THE ORDER TO DRIVE EACH ROUND IN
+         *
+         * Clustering answers WHO carries which stops. It does not answer
+         * what order they drive them in, and until now nothing did: the
+         * rounds came out of runOf() sorted by deadline, the apply wrote
+         * run_stops in exactly that order, and the spreadsheet a driver
+         * was handed zig-zagged across Bexar County in due-time sequence.
+         * That is the half of "cluster by nearest neighbour to reduce
+         * drive time" that was never built.
+         *
+         * NEAREST-NEIGHBOUR FROM THE PHARMACY, per round, using the
+         * router that has been sitting in sequencing.ts unused because it
+         * needs a point on every stop and delivery addresses had none
+         * until the BAA landed on 20 November.
+         *
+         * IT REFUSES RATHER THAN DEGRADES. One stop without coordinates
+         * and the whole round falls back to deadline order. A route that
+         * is geographic for nine stops out of ten is worse than one that
+         * is not: the dispatcher believes the drive is solved and it is
+         * not. That rule is sequencing.ts's and this does not overrule
+         * it -- it just catches the refusal and says which rounds it hit.
+         *
+         * NEAREST-NEIGHBOUR IGNORES DEADLINES, which is why STAT is held
+         * out of this split entirely and why the note below says to check
+         * the due times. A greedy route can put the tightest stop last
+         * because it happens to be furthest. */
+        const originRow = await client.execute({
+            sql: 'SELECT lat, lng FROM sites WHERE project_id = ? AND id = ?',
+            args: [project.id, site.id],
+        });
+        const o0 = originRow.rows[0];
+        const origin = o0 && o0['lat'] !== null && o0['lng'] !== null
+            ? { lat: Number(o0['lat']), lng: Number(o0['lng']) }
+            : null;
+
+        const stopOf = new Map<number, SequenceStop>(rs.rows.map((r) => [Number(r['id']), {
+            orderId: Number(r['id']),
+            lat: r['lat'] === null || r['lat'] === undefined ? null : Number(r['lat']),
+            lng: r['lng'] === null || r['lng'] === undefined ? null : Number(r['lng']),
+            dueAt: r['due_at'] === null || r['due_at'] === undefined ? null : String(r['due_at']),
+            zip: String(r['zip'] ?? ''),
+        }]));
+
+        let droveBy = 0;
+        let dueBy = 0;
+        let refusal: string | null = null;
+        const ordered = balance.rounds.map((r) => {
+            const stops = r.run.orderIds
+                .map((id) => stopOf.get(id))
+                .filter((x): x is SequenceStop => x !== undefined);
+            try {
+                const out = sequenceStops(stops, origin, 'nearest');
+                droveBy += 1;
+                return { orderIds: out.orderIds, ordering: 'nearest' as const, driveMiles: out.estimatedMiles };
+            } catch (err) {
+                if (!(err instanceof SequencingError)) throw err;
+                /* The first refusal, not a list of identical ones: every
+                   round on a day with no coordinates refuses for the same
+                   reason and the dispatcher only needs it once. */
+                if (refusal === null) refusal = err.message;
+                dueBy += 1;
+                const out = sequenceStops(stops, origin, 'due');
+                return { orderIds: out.orderIds, ordering: 'due' as const, driveMiles: null };
+            }
+        });
+
         const notes = [...balance.notes, ...staffing.notes];
+        if (droveBy > 0) {
+            notes.push(
+                `${droveBy} ${droveBy === 1 ? 'round is' : 'rounds are'} in driving order, nearest stop first `
+                + 'from the pharmacy. That ordering takes no account of deadlines, so check the due times '
+                + 'before the round goes out.',
+            );
+        }
+        if (dueBy > 0 && refusal !== null) {
+            notes.push(
+                `${dueBy} ${dueBy === 1 ? 'round is' : 'rounds are'} in deadline order instead of driving `
+                + `order. ${refusal}`,
+            );
+        }
         if (offShift.length > 0) {
             notes.unshift(
                 `${offShift.length} of the ticked ${offShift.length === 1 ? 'driver is' : 'drivers are'} `
@@ -1277,8 +1356,15 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         }
         if (points.size === 0) {
             notes.push(
-                'No ZIP centres are loaded, so rounds were grouped by zone and size rather than by '
-                + 'real distance. Load them and the same list splits tighter.',
+                /* IT SAID "by zone and size", and that was not true. Zone
+                   is proposeRuns's rule, on the board. This path groups
+                   strictly by (pharmacy, ZIP) and places those groups by
+                   distance between ZIP centres -- so with no centres
+                   loaded there is no geography in it at all, only even
+                   weight. Saying "zone" implied a proximity rule that was
+                   not running. */
+                'No ZIP centres are loaded, so this split is by ZIP and size only — nothing in it '
+                + 'measures distance. Load the ZIP centres and the same list splits by proximity.',
             );
         }
 
@@ -1288,15 +1374,25 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             settings,
             /** Everyone who could have been ticked, with their shift state,
              *  so the screen does not have to ask again to redraw. */
-            drivers: [...here].sort((a, b) => Number(b.onShift) - Number(a.onShift)
-                || a.name.localeCompare(b.name)),
+            drivers: [...offered].sort((a, b) => a.name.localeCompare(b.name))
+                .map((d) => ({
+                    username: d.username, name: d.name,
+                    homeSiteId: d.homeSiteId, onShift: d.onShift,
+                })),
             chosen: drivers,
             /** Parallel arrays, as /propose does it: rounds[i] is offered to
              *  suggested[i]. A suggestion, never an assignment -- nothing is
              *  written until POST /runs/split/apply. */
             rounds: balance.rounds.map((r, i) => ({
-                orderIds: r.run.orderIds,
-                stops: r.run.orderIds.length,
+                /* IN DRIVING ORDER where there was one. /split/apply writes
+                   run_stops in the order it is given, so this array is the
+                   sequence the driver's phone and spreadsheet will show. */
+                orderIds: ordered[i]!.orderIds,
+                stops: ordered[i]!.orderIds.length,
+                /** 'nearest' = driving order, 'due' = by deadline. */
+                ordering: ordered[i]!.ordering,
+                /** Straight-line miles for the whole round, nearest only. */
+                driveMiles: ordered[i]!.driveMiles,
                 zips: r.run.zips,
                 siteIds: r.run.siteIds,
                 earliestDueAt: r.run.earliestDueAt,
