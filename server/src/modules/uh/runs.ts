@@ -34,6 +34,7 @@ import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrateg
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
 import { proposeRuns, staffProposal, balanceAcross, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
+import { coverList } from './roster';
 import { zipPointMap } from './zones';
 import { paidBandFor } from './driver-pay';
 
@@ -1113,14 +1114,32 @@ export function createRunsRouter({ client }: { client: Client }): Router {
          * who is on shift. A screen that cannot tell would tick nobody, or
          * worse, tick everybody.
          *
-         * THIS COUNTER'S OWN DRIVERS, plus the floaters who belong to no
-         * counter. Somebody whose pharmacy is elsewhere is not offered: a
-         * dispatcher splitting the discharge list should not have to read
-         * past thirty names to find the seven standing in front of them.
-         * The board is where work crosses counters. */
+         * ON SHIFT, AND MAPPED TO THIS COUNTER. Both halves, and nothing
+         * else. The first cut of this offered the counter's drivers plus
+         * every floater, on shift or not, with the on-shift ones ticked;
+         * on this contract that is thirty-five names in a scrolling box
+         * to find the eleven people actually standing at Wheatley this
+         * morning. Dispatch asked for the short list, and the short list
+         * is the correct one: somebody who has not tapped Go on shift is
+         * not carrying a round, and somebody based at another pharmacy is
+         * the board's business, not this dialog's.
+         *
+         * MAPPED MEANS WHAT IT MEANS ON THE BOARD -- home pharmacy, or
+         * this counter in `alsoCovers`. Two definitions of the same word
+         * is how two screens start disagreeing about the same driver.
+         *
+         * THE ONE CONCESSION, and it is to an unconfigured contract
+         * rather than to convenience: if nobody is mapped here at all,
+         * the drivers on shift who are mapped NOWHERE are offered, and
+         * `unmapped` says so, so the screen can admit what it is showing.
+         * Without that, a roster loaded before anybody set home
+         * pharmacies -- which is exactly where UH stands -- opens an
+         * empty dialog and the day's list cannot be split at all. A
+         * driver mapped to a DIFFERENT counter is never offered. */
         const rosterRows = await client.execute({
             sql: `SELECT u.username, u.name,
                          json_extract(m.settings, '$.homeSiteId') AS home_site_id,
+                         json_extract(m.settings, '$.alsoCovers') AS also_covers,
                          CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END AS on_shift
                     FROM users u
                     JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
@@ -1130,23 +1149,39 @@ export function createRunsRouter({ client }: { client: Client }): Router {
                    ORDER BY u.name`,
             args: [project.id, project.id],
         });
-        const everyone = rosterRows.rows.map((r) => ({
-            username: String(r['username']),
-            name: String(r['name']),
-            homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined
-                ? null : Number(r['home_site_id']),
-            onShift: Number(r['on_shift']) === 1,
-        }));
-        const here = everyone.filter((d) => d.homeSiteId === site.id || d.homeSiteId === null);
+        const everyone = rosterRows.rows.map((r) => {
+            const covers = coverList(r['also_covers']);
+            const homeSiteId = r['home_site_id'] === null || r['home_site_id'] === undefined
+                ? null : Number(r['home_site_id']);
+            return {
+                username: String(r['username']),
+                name: String(r['name']),
+                homeSiteId,
+                onShift: Number(r['on_shift']) === 1,
+                mapped: homeSiteId === site.id || covers.includes(site.id),
+                placed: homeSiteId !== null || covers.length > 0,
+            };
+        });
+        const here = everyone.filter((d) => d.mapped && d.onShift);
+        const loose = everyone.filter((d) => !d.placed && d.onShift);
+        const offered = here.length > 0 ? here : loose;
 
         const picked = String(q['couriers'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
         if (picked.length === 0) {
             res.json({
                 serviceDate,
                 site,
-                /** Ordered on shift first: the answer on almost every day. */
-                drivers: [...here].sort((a, b) => Number(b.onShift) - Number(a.onShift)
-                    || a.name.localeCompare(b.name)),
+                drivers: [...offered].sort((a, b) => a.name.localeCompare(b.name))
+                    .map((d) => ({
+                        username: d.username, name: d.name,
+                        homeSiteId: d.homeSiteId, onShift: d.onShift,
+                    })),
+                /** True when none of them is mapped here and the screen is
+                 *  showing drivers who are mapped to no counter at all. */
+                unmapped: here.length === 0 && loose.length > 0,
+                /** This counter's own drivers who have not started a shift:
+                 *  the number the screen needs to explain a short list. */
+                restingHere: everyone.filter((d) => d.mapped && !d.onShift).length,
                 rounds: [],
                 urgent: [],
                 notes: [],

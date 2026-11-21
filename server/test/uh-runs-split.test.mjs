@@ -39,6 +39,8 @@ let admin;
 let projectId;
 let siteId;
 let otherSiteId;
+/** A counter nobody is mapped to, for the unconfigured-contract case. */
+let bareSiteId;
 
 const sql = (q, args = []) => srv.core.client.execute({ sql: q, args });
 
@@ -80,10 +82,18 @@ beforeAll(async () => {
     const sites = (await admin.get(`${UH}/sites`)).body;
     siteId = sites.find((s) => s.code === 'discharge').id;
     otherSiteId = sites.find((s) => s.code === 'green').id;
+    bareSiteId = sites.find((s) => s.code === 'southeast').id;
+    expect(bareSiteId, 'the third counter the roster tests need').toBeTruthy();
 
     await driver('split.ana', 'Ana Driver', siteId, true);
     await driver('split.ben', 'Ben Driver', siteId, true);
     await driver('split.cal', 'Cal Driver', siteId, false);
+    /* Mapped to another counter and on shift: the discharge dialog must
+       not offer them, which is the whole of the 21 November change. */
+    await driver('split.far', 'Far Driver', otherSiteId, true);
+    /* Mapped nowhere and on shift: not offered while anybody is mapped
+       here, offered at a counter nobody is mapped to. */
+    await driver('split.loose', 'Loose Driver', null, true);
 }, 60_000);
 
 afterAll(async () => { await srv?.stop(); });
@@ -112,19 +122,49 @@ describe('what it refuses to answer', () => {
         const r = await split(`serviceDate=${DAY}&site=discharge`);
         expect(r.status, r.text).toBe(200);
         expect(r.body.rounds).toEqual([]);
-        const names = r.body.drivers.map((d) => d.username);
-        expect(names).toContain('split.ana');
-        expect(names).toContain('split.cal');
+        expect(r.body.drivers.map((d) => d.username)).toContain('split.ana');
     });
 
-    it('says which of them are on shift, on shift first', async () => {
+    it('offers only the drivers mapped here who are on shift', async () => {
+        /* THE SHORT LIST, which is the point of it. Thirty-five names on
+           this contract and eleven people standing at the counter; the
+           first cut of this dialog showed all thirty-five and dispatch
+           asked for the eleven. Three different people are left out here
+           and each is left out for its own reason. */
         const r = await split(`serviceDate=${DAY}&site=discharge`);
-        const byName = Object.fromEntries(r.body.drivers.map((d) => [d.username, d.onShift]));
-        expect(byName['split.ana']).toBe(true);
-        expect(byName['split.cal']).toBe(false);
-        /* Ordered so the dispatcher reads the people who turned up first. */
-        const flags = r.body.drivers.map((d) => d.onShift);
-        expect(flags).toEqual([...flags].sort((a, b) => Number(b) - Number(a)));
+        const names = r.body.drivers.map((d) => d.username);
+        expect(names).toEqual(['split.ana', 'split.ben']);
+        /* Mapped here, not on shift. */
+        expect(names).not.toContain('split.cal');
+        /* On shift, mapped to another counter. */
+        expect(names).not.toContain('split.far');
+        /* On shift, mapped nowhere, and somebody IS mapped here. */
+        expect(names).not.toContain('split.loose');
+        expect(r.body.drivers.every((d) => d.onShift)).toBe(true);
+        expect(r.body.unmapped).toBe(false);
+    });
+
+    it('counts the ones who are mapped here and resting, rather than listing them', async () => {
+        /* So the screen can say where everybody is without putting the
+           long list back on it by another route. */
+        const r = await split(`serviceDate=${DAY}&site=discharge`);
+        expect(r.body.restingHere).toBe(1);
+    });
+
+    it('falls back to the unplaced drivers at a counter nobody is mapped to, and says so', async () => {
+        /* THE UNCONFIGURED CONTRACT. UH's thirty-five drivers were loaded
+           with no home pharmacy; a strict reading would open an empty
+           dialog every morning and the list could not be split at all.
+           The unplaced drivers on shift are offered instead and `unmapped`
+           admits it. Somebody mapped to a DIFFERENT counter is still not
+           offered -- that is the board's business. */
+        const r = await split(`serviceDate=${DAY}&site=southeast`);
+        expect(r.status, r.text).toBe(200);
+        const names = r.body.drivers.map((d) => d.username);
+        expect(names).toEqual(['split.loose']);
+        expect(names).not.toContain('split.far');
+        expect(r.body.unmapped).toBe(true);
+        expect(r.body.restingHere).toBe(0);
     });
 
     it('will not take a name that is not a driver here', async () => {

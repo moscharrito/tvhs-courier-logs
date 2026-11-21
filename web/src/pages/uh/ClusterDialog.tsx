@@ -13,17 +13,21 @@
  * It all happens here now, and nothing is sent anywhere.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * IT OPENS WHERE THE WORK IS, which is the moment after an import.
+ * IT OPENS WHERE DOWNLOAD USED TO BE, on every imported row.
  *
  * Clustering needs ORDERS, and a list handed over is a file until somebody
- * imports it. So the button lives on the import outcome -- the one moment
- * when the pharmacy, the service date and the orders are all known and the
- * dispatcher is already looking at the right screen.
+ * imports it -- so the first cut put this on the import outcome, the one
+ * moment when the pharmacy, the service date and the orders are all known.
+ * That control lasted about thirty seconds: reload, or come back to a list
+ * imported an hour ago, and there was no way in. It now sits on each row
+ * of Recent imports, in place of the Download link rather than beside it,
+ * because Download was the first move in the routine this replaces.
  *
  * It is NOT the "plan the wave" panel that was built on the board twice and
  * removed twice. That one proposed runs for nine counters at once and had
- * its own courier picker. This is one counter's list, the drivers already
- * on shift at it, and the same POST the dispatcher's own click makes.
+ * its own courier picker. This is one counter's list, the drivers mapped to
+ * that counter who are on shift, and the same POST the dispatcher's own
+ * click makes.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * NOTHING IS WRITTEN UNTIL "ASSIGN".
@@ -75,15 +79,23 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
     onDone: (runs: number) => void;
 }) {
     const [drivers, setDrivers] = useState<Driver[] | null>(null);
+    /** Set when the drivers listed are mapped to no counter at all. */
+    const [unmapped, setUnmapped] = useState(false);
+    /** This counter's own drivers who have not started a shift. */
+    const [resting, setResting] = useState(0);
     const [ticked, setTicked] = useState<string[]>([]);
     const [split, setSplit] = useState<Split | null>(null);
     const [busy, setBusy] = useState<'' | 'drivers' | 'cluster' | 'assign'>('drivers');
     const [err, setErr] = useState('');
     const [assigned, setAssigned] = useState(false);
 
-    /* Who could carry it: this counter's own drivers, on shift first. The
-       roster read is the planner's, so "whose pharmacy is this" is answered
-       in one place rather than two. */
+    /* WHO IS STANDING HERE, which is a shorter question than it was.
+       The server answers with the drivers mapped to this counter who are
+       on shift, and nobody else -- not the thirty-five names on the
+       contract, not the people mapped elsewhere, not the ones who have
+       not tapped Go on shift. The roster read is the planner's, so
+       "whose pharmacy is this" is answered in one place rather than
+       two. */
     useEffect(() => {
         let gone = false;
         (async () => {
@@ -94,18 +106,21 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                    was wrong -- that roster is deliberately stripped to what
                    staffProposal takes and carries no shift state, so every
                    driver came back looking off shift. */
-                const got = await api<{ drivers: Driver[] }>(
+                const got = await api<{ drivers: Driver[]; unmapped?: boolean; restingHere?: number }>(
                     `/api/projects/${projectCode}/uh/runs/split`
                     + `?site=${encodeURIComponent(site.code)}&serviceDate=${serviceDate}`,
                 );
                 if (gone) return;
                 const list = got.drivers ?? [];
                 setDrivers(list);
-                /* On shift is ticked to start with, because that is the
-                   answer on almost every day. Everybody else is listed and
-                   untouched -- a driver who has not tapped Go on shift can
-                   still be given a round, and sometimes has to be. */
-                setTicked(list.filter((d) => d.onShift).map((d) => d.username));
+                setUnmapped(got.unmapped === true);
+                setResting(got.restingHere ?? 0);
+                /* ALL OF THEM, TICKED. Everybody on this list is mapped
+                   here and on shift, so the default answer is everybody
+                   and the dispatcher unticks the exceptions. Untick is a
+                   smaller job than tick when the usual day is "all of
+                   them". */
+                setTicked(list.map((d) => d.username));
             } catch (e) {
                 if (!gone) setErr(why(e, 'Could not read the driver list.'));
             } finally {
@@ -180,8 +195,7 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
             : [...was, username]));
     };
 
-    const onShift = (drivers ?? []).filter((d) => d.onShift);
-    const off = (drivers ?? []).filter((d) => !d.onShift);
+    const here = drivers ?? [];
 
     return (
         <div className="izy-modal-back" role="presentation" onMouseDown={onClose}>
@@ -189,12 +203,12 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                 className="izy-modal izy-cluster"
                 role="dialog"
                 aria-modal="true"
-                aria-label={`Split the ${site.name} list`}
+                aria-label={`Cluster the ${site.name} list`}
                 onMouseDown={(e) => e.stopPropagation()}
             >
                 <div className="izy-cluster-head">
                     <div>
-                        <h2>Split this list between drivers</h2>
+                        <h2>Cluster this list between drivers</h2>
                         <p className="izy-muted">{site.name} · {serviceDate}</p>
                     </div>
                     <button type="button" className="izy-btn secondary small" onClick={onClose}>Close</button>
@@ -207,14 +221,37 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                 {drivers !== null && (
                     <>
                         <div className="izy-cluster-who">
-                            <h3>Who is carrying it</h3>
-                            {onShift.length === 0 && (
+                            <h3>On shift at {site.name}</h3>
+                            {/* NOBODY, AND WHY NOBODY. An empty box with no
+                                sentence under it reads as a broken screen.
+                                These two cases have different answers --
+                                one is "wait for somebody to start their
+                                shift", the other is "go and set the home
+                                pharmacies" -- and a dispatcher who cannot
+                                tell them apart will ring us about it. */}
+                            {here.length === 0 && (
                                 <p className="izy-alert warn" role="status">
-                                    Nobody from {site.name} is on shift. Tick whoever is driving it anyway.
+                                    {resting > 0
+                                        ? `Nobody mapped to ${site.name} has started a shift yet. `
+                                          + `${resting} ${resting === 1 ? 'driver is' : 'drivers are'} `
+                                          + 'mapped here and resting. Assign it from the board instead.'
+                                        : `No driver is mapped to ${site.name} and on shift. `
+                                          + 'Assign it from the board instead.'}
+                                </p>
+                            )}
+                            {/* SHOWING SOMETHING ELSE, AND SAYING SO. A
+                                contract whose drivers have no home
+                                pharmacy yet would otherwise get an empty
+                                dialog every morning. */}
+                            {unmapped && here.length > 0 && (
+                                <p className="izy-alert warn" role="status">
+                                    None of these drivers has a home pharmacy set, so this is everyone
+                                    on shift who is not based at another counter. Set their pharmacies
+                                    and this list gets shorter.
                                 </p>
                             )}
                             <ul className="izy-cluster-drivers">
-                                {[...onShift, ...off].map((d) => (
+                                {here.map((d) => (
                                     <li key={d.username}>
                                         <label>
                                             <input
@@ -222,16 +259,21 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                                 checked={ticked.includes(d.username)}
                                                 onChange={() => flip(d.username)}
                                             />
-                                            <span>
-                                                {d.name}
-                                                {d.onShift
-                                                    ? <span className="izy-pill">On shift</span>
-                                                    : <span className="izy-pill muted">Not on shift</span>}
-                                            </span>
+                                            <span>{d.name}</span>
                                         </label>
                                     </li>
                                 ))}
                             </ul>
+                            {/* The ones who are here but resting, as a count
+                                and not as thirty tick boxes. It answers
+                                "where is everybody" without reopening the
+                                box this change was made to close. */}
+                            {here.length > 0 && !unmapped && resting > 0 && (
+                                <p className="izy-muted izy-cluster-note">
+                                    {resting} more {resting === 1 ? 'driver is' : 'drivers are'} mapped
+                                    to {site.name} but not on shift.
+                                </p>
+                            )}
                             <button
                                 type="button"
                                 className="izy-btn"
