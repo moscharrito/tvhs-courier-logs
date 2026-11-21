@@ -164,10 +164,23 @@ export async function sweepStaleShifts(deps: {
         const fresh = carrying
             .map((c) => ({
                 ...c,
-                body: `${noticeName(c.courier, names)} has been on shift for ${c.hours} hours and is still carrying `
-                    + `${c.packages} package${c.packages === 1 ? '' : 's'} (shift ${c.shiftId}). `
-                    + 'The shift was left open rather than closed, because those packages are '
-                    + 'unaccounted for. Ring them.',
+                /* PLAINLY, NOT ANXIOUSLY. This said the packages were
+                   "unaccounted for" and ended "Ring them.", which reads as
+                   an accusation about a driver who has most likely simply
+                   forgotten to tap a button. What is true is narrower: the
+                   shift is open, the deliveries are still signed out, and
+                   somebody should ask. The owner asked for the milder tone
+                   on 21 November.
+
+                   CHANGING THIS RE-REPORTS ONCE. `already` above is keyed
+                   on the exact body text, so every shift already reported
+                   under the old wording is reported a second time and then
+                   settles -- the shift id in the sentence keeps it quiet
+                   from there. */
+                body: `${noticeName(c.courier, names)} has been on shift for ${c.hours} hours and still has `
+                    + `${c.packages} ${c.packages === 1 ? 'delivery' : 'deliveries'} signed out (shift ${c.shiftId}). `
+                    + 'The shift was left open rather than closed, so the deliveries stay on the record. '
+                    + 'Worth checking in with them.',
             }))
             .filter((c) => !already.has(c.body));
         if (fresh.length === 0) return result;

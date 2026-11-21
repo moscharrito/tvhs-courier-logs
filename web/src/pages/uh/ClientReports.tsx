@@ -381,7 +381,8 @@ export function ClientReports() {
                             </div>
                         </div>
                         <p className="izy-muted">
-                            Not yet returned is medication that failed and is still in a van.
+                            Not yet returned is medication that could not be delivered and is
+                            still with the courier.
                         </p>
                     </Section>
 

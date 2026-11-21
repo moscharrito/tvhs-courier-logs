@@ -122,7 +122,7 @@ const TITLES: Record<string, string> = {
     'work.unclaimed': 'Nobody has claimed a STAT',
     'shift.missed': 'A driver has not come on shift',
     'dispatch.notStarted': 'The day has not started',
-    'shift.carryingOvernight': 'Packages still in a van',
+    'shift.carryingOvernight': 'Deliveries not returned yet',
     'mail.failing': 'Email has stopped',
     'delivery.completed': 'Delivery completed',
     'delivery.failed': 'Delivery could not be completed',

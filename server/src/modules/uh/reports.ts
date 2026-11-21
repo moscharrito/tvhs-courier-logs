@@ -975,7 +975,7 @@ export function createReportsRouter({ client }: { client: Client }): Router {
             ['Turnaround, end to end (90th pct min)', report.turnaround.endToEnd.p90Minutes ?? 'n/a', 'The tail, which a median hides'],
             ['Reattempted', followUp.reattempts, 'Second and later attempts created in this range'],
             ['Returned to the pharmacy', followUp.returned, 'Undelivered medication handed back over a counter'],
-            ['Failed, not yet returned', followUp.awaitingReturn, 'Medication unaccounted for: still in a van'],
+            ['Failed, not yet returned', followUp.awaitingReturn, 'Still signed out to the courier, not yet back at a counter'],
         ];
         for (const row of rows) {
             const added = summary.addRow(row);

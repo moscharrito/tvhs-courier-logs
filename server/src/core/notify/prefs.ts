@@ -140,7 +140,7 @@ const CATALOGUE: Record<NotificationKind, { label: string; about: string; volume
     'work.unclaimed': { label: 'A STAT nobody has claimed', about: 'An urgent delivery has been sitting in the pool.', volume: 'rare' },
     'shift.missed': { label: 'A driver with work has not come on shift', about: 'Somebody has a run today and had not checked in by the check-in time.', volume: 'rare' },
     'dispatch.notStarted': { label: 'A day that has not started', about: 'No lists arrived, or they arrived and nobody built a run from them.', volume: 'rare' },
-    'shift.carryingOvernight': { label: 'A shift left open with packages in the van', about: 'Somebody went home still carrying medication.', volume: 'rare' },
+    'shift.carryingOvernight': { label: 'A shift left open with deliveries still out', about: 'A driver finished the day with deliveries still signed out to them.', volume: 'rare' },
     'mail.failing': { label: 'Email has stopped', about: 'Nothing we send is being accepted. Written here because it cannot be emailed.', volume: 'rare' },
     'delivery.completed': { label: 'A delivery of yours was completed', about: 'One of your counter’s deliveries got there.', volume: 'daily' },
     'delivery.failed': { label: 'A delivery of yours could not be completed', about: 'One of your counter’s deliveries was attempted and came back.', volume: 'daily' },
