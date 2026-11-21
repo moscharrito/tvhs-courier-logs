@@ -1981,6 +1981,9 @@ body {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
     margin: 0 0 16px; font-size: 13px;
 }
+/* Icon and word on one line, which is the rule in app/Icons.tsx: the glyph
+   makes it findable at a glance, the word is what it is actually called. */
+.izy-cluster table .izy-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .izy-cluster-do {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
     margin-top: 14px; font-size: 13px;

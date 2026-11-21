@@ -182,3 +182,15 @@ export function BellIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 
         </svg>
     );
 }
+
+/* A sheet coming down: the per-driver spreadsheet in the cluster dialog.
+   Paired with the word, as every icon here is -- see the header. */
+export function DownloadIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <svg {...frame(size)}>
+            <path d="M12 3.5v10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+            <path d="M8.5 10.5 12 14l3.5-3.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        </svg>
+    );
+}

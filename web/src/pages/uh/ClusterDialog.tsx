@@ -38,6 +38,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, why, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
+import { DownloadIcon } from '../../app/Icons';
 
 interface Driver {
     username: string;
@@ -286,7 +287,9 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                                                 href={`/api/projects/${projectCode}/uh/runs/export.xlsx`
                                                                     + `?serviceDate=${split.serviceDate}`
                                                                     + `&courierUsername=${encodeURIComponent(r.courier.username)}`}
+                                                                title={`${r.courier.name}’s round as a spreadsheet`}
                                                             >
+                                                                <DownloadIcon size={15} />
                                                                 Excel
                                                             </a>
                                                         )}
