@@ -33,7 +33,7 @@ import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from 
 import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
-import { proposeRuns, staffProposal, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
+import { proposeRuns, staffProposal, balanceAcross, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
 import { zipPointMap } from './zones';
 import { paidBandFor } from './driver-pay';
 
@@ -1040,6 +1040,360 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             },
             notes,
         });
+    }));
+
+    /* ═══════════════════ SPLITTING ONE COUNTER'S LIST BETWEEN ITS DRIVERS
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * WHY THIS IS NOT A FLAG ON /propose.
+     *
+     * /propose answers "how many rounds does this day need": it packs
+     * geography first and reports a shortfall when the fleet cannot carry
+     * the result. That overflow behaviour is a contract the board depends
+     * on and its tests encode it.
+     *
+     * This answers the dispatcher's other question, the one they have been
+     * answering by pasting a list into an external chat assistant: "here
+     * are the people on shift at this counter, split today's list between
+     * them." The driver count is the number of piles rather than a ceiling,
+     * and NOTHING MAY BE LEFT OVER -- the dispatcher ticked these names so
+     * that every order would have a driver.
+     *
+     * Two algorithms behind one endpoint, chosen by a query parameter,
+     * would be two sets of rules in one place and a reader unable to tell
+     * which one answered them. So: its own pair of routes, its own engine
+     * function (balanceAcross), and /propose untouched.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * WHAT IT REPLACES, AND WHY THAT MATTERS BEYOND CONVENIENCE.
+     *
+     * The list currently leaves the building: downloaded, pasted into a
+     * third-party assistant with every patient name and address on it, and
+     * the clusters pasted back. Doing it here means a day's protected
+     * health information stops making that trip. That is the strongest
+     * argument for this endpoint and it is worth stating where somebody
+     * will read it before deciding to "just use the API again".
+     */
+
+    /** STAT is not split. See the note in the handler. */
+    const SPLITTABLE = "o.status IN ('ready', 'pending')";
+
+    router.get('/split', dispatch, wrap(async (req, res) => {
+        const q = req.query as Record<string, string | undefined>;
+        const project = req.project!;
+        const serviceDate = q['serviceDate'] && /^\d{4}-\d{2}-\d{2}$/.test(q['serviceDate'])
+            ? q['serviceDate']
+            : todayIn(project.timezone);
+
+        /* A SPLIT IS PER COUNTER, always. The whole point is that these
+           drivers are standing at this pharmacy; a split across nine of
+           them is the whole-day plan, which is what /propose is for. */
+        if (!q['site']) {
+            res.status(400).json({ error: 'Name the pharmacy to split, with ?site=<code>.', code: 'split.noSite' });
+            return;
+        }
+        const siteRow = await client.execute({
+            sql: 'SELECT id, code, name FROM sites WHERE project_id = ? AND code = ?',
+            args: [project.id, q['site']],
+        });
+        const r0 = siteRow.rows[0];
+        if (!r0) {
+            res.status(400).json({ error: `No pharmacy with the code ${q['site']} on this contract.` });
+            return;
+        }
+        const site = { id: Number(r0['id']), code: String(r0['code']), name: String(r0['name']) };
+
+        /* ─── WHO COULD CARRY IT, WHICH IS THE FIRST HALF OF THE ANSWER
+         *
+         * Asked WITHOUT `couriers`, this returns the counter's drivers and
+         * no rounds. That is not a convenience: the screen has to draw the
+         * tick boxes before anybody can tick one, and the alternative was
+         * reading them from /runs/propose -- which deliberately strips its
+         * roster to what staffProposal takes and therefore does not say
+         * who is on shift. A screen that cannot tell would tick nobody, or
+         * worse, tick everybody.
+         *
+         * THIS COUNTER'S OWN DRIVERS, plus the floaters who belong to no
+         * counter. Somebody whose pharmacy is elsewhere is not offered: a
+         * dispatcher splitting the discharge list should not have to read
+         * past thirty names to find the seven standing in front of them.
+         * The board is where work crosses counters. */
+        const rosterRows = await client.execute({
+            sql: `SELECT u.username, u.name,
+                         json_extract(m.settings, '$.homeSiteId') AS home_site_id,
+                         CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END AS on_shift
+                    FROM users u
+                    JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
+                    LEFT JOIN shifts sh ON sh.courier_username = u.username
+                         AND sh.project_id = ? AND sh.ended_at IS NULL
+                   WHERE u.status = 'active' AND m.role IN ('courier', 'lead')
+                   ORDER BY u.name`,
+            args: [project.id, project.id],
+        });
+        const everyone = rosterRows.rows.map((r) => ({
+            username: String(r['username']),
+            name: String(r['name']),
+            homeSiteId: r['home_site_id'] === null || r['home_site_id'] === undefined
+                ? null : Number(r['home_site_id']),
+            onShift: Number(r['on_shift']) === 1,
+        }));
+        const here = everyone.filter((d) => d.homeSiteId === site.id || d.homeSiteId === null);
+
+        const picked = String(q['couriers'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (picked.length === 0) {
+            res.json({
+                serviceDate,
+                site,
+                /** Ordered on shift first: the answer on almost every day. */
+                drivers: [...here].sort((a, b) => Number(b.onShift) - Number(a.onShift)
+                    || a.name.localeCompare(b.name)),
+                rounds: [],
+                urgent: [],
+                notes: [],
+            });
+            return;
+        }
+
+        const chosen = everyone.filter((d) => picked.includes(d.username));
+        const unknown = picked.filter((u) => !chosen.some((d) => d.username === u));
+        if (unknown.length > 0) {
+            res.status(400).json({
+                error: `Not drivers on this contract: ${unknown.join(', ')}.`,
+                code: 'split.notDrivers',
+            });
+            return;
+        }
+        const drivers: RosterDriver[] = chosen.map((d) => ({
+            username: d.username, name: d.name, homeSiteId: d.homeSiteId,
+        }));
+        const offShift = chosen.filter((d) => !d.onShift).map((d) => d.name);
+
+        /* Unassigned only, same rule and same reason as /propose: an order
+           already on a run belongs to a courier who may have collected it,
+           and handing it to somebody else is how a package ends up in two
+           places. */
+        const rs = await client.execute({
+            sql: `SELECT o.id, o.site_id, o.zip, o.zone, o.due_at, o.service_type
+                    FROM orders o
+                   WHERE o.project_id = ? AND o.service_date = ? AND o.site_id = ?
+                     AND ${SPLITTABLE}
+                     AND NOT EXISTS (
+                           SELECT 1 FROM run_stops rs
+                            JOIN runs r ON r.id = rs.run_id
+                            WHERE rs.order_id = o.id AND r.status != 'cancelled')
+                   ORDER BY o.id`,
+            args: [project.id, serviceDate, site.id],
+        });
+        const all: Clusterable[] = rs.rows.map((r) => ({
+            id: Number(r['id']),
+            siteId: Number(r['site_id']),
+            zip: String(r['zip'] ?? ''),
+            zone: r['zone'] === null || r['zone'] === undefined ? null : Number(r['zone']),
+            dueAt: r['due_at'] === null || r['due_at'] === undefined ? null : String(r['due_at']),
+            serviceType: String(r['service_type'] ?? 'scheduled'),
+        }));
+
+        /* STAT IS HELD BACK RATHER THAN SPLIT, and this is the one place
+           the split declines to carry everything.
+
+           A STAT has one hour from pickup as well as two from the request.
+           Dropped into an evenly-sized round it breaches the inner clock on
+           the way to the eleventh stop, and it does so invisibly because
+           the round as a whole still looks on time. That is cluster.ts's
+           oldest rule and this endpoint does not get to overrule it.
+
+           They are RETURNED, not silently dropped: the screen lists them so
+           the dispatcher gives them their own short runs. */
+        const urgent = all.filter((o) => o.serviceType === 'stat');
+        const standard = all.filter((o) => o.serviceType !== 'stat');
+
+        const settings = {
+            drivers: drivers.length,
+            maxShareAboveMean: Number.isFinite(Number(q['maxShareAboveMean']))
+                && Number(q['maxShareAboveMean']) >= 0 && Number(q['maxShareAboveMean']) <= 3
+                ? Number(q['maxShareAboveMean']) : 0.25,
+            maxSpreadMiles: Number.isFinite(Number(q['maxSpreadMiles']))
+                && Number(q['maxSpreadMiles']) > 0 && Number(q['maxSpreadMiles']) <= 200
+                ? Number(q['maxSpreadMiles']) : DEFAULT_CLUSTER_SETTINGS.maxSpreadMiles,
+            maxSitesPerRun: DEFAULT_CLUSTER_SETTINGS.maxSitesPerRun,
+        };
+
+        const points = await zipPointMap(client, project.id, serviceDate);
+        const balance = balanceAcross(standard, settings, points);
+
+        /* Names onto rounds through the same function the board planner
+           uses, so "whose pharmacy is this" is decided in one place. */
+        const staffing = staffProposal(balance.rounds.map((r) => r.run), drivers);
+
+        const notes = [...balance.notes, ...staffing.notes];
+        if (offShift.length > 0) {
+            notes.unshift(
+                `${offShift.length} of the ticked ${offShift.length === 1 ? 'driver is' : 'drivers are'} `
+                + `not on shift: ${offShift.join(', ')}. They can still be given a round, but nobody `
+                + 'has told us they have started.',
+            );
+        }
+        if (urgent.length > 0) {
+            notes.unshift(
+                `${urgent.length} STAT ${urgent.length === 1 ? 'delivery is' : 'deliveries are'} not in `
+                + 'this split. A STAT has one hour from pickup and cannot hold that inside a full round: '
+                + `give ${urgent.length === 1 ? 'it its' : 'them their'} own short run.`,
+            );
+        }
+        if (points.size === 0) {
+            notes.push(
+                'No ZIP centres are loaded, so rounds were grouped by zone and size rather than by '
+                + 'real distance. Load them and the same list splits tighter.',
+            );
+        }
+
+        res.json({
+            serviceDate,
+            site,
+            settings,
+            /** Everyone who could have been ticked, with their shift state,
+             *  so the screen does not have to ask again to redraw. */
+            drivers: [...here].sort((a, b) => Number(b.onShift) - Number(a.onShift)
+                || a.name.localeCompare(b.name)),
+            chosen: drivers,
+            /** Parallel arrays, as /propose does it: rounds[i] is offered to
+             *  suggested[i]. A suggestion, never an assignment -- nothing is
+             *  written until POST /runs/split/apply. */
+            rounds: balance.rounds.map((r, i) => ({
+                orderIds: r.run.orderIds,
+                stops: r.run.orderIds.length,
+                zips: r.run.zips,
+                siteIds: r.run.siteIds,
+                earliestDueAt: r.run.earliestDueAt,
+                spreadMiles: r.spreadMiles === null ? null : Math.round(r.spreadMiles * 10) / 10,
+                stretched: r.stretched,
+                courier: staffing.suggested[i] ?? null,
+            })),
+            /** Held back on purpose. See the note in the handler. */
+            urgent: urgent.map((o) => o.id),
+            notes,
+        });
+    }));
+
+    const ApplySplit = z.object({
+        serviceDate: isoDate,
+        siteId: z.number().int().positive(),
+        rounds: z.array(z.object({
+            courierUsername: z.string().trim().min(1).max(80),
+            orderIds: z.array(z.number().int().positive()).min(1),
+        })).min(1).max(60),
+    });
+
+    /* WHAT THE CLIENT SENDS IS CHECKED, NOT TRUSTED.
+     *
+     * The browser posts back the split it was shown, which is convenient
+     * and is also a request that could name any order and any courier. So
+     * every order is re-read here against the project, the pharmacy, the
+     * service date and the unassigned rule, and every courier against the
+     * roster. A round that fails takes nothing with it: the check runs over
+     * the whole body before a single run is created.
+     *
+     * Re-deriving the split server-side instead was the alternative. It
+     * would be safe in the same way and would quietly disagree with what
+     * the dispatcher accepted whenever the data moved underneath them --
+     * an order imported in the intervening minute lands in a different
+     * round than the one on screen. Validating what they accepted keeps
+     * the screen and the result the same thing. */
+    router.post('/split/apply', dispatch, wrap(async (req, res) => {
+        const body = parse(ApplySplit, req.body, res);
+        if (!body) return;
+        const project = req.project!;
+
+        const seen = new Set<number>();
+        for (const round of body.rounds) {
+            for (const id of round.orderIds) {
+                if (seen.has(id)) {
+                    res.status(400).json({
+                        error: `Delivery ${id} is on two rounds. One driver per stop.`,
+                        code: 'split.duplicateOrder',
+                    });
+                    return;
+                }
+                seen.add(id);
+            }
+        }
+
+        for (const round of body.rounds) {
+            if (!(await courierIsMember(project.id, round.courierUsername))) {
+                res.status(400).json({
+                    error: `${round.courierUsername} is not a driver on this contract.`,
+                    code: 'split.notDrivers',
+                });
+                return;
+            }
+        }
+
+        const ids = [...seen];
+        const check = await client.execute({
+            sql: `SELECT o.id
+                    FROM orders o
+                   WHERE o.project_id = ? AND o.service_date = ? AND o.site_id = ?
+                     AND ${SPLITTABLE}
+                     AND NOT EXISTS (
+                           SELECT 1 FROM run_stops rs
+                            JOIN runs r ON r.id = rs.run_id
+                            WHERE rs.order_id = o.id AND r.status != 'cancelled')
+                     AND o.id IN (${ids.map(() => '?').join(',')})`,
+            args: [project.id, body.serviceDate, body.siteId, ...ids],
+        });
+        const ok = new Set(check.rows.map((r) => Number(r['id'])));
+        const stale = ids.filter((id) => !ok.has(id));
+        if (stale.length > 0) {
+            res.status(409).json({
+                error: `${stale.length} ${stale.length === 1 ? 'delivery has' : 'deliveries have'} changed `
+                    + 'since this split was worked out — assigned to somebody else, cancelled, or moved. '
+                    + 'Nothing was created. Cluster again.',
+                code: 'split.stale',
+                orderIds: stale,
+            });
+            return;
+        }
+
+        const siteRow = await client.execute({
+            sql: 'SELECT name FROM sites WHERE project_id = ? AND id = ?',
+            args: [project.id, body.siteId],
+        });
+        const siteName = String(siteRow.rows[0]?.['name'] ?? '');
+
+        const created: unknown[] = [];
+        const rejected: unknown[] = [];
+        for (const [n, round] of body.rounds.entries()) {
+            const rs = await client.execute({
+                sql: `INSERT INTO runs (project_id, courier_username, service_date, label, notes, created_by)
+                      VALUES (?, ?, ?, ?, '', ?) RETURNING *`,
+                args: [
+                    project.id, round.courierUsername, body.serviceDate,
+                    `${siteName} ${n + 1}`.slice(0, 80), actorOf(req),
+                ],
+            });
+            const run = Object.fromEntries(Object.entries(rs.rows[0]!)) as unknown as RunRow;
+
+            let sequence = 1;
+            for (const orderId of round.orderIds) {
+                /* The same path a dispatcher's own click takes: it writes
+                   the custody event first and refuses a transition the
+                   order does not allow, so a run cannot hold an order that
+                   does not believe it is assigned. */
+                const result = await addStop(req, run, orderId, sequence);
+                if (result.ok) sequence += 1; else rejected.push(result.body);
+            }
+            created.push({ ...presentRun(run), stops: await stopsOf(project.id, Number(run.id)) });
+        }
+
+        await req.audit('run.split', 'site', String(body.siteId), {
+            serviceDate: body.serviceDate,
+            rounds: body.rounds.length,
+            stops: ids.length,
+            couriers: body.rounds.map((r) => r.courierUsername),
+            rejected: rejected.length,
+        });
+
+        res.status(201).json({ runs: created, rejected });
     }));
 
     router.get('/', readers, wrap(async (req, res) => {

@@ -556,6 +556,8 @@ const MATRIX = [
     ['GET', `${UH}/threads/999999`, UH_MEMBER, 'a thread is scoped to the order, not to a role'],
     ['POST', `${UH}/threads/999999`, UH_MEMBER, 'same check, same place'],
     ['GET', `${UH}/runs/propose`, UH_DISPATCH, 'the shape of the whole day across every counter, which no single pharmacy may read'],
+    ['GET', `${UH}/runs/split`, UH_DISPATCH, 'the whole list at one counter, and who is on shift to carry it'],
+    ['POST', `${UH}/runs/split/apply`, UH_DISPATCH, 'creates runs and assigns drivers, which is dispatch and nobody else'],
     ['GET', `${UH}/runs/999999`, UH_DISPATCH_AND_COURIER, ''],
     ['PATCH', `${UH}/runs/999999`, UH_DISPATCH, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'scoped to the sites on the membership, which for the Site Manager is all eight'],

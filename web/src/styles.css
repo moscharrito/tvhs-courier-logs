@@ -1922,3 +1922,66 @@ body {
 .izy-pref-about { display: block; margin-top: 2px; font-size: 13px; color: var(--izy-muted); line-height: 1.45; }
 .izy-pref-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .izy-prefs-save { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 13px; }
+
+
+/* ════════════════ SPLITTING A LIST BETWEEN DRIVERS, IN A DIALOG
+ *
+ * The first modal on this site, so the backdrop and panel are defined here
+ * rather than borrowed. Kept deliberately plain: it opens over the import
+ * screen a dispatcher is already reading, and a heavy overlay would hide
+ * the outcome message that explains why the dialog is there.
+ *
+ * IT SCROLLS INSIDE ITSELF. Nine counters on a busy Tuesday is a dozen
+ * rounds; the panel is capped and scrolls, so the Assign button cannot end
+ * up below the fold of the viewport with no way to reach it.
+ */
+.izy-modal-back {
+    position: fixed; inset: 0; z-index: 90;
+    background: rgba(8, 20, 14, 0.45);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+             max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+    overflow: auto;
+}
+.izy-modal {
+    background: var(--izy-card); color: var(--izy-ink);
+    border: 1px solid var(--izy-line); border-radius: 12px;
+    box-shadow: 0 18px 50px rgba(16, 24, 40, 0.28);
+    width: min(860px, 100%); max-height: calc(100vh - 32px);
+    overflow: auto; padding: 20px 22px; margin: auto;
+}
+.izy-cluster-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.izy-cluster-head h2 { margin: 0; font-size: 19px; }
+.izy-cluster-head p { margin: 2px 0 0; font-size: 13px; }
+.izy-cluster-head button { margin-left: auto; flex: 0 0 auto; }
+.izy-cluster h3 { margin: 0 0 8px; font-size: 14px; }
+.izy-cluster-who { border-top: 1px solid var(--izy-line); padding-top: 14px; }
+
+/* Two columns at desk width, one on a phone. A counter has seven or eight
+   drivers, which is a tall single column on a laptop for no reason. */
+.izy-cluster-drivers {
+    list-style: none; margin: 0 0 14px; padding: 0;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 2px 16px;
+}
+.izy-cluster-drivers label {
+    display: flex; align-items: center; gap: 9px; padding: 6px 2px;
+    font-size: 14px; cursor: pointer; min-width: 0;
+}
+.izy-cluster-drivers input { width: 17px; height: 17px; flex: 0 0 auto; }
+.izy-cluster-drivers span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.izy-cluster-note { font-size: 12.5px; margin: 10px 0 0; }
+.izy-cluster-out { border-top: 1px solid var(--izy-line); margin-top: 18px; padding-top: 14px; }
+.izy-cluster-out .izy-alert { margin-bottom: 10px; }
+/* The ZIP list is the widest thing in the table and the least urgent, so it
+   wraps rather than pushing the width and the driver name off the screen. */
+.izy-cluster-zips { font-size: 12.5px; color: var(--izy-soft); overflow-wrap: anywhere; }
+/* The offer under the import outcome. A row on a laptop, stacked on a
+   phone, so the sentence never squeezes the button to two words. */
+.izy-cluster-offer {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    margin: 0 0 16px; font-size: 13px;
+}
+.izy-cluster-do {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    margin-top: 14px; font-size: 13px;
+}

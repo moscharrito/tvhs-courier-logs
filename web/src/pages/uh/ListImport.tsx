@@ -38,6 +38,7 @@ import { clockFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
+import { ClusterDialog } from './ClusterDialog';
 import { displayName } from '../../lib/people';
 import type { Site } from './Sites';
 
@@ -244,6 +245,13 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
        filtering in the browser could never find it. */
     const [findSite, setFindSite] = useState<number | ''>('');
     const [findDate, setFindDate] = useState('');
+    /* WHAT WAS JUST IMPORTED, kept so the cluster dialog can be opened on
+       it. The form's own siteId is cleared and reused for the next upload;
+       this is the counter and day the orders actually landed on, which is
+       what a split has to be about. Null until an import succeeds. */
+    const [clusterable, setClusterable] = useState<
+        { site: { id: number; code: string; name: string }; serviceDate: string } | null>(null);
+    const [clustering, setClustering] = useState(false);
     const [siteId, setSiteId] = useState<number | ''>('');
     const [serviceDate, setServiceDate] = useState(() => todayIn(timezone));
     const [file, setFile] = useState<File | null>(null);
@@ -575,6 +583,12 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                 }
 
                 setMsg(outcome);
+                /* Only when there is something to split: an import that
+                   created nothing has no orders to cluster, and offering
+                   the button there is a dead control. */
+                setClusterable(done.site && done.serviceDate && (done.orderIds ?? []).length > 0
+                    ? { site: done.site, serviceDate: done.serviceDate }
+                    : null);
                 setAssignTo('');
                 setPreview(null);
                 setFile(null);
@@ -620,6 +634,47 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                     {msg.text}
                     {msg.details && msg.details.length > 0 && <ul>{msg.details.map((d) => <li key={d}>{d}</li>)}</ul>}
                 </div>
+            )}
+
+            {/* ─── SPLIT IT BETWEEN THE DRIVERS, FROM HERE.
+
+                This is the moment the orders exist and the dispatcher is
+                already on the right screen. The alternative was a button
+                on the list-drop row, which is a FILE and has no orders
+                behind it until this import has run.
+
+                Offered rather than automatic: the single-driver dropdown
+                above still covers the common small list, and a split is a
+                judgement about who is driving what today. */}
+            {clusterable && (
+                <p className="izy-cluster-offer">
+                    <button type="button" className="izy-btn" onClick={() => setClustering(true)}>
+                        Split this list between drivers
+                    </button>
+                    <span className="izy-muted">
+                        Groups it by zone and ZIP so each driver stays in one part of the city,
+                        then assigns them.
+                    </span>
+                </p>
+            )}
+            {clustering && clusterable && (
+                <ClusterDialog
+                    projectCode={projectCode}
+                    site={clusterable.site}
+                    serviceDate={clusterable.serviceDate}
+                    onClose={() => setClustering(false)}
+                    onDone={(runs) => {
+                        setMsg({
+                            kind: 'ok',
+                            text: `${runs} ${runs === 1 ? 'round' : 'rounds'} created and assigned. `
+                                + 'Each driver has their stops on their phone.',
+                        });
+                        /* The dialog stays open: the per-driver spreadsheets
+                           appear in it once the runs exist, and closing it
+                           out from under somebody about to download them
+                           would be the obvious annoyance. */
+                    }}
+                />
             )}
 
             {!canImport ? (

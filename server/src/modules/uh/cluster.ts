@@ -616,3 +616,284 @@ export function staffProposal(runs: ProposedRun[], roster: readonly RosterDriver
 
     return { suggested, unstaffed, spare, notes };
 }
+
+/* ═══════════════════════════════ splitting ONE pharmacy's list between the
+ *                                 drivers who are standing there
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * A DIFFERENT QUESTION FROM proposeRuns, WHICH IS WHY IT IS A DIFFERENT
+ * FUNCTION.
+ *
+ * proposeRuns answers "how many rounds does this day need, and what should
+ * they be". It is geography first: it packs until a round is full or wide,
+ * opens another, and when the day needs more rounds than there are drivers
+ * it says so and leaves the remainder unplaced. That is the right answer
+ * for a board showing nine counters at noon.
+ *
+ * This answers the dispatcher's other question: "here are the seven people
+ * on shift at this counter, split today's list between them." The driver
+ * count is not a ceiling to report against, it is the number of piles to
+ * make, and nothing may be left over -- an order with no driver is an order
+ * nobody delivers, and the dispatcher ticked these seven precisely so that
+ * would not happen.
+ *
+ * Writing it inside proposeRuns was the obvious move and would have been
+ * wrong twice over: that function's overflow behaviour is what the board
+ * depends on, and its tests encode a contract about what happens when the
+ * day does not fit. This one is additive. Neither can break the other.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE TENSION IS REAL AND IS NOT RESOLVED BY WANTING BOTH.
+ *
+ * "Equal piles" and "short drives" pull against each other, and on this
+ * contract they pull hard: 78207 runs 55 deliveries a day on its own while
+ * a dozen ZIPs carry one or two. Split seven ways by count and somebody
+ * drives across the county; split seven ways by geography and one driver
+ * has thirty stops while another has four.
+ *
+ * So the rule is TIGHT FIRST, EVEN WITHIN A TOLERANCE. Rounds are built
+ * nearest-first, then evened out only as far as geography allows, and what
+ * could not be evened is reported rather than forced. A dispatcher who
+ * wants it flatter widens the tolerance and sees what it costs.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * IT NEVER LIES ABOUT THE WIDTH. A round that had to take a far group in
+ * order to carry its share is counted in `stretched` and named in the
+ * notes. The alternative -- quietly exceeding maxSpreadMiles because the
+ * arithmetic demanded it -- is the confidently-wrong answer this module has
+ * refused to give since 7.9.
+ */
+
+export interface BalanceSettings {
+    /** How many piles to make: the drivers the dispatcher ticked. */
+    drivers: number;
+    /**
+     * How far above the average a round may run, as a fraction.
+     *
+     * 0.25 means a round may carry a quarter more than its even share
+     * before the evening-out pass tries to move work off it. Zero would
+     * demand exact equality, which on most totals is unachievable and
+     * would spin, so the cap is always at least one whole stop of slack.
+     */
+    maxShareAboveMean: number;
+    /** As proposeRuns: the width of a round, centre to centre, in miles. */
+    maxSpreadMiles: number;
+    /** As proposeRuns: escorted badge-ins are the real cost of a site. */
+    maxSitesPerRun: number;
+}
+
+export interface BalancedRound {
+    run: ProposedRun;
+    /** Widest gap between two ZIPs on it, or null when any ZIP on the round
+     *  has no known centre -- a partial answer here reads as a real one. */
+    spreadMiles: number | null;
+    /** True when that width is over the limit, because carrying the list
+     *  with this many drivers mattered more. Shown, never hidden. */
+    stretched: boolean;
+}
+
+export interface Balance {
+    /** One per driver asked for, fewer only when there is less work than
+     *  drivers. Never more: that would be an order with nobody to drive it. */
+    rounds: BalancedRound[];
+    notes: string[];
+}
+
+/** The widest gap between any two ZIPs on a run. */
+function spreadOf(zips: readonly string[], points?: ReadonlyMap<string, ZipPoint>): number | null {
+    if (points === undefined) return null;
+    const put: ZipPoint[] = [];
+    for (const z of zips) {
+        const p = points.get(z);
+        if (p === undefined) return null;
+        put.push(p);
+    }
+    let worst = 0;
+    for (let i = 0; i < put.length; i += 1) {
+        for (let j = i + 1; j < put.length; j += 1) {
+            worst = Math.max(worst, milesApart(put[i]!, put[j]!));
+        }
+    }
+    return worst;
+}
+
+/**
+ * Split one list between a named set of drivers.
+ *
+ * Pure, like everything else here: no database, no network, no clock.
+ *
+ * STATs are NOT pulled out here. They come out in proposeRuns for a reason
+ * that has not changed -- an hour from pickup does not survive a full loop
+ * -- and a caller that wants both runs this over the standard work only.
+ */
+export function balanceAcross(
+    orders: Clusterable[],
+    settings: BalanceSettings,
+    points?: ReadonlyMap<string, ZipPoint>,
+): Balance {
+    const notes: string[] = [];
+    const seats = Math.max(1, Math.floor(settings.drivers));
+
+    if (orders.length === 0) return { rounds: [], notes: ['Nothing to split yet.'] };
+
+    /* The same unit proposeRuns packs, and for the same reason: a delivery
+       is collected at one counter and goes to one ZIP, and that pair is the
+       smallest thing neither constraint can split. */
+    const byPlace = new Map<string, Clusterable[]>();
+    for (const o of orders) {
+        const key = `${o.siteId}|${o.zip}`;
+        const got = byPlace.get(key);
+        if (got) got.push(o);
+        else byPlace.set(key, [o]);
+    }
+
+    /* A group bigger than its even share is cut down to size FIRST.
+       Otherwise 78207's fifty-five arrive as one indivisible lump, land on
+       one driver, and no amount of evening out can move them: the pass
+       shifts whole groups, and a group that IS the imbalance is the one
+       thing it cannot shift. Cutting is safe because every slice shares the
+       one ZIP -- they are the same place, so no slice widens a round. */
+    const share = orders.length / seats;
+    const cap = Math.max(1, Math.ceil(share * (1 + Math.max(0, settings.maxShareAboveMean))));
+    const groups: Clusterable[][] = [];
+    for (const g of byPlace.values()) {
+        if (g.length <= cap) { groups.push(g); continue; }
+        for (let i = 0; i < g.length; i += cap) groups.push(g.slice(i, i + cap));
+    }
+    groups.sort((a, b) => (b.length - a.length) || (a[0]!.id - b[0]!.id));
+
+    interface Pile { orders: Clusterable[]; zips: Set<string>; sites: Set<number> }
+    const piles: Pile[] = Array.from(
+        { length: Math.min(seats, groups.length) },
+        () => ({ orders: [], zips: new Set<string>(), sites: new Set<number>() }),
+    );
+
+    /** How far a group sits from a pile: the worst pair, which is the
+     *  number the width limit is about. Infinity when it cannot be read. */
+    const reach = (pile: Pile, group: Clusterable[]): number => {
+        if (points === undefined || pile.zips.size === 0) return 0;
+        let worst = 0;
+        for (const o of group) {
+            const to = points.get(o.zip);
+            if (to === undefined) return Number.POSITIVE_INFINITY;
+            for (const z of pile.zips) {
+                const from = points.get(z);
+                if (from === undefined) return Number.POSITIVE_INFINITY;
+                worst = Math.max(worst, milesApart(from, to));
+            }
+        }
+        return worst;
+    };
+
+    const add = (pile: Pile, group: Clusterable[]) => {
+        for (const o of group) { pile.orders.push(o); pile.zips.add(o.zip); pile.sites.add(o.siteId); }
+    };
+
+    /* ── biggest group first, into the pile it suits best ─────────────
+       An empty pile is taken before anything is stretched, so a far group
+       opens a round of its own rather than widening somebody else's. Among
+       piles that already hold work the nearest wins, and ties go to the
+       lighter one -- which is where the evenness comes from, without any
+       arithmetic forcing it. */
+    for (const group of groups) {
+        const empty = piles.find((p) => p.orders.length === 0);
+        if (empty) { add(empty, group); continue; }
+
+        const scored = piles.map((p) => ({
+            p,
+            far: reach(p, group),
+            room: p.orders.length + group.length <= cap,
+            sites: new Set([...p.sites, ...group.map((o) => o.siteId)]).size,
+        }));
+        /* A round that would collect from too many counters is out of the
+           running before distance is considered: an escorted badge-in costs
+           more than a few miles. If that rules out everything, the limit
+           yields rather than the order going undelivered. */
+        const allowed = scored.filter((s) => s.sites <= settings.maxSitesPerRun);
+        const usable = allowed.length > 0 ? allowed : scored;
+        const within = usable.filter((s) => s.room && s.far <= settings.maxSpreadMiles);
+        /* Nothing both near enough and light enough: take the lightest and
+           accept the stretch, which `stretched` then reports. Leaving the
+           group unplaced is not on the table -- the dispatcher ticked these
+           drivers so that every order would have one. */
+        const pool = within.length > 0 ? within : usable;
+        pool.sort((a, b) => (a.p.orders.length - b.p.orders.length) || (a.far - b.far));
+        add(pool[0]!.p, group);
+    }
+
+    /* ── even it out, as far as geography allows ──────────────────────
+       Only ever OUT of a pile above the cap and INTO one that stays at or
+       below it, so the weight above the cap strictly falls and this cannot
+       cycle. The pass bound is belt and braces. */
+    const groupsIn = (pile: Pile): Clusterable[][] => {
+        const m = new Map<string, Clusterable[]>();
+        for (const o of pile.orders) {
+            const k = `${o.siteId}|${o.zip}`;
+            const g = m.get(k);
+            if (g) g.push(o); else m.set(k, [o]);
+        }
+        /* Smallest first: shave the round, do not gut it. */
+        return [...m.values()].sort((a, b) => a.length - b.length);
+    };
+
+    for (let pass = 0; pass < 500; pass += 1) {
+        const heavy = [...piles].sort((a, b) => b.orders.length - a.orders.length)[0]!;
+        if (heavy.orders.length <= cap) break;
+        let moved = false;
+        for (const group of groupsIn(heavy)) {
+            if (heavy.orders.length - group.length < 1) continue;
+            const to = piles
+                .filter((p) => p !== heavy && p.orders.length + group.length <= cap)
+                .map((p) => ({ p, far: reach(p, group) }))
+                .filter((s) => s.far <= settings.maxSpreadMiles)
+                .sort((a, b) => (a.p.orders.length - b.p.orders.length) || (a.far - b.far))[0]?.p;
+            if (!to) continue;
+            const ids = new Set(group.map((o) => o.id));
+            heavy.orders = heavy.orders.filter((o) => !ids.has(o.id));
+            heavy.zips = new Set(heavy.orders.map((o) => o.zip));
+            heavy.sites = new Set(heavy.orders.map((o) => o.siteId));
+            add(to, group);
+            moved = true;
+            break;
+        }
+        if (!moved) break;
+    }
+
+    const rounds: BalancedRound[] = piles
+        .filter((p) => p.orders.length > 0)
+        .map((p) => {
+            const run = runOf('standard', p.orders);
+            const spreadMiles = spreadOf(run.zips, points);
+            return { run, spreadMiles, stretched: spreadMiles !== null && spreadMiles > settings.maxSpreadMiles };
+        })
+        /* Heaviest first: the round a dispatcher checks is the big one. */
+        .sort((a, b) => b.run.orderIds.length - a.run.orderIds.length);
+
+    const counts = rounds.map((r) => r.run.orderIds.length);
+    const low = Math.min(...counts);
+    const high = Math.max(...counts);
+
+    if (rounds.length < seats) {
+        const idle = seats - rounds.length;
+        notes.push(
+            `${seats} ${seats === 1 ? 'driver was' : 'drivers were'} ticked and this list makes `
+            + `${rounds.length} ${rounds.length === 1 ? 'round' : 'rounds'}, so ${idle} `
+            + `${idle === 1 ? 'driver gets' : 'drivers get'} nothing from it.`,
+        );
+    }
+    if (high - low > 1) {
+        notes.push(
+            `Rounds run from ${low} to ${high} stops. They are not evened further because the work `
+            + 'left on the big ones is too far from the small ones to move without widening them.',
+        );
+    }
+    const stretched = rounds.filter((r) => r.stretched).length;
+    if (stretched > 0) {
+        notes.push(
+            `${stretched} ${stretched === 1 ? 'round is' : 'rounds are'} wider than the `
+            + `${settings.maxSpreadMiles}-mile limit, because the list had to be carried by `
+            + `${seats} ${seats === 1 ? 'driver' : 'drivers'}. Tick another driver, or accept the drive.`,
+        );
+    }
+    return { rounds, notes };
+}
