@@ -31,6 +31,23 @@
  * instantiate the core.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * workerBlobURL: false, AND IT IS NOT A TUNING KNOB.
+ *
+ * tesseract.js defaults it to TRUE (constants/defaultOptions.js), which
+ * means it does not load the worker from the path it was given. It builds
+ * a one-line Blob that importScripts the path, and starts the worker from
+ * `blob:`. Our policy is `worker-src 'self'`, which does not include
+ * blob:, so the Worker constructor throws before a single file is
+ * fetched -- after every asset has downloaded perfectly.
+ *
+ * That is the shape that cost two deploys: nothing 404s, nothing logs,
+ * and the page says the reader would not start. Setting this false makes
+ * it `new Worker('/vendor/tesseract/worker.min.js')`, which is same
+ * origin and already allowed. The alternative was adding blob: to
+ * worker-src, which widens the policy to fix a default we can simply
+ * turn off.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  * IT READS A STRIP, NOT A PAGE.
  *
  * The sheet has forty-odd numbers on it and the one that matters is not
@@ -73,23 +90,55 @@ async function reader(): Promise<Recogniser> {
         /* DYNAMIC, so the core is a separate chunk and the people who
            never open this page never pay for it. */
         starting = (async () => {
-            const { createWorker } = await import('tesseract.js');
-            const made = await createWorker('eng', 1, {
-                workerPath: '/vendor/tesseract/worker.min.js',
-                corePath: '/vendor/tesseract/',
-                langPath: '/vendor/tesseract',
-                /* Nothing to a console in a warehouse. */
-                logger: () => {},
-            });
+            /* ── SAY WHICH STEP FAILED.
+             *
+             * "The reader could not start" was the whole of what this
+             * reported, and it was the same eleven words for a missing
+             * file, a blocked worker and a browser with no WebAssembly.
+             * Two wrong diagnoses came out of that. Each stage now names
+             * itself, so the next failure arrives already half read. */
+            let stage = 'loading the reader';
+            try {
+                const { createWorker } = await import('tesseract.js');
+                stage = 'starting the reader';
+                const made = await createWorker('eng', 1, {
+                    workerPath: '/vendor/tesseract/worker.min.js',
+                    corePath: '/vendor/tesseract/',
+                    langPath: '/vendor/tesseract',
+                    /* See the note at the top: the default starts the
+                       worker from a blob: URL, which our policy refuses. */
+                    workerBlobURL: false,
+                    /* Nothing to a console in a warehouse. */
+                    logger: () => {},
+                });
             /* DIGITS AND WHAT SEPARATES THEM, nothing else. The reader is
                far less likely to offer an S where a 5 is when S is not a
                character it may return. phone-scan.ts still forgives the
                substitutions, because this only narrows the alphabet and
                does not guarantee it. */
-            await made.setParameters({
-                tessedit_char_whitelist: '0123456789()-. ',
-            });
-            return made;
+                stage = 'setting the reader up';
+                await made.setParameters({
+                    tessedit_char_whitelist: '0123456789()-. ',
+                });
+                return made;
+            } catch (e) {
+                /* The cause is kept, not swallowed: a SecurityError from a
+                   refused worker and a TypeError from a bad path read very
+                   differently once somebody can see which is which.
+                
+                   NOT `instanceof Error`, which was the first attempt and
+                   was wrong in the one case this exists for. A worker
+                   refused by the content security policy throws a
+                   DOMException, and a DOMException does not reliably pass
+                   that check -- so the message was dropped from exactly
+                   the failure it was added to explain. Read the property. */
+                starting = null;
+                const said = typeof (e as { message?: unknown })?.message === 'string'
+                    && (e as { message: string }).message !== ''
+                    ? `: ${(e as { message: string }).message}`
+                    : '';
+                throw new Error(`Failed ${stage}${said}`);
+            }
         })();
     }
     worker = await starting;
