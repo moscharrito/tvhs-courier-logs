@@ -117,7 +117,7 @@ describe('the site manager, who is dispatch', () => {
         renderAs('lead');
         await screen.findByRole('heading', { name: /daily list/i });
 
-        for (const name of ['Open the board', 'Search orders', 'Driver roster', 'Performance']) {
+        for (const name of ['Open the board', 'Search orders', 'Driver roster', 'Performance', 'Sort packages']) {
             expect(screen.getByRole('link', { name }), name).toBeInTheDocument();
         }
         /* Drivers record came off on 18 November, same direction and same
@@ -128,6 +128,21 @@ describe('the site manager, who is dispatch', () => {
         for (const name of ['Discrepancies', 'Returns', "The client's view", 'Drivers record']) {
             expect(screen.queryByRole('link', { name }), name).toBeNull();
         }
+    });
+
+    it('can reach the sort bench, which it could not when it shipped', async () => {
+        /* IT WENT OUT INVISIBLE. The Sort page was wired to the pharmacy
+           rail only -- the one rail an administrator or a dispatcher never
+           sees -- so the page existed, the route worked, the server
+           admitted them, and nobody running dispatch could find it.
+
+           Pinned as an href rather than as "a link exists", because the
+           failure was not a missing component. It was a link in a place
+           the people who need it do not look. */
+        renderAs('lead');
+        await screen.findByRole('heading', { name: /daily list/i });
+        expect(screen.getByRole('link', { name: 'Sort packages' }))
+            .toHaveAttribute('href', '/projects/uh/sort');
     });
 
     it('is given the driver roster, which the server always allowed', async () => {
@@ -164,6 +179,7 @@ describe('an administrator', () => {
         for (const name of [
             'Open the board', 'Search orders', 'Performance', 'Discrepancies', 'Returns',
             'Drivers record', 'Driver roster', 'Invoices', 'Driver applications', "The client's view",
+            'Sort packages',
         ]) {
             expect(screen.getByRole('link', { name }), name).toBeInTheDocument();
         }

@@ -78,6 +78,24 @@ export function ProjectHome() {
             <nav className="izy-card izy-quick" aria-label="Dispatch">
                 <Link className="izy-btn" to={`/projects/${project.code}/board`}>Open the board</Link>
                 <Link className="izy-btn secondary" to={`/projects/${project.code}/orders`}>Search orders</Link>
+                {/* ───── THE SORT BENCH, SECOND, BECAUSE OF WHEN IT IS USED.
+                    It shipped on 21 November reachable only from the
+                    pharmacy rail, which is the one rail an administrator
+                    never sees -- so the page existed and nobody running
+                    dispatch could find it.
+
+                    It belongs up here rather than among the reporting
+                    links below. Everything under this is read while
+                    answering a question about the contract; this is used
+                    standing at the bench with a parcel in one hand, in the
+                    same half hour as the board, and a shortcut that has to
+                    be scrolled to is a shortcut nobody uses.
+
+                    Dispatch, not admin alone: `lead` is this contract's
+                    dispatcher and the server admits them. */}
+                {canDispatch && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/sort`}>Sort packages</Link>
+                )}
                 {/* ───────────────────── THE ROW IS WHAT THE ROLE DOES
                     Performance, Discrepancies, Returns and the client's view
                     came off dispatch's row on 7 November at the owner's
