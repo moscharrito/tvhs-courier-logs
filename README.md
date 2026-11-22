@@ -501,6 +501,14 @@ The policy is `default-src 'self'` with `script-src 'self'`, no CDN and no inlin
 
 `npm run audit` checks production dependencies at the high threshold. It is not part of `npm run ci`, which has to run offline.
 
+#### `npm run ci` and its exit code
+
+It fails the way you would want it to, and this paragraph exists because that was publicly doubted on 22 November 2026 and the doubt was wrong.
+
+`npm run test --workspaces --if-present` finishes every workspace before it reports — so a server failure still lets the web suite run and print its own totals underneath — but it exits non-zero, and the `&&` before `app:test` then stops the chain. Reading the tail of the output can therefore show a green summary sitting below a red one. Read the exit code, or grep the whole log for `FAIL`, not the last few lines.
+
+The trap is in calling it, not in the script. In a POSIX shell, `npm run ci > out.txt 2>&1; echo done` reports **`echo`'s** status, which is always zero, and the gate's own result is discarded in the semicolon. Anything that wraps this — a background runner, a hook, a CI step — has to keep the status: drop the trailing command, or capture `$?` immediately and exit with it. An automated wrapper that gets this wrong turns a red suite into a green notification, which is worse than having no gate at all, because it is believed.
+
 The review found one high advisory, `drizzle-orm` below 0.45.2, and upgraded it. Exposure was nil either way, because drizzle is used for schema definitions and migrations and every runtime query goes through `client.execute({ sql, args })` with bound parameters, but a high advisory in a production dependency is not something to argue with.
 
 Four moderate advisories were traced to the calling code rather than accepted or dismissed by their labels: the `uuid` bug needs a `buf` argument that `exceljs` never passes, and the react-router open redirect needs a user-controlled navigation target, of which this application has none. Both "fixes" are major-version changes. The reasoning is written down in the security review so the next person does not have to redo it.
