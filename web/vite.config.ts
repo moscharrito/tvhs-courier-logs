@@ -98,5 +98,39 @@ export default defineConfig({
         setupFiles: ['./src/test/setup.ts'],
         include: ['src/**/*.test.{ts,tsx}'],
         css: false,
+        /* ── WHY THIS SUITE NEEDS THE SAME TREATMENT AS THE SERVER'S ───────
+         *
+         * On 22 November 2026 four consecutive gate runs went red and not
+         * one of them failed on an assertion. Every failure was
+         * `TestTimeoutError: Test timed out in 5000ms`, on a DIFFERENT test
+         * each time -- ListImport, then Roster, then Reports -- and every
+         * one of them passed on its own immediately afterwards. Reports
+         * took 9.7 seconds for fifteen tests alone, in the same minute it
+         * had "timed out" inside a run that took 370.
+         *
+         * That is not a slow test. It is a five-second budget on a machine
+         * with two physical cores where, by Vitest's own accounting, half
+         * the wall clock goes on standing up a jsdom environment per file.
+         * When something else is competing -- the server suite finishing, a
+         * virus scanner, a build -- a test that normally takes 80ms is
+         * descheduled past five seconds and the suite calls it broken.
+         *
+         * THE COST OF A RED GATE NOBODY BELIEVES is the thing being fixed
+         * here, not the minutes. A suite that cries wolf is one somebody
+         * eventually pushes past, and it nearly happened: a timeout landed
+         * in Reports.test.tsx on a day Reports.tsx had genuinely been
+         * edited, and telling those apart took a separate run.
+         *
+         * 30 seconds matches server/vitest.config.mjs deliberately. It is
+         * not a claim that any test takes thirty seconds -- it is how far a
+         * loaded machine can stretch one that takes eighty milliseconds.
+         * Only a test that genuinely hangs pays the difference. */
+        testTimeout: 30_000,
+        hookTimeout: 30_000,
+        /* Same cap and the same reason as the server's. Fifty-four files,
+         * each given its own isolated worker, on two physical cores: the
+         * run where Stop.test.tsx never started at all was a worker that
+         * could not be spawned, not a test that failed. */
+        maxWorkers: 3,
     },
 });

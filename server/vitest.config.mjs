@@ -35,11 +35,28 @@ export default defineConfig({
         // a file run in order.
         pool: 'forks',
         fileParallelism: true,
-        // Each fork boots a server, a libsql client and (for the export tests)
-        // ExcelJS, so forks are heavy. Unbounded parallelism oversubscribes a
-        // 4-core dev machine and makes the export tests time out; cap the pool
-        // so runs are predictable.
-        poolOptions: { forks: { maxForks: 3, minForks: 1 } },
+        /* Each fork boots a server, a libsql client and (for the export
+         * tests) ExcelJS, so forks are heavy. Unbounded parallelism
+         * oversubscribes this two-core machine and makes the export tests
+         * time out; cap the pool so runs are predictable.
+         *
+         * ── THIS WAS SILENTLY NOT APPLIED FOR A DAY.
+         *
+         * It was written as `poolOptions: { forks: { maxForks: 3 } }`, which
+         * Vitest 4 removed in favour of a top-level `maxWorkers`. The 5.1.1
+         * upgrade on 22 November 2026 therefore dropped the cap -- and said
+         * so, in a DEPRECATED line at the top of every run that reads like
+         * noise and was treated as noise.
+         *
+         * Uncapped, the suite started failing to START test files:
+         *
+         *     [vitest-pool]: Failed to start forks worker for test files
+         *     Caused by: Timeout waiting for worker to respond
+         *
+         * Two files never ran at all in one gate. That is the worst shape a
+         * test failure can take, because the summary says 142 passed and
+         * nothing in it is red -- the suite simply got smaller. */
+        maxWorkers: 3,
         sequence: { concurrent: false },
         testTimeout: 30000,
         hookTimeout: 30000,
