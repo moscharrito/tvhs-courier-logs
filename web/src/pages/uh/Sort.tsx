@@ -79,14 +79,18 @@ export function Sort({ projectCode }: { projectCode: string }) {
     const [err, setErr] = useState('');
     /** More than one number on the sheet survived. The sorter picks. */
     const [choices, setChoices] = useState<PhoneCandidate[]>([]);
-    const [typed, setTyped] = useState('');
     const [asked, setAsked] = useState('');
     const [matches, setMatches] = useState<Match[] | null>(null);
 
-    /* THE CAMERA IS STOPPED WHEN THE PAGE GOES. A track left running holds
-       the hardware, and on Android the next app to want it gets nothing.
-       A sorter who leaves this page and cannot then take a photograph has
-       been given a worse problem than the one this solves. */
+    /* THE CAMERA IS STOPPED WHEN THE PAGE GOES, and only then. There is
+       no Stop button: this page is the camera, and a control whose whole
+       effect is to make the one thing on the screen stop working is a
+       control that only gets pressed by accident.
+
+       The cleanup still matters. A track left running holds the hardware,
+       and on Android the next app to want it gets nothing -- a sorter who
+       leaves this page and then cannot take a photograph has been handed
+       a worse problem than the one this solves. */
     const stop = useCallback(() => {
         stream.current?.getTracks().forEach((t) => t.stop());
         stream.current = null;
@@ -116,12 +120,17 @@ export function Sort({ projectCode }: { projectCode: string }) {
             /* cameraAdvice knows the one that catches people out: on an
                iPhone the camera is Safari's and nobody else's. */
             const advice = cameraAdvice();
-            setErr(`${why(e, 'The camera would not start.')}${advice ? ` ${advice}` : ''}`
-                + ' Type the last four digits instead.');
+            setErr(`${why(e, 'The camera would not start.')}${advice ? ` ${advice}` : ''}`);
         } finally {
             setBusy('');
         }
     }, []);
+
+    /* IT STARTS ITSELF. The page has one purpose and the first thing
+       anybody did on it was press Start, so the press was ceremony. The
+       browser still asks for permission the first time, which is the
+       prompt that actually matters and is not ours to skip. */
+    useEffect(() => { void start(); }, [start]);
 
     const look = useCallback(async (digits: string) => {
         setBusy('looking');
@@ -157,8 +166,8 @@ export function Sort({ projectCode }: { projectCode: string }) {
             const text = await readDigits(el);
             const found = findPhones(text);
             if (found.length === 0) {
-                setErr('No telephone number could be read off that. Hold the sheet flatter and '
-                    + 'fill the frame with the RECIPIENT box — or type the last four digits.');
+                setErr('No telephone number could be read off that. Fill the green box with the '
+                    + 'RECIPIENT panel, hold the sheet flat, and keep it still.');
                 return;
             }
             /* ONE ANSWER GOES STRAIGHT THROUGH. Two or more and the sorter
@@ -168,21 +177,20 @@ export function Sort({ projectCode }: { projectCode: string }) {
             if (found.length === 1) { await look(found[0]!.digits); return; }
             setChoices(found);
         } catch (e) {
-            setErr(why(e, 'The reader could not start. Type the last four digits instead.'));
+            setErr(why(e, 'The reader could not start.'));
         } finally {
             setBusy('');
         }
     }, [live, look]);
 
-    const clear = () => { setMatches(null); setChoices([]); setAsked(''); setTyped(''); setErr(''); };
+    const clear = () => { setMatches(null); setChoices([]); setAsked(''); setErr(''); };
 
     return (
         <div className="izy-sort">
             <header className="izy-sort-head">
                 <h1>Sort a package</h1>
                 <p className="izy-muted">
-                    Point at the patient’s telephone number on the sheet, or type the last four digits.
-                    Nothing is saved.
+                    Fill the green box with the RECIPIENT panel, then press Scan. Nothing is saved.
                 </p>
             </header>
 
@@ -212,59 +220,40 @@ export function Sort({ projectCode }: { projectCode: string }) {
                 {live && <div className="izy-sort-guide" aria-hidden="true" />}
             </div>
 
+            {/* ONE BUTTON, IN THE MIDDLE, UNDER THE THUMB. It is pressed
+                one-handed with a parcel in the other, by somebody who is
+                not looking at the screen until after the press. A second
+                control beside it is a control that gets hit by mistake. */}
             <div className="izy-sort-do">
-                {!live ? (
+                {live ? (
+                    <button
+                        type="button"
+                        className="izy-btn big"
+                        disabled={busy !== ''}
+                        onClick={() => { void scan(); }}
+                    >
+                        {busy === 'reading' ? 'Reading…' : busy === 'looking' ? 'Looking…' : 'Scan'}
+                    </button>
+                ) : (
+                    /* Only when there is no camera to scan with -- a refused
+                       permission, or another app holding it. Not a Start
+                       button in the ordinary case: the page starts itself. */
                     <button
                         type="button"
                         className="izy-btn big"
                         disabled={busy !== ''}
                         onClick={() => { void start(); }}
                     >
-                        {busy === 'camera' ? 'Starting…' : 'Start camera'}
+                        {busy === 'camera' ? 'Starting…' : 'Try the camera again'}
                     </button>
-                ) : (
-                    <>
-                        <button
-                            type="button"
-                            className="izy-btn big"
-                            disabled={busy !== ''}
-                            onClick={() => { void scan(); }}
-                        >
-                            {busy === 'reading' ? 'Reading…' : busy === 'looking' ? 'Looking…' : 'Scan'}
-                        </button>
-                        <button type="button" className="izy-btn secondary" onClick={stop}>
-                            Stop camera
-                        </button>
-                    </>
                 )}
             </div>
 
             {!scanSupported() && (
-                <p className="izy-muted">
-                    This browser cannot run the reader, so the keypad is the way through here.
+                <p className="izy-muted izy-sort-note">
+                    This browser cannot run the reader. Open the page in Chrome on the bench phone.
                 </p>
             )}
-
-            {/* ── AND THE WAY THROUGH, never behind a tab. */}
-            <form
-                className="izy-sort-type"
-                onSubmit={(e) => { e.preventDefault(); if (typed.trim() !== '') void look(typed); }}
-            >
-                <label className="izy-field">
-                    Last four digits
-                    <input
-                        value={typed}
-                        onChange={(e) => setTyped(e.target.value)}
-                        inputMode="numeric"
-                        autoComplete="off"
-                        placeholder="0147"
-                        aria-label="Last four digits of the patient’s telephone number"
-                    />
-                </label>
-                <button className="izy-btn secondary" type="submit" disabled={busy !== '' || typed.trim() === ''}>
-                    Find
-                </button>
-            </form>
 
             {choices.length > 0 && (
                 <div className="izy-sort-pick">

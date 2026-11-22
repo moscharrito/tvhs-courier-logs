@@ -2028,9 +2028,12 @@ body {
     pointer-events: none;
 }
 
-.izy-sort-do { display: flex; gap: 10px; align-items: center; }
+/* CENTRED, because it is the only thing to press and the thumb goes to
+   the middle of the screen. */
+.izy-sort-do { display: flex; justify-content: center; }
+.izy-sort-do .izy-btn { min-width: 220px; }
+.izy-sort-note { display: block; text-align: center; margin-top: 10px; }
 .izy-btn.big { font-size: 1.15rem; padding: 14px 22px; }
-.izy-sort-type { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
 .izy-sort-pick { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 
 .izy-sort-out { margin-top: 18px; }
@@ -2050,5 +2053,5 @@ body {
 
 @media (max-width: 520px) {
     .izy-sort-facts { grid-template-columns: 1fr; }
-    .izy-sort-type { flex-wrap: wrap; }
+    .izy-sort-do .izy-btn { width: 100%; }
 }

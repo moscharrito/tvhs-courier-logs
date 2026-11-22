@@ -575,6 +575,16 @@ const ASSET_EXTENSIONS = new Set([
     '.ico', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif',
     '.woff', '.woff2', '.ttf', '.otf', '.eot',
     '.mp4', '.webm', '.mp3', '.wav', '.pdf', '.wasm',
+    /* THE READER'S LANGUAGE MODEL, and the reason it is spelled out.
+     *
+     * express.static above serves it when it is there. When it is NOT --
+     * a build that forgot to copy it, which has already happened once --
+     * the fallback below hands back index.html with a 200, and the
+     * fetching code checks `resp.ok` and gets true. tesseract then tries
+     * to gunzip a page of HTML and fails somewhere far from the cause.
+     *
+     * A 404 is the honest answer and it names the file. */
+    '.gz', '.traineddata',
 ]);
 
 function mountShell(app: Express, webDist: string): void {

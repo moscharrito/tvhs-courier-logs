@@ -38,6 +38,13 @@ const match = (over: Record<string, unknown> = {}) => ({
 
 const open = () => render(<Sort projectCode="uh" />);
 
+/** Read this off the sheet, then wait for the answer to land. */
+async function scanned(text: string) {
+    readDigits.mockResolvedValue(text);
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
+}
+
 /** jsdom has no camera. Give the page one that works. */
 function withCamera(ok = true) {
     const track = { stop: vi.fn() };
@@ -57,14 +64,14 @@ function withCamera(ok = true) {
     return track;
 }
 
-const startCamera = async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Start camera' }));
-    return screen.findByRole('button', { name: 'Scan' });
-};
-
 beforeEach(() => {
     readDigits.mockReset();
     scanSupported.mockReturnValue(true);
+    /* THE PAGE STARTS ITS OWN CAMERA. There is no Start button in the
+       ordinary case and no Stop button at all: this page is the camera,
+       and a control whose only effect is to make the one thing on the
+       screen stop working gets pressed by accident and nothing else. */
+    withCamera();
 });
 
 describe('looking a number up', () => {
@@ -74,21 +81,16 @@ describe('looking a number up', () => {
            referrer headers and every log that keeps a request line. This
            is the assertion that stops somebody making it a GET. */
         const { calls, bodies } = mockFetch({ [LOOKUP]: { matches: [match()] } });
-        open();
-
-        fireEvent.change(screen.getByLabelText(/Last four digits/), { target: { value: '0147' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
-        expect(bodies[LOOKUP]).toEqual({ phone: '0147' });
-        expect(calls.every((c) => !c.includes('0147'))).toBe(true);
+        expect(bodies[LOOKUP]).toEqual({ phone: '2105550147' });
+        expect(calls.every((c) => !c.includes('2105550147'))).toBe(true);
     });
 
     it('puts the driver first and the rest underneath', async () => {
         mockFetch({ [LOOKUP]: { matches: [match()] } });
-        open();
-        fireEvent.change(screen.getByLabelText(/Last four digits/), { target: { value: '0147' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
         expect(screen.getByText(/Wheatley 1 · stop 4/)).toBeInTheDocument();
@@ -101,9 +103,7 @@ describe('looking a number up', () => {
         /* A package nobody has must not go into a pile, and silence would
            send it into one. */
         mockFetch({ [LOOKUP]: { matches: [match({ driver: null })] } });
-        open();
-        fireEvent.change(screen.getByLabelText(/Last four digits/), { target: { value: '0147' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Not assigned yet');
         expect(screen.getByText(/Leave it out of the piles/)).toBeInTheDocument();
@@ -111,9 +111,7 @@ describe('looking a number up', () => {
 
     it('says when nothing matched at all', async () => {
         mockFetch({ [LOOKUP]: { matches: [] } });
-        open();
-        fireEvent.change(screen.getByLabelText(/Last four digits/), { target: { value: '0000' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await scanned('Mobile: 210-555-0199');
 
         await screen.findByText(/No delivery with that number/);
     });
@@ -127,9 +125,7 @@ describe('looking a number up', () => {
                 ],
             },
         });
-        open();
-        fireEvent.change(screen.getByLabelText(/Last four digits/), { target: { value: '0147' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
         expect(screen.getByText('Ben Driver')).toBeInTheDocument();
@@ -137,9 +133,7 @@ describe('looking a number up', () => {
 
     it('shows the handling, which decides where it is put down', async () => {
         mockFetch({ [LOOKUP]: { matches: [match({ handling: ['Fridge', 'Controlled'] })] } });
-        open();
-        fireEvent.change(screen.getByLabelText(/Last four digits/), { target: { value: '0147' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+        await scanned('Mobile: 210-555-0147');
 
         const card = (await screen.findByText('Ana Driver')).closest('article')!;
         expect(within(card).getByText('Fridge')).toBeInTheDocument();
@@ -148,12 +142,11 @@ describe('looking a number up', () => {
 
 describe('scanning the sheet', () => {
     it('reads one number and goes straight to the answer', async () => {
-        withCamera();
         readDigits.mockResolvedValue('PHONE (IMPORTANT) Mobile: 210-555-0147');
         const { bodies } = mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
-        fireEvent.click(await startCamera());
+        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
         await screen.findByText('Ana Driver');
         expect(bodies[LOOKUP]).toEqual({ phone: '2105550147' });
     });
@@ -162,51 +155,53 @@ describe('scanning the sheet', () => {
         /* Guessing would eventually put a package in the wrong van, which
            costs a redelivery and a call from somebody who did not get
            their medication. Two buttons costs a second. */
-        withCamera();
         readDigits.mockResolvedValue('Alt 210-555-0000 Mobile: 210-555-0147');
         mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
-        fireEvent.click(await startCamera());
+        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
         await screen.findByText(/Which number is the patient/);
         expect(screen.getByRole('button', { name: '210-555-0147' })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: '210-555-0000' })).toBeInTheDocument();
     });
 
     it('never offers our own number, which is on every sheet', async () => {
-        withCamera();
         readDigits.mockResolvedValue('IZY GLOBAL SERVICES 832-715-8986');
         mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
-        fireEvent.click(await startCamera());
+        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
         await screen.findByText(/No telephone number could be read/);
     });
 
-    it('tells the sorter how to get past a bad read', async () => {
-        withCamera();
+    it('tells the sorter what to do about a bad read', async () => {
+        /* WHAT TO CHANGE, not that it failed. "Could not read" on its own
+           gets the same shot taken again. With no keypad left as a way
+           round, the advice IS the recovery. */
         readDigits.mockResolvedValue('nothing here at all');
         mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
-        fireEvent.click(await startCamera());
-        await screen.findByText(/type the last four digits/i);
+        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
+        const said = await screen.findByRole('alert');
+        expect(said).toHaveTextContent(/Fill the green box with the RECIPIENT panel/);
+        expect(said).toHaveTextContent(/hold the sheet flat/);
     });
 });
 
 describe('when the camera will not play', () => {
-    it('says so and points at the keypad', async () => {
-        /* A sorter who cannot get past this page stops using it for good
-           and goes back to reading addresses off sheets. */
+    it('says so, and offers another go rather than a dead page', async () => {
+        /* A refused permission or another app holding the camera. The
+           page cannot do its job, so it has to say what happened and
+           give a way to retry -- this is the ONE case that gets a button
+           other than Scan. */
         withCamera(false);
         mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Start camera' }));
         await screen.findByRole('alert');
-        expect(screen.getByRole('alert')).toHaveTextContent(/type the last four digits/i);
-        /* And the keypad is on the screen, not behind a tab. */
-        expect(screen.getByLabelText(/Last four digits/)).toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: 'Try the camera again' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Scan' })).not.toBeInTheDocument();
     });
 
     it('says when the browser cannot run the reader at all', async () => {
@@ -216,14 +211,28 @@ describe('when the camera will not play', () => {
         expect(screen.getByText(/cannot run the reader/)).toBeInTheDocument();
     });
 
+    it('has no Stop button, and no keypad', async () => {
+        /* Both were asked for and both were removed. The keypad was my
+           own addition as a way through a bad read; the bench did not
+           want a second way to do the job and a text box on a page meant
+           to be used one-handed is a text box nobody fills in. */
+        mockFetch({ [LOOKUP]: { matches: [] } });
+        open();
+        await screen.findByRole('button', { name: 'Scan' });
+        expect(screen.queryByRole('button', { name: /Stop camera/i })).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/Last four digits/)).not.toBeInTheDocument();
+    });
+
     it('lets go of the camera when the page goes', async () => {
         /* A track left running holds the hardware, and on Android the next
            app to want it gets nothing. A sorter who then cannot take a
-           photograph has a worse problem than the one this solves. */
+           photograph has a worse problem than the one this solves. With
+           no Stop button, this teardown is the ONLY thing that releases
+           it. */
         const track = withCamera();
         mockFetch({ [LOOKUP]: { matches: [] } });
         const view = open();
-        await startCamera();
+        await screen.findByRole('button', { name: 'Scan' });
         view.unmount();
         expect(track.stop).toHaveBeenCalled();
     });
