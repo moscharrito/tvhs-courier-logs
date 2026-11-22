@@ -984,17 +984,94 @@ describe('the deliveries with no proof photograph', () => {
         expect(ids).toContain(failedWithForm.id);
     });
 
-    it('still leaves out everything that has not reached a door', async () => {
-        /* Two statuses are in now, which makes it worth saying which are
-           not: an order in flight has no photograph because it has not
-           happened yet, and a cancelled one never reached a door at all. */
+    it('leaves out work that is still in time', async () => {
+        /* The day's live rounds. A stop due this afternoon has no
+           photograph because it has not happened yet, and listing the lot
+           buries the handful genuinely missing one. Both of these are STAT
+           orders received minutes ago, so their deadlines are ahead. */
         const waiting = await makeOrder();
         const carried = await makeOrder();
         await driveTo(carried.id, 'picked_up');
+        const held = await makeOrder();
+        await driveTo(held.id, 'assigned');
 
         const ids = await idsWithNoPhoto();
         expect(ids).not.toContain(waiting.id);
         expect(ids).not.toContain(carried.id);
+        expect(ids).not.toContain(held.id);
+    });
+
+    /* ───────────── THE STOPS THAT NEVER REACHED AN ENDING AT ALL ─────────
+     *
+     * Reported from production on 22 November 2026, and it is the reason
+     * this block grew a third arm. A day's orders sat at `assigned` with a
+     * courier's name on them, twenty-seven hours past the deadline, with
+     * nothing behind them -- and ticking the filter found none of them,
+     * because it only ever looked at the two endings.
+     *
+     * This is the WORST gap rather than an edge of it. A delivered order
+     * with no picture at least has a courier saying it was handed over.
+     * One of these has nobody saying anything, and the pharmacy handed us
+     * the medication either way.
+     */
+    const STALE = (() => {
+        /* Three days back, not one: a date built from UTC can still be
+           today in America/Chicago for five hours either side of midnight,
+           and a test that fails at 7pm and passes at 9am is worse than no
+           test. */
+        const d = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+        return d.toISOString().slice(0, 10);
+    })();
+
+    it('lists an order left on a courier after its day has passed', async () => {
+        const abandoned = await makeOrder({ serviceDate: STALE });
+        await driveTo(abandoned.id, 'assigned');
+        expect(await idsWithNoPhoto()).toContain(abandoned.id);
+    });
+
+    it('lists one a courier collected and never came back about', async () => {
+        /* `assigned` is where these pile up, because drivers stopped
+           recording collections on 3 November and the custody link is now
+           written when a courier opens a stop. `picked_up` is matched too:
+           a package in a van with no outcome is the same gap, and an
+           earlier build of the app still writes that status. */
+        const carried = await makeOrder({ serviceDate: STALE });
+        await driveTo(carried.id, 'picked_up');
+        expect(await idsWithNoPhoto()).toContain(carried.id);
+    });
+
+    it('does not list one nobody was ever given', async () => {
+        /* Pending and ready were never handed to a courier, so they are a
+           dispatch failure rather than a missing proof -- and the Late only
+           filter beside this one already lists them. Letting them in here
+           would bury the orders we actually cannot account for under every
+           row that was never sent out. */
+        const never = await makeOrder({ serviceDate: STALE });
+        expect(await idsWithNoPhoto()).not.toContain(never.id);
+    });
+
+    it('does not list one that was cancelled', async () => {
+        /* It never reached a door, so there is nothing to prove. */
+        const dropped = await makeOrder({ serviceDate: STALE });
+        await driveTo(dropped.id, 'assigned');
+        expect((await admin.post(`${BASE}/${dropped.id}/events`)
+            .send({ type: 'cancelled', reason: 'pharmacy withdrew it' })).status).toBe(201);
+        expect(await idsWithNoPhoto()).not.toContain(dropped.id);
+    });
+
+    it('lists one whose deadline has gone even though the day has not', async () => {
+        /* The second half of the rule, and the half that is worth having
+           before the day ends: an order received four hours ago on a
+           two-hour clock is late now, and saying so this afternoon is what
+           lets somebody rescue it. Waiting for the date to roll over turns
+           every one of these into tomorrow's apology. */
+        const late = await makeOrder({ requestedAt: PAST });
+        await driveTo(late.id, 'assigned');
+
+        const row = await sql('SELECT due_at, service_date FROM orders WHERE id = ?', [late.id]);
+        expect(String(row.rows[0].due_at) < new Date().toISOString(), 'the fixture must be past due').toBe(true);
+
+        expect(await idsWithNoPhoto()).toContain(late.id);
     });
 
     it('narrows rather than replaces the other filters', async () => {

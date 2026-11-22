@@ -31,7 +31,7 @@ import { priceOrder } from './order-pricing';
 import { sendPdf } from './client-portal';
 import { presentHandling, signingInstruction, handlingFlags } from './handling';
 import { SIGNATURE_RULES, SERVICE_TYPES } from '../../db/schema/uh';
-import { dateIn, instantAt } from '../../core/dates';
+import { dateIn, instantAt, todayIn } from '../../core/dates';
 import { resolveSettings } from '../../core/projects/settings';
 import { resolveZone, pricingSettingsFrom } from './pricing';
 import { zipZoneMap, scheduleOn, siteZipMileMap, payKey } from './zones';
@@ -904,10 +904,41 @@ export function createOrdersRouter(
          * delivery -- so one list of kinds across both statuses would call
          * that one evidenced and quietly drop it.
          *
-         * STILL ONLY delivered AND failed. An order in flight has no
-         * photograph because it has not happened yet, and listing those
-         * buries the handful genuinely missing one under the whole day.
-         * Cancelled never reached a door at all.
+         * ── AND THE THIRD CASE, WHICH IS THE ONE THAT WAS MISSING ──────
+         *
+         * Reported from production on 22 November 2026: a day's orders with
+         * no proof behind them, and ticking this found none of them. The
+         * clause was right about both endings and blind to the orders that
+         * never reached one. They sat at `assigned` with a courier's name
+         * on them, twenty-seven hours past the deadline, and the filter
+         * read them as in flight.
+         *
+         * They are the WORST gap, not an edge of it. A delivered order with
+         * no picture at least has a courier saying it was handed over; one
+         * of these has nobody saying anything at all, and the pharmacy
+         * handed us the medication either way. When University Health asks
+         * what became of a prescription, this is the row with no answer.
+         *
+         * `assigned` is where they pile up rather than `picked_up` because
+         * drivers stopped recording collections on 3 November: the custody
+         * link is written the moment a courier opens a stop (see
+         * CUSTODY_ON_ASSIGNMENT in order-events.ts), so an order nobody
+         * ever touched never moves off `assigned`. Both are matched anyway
+         * -- a package in a van with no outcome is the same gap -- and the
+         * pair is the one escalation.ts already calls an open stop.
+         *
+         * NOT pending OR ready. Those were never given to anybody, so they
+         * are a dispatch failure rather than a missing proof, and the Late
+         * only filter beside this already lists them.
+         *
+         * AND ONLY ONCE THE TIME FOR IT HAS PASSED, which is what keeps the
+         * day's live work out: either the service date is behind us, or the
+         * deadline on the order itself has gone. The first catches the
+         * abandoned ones the morning after, the second catches today's
+         * while the day can still be rescued. An order due this afternoon
+         * is simply not late yet.
+         *
+         * Cancelled stays out: it never reached a door at all.
          *
          * The kinds come from pod-photos rather than being written out
          * again, because this has to agree with the document: storedPhoto()
@@ -920,8 +951,15 @@ export function createOrdersRouter(
                  WHERE f.order_id = o.id AND f.project_id = o.project_id
                    AND f.status = 'stored' AND f.kind IN (${kinds.map(() => '?').join(',')}))`;
             where.push(`((o.status = 'delivered' AND ${missing(PROOF_KINDS)})`
-                + ` OR (o.status = 'failed' AND ${missing(ATTEMPT_KIND)}))`);
-            args.push(...PROOF_KINDS, ...ATTEMPT_KIND);
+                + ` OR (o.status = 'failed' AND ${missing(ATTEMPT_KIND)})`
+                + ` OR (o.status IN ('assigned','picked_up')`
+                + ` AND (o.service_date < ? OR (o.due_at IS NOT NULL AND o.due_at < ?))))`);
+            args.push(
+                ...PROOF_KINDS,
+                ...ATTEMPT_KIND,
+                todayIn(req.project!.timezone),
+                new Date().toISOString(),
+            );
             applied.push('noPhoto');
         }
 

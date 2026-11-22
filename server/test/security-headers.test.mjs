@@ -54,12 +54,30 @@ describe('the content security policy', () => {
     it('allows scripts from here and nowhere else', async () => {
         const res = await srv.agent().get('/');
         const d = directives(res.headers['content-security-policy']);
-        expect(d.get('script-src')).toEqual(["'self'"]);
+        /* ── TWO TOKENS, AND THE SECOND ONE IS NOT WHAT IT LOOKS LIKE ──
+         *
+         * 'wasm-unsafe-eval' arrived with the Sort page on 21 November:
+         * the reader is WebAssembly and Chrome will not instantiate a
+         * module without it. It is a narrow permission despite the name --
+         * it allows compiling WebAssembly and does NOT allow eval of a
+         * JavaScript string, which is the separate token asserted absent
+         * two lines down.
+         *
+         * SPELT OUT RATHER THAN LOOSENED TO a toContain. The point of this
+         * assertion is that the list is exactly these and nothing has been
+         * quietly added beside them, so it has to break when one is. It
+         * broke here because the header moved and this did not, which is
+         * the test doing its job -- read what was added before changing
+         * the line. */
+        expect(d.get('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
         /* If this ever fails because a page needs a CDN, the answer is to
-           serve the file from server/public, the way flatpickr now is. A
-           script from somebody else's server runs with our session cookie on
-           a page showing patient addresses. */
+           serve the file from server/public, the way flatpickr now is, or
+           to copy it out of node_modules at build time, the way the Sort
+           page's reader is. A script from somebody else's server runs with
+           our session cookie on a page showing patient addresses. */
         expect(d.get('script-src')).not.toContain("'unsafe-inline'");
+        /* Still absent, and 'wasm-unsafe-eval' above is not this: these are
+           separate tokens and membership is by whole string. */
         expect(d.get('script-src')).not.toContain("'unsafe-eval'");
     });
 
@@ -118,7 +136,7 @@ describe('the content security policy', () => {
         expect(d.get('frame-ancestors')).toEqual(["'none'"]);
         // Nor anything else. One origin, one directive.
         expect(d.get('default-src')).toEqual(["'self'"]);
-        expect(d.get('script-src')).toEqual(["'self'"]);
+        expect(d.get('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
         expect(d.get('connect-src')).toEqual(["'self'"]);
     });
 

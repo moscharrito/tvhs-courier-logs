@@ -315,11 +315,25 @@ export function Orders() {
                         photograph", which would call a delivery evidenced
                         by the picture of why it did not happen.
 
-                        THE STATUSES ARE IN THE LABEL rather than in a note
-                        underneath, because the first question anybody asks
-                        of an empty result is which rows it was looking at.
-                        A pending order has no photograph because it has not
-                        happened yet.
+                        AND THE ONES THAT NEVER ENDED, since 22 November.
+                        An order still sitting at assigned the morning after
+                        has no proof of anything, and that is a worse gap
+                        than a delivery missing its picture rather than a
+                        lesser one: nobody has said what became of the
+                        medication. It was reported from production as the
+                        filter finding nothing, which is exactly what it
+                        looks like from here.
+
+                        A pending order is still not here. It was never
+                        given to a courier, so it is a dispatch gap rather
+                        than a missing proof, and Late only beside this
+                        already finds it.
+
+                        THE THREE SITUATIONS ARE IN THE LABEL rather than in
+                        a note underneath, because the first question
+                        anybody asks of an empty result is which rows it was
+                        looking at. It is a long label and it is shorter
+                        than the conversation it saves.
 
                         {' '} IS LOAD-BEARING. This label is a flex column,
                         so the two halves are separate boxes and a screen
@@ -335,14 +349,13 @@ export function Orders() {
                         written, so the suite is green either way; this was
                         found by looking at the real page, on 18 November
                         2026, and only the real page can find it again. */}
-                    <label className="izy-field" style={{ minWidth: 215 }}>Proof of delivery
+                    <label className="izy-field" style={{ minWidth: 250 }}>Proof of delivery
                         <span>
                             <input
                                 type="checkbox"
                                 checked={get('noPhoto') === 'true'}
                                 onChange={(e) => set('noPhoto', e.target.checked ? 'true' : '')}
-                            />{' '}delivered or failed, no photo
-                        </span>
+                            />{' '}delivered or failed with no photo, or never finished</span>
                     </label>
                     <button
                         className="izy-btn secondary"

@@ -166,7 +166,7 @@ describe('Orders', () => {
         expect(calls.some((c) => c.includes('/uh/orders/summary?') && c.includes('noPhoto=true'))).toBe(true);
     });
 
-    it('names both endings on the control, so an empty result is readable', async () => {
+    it('names all three situations on the control, so an empty result is readable', async () => {
         /* The first question anybody asks of an empty result is which rows
            it was looking at. A pending order has no photograph because it
            has not happened yet, and that belongs on the control rather than
@@ -192,6 +192,12 @@ describe('Orders', () => {
         /* Both, since 18 November: a failed stop with no picture of the door
            is as unevidenced as a delivery with no signed form. */
         expect(box).toHaveAccessibleName(expect.stringContaining('failed'));
+        /* And since 22 November the stops that never reached either ending.
+           Reported from production as the filter catching nothing: a day's
+           orders sat at assigned, long past due, and the control said it
+           was only looking at deliveries. The label has to say otherwise or
+           the next person reads an empty result as an all-clear. */
+        expect(box).toHaveAccessibleName(expect.stringContaining('never finished'));
     });
 
     /* ── SEARCHING BY PATIENT NAME, WITHOUT PUTTING ONE IN THE URL ────────

@@ -26,7 +26,10 @@
  *   1. Does the total CHANGE? If the two totals match to the row, the
  *      server ignored the parameter -- an old build, or a proxy serving a
  *      cached answer. Nothing else looks like that.
- *   2. Is every returned row delivered or failed? One pending row in the
+ *   2. Is every returned row one the clause allows? Since 22 November
+ *      that is four statuses, not two: delivered and failed with nothing
+ *      photographed, and assigned or picked_up left past their deadline
+ *      with no ending recorded at all. A pending or cancelled row in the
  *      filtered answer means the clause is not reaching the query.
  *   3. How LONG did it take? The filter is a correlated subquery over every
  *      order in the project. If that is slow enough, the page simply still
@@ -36,6 +39,15 @@
  *
  * It also answers the operational question, which is the one worth having
  * every month: how many deliveries we cannot evidence.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * AND THE SECOND REPORT, ON 22 NOVEMBER, WHICH WAS THE OPPOSITE FAULT. The
+ * filter found nothing on a day whose orders plainly had no proof behind
+ * them. It was right about both endings and blind to the stops that never
+ * reached one: a courier's name on them, a day past due, and nothing said.
+ * Those are now in, so this script's own idea of a stray status had to
+ * move with it -- a check that disagrees with the thing it checks reports
+ * the fix as the bug.
  * ───────────────────────────────────────────────────────────────────────── */
 
 import { adminPassword } from './lib/secret.mjs';
@@ -133,7 +145,8 @@ say('');
 if (plain.body.total === filtered.body.total) {
     say('  THE FILTER DID NOTHING. Both calls returned the same total, which');
     say('  the clause cannot produce: it can only ever remove rows, and every');
-    say('  pending, assigned, picked-up and cancelled order is outside it.');
+    say('  pending and cancelled order is outside it, as is everything still');
+    say('  inside its deadline.');
     say('');
     say('  So the parameter never reached the query. Either this server is');
     say('  running a build from before the filter existed -- check /health');
@@ -147,13 +160,24 @@ if (plain.body.total === filtered.body.total) {
 say('');
 
 /* 2. Is everything it returned actually settled? */
+const ALLOWED = ['delivered', 'failed', 'assigned', 'picked_up'];
 const got = statuses(filtered.body);
-const stray = Object.keys(got).filter((s) => s !== 'delivered' && s !== 'failed');
+const stray = Object.keys(got).filter((s) => !ALLOWED.includes(s));
 say(`  statuses in the filtered answer: ${Object.entries(got).map(([k, v]) => `${k} ${v}`).join(', ') || '(none)'}`);
 if (stray.length > 0) {
-    say(`  STRAY STATUSES: ${stray.join(', ')}. The clause allows delivered and`);
-    say('  failed only, so a row outside those means it is not being applied.');
+    say(`  STRAY STATUSES: ${stray.join(', ')}. The clause allows ${ALLOWED.join(', ')}`);
+    say('  and nothing else, so a row outside those means it is not being applied.');
 }
+
+/* THE TWO GAPS ARE NOT THE SAME PROBLEM and want different people. A
+   settled order with no picture is an upload to chase; an order still on a
+   courier a day later is a package nobody can account for, and it is the
+   one to read first. */
+const unfinished = (got['assigned'] ?? 0) + (got['picked_up'] ?? 0);
+const unevidenced = (got['delivered'] ?? 0) + (got['failed'] ?? 0);
+say('');
+say(`  settled with no photograph   ${String(unevidenced).padStart(7)}   an upload to chase`);
+say(`  never finished at all        ${String(unfinished).padStart(7)}   nobody said what happened`);
 say('');
 
 /* 3. And the operational answer, which is why anybody would run this twice. */
