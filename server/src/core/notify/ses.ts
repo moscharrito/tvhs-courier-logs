@@ -93,6 +93,31 @@ export interface MailAttempts {
     /** The last refusal. Status and AWS error type only, never a recipient
      *  and never a hostname -- it is reported on a public endpoint. */
     lastError: string | null;
+    /** What SES SAID, with every address taken out of it.
+     *
+     *  ── WHY THE TYPE ALONE WAS NOT ENOUGH, AGAIN.
+     *
+     *  The same lesson as the 403s one field up, learned a second time and
+     *  more expensively. `400 MessageRejected` is at least three faults:
+     *  an unverified SENDER identity, the sandbox refusing an unverified
+     *  RECIPIENT, and a custom MAIL FROM domain whose MX record is missing
+     *  while the account is set to reject on MX failure. They need three
+     *  different fixes -- verify an identity, request production access,
+     *  add one DNS record -- and the type names none of them.
+     *
+     *  Production spent days at "REFUSING EVERY SEND: 400 MessageRejected"
+     *  with the sentence that says which one thrown away on every single
+     *  attempt, nine and a half thousand times. The only copy anywhere was
+     *  in an audit row for a password reset, reachable by signing in and
+     *  running a script, which is not where somebody reading /health is.
+     *
+     *  SAFE TO KEEP, BECAUSE OF WHAT IS TAKEN OUT. See `redact` below: every
+     *  address is removed before this is stored, and the one that was there
+     *  is reported as `the sender` or `a recipient` -- which is the part
+     *  that decides the fix, and is exactly the part that is not personal.
+     *  SES's error sentences are a fixed published set describing the
+     *  REQUEST; they never quote the message body. */
+    lastDetail: string | null;
     /** When this process last PUT something to SES, failed or not.
      *
      *  WITHOUT THIS THE COUNT ABOVE IS A LIE BY OMISSION. `failing` only
@@ -144,6 +169,40 @@ export function assertNoPatientData(text: string): void {
     }
 }
 
+/* Anything shaped like an email address, which is the only personal thing
+   an SES error sentence can contain. Deliberately greedy about what counts
+   as one: a near-miss left in a public field is worse than a sentence with
+   a hole in it. */
+const ADDRESS = /[^\s<>@,;:"()[\]]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+/** Space to tilde: printable ASCII, written as a range so it reads as one. */
+const UNPRINTABLE = /[^ -~]/g;
+
+/** For comparing one address to another. Not for displaying either. */
+const normalise = (address: string): string => address.trim().toLowerCase().replace(/^<|>$/g, '');
+
+/**
+ * SES's sentence, with every address replaced by what it WAS to us.
+ *
+ * The substitution is the useful part, not a side effect of hiding things.
+ * "Email address is not verified. The following identities failed the check
+ * in region US-EAST-2: <the sender>" and the same sentence ending in
+ * "<a recipient>" are two different faults with two different fixes, and
+ * telling them apart is the entire reason this field exists.
+ *
+ * Printable ASCII only and capped: this goes on an unauthenticated endpoint,
+ * and an upstream that one day returns something other than a short English
+ * sentence must not be able to turn /health into its megaphone.
+ */
+export function redact(message: string, from: string): string {
+    const sender = normalise(from);
+    const said = message.replace(ADDRESS, (found) => (
+        normalise(found) === sender && sender !== '' ? '<the sender>' : '<a recipient>'
+    ));
+    const clean = said.replace(UNPRINTABLE, ' ').replace(/\s+/g, ' ').trim();
+    return clean.length > 200 ? `${clean.slice(0, 197)}...` : clean;
+}
+
 interface SesConfig {
     region: string;
     accessKeyId: string;
@@ -193,7 +252,9 @@ const unavailable = (reason: string): Mailer => ({
     async send() { throw new Error(reason); },
     /* Nothing is attempted, so nothing is failing. /health reports this
        mailer as "off" from `available` and never reads these. */
-    attempts: () => ({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null }),
+    attempts: () => ({
+        attempted: 0, failing: 0, lastError: null, lastDetail: null, lastAttemptAt: null,
+    }),
 });
 
 export function createMailer(config: Config): Mailer {
@@ -212,12 +273,13 @@ export function createMailer(config: Config): Mailer {
     let attempted = 0;
     let failing = 0;
     let lastError: string | null = null;
+    let lastDetail: string | null = null;
     let lastAttemptAt: string | null = null;
 
     return {
         available: true,
         reason: null,
-        attempts: () => ({ attempted, failing, lastError, lastAttemptAt }),
+        attempts: () => ({ attempted, failing, lastError, lastDetail, lastAttemptAt }),
 
         async send(mail: Mail, at = new Date()): Promise<void> {
             /* Before anything else, and before the body is even serialised.
@@ -258,6 +320,9 @@ export function createMailer(config: Config): Mailer {
                    caller and the log. */
                 failing += 1;
                 lastError = 'could not reach SES';
+                /* No response, so there is no sentence. Clearing it stops
+                   the last one standing over a different fault. */
+                lastDetail = null;
                 throw err;
             }
 
@@ -290,14 +355,35 @@ export function createMailer(config: Config): Mailer {
                 let type = res.headers.get('x-amzn-errortype') ?? '';
                 /* The header can arrive as "AccessDeniedException:http://..." */
                 type = type.split(':')[0]!.trim();
-                if (type === '') {
-                    try {
-                        const parsed = await res.json() as { __type?: string; message?: string };
-                        type = parsed.__type ?? '';
-                    } catch { /* not JSON; the status is enough */ }
-                }
+
+                /* ── AND THE SENTENCE, WHICH IS THE PART THAT NAMES THE FIX.
+                 *
+                 * READ ONCE, AS TEXT. The body was previously read only
+                 * when the header was missing, and with res.json(), which
+                 * consumes the stream -- so there was no second chance at
+                 * it afterwards. It is taken as text here and parsed from
+                 * that, which leaves both the type and the message
+                 * available however SES chose to answer.
+                 *
+                 * `message` is the human sentence; `Message` is the same
+                 * field in the older query-protocol shape, and SES still
+                 * answers with it from some endpoints. */
+                let message = '';
+                try {
+                    const body = await res.text();
+                    if (body !== '') {
+                        const parsed = JSON.parse(body) as {
+                            __type?: string; message?: string; Message?: string;
+                        };
+                        if (type === '') type = (parsed.__type ?? '').split(':')[0]!.trim();
+                        message = parsed.message ?? parsed.Message ?? '';
+                    }
+                } catch { /* not JSON, or already consumed; the type is enough */ }
+
                 failing += 1;
                 lastError = `${res.status}${type ? ` ${type}` : ''}`;
+                /* Addresses out, the fix left in. See redact(). */
+                lastDetail = message === '' ? null : redact(message, cfg.from);
                 throw new Error(`SES refused the message: ${lastError}`);
             }
 
@@ -305,6 +391,7 @@ export function createMailer(config: Config): Mailer {
                ago is not broken, whatever it did before. */
             failing = 0;
             lastError = null;
+            lastDetail = null;
         },
     };
 }

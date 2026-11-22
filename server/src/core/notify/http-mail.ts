@@ -82,7 +82,9 @@ const unavailable = (reason: string): Mailer => ({
     available: false,
     reason,
     async send() { throw new Error(reason); },
-    attempts: (): MailAttempts => ({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null }),
+    attempts: (): MailAttempts => ({
+        attempted: 0, failing: 0, lastError: null, lastDetail: null, lastAttemptAt: null,
+    }),
 });
 
 /**
@@ -119,7 +121,21 @@ export function createHttpMailer(config: Config): Mailer {
     return {
         available: true,
         reason: null,
-        attempts: () => ({ attempted, failing, lastError, lastAttemptAt }),
+        /* ── lastDetail IS ALWAYS null HERE, AND THAT IS NOT AN OVERSIGHT.
+         *
+         * The SES mailer keeps the provider's sentence because SES answers
+         * from a fixed published set of errors that describe the REQUEST --
+         * an unverified identity, a missing MAIL FROM record -- and never
+         * quote the message. Nothing of the sort is promised by a generic
+         * HTTP provider: its error body is whatever it feels like saying,
+         * and it may well read the recipient straight back.
+         *
+         * redact() would take the addresses out, but the rule it rests on
+         * does not hold here, so the status stays the whole of it. If this
+         * provider is ever fixed to one whose errors ARE a published set,
+         * that is the moment to revisit it -- deliberately, not by reaching
+         * for the field because it exists. */
+        attempts: () => ({ attempted, failing, lastError, lastDetail: null, lastAttemptAt }),
 
         async send(mail: Mail): Promise<void> {
             /* Before the body is serialised, and NOT counted as an attempt:

@@ -7,7 +7,9 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { startServer } from './helpers/server.mjs';
-import { assertNoPatientData, signRequest, amzDates, createMailer } from '../src/core/notify/ses.ts';
+import {
+    assertNoPatientData, signRequest, amzDates, createMailer, redact,
+} from '../src/core/notify/ses.ts';
 import { dispatchPending, EMAILED_KINDS, BATCH, MAX_ATTEMPTS } from '../src/core/notify/dispatch.ts';
 import { noticeBody } from '../src/modules/uh/delivery-notices.ts';
 
@@ -471,6 +473,131 @@ describe('what a refusal from SES is allowed to say, and what it must say', () =
         expect(err.message).not.toContain('counter@example.invalid');
         expect(err.message).not.toMatch(/not verified/i);
     });
+
+    /* ───────── AND THE SENTENCE, KEPT WHERE THE TYPE IS NOT ENOUGH ───────
+     *
+     * The four tests above exist because a 403 is three faults wearing one
+     * number. On 22 November 2026 the same lesson arrived for 400: the
+     * mailer had refused 9,550 consecutive sends reporting
+     * `400 MessageRejected`, and that is an unverified SENDER, OR the
+     * sandbox refusing a RECIPIENT, OR a custom MAIL FROM domain whose MX
+     * record is missing. Verify an identity, request production access, add
+     * a DNS record: three places, and the type names none of them.
+     *
+     * Only SES's sentence says which, and it was being discarded on every
+     * attempt. So it is kept -- on attempts(), never on the thrown error,
+     * and never with an address in it.
+     */
+    const detailAfter = async (status, headers, body) => {
+        refuse(status, headers, body);
+        const mailer = createMailer({ mail: cfg });
+        await mailer.send(letter).catch(() => {});
+        return mailer.attempts().lastDetail;
+    };
+
+    it('keeps what SES said, with the sender named as the sender', async () => {
+        /* THE WHOLE POINT. "the following identities failed" about OUR from
+           address is an unverified sender -- verify it, no production
+           access needed, and it is the quick fix. The same sentence about
+           somebody else's address is the sandbox, which is a support
+           request to Amazon. One word apart, days apart in the fixing. */
+        const said = await detailAfter(400, { 'x-amzn-errortype': 'MessageRejected' }, {
+            message: 'Email address is not verified. The following identities failed'
+                + ' the check in region US-EAST-2: no-reply@example.invalid',
+        });
+        expect(said).toContain('not verified');
+        expect(said).toContain('<the sender>');
+        expect(said).not.toContain('no-reply@example.invalid');
+    });
+
+    it('names a recipient as a recipient, without saying who', async () => {
+        const said = await detailAfter(400, { 'x-amzn-errortype': 'MessageRejected' }, {
+            message: 'Email address is not verified. The following identities failed'
+                + ' the check in region US-EAST-2: counter@example.invalid',
+        });
+        expect(said).toContain('<a recipient>');
+        expect(said).not.toContain('counter@example.invalid');
+    });
+
+    it('reads the body even when the header already named the type', async () => {
+        /* THE BUG THIS REPLACED. The body was read only when the header was
+           missing, and with res.json(), which consumes the stream -- so on
+           the common path, where SES sets the header, the sentence was
+           never looked at and could not be looked at afterwards. That path
+           is production's. */
+        const said = await detailAfter(400, { 'x-amzn-errortype': 'MessageRejected' }, {
+            __type: 'MessageRejected',
+            message: 'MAIL FROM domain is not verified.',
+        });
+        expect(said).toBe('MAIL FROM domain is not verified.');
+    });
+
+    it('says nothing rather than something, when there is no sentence', async () => {
+        expect(await detailAfter(502, {}, undefined)).toBeNull();
+    });
+
+    it('still keeps it off the thrown error, which reaches the logs', async () => {
+        /* attempts() is read by /health and by the queue page, both of
+           which are deliberate. A log line is neither. */
+        refuse(400, { 'x-amzn-errortype': 'MessageRejected' }, {
+            message: 'Email address is not verified: counter@example.invalid',
+        });
+        const err = await createMailer({ mail: cfg }).send(letter).catch((e) => e);
+        expect(err.message).toBe('SES refused the message: 400 MessageRejected');
+    });
+
+    it('forgets it the moment something sends', async () => {
+        /* A sentence left standing over a working mailer is how the
+           `failing` counter misled somebody once already. */
+        const mailer = createMailer({ mail: cfg });
+        refuse(400, { 'x-amzn-errortype': 'MessageRejected' }, { message: 'Email address is not verified.' });
+        await mailer.send(letter).catch(() => {});
+        expect(mailer.attempts().lastDetail).not.toBeNull();
+
+        vi.restoreAllMocks();
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+        await mailer.send(letter);
+        expect(mailer.attempts().lastDetail).toBeNull();
+        expect(mailer.attempts().failing).toBe(0);
+    });
+});
+
+describe('taking the addresses out of what a provider said', () => {
+    const FROM = 'no-reply@mail.example.invalid';
+
+    it('tells the sender apart from everybody else', () => {
+        expect(redact(`failed: ${FROM}`, FROM)).toBe('failed: <the sender>');
+        expect(redact('failed: someone@example.invalid', FROM)).toBe('failed: <a recipient>');
+    });
+
+    it('does not care about case or angle brackets', () => {
+        /* SES echoes the address as it was given, and the header form
+           <No-Reply@...> is a legitimate way to have given it. Missing that
+           would report our own sender as somebody else's address -- which
+           is the one mistake that sends a person to the wrong fix. */
+        expect(redact('failed: <No-Reply@MAIL.Example.Invalid>', FROM)).toBe('failed: <<the sender>>');
+    });
+
+    it('takes out every address, not the first one', () => {
+        const said = redact('failed: a@example.invalid, b@example.invalid', FROM);
+        expect(said).not.toContain('@');
+    });
+
+    it('treats an unconfigured sender as nobody, rather than as everybody', () => {
+        /* An empty `from` must not make the comparison succeed against a
+           stray empty match and label a recipient as the sender. */
+        expect(redact('failed: someone@example.invalid', '')).toBe('failed: <a recipient>');
+    });
+
+    it('will not let an upstream shout on a public endpoint', () => {
+        /* /health is unauthenticated. A provider that one day answers with
+           a wall of text, or with control characters, must not get to put
+           either of them there. */
+        const said = redact(`${'x'.repeat(400)}\n\tmore`, FROM);
+        expect(said.length).toBeLessThanOrEqual(200);
+        expect(said.endsWith('...')).toBe(true);
+        expect(redact('one\ntwo\u0000three', FROM)).toBe('one two three');
+    });
 });
 
 describe('what the mailer remembers about its own sends', () => {
@@ -498,7 +625,7 @@ describe('what the mailer remembers about its own sends', () => {
     afterEach(() => { vi.restoreAllMocks(); });
 
     it('starts with nothing attempted, which is the honest answer after a boot', () => {
-        expect(createMailer({ mail: cfg }).attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
+        expect(createMailer({ mail: cfg }).attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastDetail: null, lastAttemptAt: null });
     });
 
     it('counts a refusal and keeps the status and type, so /health can name it', async () => {
@@ -551,13 +678,13 @@ describe('what the mailer remembers about its own sends', () => {
         const fetching = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
         const mailer = createMailer({ mail: cfg });
         await expect(mailer.send({ ...letter, text: 'Deliver to 420 Rosewood Street' })).rejects.toThrow(/street address/i);
-        expect(mailer.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
+        expect(mailer.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastDetail: null, lastAttemptAt: null });
         expect(fetching).not.toHaveBeenCalled();
     });
 
     it('reports nothing attempted when it is not configured, rather than throwing', async () => {
         const off = createMailer({ mail: { enabled: false, ses: undefined, portalUrl: '' } });
-        expect(off.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastAttemptAt: null });
+        expect(off.attempts()).toEqual({ attempted: 0, failing: 0, lastError: null, lastDetail: null, lastAttemptAt: null });
     });
 });
 

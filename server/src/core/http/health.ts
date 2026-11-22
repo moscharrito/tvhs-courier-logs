@@ -169,12 +169,27 @@ export function createHealthRouter({
             
                The status and AWS error type are kept because they name the
                job: 403 UnrecognizedClientException is a wrong key id, 403
-               SignatureDoesNotMatch is a wrong secret, 403
-               AccessDeniedException is a missing ses:SendEmail, and 400
-               MessageRejected is the sandbox refusing an unverified
-               recipient. The precedent is the files field, which already
-               reports S3's own error code for the same reason. Neither
-               carries a hostname, an address or a key. */
+               SignatureDoesNotMatch is a wrong secret, and 403
+               AccessDeniedException is a missing ses:SendEmail. The
+               precedent is the files field, which already reports S3's own
+               error code for the same reason. Neither carries a hostname,
+               an address or a key.
+            
+               AND THE SENTENCE AFTER IT, WHICH THE TYPE DOES NOT REPLACE.
+               400 MessageRejected was in that list as "the sandbox refusing
+               an unverified recipient". It is at least three faults -- an
+               unverified SENDER, the sandbox refusing a RECIPIENT, and a
+               custom MAIL FROM domain missing its MX record while the
+               account rejects on MX failure -- and they are fixed in three
+               different places. Production sat on that one string for days
+               while the sentence naming which was discarded nine and a half
+               thousand times.
+            
+               lastDetail is SES's own words with every address taken out
+               and the one that mattered reported as `the sender` or `a
+               recipient`, which is the half that decides the fix. See
+               redact() in notify/ses.ts for what it removes and why what is
+               left is safe here. */
             const tried = mailAttempts?.();
             if (tried && tried.failing > 0) {
                 /* HOW LONG AGO MATTERS, AND LEAVING IT OUT MISLED SOMEBODY.
@@ -195,12 +210,23 @@ export function createHealthRouter({
                 const since = tried.lastAttemptAt === null
                     ? null
                     : Math.round((Date.now() - Date.parse(tried.lastAttemptAt)) / 60000);
+                /* Appended rather than replacing the type: the type is
+                   the stable handle somebody greps for and the sentence is
+                   the thing they act on. */
+                /* typeof rather than a null check. mailAttempts is a
+                   function supplied by the caller, so a mailer that predates
+                   this field -- or a test fixture written as a literal --
+                   hands back undefined, and `!== null` would publish the
+                   word "undefined" on an unauthenticated endpoint. */
+                const said = typeof tried.lastDetail === 'string' && tried.lastDetail !== ''
+                    ? ` -- ${tried.lastDetail}`
+                    : '';
                 if (since !== null && since >= STALE_AFTER_MINUTES) {
                     return `last send refused ${since} minutes ago: ${tried.lastError ?? 'reason not recorded'}`
-                        + ` (${tried.failing} in a row, nothing tried since)`;
+                        + ` (${tried.failing} in a row, nothing tried since)${said}`;
                 }
                 return `REFUSING EVERY SEND: ${tried.lastError ?? 'reason not recorded'}`
-                    + ` (${tried.failing} in a row)`;
+                    + ` (${tried.failing} in a row)${said}`;
             }
             if (!mailRecent) return 'configured';
             try {

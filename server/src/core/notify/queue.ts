@@ -186,6 +186,9 @@ export interface MailerState {
     failing: number;
     /** The last refusal: status and AWS error type. Never a recipient. */
     lastError: string | null;
+    /** What the provider said, addresses removed. The sentence that names
+     *  which of the three MessageRejected faults this is. */
+    lastDetail: string | null;
 }
 
 const Query = z.object({
@@ -403,6 +406,7 @@ export function createMailQueueRouter({ client, mailer }: { client: Client; mail
             attempted: attempts.attempted,
             failing: attempts.failing,
             lastError: attempts.lastError,
+            lastDetail: attempts.lastDetail,
         };
         /* Audited for the same reason reading the audit log is: this is the
            list of who is about to be emailed and what about, and a read of

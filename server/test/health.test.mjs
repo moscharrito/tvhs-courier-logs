@@ -182,6 +182,55 @@ describe('GET /health', () => {
         expect(res.body.scheduler.mail).toMatch(/^REFUSING EVERY SEND/);
     });
 
+    /* ──────── AND WHAT THE TYPE DOES NOT SAY, WHICH COST DAYS ───────────
+     *
+     * Production spent days reporting `400 MessageRejected` and nothing
+     * else, reaching 9,550 consecutive refusals. That one string is an
+     * unverified sender, OR the sandbox refusing a recipient, OR a custom
+     * MAIL FROM domain with no MX record -- three faults, three different
+     * places to go, and the field named none of them. SES says which in a
+     * sentence the mailer was discarding on every attempt.
+     */
+    it('prints what the provider actually said, after the type', async () => {
+        const res = await withMail({
+            attempted: 9550,
+            failing: 9550,
+            lastError: '400 MessageRejected',
+            lastDetail: 'MAIL FROM domain is not verified.',
+            lastAttemptAt: new Date(Date.now() - 60 * 1000).toISOString(),
+        });
+        /* The type still leads: it is the stable handle somebody greps for
+           and it is what every earlier report was written against. */
+        expect(res.body.scheduler.mail).toMatch(/^REFUSING EVERY SEND: 400 MessageRejected/);
+        expect(res.body.scheduler.mail).toContain('MAIL FROM domain is not verified.');
+    });
+
+    it('says the same thing on a refusal that has gone cold', async () => {
+        const res = await withMail({
+            attempted: 25,
+            failing: 25,
+            lastError: '400 MessageRejected',
+            lastDetail: 'Email address is not verified: <the sender>',
+            lastAttemptAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        });
+        expect(res.body.scheduler.mail).toMatch(/last send refused 60 minutes ago/);
+        expect(res.body.scheduler.mail).toContain('<the sender>');
+    });
+
+    it('prints nothing rather than the word undefined when there is no sentence', async () => {
+        /* mailAttempts is a function the caller supplies, so a mailer from
+           before this field existed hands back undefined for it -- as every
+           fixture above this line still does, deliberately. A `!== null`
+           check would have published the word "undefined" on an endpoint
+           that needs no password. */
+        const res = await withMail({
+            attempted: 25, failing: 25, lastError: '400 MessageRejected',
+            lastAttemptAt: new Date(Date.now() - 60 * 1000).toISOString(),
+        });
+        expect(res.body.scheduler.mail).not.toContain('undefined');
+        expect(res.body.scheduler.mail).toBe('REFUSING EVERY SEND: 400 MessageRejected (25 in a row)');
+    });
+
     it('stops saying it the moment one send works', async () => {
         const res = await withMail({ attempted: 4, failing: 0, lastError: null, lastAttemptAt: new Date().toISOString() });
         expect(res.body.scheduler.mail).not.toMatch(/REFUSING/);
