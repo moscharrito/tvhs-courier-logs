@@ -46,7 +46,25 @@ export function buildCsp(options: SecurityOptions): string {
          * bundle from our own origin; the legacy TVHS page's date picker is
          * served from server/public/vendor rather than cdnjs, which is what
          * lets this line stay this short. */
-        ['script-src', ["'self'"]],
+        /* 'wasm-unsafe-eval' IS NOT 'unsafe-eval', AND THE DIFFERENCE IS
+         * THE WHOLE REASON IT IS ACCEPTABLE. It permits compiling and
+         * instantiating WebAssembly. It does NOT permit eval of a
+         * JavaScript string, new Function, or any of the other ways a
+         * string becomes code -- those stay refused.
+         *
+         * It is here for the Sort page, which reads a telephone number
+         * off a package's waybill in the browser. The alternative was
+         * uploading a photograph of the sheet to a cloud reader, and that
+         * sheet carries a patient's name, home address, telephone number
+         * and seven prescription numbers. The agreement signed on
+         * 20 November covers an address lookup; it does not cover a
+         * document reader. Keeping the picture on the handset is worth
+         * one narrow directive.
+         *
+         * Chrome refuses to instantiate WebAssembly without it when a
+         * policy is set, and the failure is a hang rather than anything
+         * written to a console. */
+        ['script-src', ["'self'", "'wasm-unsafe-eval'"]],
         /* 'unsafe-inline' covers style attributes, which React components set
          * in about fifty places, and the boot styles in index.html that paint
          * the loading state before the bundle arrives. It is the one relaxed

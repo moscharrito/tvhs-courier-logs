@@ -92,6 +92,11 @@ const UH_DISPATCH = ['lead', 'projectAdmin', 'platformAdmin'];
 const UH_DISPATCH_AND_COURIER = ['lead', 'courier', 'projectAdmin', 'platformAdmin'];
 const UH_MANAGE = UH_STAFF;
 const UH_CLIENT_VIEW = ['pharmacy', 'projectAdmin', 'platformAdmin'];
+/* THE SORT BENCH. Dispatch and the counter staff who physically put the
+   packages into piles. A courier is deliberately not here: they already
+   have their own round on their phone, and this route would let them ask
+   about somebody else's patients. */
+const UH_SORT = ['pharmacy', 'lead', 'projectAdmin', 'platformAdmin'];
 /* The daily list: a pharmacy sends its own, and DISPATCH SENDS ANYBODY'S.
    `lead` is the contract's dispatcher since 7.20 and the lists mostly arrive
    by email for them to upload, so the one screen that starts the day cannot
@@ -557,6 +562,8 @@ const MATRIX = [
     ['GET', `${UH}/threads/999999`, UH_MEMBER, 'a thread is scoped to the order, not to a role'],
     ['POST', `${UH}/threads/999999`, UH_MEMBER, 'same check, same place'],
     ['GET', `${UH}/runs/propose`, UH_DISPATCH, 'the shape of the whole day across every counter, which no single pharmacy may read'],
+    ['POST', `${UH}/sort/lookup`, UH_SORT,
+        'a phone number off a waybill, back a driver; the counter sorts its own packages'],
     ['GET', `${UH}/runs/split`, UH_DISPATCH, 'the whole list at one counter, and who is on shift to carry it'],
     ['POST', `${UH}/runs/split/apply`, UH_DISPATCH, 'creates runs and assigns drivers, which is dispatch and nobody else'],
     ['GET', `${UH}/runs/999999`, UH_DISPATCH_AND_COURIER, ''],

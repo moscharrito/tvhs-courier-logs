@@ -13,6 +13,7 @@ import { MailQueue } from '../pages/MailQueue';
 import { LegacyTvhs } from '../pages/LegacyTvhs';
 import { ProjectHome } from '../pages/ProjectHome';
 import { Orders } from '../pages/uh/Orders';
+import { Sort } from '../pages/uh/Sort';
 import { Board } from '../pages/uh/Board';
 import { MyRun } from '../pages/uh/MyRun';
 import { Stop } from '../pages/uh/Stop';
@@ -65,6 +66,19 @@ function AdminOnly({ children }: { children: JSX.Element }) {
  * closed to couriers until somebody decides it is open, which is the right
  * way round for a screen that might carry another person's prescription.
  */
+/* The sort bench. A page that needs the project code and nothing else.
+ *
+ * NOT wrapped in DriverRoutesOnly, and deliberately: that guard sends a
+ * courier back to their run, which is right for every other screen here
+ * and would be right for this one too -- but the server already refuses
+ * a courier on this route, and wrapping it would hide the page from the
+ * pharmacy accounts who are the people actually standing at the bench.
+ * The server decides; see modules/uh/sort.ts. */
+function SortPage() {
+    const { code = '' } = useParams();
+    return <Sort projectCode={code} />;
+}
+
 function DriverRoutesOnly({ children }: { children: JSX.Element }) {
     const { code = '' } = useParams();
     const { projects } = useAuth();
@@ -150,6 +164,7 @@ export function App() {
                     gives it -- the rest render a dispatch console or hang on a
                     403, which is why they are guarded and this is not. */}
                 <Route path="/projects/:code/applications" element={<Applications />} />
+                <Route path="/projects/:code/sort" element={<SortPage />} />
                 <Route path="/projects/:code/orders" element={<DriverRoutesOnly><Orders /></DriverRoutesOnly>} />
                 <Route path="/projects/:code/orders/:orderId/stop" element={<Stop />} />
                 <Route path="/projects/:code/orders/:orderId" element={<OrderDetail />} />

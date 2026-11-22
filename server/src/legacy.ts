@@ -58,6 +58,7 @@ import { createOrdersRouter } from './modules/uh/orders';
 import { createReattemptRouter } from './modules/uh/reattempt';
 import { createStopRouter } from './modules/uh/stop';
 import { createRunsRouter } from './modules/uh/runs';
+import { createSortRouter } from './modules/uh/sort';
 import { createDriverRecordsRouter } from './modules/uh/driver-records';
 import { createReturnsRouter } from './modules/uh/returns';
 import { createFilesRouter } from './core/files/routes';
@@ -374,6 +375,10 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
            its deps and a test can set it either way. */
         patientAddresses: config.geo.patientGeocodeAllowed,
     }));
+
+    /* Which van does this package go in: a telephone number off the
+       waybill, back a driver's name. Reads only, writes nothing. */
+    legacy.app.use('/api/projects/:pid/uh/sort', requireProject, createSortRouter({ client: database.client }));
 
     /* The shadow week's log of what did not match (ticket 5.2). */
     legacy.app.use('/api/projects/:pid/uh/discrepancies', requireProject, createDiscrepancyRouter({ client: database.client }));

@@ -1988,3 +1988,67 @@ body {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
     margin-top: 14px; font-size: 13px;
 }
+
+/* ─────────────────────────────── the sort bench (21 November 2026)
+ *
+ * Read one-handed, at arm's length, over a trolley, in a warehouse. The
+ * viewfinder takes the screen and the answer is the biggest type on the
+ * page, because the alternative is bringing the phone closer with a
+ * parcel in the other hand.
+ */
+.izy-sort { max-width: 640px; margin: 0 auto; }
+.izy-sort-head h1 { margin-bottom: 4px; }
+
+.izy-sort-view {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #111;
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 12px 0;
+}
+.izy-sort-view video { width: 100%; height: 100%; object-fit: cover; }
+.izy-sort-off {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #bbb;
+}
+
+/* THE GUIDE, AND IT MATCHES lib/read-sheet.ts GUIDE EXACTLY. If the box
+   drawn here and the strip read there drift apart, a sorter lines up a
+   number that is not the one being read -- which looks exactly like bad
+   recognition and is not. Change both or neither. */
+.izy-sort-guide {
+    position: absolute;
+    left: 6%; top: 38%; width: 88%; height: 24%;
+    border: 2px solid #4ade80;
+    border-radius: 6px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.38);
+    pointer-events: none;
+}
+
+.izy-sort-do { display: flex; gap: 10px; align-items: center; }
+.izy-btn.big { font-size: 1.15rem; padding: 14px 22px; }
+.izy-sort-type { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
+.izy-sort-pick { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+.izy-sort-out { margin-top: 18px; }
+.izy-sort-asked { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.izy-sort-card {
+    border: 1px solid var(--izy-line, #ddd);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+.izy-sort-driver { display: block; font-size: 2rem; line-height: 1.15; }
+.izy-sort-driver.none { font-size: 1.4rem; opacity: 0.75; }
+.izy-sort-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 12px 0 0; }
+.izy-sort-facts dt { font-size: 0.78rem; opacity: 0.65; }
+.izy-sort-facts dd { margin: 0; }
+.izy-sort-flags { margin: 10px 0 0; display: flex; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 520px) {
+    .izy-sort-facts { grid-template-columns: 1fr; }
+    .izy-sort-type { flex-wrap: wrap; }
+}

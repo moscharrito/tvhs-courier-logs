@@ -142,6 +142,12 @@ export function Layout() {
                            the summary. */
                         <>
                             {item(`/projects/${projects[0].code}/deliveries`, 'Deliveries')}
+                            {/* THE BENCH, on a counter's own rail. The people
+                                who physically sort the packages into piles
+                                are standing here, and a page they cannot
+                                reach is a page nobody uses. The server
+                                scopes them to their own sites. */}
+                            {item(`/projects/${projects[0].code}/sort`, 'Sort')}
                             {item(`/projects/${projects[0].code}/performance`, 'Performance')}
                             <div className="izy-nav-title">Account</div>
                         </>
