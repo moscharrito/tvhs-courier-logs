@@ -156,6 +156,38 @@ describe('the bundle a billing clerk downloads', () => {
         expect(new Set(pdfs.map((n) => n.split('/')[0])).size).toBe(2);
     });
 
+    it('names each document after the patient it is about', async () => {
+        /* ── WHAT THE BUNDLE IS ACTUALLY FOR, asked for on 22 November 2026.
+         *
+         * It is extracted next to a stack of paper waybills and matched
+         * against them by hand. The order number is on the screen and not on
+         * the paper in any form somebody reads, so five hundred files called
+         * proof-of-delivery-7948 were sorted by opening them one at a time.
+         *
+         * The document has carried the name on its first page from the
+         * start; what changed is that it is legible without opening the
+         * file. The PDF metadata is still without it -- see pod.test.mjs,
+         * which pins both halves, because they are different exposures and
+         * they used to be one rule. */
+        const manager = await agentFor('uh.manager', 'manager-pass-1');
+        const res = await bundle(manager, `from=${today}&to=${today}`);
+        const pdfs = readZip(res.body).map((f) => f.name).filter((n) => n.endsWith('.pdf'));
+
+        expect(pdfs.length).toBeGreaterThan(0);
+        for (const name of pdfs) {
+            /* `Bundle Patient <n> - proof-of-delivery-<id>-<date>.pdf`,
+               under its pharmacy's folder. The name leads so that extracting
+               a counter's folder sorts it the way the paperwork already
+               is. */
+            expect(name, name).toMatch(/\/Bundle Patient \d+ - proof-of-delivery-\d+-\d{4}-\d{2}-\d{2}\.pdf$/);
+        }
+        /* And they are distinct, which is the whole point: a zip cannot
+           hold two entries at one path, and a bundle that quietly lost a
+           document to a collision would be the worst possible version of
+           this change. */
+        expect(new Set(pdfs).size).toBe(pdfs.length);
+    });
+
     it('puts real documents in it, not placeholders', async () => {
         const manager = await agentFor('uh.manager', 'manager-pass-1');
         const res = await bundle(manager, `from=${today}&to=${today}`);

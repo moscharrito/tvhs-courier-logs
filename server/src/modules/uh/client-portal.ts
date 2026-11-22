@@ -1114,7 +1114,7 @@ export function createClientPortalRouter(
         const pathOf = new Map<number, string>();
         for (const r of settled) {
             const dir = folder.get(Number(r.site_id)) ?? zipSafeName(r.site_name);
-            pathOf.set(Number(r.id), `${dir}/${podFilename(Number(r.id), r.service_date)}`);
+            pathOf.set(Number(r.id), `${dir}/${podFilename(Number(r.id), r.service_date, r.recipient_name)}`);
         }
 
         /* Every courier on the project, once. The documents name the people
@@ -1633,7 +1633,7 @@ export function createClientPortalRouter(
         await attachPhotos(client, storage, project.id, id, data);
 
         await req.audit('client.pod', 'order', String(id), { status: data.status });
-        sendPdf(res, renderPod(data), podFilename(id, data.serviceDate));
+        sendPdf(res, renderPod(data), podFilename(id, data.serviceDate, data.deliveryName));
     }));
 
     return router;

@@ -34,6 +34,10 @@ import {
     buildPdf, imageSize, Page, PAGE, textWidth, toLatin, wrap,
     type EmbeddedImage, type Point,
 } from '../../core/pdf/writer';
+/* A leaf utility with no imports of its own, so this is not a cycle: see
+   the note above zipSafeName for what it removes and why a filename has to
+   survive a zip, a filesystem and a response header all at once. */
+import { zipSafeName } from '../../core/zip/writer';
 import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
 
 const MARGIN = 54;
@@ -597,9 +601,50 @@ export function renderPod(data: PodData, now: Date = new Date()): Buffer {
 
 /* -------------------------------------------------------------- gathering */
 
-/** A filename that names the delivery and nothing about the patient. */
-export const podFilename = (orderId: number, serviceDate: string): string =>
-    `proof-of-delivery-${orderId}-${toLatin(serviceDate)}.pdf`;
+/**
+ * What one proof of delivery is called.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE PATIENT'S NAME IS IN IT, AND IT DID NOT USED TO BE.
+ *
+ * This read "a filename that names the delivery and nothing about the
+ * patient" until 22 November 2026, which was a deliberate choice and is now
+ * a deliberately different one. The bundle is extracted beside a stack of
+ * paper waybills and matched against them by hand, and an order number is
+ * the one thing on the screen that is not on the paper in a form anybody
+ * reads. Five hundred files called proof-of-delivery-7948 are sorted by
+ * opening them.
+ *
+ * THE NAME LEADS so a folder sorts by patient, which is the order the
+ * paperwork is already in.
+ *
+ * WHAT THIS DOES AND DOES NOT CHANGE. The document has always carried the
+ * name, the address and the signature on its first page, so nobody gains
+ * access to anything by reading the filename. What is new is that the name
+ * is legible WITHOUT opening the file: in a zip listing, in a downloads
+ * folder, and in a screenshot of either. That is the point of the change
+ * and it is also its whole cost.
+ *
+ * THE PDF METADATA IS STILL WITHOUT IT, and that is not an oversight --
+ * see buildPdf above. Metadata rides inside the file wherever it is
+ * forwarded and shows in a reader's title bar, which is a different
+ * exposure from a filename somebody chose to download.
+ *
+ * toLatin THEN zipSafeName, in that order and both of them. toLatin turns
+ * accents into their plain letters rather than dropping them, so a name is
+ * still recognisable; zipSafeName removes what a zip, Windows or a
+ * Content-Disposition header would choke on -- including the quote and the
+ * control characters that would otherwise let a name injected into a
+ * recipient field rewrite a response header.
+ */
+export function podFilename(orderId: number, serviceDate: string, patientName = ''): string {
+    const delivery = `proof-of-delivery-${orderId}-${toLatin(serviceDate)}.pdf`;
+    const who = toLatin(patientName).trim();
+    /* An order with no recipient name keeps the old filename rather than
+       growing an "unnamed" in front of it, which is what zipSafeName would
+       hand back for an empty string. */
+    return who === '' ? delivery : `${zipSafeName(who)} - ${delivery}`;
+}
 
 interface LoadOptions {
     projectId: number;

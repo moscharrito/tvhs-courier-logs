@@ -1370,7 +1370,7 @@ export function createOrdersRouter(
         await attachPhotos(client, storage, req.project!.id, Number(order.id), data);
 
         await req.audit('order.pod', 'order', String(order.id), { status: data.status });
-        sendPdf(res, renderPod(data), podFilename(Number(order.id), data.serviceDate));
+        sendPdf(res, renderPod(data), podFilename(Number(order.id), data.serviceDate, data.deliveryName));
     }));
 
     /* The map for one stop (ticket 5.13). Before /:id so "directions" is not

@@ -360,17 +360,80 @@ describe('the proof of delivery', () => {
         expect(theirs).not.toContain('ada.courier');
     });
 
-    it('keeps the patient name out of the file metadata and the filename', async () => {
-        /* The title shows in a reader's tab and in the file properties of
-           anything this is forwarded to. */
+    it('keeps the patient name out of the file METADATA, which is not the filename', async () => {
+        /* ── THE TWO WERE ONE RULE UNTIL 22 NOVEMBER 2026, AND ARE NOT NOW.
+         *
+         * The title shows in a reader's tab and in the file properties of
+         * anything this is forwarded to: it rides INSIDE the file, wherever
+         * the file goes, and nobody chose to see it. That still has no
+         * patient name in it.
+         *
+         * The filename does, deliberately, since the bundle is matched
+         * against a stack of paper waybills by hand and an order number is
+         * not on the paper in a form anybody reads. Different exposure,
+         * different answer, and this test now pins both halves so neither
+         * drifts into the other. */
         const order = await deliveredOrder({ recipientName: 'Ines Vargas' });
         const res = await admin.get(`${ORDERS}/${order.id}/pod.pdf`);
         const body = Buffer.from(res.body).toString('latin1');
         const title = /\/Title \(([^)]*)\)/.exec(body)?.[1] ?? '';
         expect(title).not.toContain('Ines');
         expect(title).toContain(String(order.id));
-        expect(res.headers['content-disposition']).not.toContain('Ines');
-        expect(podFilename(7, '2026-09-14')).toBe('proof-of-delivery-7-2026-09-14.pdf');
+        /* And it is still sent inline rather than as an attachment, so
+           looking at one delivery does not drop a named file into a shared
+           counter machine's downloads folder. */
+        expect(res.headers['content-disposition']).toMatch(/^inline;/);
+        expect(res.headers['content-disposition']).toContain('Ines Vargas');
+    });
+
+    describe('what a proof of delivery is called', () => {
+        /* Asked for on 22 November 2026. Five hundred files called
+           proof-of-delivery-7948 are sorted by opening them. */
+
+        it('leads with the patient, so a folder sorts the way the paper does', () => {
+            expect(podFilename(7, '2026-09-14', 'Ines Vargas'))
+                .toBe('Ines Vargas - proof-of-delivery-7-2026-09-14.pdf');
+        });
+
+        it('keeps the old name when there is no recipient on the order', () => {
+            /* Not "unnamed - proof-of-delivery-...", which is what
+               zipSafeName hands back for an empty string. */
+            expect(podFilename(7, '2026-09-14')).toBe('proof-of-delivery-7-2026-09-14.pdf');
+            expect(podFilename(7, '2026-09-14', '   ')).toBe('proof-of-delivery-7-2026-09-14.pdf');
+        });
+
+        it('keeps an accented name readable rather than dropping the letters', () => {
+            /* toLatin before zipSafeName. A pharmacist looking for Munoz
+               should find Munoz, not Mu-oz or Mnz. */
+            expect(podFilename(7, '2026-09-14', 'José Muñoz'))
+                .toBe('Jose Munoz - proof-of-delivery-7-2026-09-14.pdf');
+        });
+
+        it('cannot be used to rewrite a response header', () => {
+            /* THE REASON zipSafeName IS IN THIS AND NOT JUST toLatin. The
+               filename goes into Content-Disposition inside double quotes,
+               so a quote or a newline in a recipient field would end the
+               header and start another one. Pharmacy uploads are the source
+               of these names and nothing upstream promises they are tidy. */
+            const nasty = podFilename(7, '2026-09-14', 'A"\r\nX-Evil: yes');
+            expect(nasty).not.toContain('"');
+            expect(nasty).not.toMatch(/[\r\n]/);
+        });
+
+        it('cannot climb out of its folder in the bundle', () => {
+            /* The zip writes these under a per-pharmacy directory. A slash
+               or a run of dots in a name would put the file somewhere else
+               entirely when it was extracted. */
+            const climbed = podFilename(7, '2026-09-14', '../../etc/passwd');
+            expect(climbed).not.toContain('/');
+            expect(climbed).not.toContain('\\');
+        });
+
+        it('stays a sensible length however long the name is', () => {
+            const long = podFilename(7, '2026-09-14', 'Wolfeschlegelsteinhausenbergerdorff '.repeat(10));
+            expect(long.length).toBeLessThan(140);
+            expect(long.endsWith('proof-of-delivery-7-2026-09-14.pdf')).toBe(true);
+        });
     });
 
     it('is never cached, because a pharmacy counter is a shared machine', async () => {
