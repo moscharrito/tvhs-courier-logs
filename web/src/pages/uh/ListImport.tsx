@@ -98,6 +98,15 @@ interface ImportSummary {
     importedBy: string;
     /** Optional: a server older than this build does not send it. */
     importedByName?: string;
+    /** Deliveries the clusterer would still offer: ready or pending, not
+     *  STAT, not already on a live run. Zero means the list is clustered.
+     *
+     *  OPTIONAL, AND UNDEFINED IS NOT ZERO. A server older than
+     *  21 November does not send it, and treating a missing field as
+     *  "nothing left" would grey out every Cluster button on the screen
+     *  against an older deploy. Undefined means "cannot tell", which the
+     *  row answers by leaving the button live. */
+    unclusteredCount?: number;
     /** Deliveries on this list a driver has picked up, delivered or failed.
      *  Optional for the same reason: a server older than 11 November does
      *  not send it, and `undefined` must not read as "nothing was driven" --
@@ -669,6 +678,14 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                             text: `${runs} ${runs === 1 ? 'round' : 'rounds'} created and assigned. `
                                 + 'Each driver has their stops on their phone.',
                         });
+                        /* The row behind the dialog is now stale: its
+                           deliveries are on runs and its Cluster button
+                           should be out. Re-read rather than decrement
+                           locally -- a round can be rejected on apply, and
+                           a count this screen guessed at would be the one
+                           thing saying a list was finished when it is
+                           not. */
+                        void loadRecent();
                         /* The dialog stays open: the per-driver spreadsheets
                            appear in it once the runs exist, and closing it
                            out from under somebody about to download them
@@ -1046,8 +1063,29 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                     NOT ON A WITHDRAWN LIST, and not on one
                                     that created nothing: both would open a
                                     dialog with no deliveries behind it. */}
+                                {/* ── AND IT GOES OUT ONCE THERE IS NOTHING LEFT
+                                    TO CLUSTER.
+
+                                    Pressing it twice was never dangerous:
+                                    /runs/split offers only unassigned
+                                    orders, and /split/apply re-reads every
+                                    id and refuses the whole body if one has
+                                    moved. The second press opened a dialog
+                                    that split nothing and said so in small
+                                    print, which is a worse answer than a
+                                    button that is plainly done.
+
+                                    `unclusteredCount === 0` is the test, not
+                                    "a run exists for this day": a list can be
+                                    half clustered -- somebody ticked two
+                                    drivers, looked at it, and left the rest
+                                    -- and that list still has work in it. */}
                                 <td>
-                                    {l.status !== 'cancelled' && l.orderCount > 0 ? (
+                                    {l.status === 'cancelled' || l.orderCount === 0 ? (
+                                        <span className="izy-muted">—</span>
+                                    ) : l.unclusteredCount === 0 ? (
+                                        <span className="izy-pill">Clustered</span>
+                                    ) : (
                                         <button
                                             type="button"
                                             className="izy-btn small"
@@ -1058,8 +1096,16 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                             aria-label={`Cluster the ${l.serviceDate} ${l.site.name} list between drivers`}
                                         >
                                             Cluster
+                                            {/* HOW MUCH IS LEFT, on a list that is
+                                                partly done. Without it the button
+                                                looks identical to an untouched list
+                                                and a dispatcher re-clusters the
+                                                whole day to find out. */}
+                                            {typeof l.unclusteredCount === 'number'
+                                                && l.unclusteredCount < l.orderCount
+                                                && ` ${l.unclusteredCount} left`}
                                         </button>
-                                    ) : <span className="izy-muted">—</span>}
+                                    )}
                                 </td>
                                 {canWithdraw === true && (
                                     <td>

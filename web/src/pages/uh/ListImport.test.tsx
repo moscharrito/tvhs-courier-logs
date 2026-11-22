@@ -917,6 +917,57 @@ describe('ListImport', () => {
         }
     });
 
+    /* ───────── once it is clustered, the button is done (21 November)
+     *
+     * Pressing it twice was never dangerous -- the split offers only
+     * unassigned orders and the apply re-reads every id -- but the second
+     * press opened a dialog that divided nothing and said so in small
+     * print. A button that is plainly finished is a better answer than a
+     * live one that does nothing.
+     */
+    const listRow = (over = {}) => ({
+        id: 11, site: { id: 7, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
+        serviceDate: '2026-09-14', status: 'released', receivedAt: '2026-09-14T17:00:00.000Z',
+        sourceFilename: 'wave.xlsx', rowCount: 50, orderCount: 50, skippedCount: 0, importedBy: 'admin',
+        ...over,
+    });
+
+    const rowOf = async (over = {}) => {
+        stub({ ...baseRoutes, 'GET /api/projects/uh/uh/imports': [listRow(over)] });
+        render(<ListImport projectCode="uh" timezone="America/Chicago" canImport />);
+        return (await screen.findByText('wave.xlsx')).closest('tr')!;
+    };
+
+    it('says Clustered instead of offering the button, once nothing is left', async () => {
+        const row = await rowOf({ unclusteredCount: 0 });
+        expect(within(row).getByText('Clustered')).toBeInTheDocument();
+        expect(within(row).queryByRole('button', { name: /^Cluster the/ })).not.toBeInTheDocument();
+    });
+
+    it('still offers it on a list nobody has touched', async () => {
+        const row = await rowOf({ unclusteredCount: 50 });
+        expect(within(row).getByRole('button', { name: /^Cluster the/ })).toBeInTheDocument();
+        /* No count on an untouched list: "50 left" of 50 is noise. */
+        expect(within(row).queryByText(/left/)).not.toBeInTheDocument();
+    });
+
+    it('says how many are left on a list that is half done', async () => {
+        /* A dispatcher who clustered two drivers' worth and came back needs
+           to see there is more, without re-clustering the day to find out.
+           An unadorned button looks identical to an untouched list. */
+        const row = await rowOf({ unclusteredCount: 12 });
+        expect(within(row).getByRole('button', { name: /^Cluster the/ })).toHaveTextContent('12 left');
+    });
+
+    it('leaves the button live when the server is too old to say', async () => {
+        /* A deployed bundle can be newer than the server for a minute, and
+           a missing field is "cannot tell", not "nothing left". Reading
+           undefined as zero would grey out every button on the screen. */
+        const row = await rowOf({});
+        expect(within(row).getByRole('button', { name: /^Cluster the/ })).toBeInTheDocument();
+        expect(within(row).queryByText('Clustered')).not.toBeInTheDocument();
+    });
+
     it('offers no cluster on a list that created no deliveries', async () => {
         /* A file can import nothing at all -- every row a duplicate, or
            every row blocked. The row stays, so the morning is on the

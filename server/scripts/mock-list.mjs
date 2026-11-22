@@ -54,6 +54,7 @@
  *   node server/scripts/mock-list.mjs --site discharge   a different counter
  *   node server/scripts/mock-list.mjs --csv              csv instead of xlsx
  *   node server/scripts/mock-list.mjs --streets          real streets, so it geocodes
+ *   node server/scripts/mock-list.mjs --stat             include STAT rows, which a real list has not got
  *
  * Writes to docs/forms/ and prints the path. Upload it from the pharmacy's
  * own portal, not from an admin account: the point is the counter's path.
@@ -170,12 +171,30 @@ const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 const HEADERS = ['RX #', 'Patient Name', 'Phone', 'Address', 'Apt', 'City', 'State', 'Zip Code',
     'Priority', '# OF PIECES', 'Medication', 'Delivery Instructions', 'Signature', 'ID', 'Fridge', 'Controlled'];
 
+/* ── NO STAT ROWS, BECAUSE A PHARMACY'S LIST HAS NOT GOT ANY ──────────
+ *
+ * It generated them at 6% until 21 November, on the reasoning that a real
+ * morning holds a few urgent ones. It does -- but they do not arrive on
+ * this list. University Health raises a STAT separately and dispatch keys
+ * it in by hand; the daily export is the scheduled wave.
+ *
+ * It mattered because the clusterer HOLDS STAT BACK on purpose: one hour
+ * from pickup cannot survive being the eleventh stop of nineteen, so those
+ * rows come out of the split and are listed for a short run of their own.
+ * Correct behaviour, and on a generated file it fired every time -- fifty
+ * rows in, forty-six clustered, a banner explaining why. The test file was
+ * manufacturing an exception that the thing it was testing never meets, and
+ * the obvious reading of that banner is that the clusterer is dropping
+ * work.
+ *
+ * --stat puts them back, for the one case where the hold-back itself is
+ * what is being tested. */
 const rows = [];
 for (let i = 0; i < orders; i += 1) {
-    /* Mostly scheduled, a handful urgent, a few same-day extras: the shape of
-       a real morning rather than an even split. */
+    /* Mostly scheduled with a few same-day extras: the shape of a real
+       morning rather than an even split. */
     const r = rand();
-    const priority = r < 0.06 ? 'STAT' : r < 0.14 ? 'ADHOC' : 'SCHEDULED';
+    const priority = (has('stat') && r < 0.06) ? 'STAT' : r < 0.14 ? 'ADHOC' : 'SCHEDULED';
     const controlled = rand() < 0.07;
     const zip = pick(ZIPS);
     /* Drawn AFTER the zip and from the same generator, so --seed still

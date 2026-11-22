@@ -1057,12 +1057,53 @@ function personKey(recipientName: unknown, addressLine: unknown, zip: unknown): 
             for (const w of workRs.rows) driven.set(Number(w['daily_list_id']), Number(w['n']));
         }
 
+        /* ───────── AND HOW MUCH OF EACH LIST IS STILL WAITING FOR A DRIVER
+         *
+         * So the Cluster button on the row can grey out once there is
+         * nothing left to cluster. The server already refuses a second
+         * pass -- /runs/split offers only unassigned orders, and
+         * /split/apply re-checks every id and rejects the whole body if
+         * one has moved -- so this is not a safety control. It is the
+         * screen telling the truth: a live button on a finished list is an
+         * invitation to press it, and what it does is open a dialog
+         * offering nobody any work.
+         *
+         * THE SAME THREE RULES THE SPLIT ITSELF USES, which is why they
+         * are spelled out rather than approximated as "status = ready":
+         *   - ready or pending, the SPLITTABLE rule in runs.ts
+         *   - not already on a run that is not cancelled
+         *   - not STAT, which the clusterer holds back on purpose
+         * Approximating any one of them gives a row that says "nothing
+         * left" over work there is, or stays lit over a list that is done.
+         */
+        const waiting = new Map<number, number>();
+        if (listIds.length > 0) {
+            const marks = listIds.map(() => '?').join(',');
+            const waitRs = await client.execute({
+                sql: `SELECT o.daily_list_id, COUNT(*) AS n FROM orders o
+                       WHERE o.project_id = ? AND o.daily_list_id IN (${marks})
+                         AND o.status IN ('ready', 'pending')
+                         AND o.service_type != 'stat'
+                         AND NOT EXISTS (
+                               SELECT 1 FROM run_stops rs
+                                JOIN runs r ON r.id = rs.run_id
+                                WHERE rs.order_id = o.id AND r.status != 'cancelled')
+                       GROUP BY o.daily_list_id`,
+                args: [req.project!.id, ...listIds],
+            });
+            for (const w of waitRs.rows) waiting.set(Number(w['daily_list_id']), Number(w['n']));
+        }
+
         res.json(rs.rows.map((r) => ({
             id: Number(r['id']),
             site: { id: Number(r['site_id']), code: String(r['site_code']), name: String(r['site_name']) },
             /** Deliveries on this list a driver has picked up, delivered or
              *  failed. Zero means it can be withdrawn in one click. */
             driverWorkCount: driven.get(Number(r['id'])) ?? 0,
+            /** Deliveries on this list the clusterer would still offer.
+             *  Zero means every one of them is on a driver's run already,
+             *  and the Cluster button has nothing to do. */
+            unclusteredCount: waiting.get(Number(r['id'])) ?? 0,
             serviceDate: String(r['service_date']),
             status: String(r['status']),
             receivedAt: String(r['received_at']),

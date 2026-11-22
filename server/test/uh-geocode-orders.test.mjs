@@ -24,16 +24,18 @@ const DAY = '2026-11-21';
 let srv;
 let admin;
 let siteId;
+/** A second counter, for the scoping test at the foot of the file. */
+let otherSiteId;
 
 const sql = (q, args = []) => srv.core.client.execute({ sql: q, args });
 
 /* A delivery with a street address on it, on DAY. The address is invented
    and so is the patient: nothing in this repository may carry a real one. */
 let seq = 0;
-async function order(addressLine = '1100 Rehearsal Way') {
+async function order(addressLine = '1100 Rehearsal Way', at = undefined) {
     seq += 1;
     const r = await admin.post(`${UH}/orders`).send({
-        siteId,
+        siteId: at ?? siteId,
         serviceType: 'adhoc',
         recipientName: `Geo Patient ${seq}`,
         addressLine,
@@ -53,6 +55,7 @@ beforeAll(async () => {
     admin = await srv.login('admin');
     const sites = (await admin.get(`${UH}/sites`)).body;
     siteId = sites.find((s) => s.code === 'discharge').id;
+    otherSiteId = sites.find((s) => s.code === 'green').id;
 
     /* A driver on this contract, for the clustering tests at the foot of
        the file. The seeded north/south drivers are TVHS, not UH. */
@@ -209,5 +212,40 @@ describe('clustering looks the addresses up by itself', () => {
         expect(res.status, res.text).toBe(200);
         expect(res.body.rounds.length).toBeGreaterThan(0);
         expect(res.body.rounds.every((r) => r.ordering === 'due')).toBe(true);
+    });
+});
+
+/* ───────── and it looks up ONE COUNTER, not the whole contract
+ *
+ * The first cut passed no site, so clustering Wheatley's eleven deliveries
+ * looked up every pharmacy's day -- nine counters, up to fourteen hundred
+ * addresses on a Tuesday -- inside the one request the dispatcher was
+ * sitting in front of. The right answer, eventually, through a proxy that
+ * would have given up first.
+ *
+ * The admin button is still whole-day. That one is somebody deciding to
+ * prepare a day; this one is somebody waiting for a split.
+ */
+describe('how far the clusterer reaches', () => {
+    it('leaves another counter\u2019s deliveries alone', async () => {
+        const mine = await order();
+        const theirs = await order('1200 Rehearsal Way', otherSiteId);
+
+        const res = await admin.get(`${UH}/runs/split?site=discharge&serviceDate=${DAY}&couriers=geo.ana`);
+        expect(res.status, res.text).toBe(200);
+
+        const statusOf = async (id) =>
+            String((await sql('SELECT geocode_status FROM orders WHERE id = ?', [id])).rows[0].geocode_status);
+
+        expect(await statusOf(mine), 'this counter was looked up').toBe('failed');
+        expect(await statusOf(theirs), 'the other counter was not touched').toBe('pending');
+    });
+
+    it('the admin button still covers the whole day, both counters', async () => {
+        const theirs = await order('1300 Rehearsal Way', otherSiteId);
+
+        const res = await admin.post(`${UH}/geocode/orders`).send({ serviceDate: DAY });
+        expect(res.status, res.text).toBe(201);
+        expect(res.body.failed.some((f) => f.orderId === theirs)).toBe(true);
     });
 });

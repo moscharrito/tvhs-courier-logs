@@ -1412,7 +1412,12 @@ export function createRunsRouter(
          */
         if (patientAddresses && lookup) {
             try {
-                await locateDeliveries({ client, lookup, projectId: project.id, serviceDate });
+                /* THIS COUNTER ONLY. The dispatcher is waiting on this
+                   request; the other eight pharmacies' deliveries are not
+                   in the split and are not theirs to wait for. */
+                await locateDeliveries({
+                    client, lookup, projectId: project.id, serviceDate, siteId: site.id,
+                });
             } catch {
                 /* Swallowed on purpose; see above. The fallback below
                    reports what is still missing, which is the thing the

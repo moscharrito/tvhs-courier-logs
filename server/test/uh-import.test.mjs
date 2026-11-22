@@ -1150,6 +1150,108 @@ describe('withdrawing a list', () => {
         expect(event.detail.driverWorkDeleted).toBe(0);
     });
 
+    /* ───────── WHAT IS LEFT TO CLUSTER, so the row's button can go out
+     *
+     * Pressing Cluster on a finished list was never dangerous: /runs/split
+     * offers only unassigned orders and /split/apply re-reads every id and
+     * refuses the whole body if one has moved. But it opened a dialog that
+     * split nothing and explained itself in small print, which is a worse
+     * answer than a button that is plainly done.
+     *
+     * The stops are written with SQL rather than through /runs, the same
+     * way driven() fakes a delivered order above. What is under test is the
+     * COUNT on the list endpoint, not the run API, and going through the
+     * API would need a UH courier this file has no reason to have.
+     */
+    async function onARun(listId, orderIds, status = 'planned') {
+        const run = await sql(
+            `INSERT INTO runs (project_id, courier_username, service_date, label, status, created_by)
+             VALUES ((SELECT id FROM projects WHERE code = 'uh'), 'some.driver', '2026-09-14', 'Cluster 1', ?, 'admin')
+             RETURNING id`, [status],
+        );
+        const runId = Number(run.rows[0].id);
+        let n = 1;
+        for (const id of orderIds) {
+            await sql(
+                `INSERT INTO run_stops (project_id, run_id, order_id, sequence)
+                 VALUES ((SELECT id FROM projects WHERE code = 'uh'), ?, ?, ?)`,
+                [runId, Number(id), n],
+            );
+            await sql("UPDATE orders SET status = 'assigned' WHERE id = ?", [Number(id)]);
+            n += 1;
+        }
+        return runId;
+    }
+
+    const rowFor = async (listId) =>
+        (await admin.get(BASE)).body.find((r) => r.id === listId);
+
+    /** The ids the clusterer would actually offer from this list. */
+    const offerable = async (listId) => (await sql(
+        `SELECT id FROM orders WHERE daily_list_id = ?
+           AND status IN ('ready', 'pending') AND service_type != 'stat' ORDER BY id`,
+        [listId],
+    )).rows.map((o) => Number(o.id));
+
+    it('says how much of a list is still waiting for a driver', async () => {
+        await reset();
+        const list = await uploaded();
+        const fresh = await rowFor(list.id);
+
+        expect(fresh.unclusteredCount).toBe((await offerable(list.id)).length);
+        /* AND IT IS NOT orderCount. RX-1002 in the fixture is a STAT, which
+           the clusterer holds back, so a brand new list already has fewer
+           deliveries to cluster than it has deliveries. A row that counted
+           every order would keep a live button over a finished list. */
+        expect(fresh.unclusteredCount).toBeLessThan(fresh.orderCount);
+    });
+
+    it('drops to zero once every delivery is on a run, and not before', async () => {
+        /* THE WHOLE POINT. Half a list clustered is still a list with work
+           in it, and a row that went out on the first run created would
+           hide the rest of the day. */
+        await reset();
+        const list = await uploaded();
+        const ids = await offerable(list.id);
+        expect(ids.length, 'enough rows to leave some behind').toBeGreaterThan(1);
+
+        await onARun(list.id, ids.slice(0, 1));
+        expect((await rowFor(list.id)).unclusteredCount).toBe(ids.length - 1);
+
+        await onARun(list.id, ids.slice(1));
+        expect((await rowFor(list.id)).unclusteredCount).toBe(0);
+    });
+
+    it('hands the work back when the run is cancelled', async () => {
+        /* A withdrawn run returns its stops to the pool. The row has to
+           light up again or the day is quietly stranded: nothing else on
+           this screen would ever mention it. */
+        await reset();
+        const list = await uploaded();
+        const ids = await offerable(list.id);
+        const runId = await onARun(list.id, ids);
+        expect((await rowFor(list.id)).unclusteredCount).toBe(0);
+
+        await sql("UPDATE runs SET status = 'cancelled' WHERE id = ?", [runId]);
+        await sql(
+            `UPDATE orders SET status = 'ready' WHERE id IN (${ids.map(() => '?').join(',')})`, ids,
+        );
+        expect((await rowFor(list.id)).unclusteredCount).toBe(ids.length);
+    });
+
+    it('does not count a STAT, which the clusterer holds back anyway', async () => {
+        /* Otherwise a list whose every ordinary delivery is on a run would
+           keep a live Cluster button for work the split will never offer,
+           and pressing it would produce the empty dialog this is for. */
+        await reset();
+        const list = await uploaded();
+        const ids = await offerable(list.id);
+        await sql("UPDATE orders SET service_type = 'stat' WHERE id = ?", [ids[0]]);
+
+        await onARun(list.id, ids.slice(1));
+        expect((await rowFor(list.id)).unclusteredCount).toBe(0);
+    });
+
     it('puts the driven count on the list, so the button can say it before it is pressed', async () => {
         /* A server-side guard that the screen never mentions is still a
            surprise. The whole lesson of 9 November is that the one dialog

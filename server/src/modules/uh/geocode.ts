@@ -100,24 +100,39 @@ export interface LocateOutcome {
  * point, and the lookup caches by address underneath, so the second pass
  * over a located day does no work and discloses nothing.
  *
+ * `siteId` NARROWS IT TO ONE COUNTER, and the clusterer always passes one.
+ * Without it, clustering Wheatley's eleven deliveries looked up the whole
+ * contract's day -- nine pharmacies, up to fourteen hundred addresses on a
+ * Tuesday -- inside the one request the dispatcher was waiting on. Correct
+ * answer, eventually, through a proxy that would have given up first. The
+ * admin button stays whole-day on purpose: that one is somebody choosing to
+ * prepare a day, not somebody waiting for a split.
+ *
  * IT IS NOT GATED HERE. The permission is a deployment decision and both
  * callers check it before calling -- here it would be a third copy of the
  * same `if`, and a gate nobody can see from the call site is a gate that
  * gets refactored away.
  */
 export async function locateDeliveries(
-    { client, lookup, projectId, serviceDate }:
-    { client: Client; lookup: GeoLookup; projectId: number; serviceDate: string },
+    { client, lookup, projectId, serviceDate, siteId }:
+    {
+        client: Client; lookup: GeoLookup; projectId: number; serviceDate: string;
+        /** One counter's deliveries. Omitted means the whole day. */
+        siteId?: number;
+    },
 ): Promise<LocateOutcome> {
     const rs = await client.execute({
         sql: `SELECT id, address_line, address_line2, city, state, zip
                 FROM orders
                WHERE project_id = ? AND service_date = ?
+                 ${siteId === undefined ? '' : 'AND site_id = ?'}
                  AND (lat IS NULL OR lng IS NULL)
                  AND status != 'cancelled'
                  AND TRIM(address_line) != ''
                ORDER BY id`,
-        args: [projectId, serviceDate],
+        args: siteId === undefined
+            ? [projectId, serviceDate]
+            : [projectId, serviceDate, siteId],
     });
     const pending = rs.rows.map((r) => ({
         id: Number(r['id']),
