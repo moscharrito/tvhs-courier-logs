@@ -609,7 +609,13 @@ const MATRIX = [
        by the query string. A row wider than this one would hand a courier,
        or a pharmacy's neighbour, a month of somebody else's patients in a
        single click. */
-    ['GET', `${UH}/client/orders-with-pod.zip`, UH_CLIENT_VIEW, 'the deliveries and every proof of delivery, patient data included'],
+    /* THE ONE ROUTE ON THIS ROUTER DISPATCH MAY CALL. Widened 22 November
+       2026: when University Health ring about a week's proofs it is
+       dispatch who answer, and the alternative was a second bundler on the
+       orders router -- which is how the two proof-of-delivery documents
+       drifted apart before pod-photos.ts. A lead is still scoped by their
+       membership's siteIds inside it, exactly as a pharmacy is. */
+    ['GET', `${UH}/client/orders-with-pod.zip`, UH_SORT, 'the deliveries and every proof of delivery, patient data included'],
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999/pod.pdf`, UH_CLIENT_VIEW, ''],
     /* The doorstep photograph. Same viewers as the delivery it belongs to,

@@ -145,6 +145,20 @@ export function Orders() {
     const [searchingFor, setSearchingFor] = useState('');
 
     const query = params.toString();
+    /* The same filters the bundle route understands, under the names it
+       reads them by. It shares none of this screen's vocabulary beyond the
+       four below, so anything else -- the courier, the one search box, the
+       proof filter -- is left off rather than passed and ignored. */
+    const podQuery = (() => {
+        const out = new URLSearchParams();
+        const day = params.get('serviceDate');
+        if (day) out.set('date', day);
+        for (const key of ['siteId', 'status', 'serviceType']) {
+            const value = params.get(key);
+            if (value) out.set(key, value);
+        }
+        return out.toString();
+    })();
     const base = `/api/projects/${code}/uh/orders`;
 
     const load = useCallback(async () => {
@@ -378,9 +392,39 @@ export function Orders() {
                         Left enabled it would hand somebody a spreadsheet of
                         the whole day labelled as their search. */}
                     {searchingFor === '' ? (
-                        <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/export.xlsx${query ? `?${query}` : ''}`}>
-                            Export to Excel
-                        </a>
+                        <>
+                            <a className="izy-btn secondary" href={`/api/projects/${code}/uh/orders/export.xlsx${query ? `?${query}` : ''}`}>
+                                Export to Excel
+                            </a>
+                            {/* ── THE SAME WEEK, WITH THE DOCUMENTS IN IT ──
+                                University Health have had this on their own
+                                portal since the bundler was built, and when
+                                they ring about a week's proofs it is dispatch
+                                who answer. Sending them to find an
+                                administrator for a file the system already
+                                makes is the kind of gap that gets solved by
+                                somebody building a second one.
+
+                                IT IS THE PORTAL'S ROUTE, deliberately. A
+                                bundler on this router would be a second
+                                answer to "what proves this delivery", and
+                                that pair has already drifted once -- see the
+                                note at the top of pod-photos.ts. The server
+                                scopes it to this caller either way.
+
+                                THE DAY BOX IS `date`, NOT `serviceDate`.
+                                This screen filters one service date; the
+                                portal's gatherOrders anchors on from/to and
+                                takes `date` as the shorthand for both ends.
+                                Passing the whole query string straight
+                                through would have dropped the day silently
+                                and bundled whatever the default range was,
+                                which is a much larger file about the wrong
+                                week. */}
+                            <a className="izy-btn secondary" href={`/api/projects/${code}/uh/client/orders-with-pod.zip${podQuery ? `?${podQuery}` : ''}`}>
+                                Export with proof of delivery
+                            </a>
+                        </>
                     ) : (
                         <span className="izy-muted">Export is off while searching by name</span>
                     )}

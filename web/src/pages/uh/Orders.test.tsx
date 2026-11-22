@@ -472,3 +472,69 @@ describe('OrderDetail', () => {
         expect(screen.getByText('That order is not assigned to you')).toBeInTheDocument();
     });
 });
+
+/* ───────────── THE WEEK'S PROOFS, FROM THE SCREEN DISPATCH ALREADY HAS
+ *
+ * University Health have had this bundle on their own portal since it was
+ * built. When they ring about a week's proofs it is dispatch who answer, and
+ * until 22 November 2026 the answer was to find an administrator -- for a
+ * file the system already makes.
+ *
+ * It points at the PORTAL's route on purpose. A second bundler on the orders
+ * router would be a second answer to "what proves this delivery", and that
+ * pair has drifted apart once already: see the note at the top of
+ * pod-photos.ts. The server scopes the one bundler to whoever asks.
+ */
+describe('exporting the proofs from the orders screen', () => {
+    it('offers the bundle beside the spreadsheet', async () => {
+        renderOrders(baseRoutes);
+        await screen.findByRole('heading', { name: 'Orders' });
+        expect(screen.getByRole('link', { name: 'Export with proof of delivery' })
+            .getAttribute('href')).toContain('/uh/client/orders-with-pod.zip');
+    });
+
+    it('carries the day across under the name the bundler reads it by', async () => {
+        /* THE ONE THAT WOULD HAVE BEEN SILENT. This screen filters by
+           `serviceDate`; the bundle route anchors on from/to and takes
+           `date` as the shorthand for both. Passing this screen's query
+           string straight through drops the day and bundles whatever the
+           default range is -- a much bigger file, about the wrong week,
+           with nothing on screen saying so. */
+        renderOrders(baseRoutes, '/projects/uh/orders?serviceDate=2026-09-14');
+        await screen.findByRole('heading', { name: 'Orders' });
+        const href = screen.getByRole('link', { name: 'Export with proof of delivery' })
+            .getAttribute('href') ?? '';
+        expect(href).toContain('date=2026-09-14');
+        expect(href).not.toContain('serviceDate');
+    });
+
+    it('passes on only the filters that route understands', async () => {
+        /* The courier box, the one search box and the proof filter mean
+           nothing to the bundler. Sending them would read as a narrower
+           bundle than the one that arrives. */
+        renderOrders(
+            baseRoutes,
+            '/projects/uh/orders?serviceDate=2026-09-14&status=delivered&assignedTo=ada&noPhoto=true',
+        );
+        await screen.findByRole('heading', { name: 'Orders' });
+        const href = screen.getByRole('link', { name: 'Export with proof of delivery' })
+            .getAttribute('href') ?? '';
+        expect(href).toContain('status=delivered');
+        expect(href).not.toContain('assignedTo');
+        expect(href).not.toContain('noPhoto');
+    });
+
+    it('goes away while somebody is searching by name, like the other export', async () => {
+        /* Same fence, same reason: a name is deliberately not in the query
+           string, so neither export can claim to be what is on screen. */
+        const mocked = renderOrders(withSearch);
+        await screen.findByRole('heading', { name: 'Orders' });
+        fireEvent.change(screen.getByLabelText('Recipient name'), { target: { value: 'Dorothy Ashby' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+
+        await waitFor(() => {
+            expect(screen.queryByRole('link', { name: 'Export with proof of delivery' })).toBeNull();
+        });
+        expect(mocked).toBeTruthy();
+    });
+});

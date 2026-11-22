@@ -1007,7 +1007,26 @@ export function createClientPortalRouter(
      * the spreadsheet lists them. */
     const BUNDLE_CONCURRENCY = 5;
 
-    router.get('/orders-with-pod.zip', viewer, wrap(async (req, res) => {
+    /* ── WHO MAY ASK FOR A BUNDLE, WHICH IS WIDER THAN THE REST OF THIS
+     *
+     * `viewer` is admin and pharmacy: this router is University Health's own
+     * portal and dispatch has its own screens. The bundle is the exception,
+     * asked for on 22 November 2026. When UH ring about a week's proofs it
+     * is dispatch who answer, and the alternative was telling them to find
+     * an administrator -- or building a second bundler on the orders router,
+     * which is how the two proof-of-delivery documents drifted apart before
+     * pod-photos.ts was written to stop it. One bundler, one definition of
+     * what proves a delivery.
+     *
+     * IT IS NOT A WIDENING OF SCOPE. gatherOrders runs scopeFor on the
+     * membership like every other route here, and a lead is not in its staff
+     * list -- so a lead gets exactly the sites their membership names and an
+     * unconfigured one gets nothing, which is lead-scope.ts's rule and the
+     * reason the role exists. A dispatcher does not see a counter here that
+     * they cannot already see on the board. */
+    const bundleViewer = requireProjectRole('admin', 'pharmacy', 'lead');
+
+    router.get('/orders-with-pod.zip', bundleViewer, wrap(async (req, res) => {
         const got = await gatherOrders(req, res, EXPORT_MAX_ROWS + 1);
         if (!got) return;
         const { project, sites, from, to, rows, names } = got;
