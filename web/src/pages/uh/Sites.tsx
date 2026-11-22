@@ -2,6 +2,8 @@
    member; admins and ops managers can add, edit and remove. */
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { todayIn } from '../../lib/when';
+import { useProjectTimezone } from '../../app/auth';
 import { api, ApiError, why } from '../../lib/api';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
@@ -28,6 +30,7 @@ export interface Site {
 const EMPTY = { code: '', name: '', type: 'pharmacy' as Site['type'], addressLine: '', city: 'San Antonio', state: 'TX', zip: '', notes: '' };
 
 export function Sites({ projectCode, canManage }: { projectCode: string; canManage: boolean }) {
+    const timezone = useProjectTimezone(projectCode);
     const base = `/api/projects/${projectCode}/uh/sites`;
     const [sites, setSites] = useState<Site[] | null>(null);
     const [msg, setMsg] = useState<
@@ -40,7 +43,14 @@ export function Sites({ projectCode, canManage }: { projectCode: string; canMana
     const [busy, setBusy] = useState(false);
     /** Null until the status endpoint answers; false on an older server. */
     const [deliveryLookup, setDeliveryLookup] = useState<boolean | null>(null);
-    const [deliveryDate, setDeliveryDate] = useState(() => new Date().toISOString().slice(0, 10));
+    /* ── THE PROJECT'S DAY, NOT THE BROWSER'S. This was
+       `new Date().toISOString().slice(0, 10)`, which is UTC: from 6pm in
+       San Antonio onwards it offered TOMORROW, and the button under it
+       looks up delivery addresses for whatever day is in the box. Nothing
+       failed loudly -- it looked up a day with no deliveries on it and
+       reported that they all had a point already. todayIn resolves the
+       day where the work happens, which is the whole reason it exists. */
+    const [deliveryDate, setDeliveryDate] = useState(() => todayIn(timezone));
     const [deliveryBusy, setDeliveryBusy] = useState(false);
 
     const load = useCallback(async () => {

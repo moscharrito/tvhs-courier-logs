@@ -115,6 +115,29 @@ export function todayIn(timeZone: string, at: Date = new Date()): string {
     return at.toLocaleDateString('en-CA', { timeZone: safeZone(timeZone) });
 }
 
+/**
+ * Both ends of a date filter, on the day the screen is opened.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ONE FUNCTION BECAUSE IT IS ONE POLICY, asked for on 22 November 2026:
+ * every date filter opens on today until somebody changes it.
+ *
+ * The screens had drifted into three different answers -- thirty days back,
+ * twenty-nine days back, and blank -- none of which was decided, each of
+ * which was whatever the person building that screen reached for. A policy
+ * spread across nine files is a policy that is already half false, and the
+ * next screen makes it a tenth answer. Changing the rule should be an edit
+ * here, not a search.
+ *
+ * NOT for the invoice period, which is a contract question rather than a
+ * filter: see Invoices.tsx. A one-day billing period opened by accident is
+ * a different kind of mistake from a one-day report.
+ */
+export function todayRange(timeZone: string): { from: string; to: string } {
+    const day = todayIn(timeZone);
+    return { from: day, to: day };
+}
+
 /* ───────────────────────────────────── THE OTHER END OF THAT RANGE.
  *
  * The screens that open on "the last thirty days" -- the drivers record,

@@ -14,7 +14,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { clockFor, stampFor, momentFor, dateFor, safeZone, todayIn, deviceZone, daysBeforeIn } from './when';
+import {
+    clockFor, stampFor, momentFor, dateFor, safeZone, todayIn, deviceZone, daysBeforeIn, todayRange,
+} from './when';
 
 /* 2026-09-14T18:08:54Z. In Chicago (CDT, UTC-5) that is 1:08 PM. In New York
    it is 2:08 PM, in Phoenix 11:08 AM, in London 7:08 PM. One instant, four
@@ -148,5 +150,38 @@ describe('daysBeforeIn', () => {
         /* safeZone's job, inherited through todayIn. A report screen must
            not go blank because a project carries a typo'd timezone. */
         expect(() => daysBeforeIn('Not/AZone', 30, new Date('2026-11-02T18:00:00.000Z'))).not.toThrow();
+    });
+});
+
+/* ───────────────────────────── THE DAY EVERY FILTER OPENS ON
+ *
+ * Asked for on 22 November 2026: every date filter opens on today, both
+ * ends, until somebody changes it. The screens had drifted to thirty days
+ * back, twenty-nine days back and blank -- three answers, none of them
+ * chosen -- so the rule lives in one function and is pinned here rather
+ * than in each of the six screens that read it.
+ */
+describe('the range a date filter opens on', () => {
+    it('is today at both ends', () => {
+        const got = todayRange('America/Chicago');
+        expect(got.from).toBe(got.to);
+        expect(got.from).toBe(todayIn('America/Chicago'));
+    });
+
+    it('is the PROJECT day, which is the whole reason it is not new Date()', () => {
+        /* 03:30 UTC on the 2nd is still the evening of the 1st in San
+           Antonio. A filter built from the browser's day opens on tomorrow
+           every evening -- which is a screen reporting on a day that has
+           not happened, and it is what Sites.tsx did until this change. */
+        const evening = new Date('2026-11-02T03:30:00.000Z');
+        expect(todayIn('America/Chicago', evening)).toBe('2026-11-01');
+        expect(todayIn('UTC', evening)).toBe('2026-11-02');
+    });
+
+    it('survives a project carrying a typo for a timezone', () => {
+        /* Inherited through todayIn's safeZone. A report screen must not go
+           blank over a bad string in a settings row. */
+        expect(() => todayRange('Not/AZone')).not.toThrow();
+        expect(todayRange('Not/AZone').from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 });

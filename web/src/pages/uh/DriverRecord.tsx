@@ -27,7 +27,7 @@ import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
-import { daysBeforeIn, todayIn } from '../../lib/when';
+import { todayRange } from '../../lib/when';
 import { money, RateNote } from './Drivers';
 import { handleUnder } from '../../lib/people';
 import { CardLink, Chip, Context, Panel, Screen, ScreenHeader, Sheet } from '../../app/Glass';
@@ -74,8 +74,13 @@ export function DriverRecord({ mine = false }: { mine?: boolean }) {
     /* In the project's zone at both ends: this is the window a driver
        checks their own pay against. See lib/when.ts. */
     const timezone = useProjectTimezone(code);
-    const from = params.get('from') ?? daysBeforeIn(timezone, 30);
-    const to = params.get('to') ?? todayIn(timezone);
+    /* Today at both ends until somebody picks a period. This screen
+       answers pay questions, so it used to open on thirty days -- the
+       change on 22 November 2026 was deliberate and system-wide, and the
+       range is two clicks from here. */
+    const opening = todayRange(timezone);
+    const from = params.get('from') ?? opening.from;
+    const to = params.get('to') ?? opening.to;
     const groupBy = params.get('groupBy') ?? 'day';
 
     const [data, setData] = useState<Record_ | null>(null);

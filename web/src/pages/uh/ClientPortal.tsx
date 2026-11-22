@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
-import { clockFor } from '../../lib/when';
+import { clockFor, todayRange } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import { Pager, usePaged } from '../../app/Pager';
@@ -210,8 +210,13 @@ export function ClientPortal() {
        and sending to a colleague on hospital wifi. */
     const [showAll, setShowAll] = useState(false);
 
-    const from = params.get('from') ?? '';
-    const to = params.get('to') ?? '';
+    /* TODAY, NOT BLANK. Blank meant no filter at all, so University
+       Health opened this on every delivery there had ever been and read
+       the first page of it. Emptying either box still clears the filter;
+       it is the opening answer that changed. */
+    const opening = todayRange(timezone);
+    const from = params.get('from') ?? opening.from;
+    const to = params.get('to') ?? opening.to;
     const status = params.get('status') ?? '';
     const reference = params.get('reference') ?? '';
     /* The one box. `reference` stays read for links made before it existed:
@@ -319,9 +324,34 @@ export function ClientPortal() {
 
     /* What the list is currently narrowed to, in words, for somebody who
        arrived here by clicking a number on the performance page and needs to
-       know which number they clicked. */
+       know which number they clicked.
+
+       ── THE DEFAULT DAY IS NOT A NARROWING, and leaving it in made this
+       banner permanent. Since 22 November the page opens on today at both
+       ends rather than blank, so `from` and `to` are always set; describing
+       them would put "Showing 2026-11-22" above every visit, next to a
+       "Show everything for today" button that does nothing because today is
+       already what you are looking at. A control that cannot change
+       anything teaches people to ignore the row it sits in, and that row
+       is the only thing explaining a short list to somebody who arrived by
+       link.
+
+       The dates are left out ONLY when they are exactly the opening pair.
+       A real one-day filter arriving by link -- from the performance page,
+       on a day that happens to be today -- is a narrowing somebody chose,
+       but it is also indistinguishable from the default and reads the same
+       either way: the card heading underneath prints the day regardless. */
+    const opened = todayRange(timezone);
+    const defaultDay = from === opened.from && to === opened.to;
     const narrowedTo = describeFilter(
-        { from, to, status, siteId, serviceType, reference },
+        {
+            from: defaultDay ? '' : from,
+            to: defaultDay ? '' : to,
+            status,
+            siteId,
+            serviceType,
+            reference,
+        },
         summary.pharmacies.find((p) => String(p.id) === siteId)?.name,
     );
 

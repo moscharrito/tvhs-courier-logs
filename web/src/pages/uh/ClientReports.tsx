@@ -54,7 +54,7 @@ import {
     clampToWindow, drillQuery, rangeOfBucket, siteIdOfSliceKey, type Grouping,
 } from '../../lib/drilldown';
 import { useProjectTimezone } from '../../app/auth';
-import { daysBeforeIn, todayIn } from '../../lib/when';
+import { todayRange } from '../../lib/when';
 
 interface Slice {
     key: string;
@@ -110,8 +110,10 @@ export function ClientReports() {
     /* The client's own performance numbers, so the window has to be the
        contract's days rather than the reader's. See lib/when.ts. */
     const timezone = useProjectTimezone(code);
-    const [from, setFrom] = useState(() => daysBeforeIn(timezone, 29));
-    const [to, setTo] = useState(() => todayIn(timezone));
+    /* Both ends on today, which is the rule everywhere now. See
+       todayRange in lib/when.ts for why it lives in one place. */
+    const [from, setFrom] = useState(() => todayRange(timezone).from);
+    const [to, setTo] = useState(() => todayRange(timezone).to);
     const [groupBy, setGroupBy] = useState('day');
     const [report, setReport] = useState<Report | null>(null);
     /* The glossary too, which 5.15 left whole as "a reference rather than a

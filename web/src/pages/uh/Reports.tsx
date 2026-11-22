@@ -14,7 +14,7 @@ import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { useAuth, useProjectTimezone } from '../../app/auth';
-import { todayIn } from '../../lib/when';
+import { todayRange } from '../../lib/when';
 import type { Site } from './Sites';
 
 interface Totals {
@@ -59,18 +59,16 @@ const GROUPINGS = [
     { value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' },
 ];
 
-/** The last N days, as service dates in the project's zone.
+/* THE RANGE THIS OPENS ON is todayRange in lib/when.ts, which is both
+ * ends on today. It replaced a local defaultRange(30) on 22 November 2026,
+ * when every date filter was put on the same rule.
  *
- * Not UTC. From 7pm in Chicago onwards `toISOString()` is already tomorrow,
- * so the range this page opened on ended on a day that had not happened and
- * the header said so. Service dates are questions about San Antonio. */
-function defaultRange(days: number, timezone: string): { from: string; to: string } {
-    const now = Date.now();
-    return {
-        from: todayIn(timezone, new Date(now - (days - 1) * 86400000)),
-        to: todayIn(timezone),
-    };
-}
+ * The reason that local one existed survives in the shared one and is
+ * worth keeping in sight: it resolves the day in the PROJECT'S zone, not
+ * UTC. From 7pm in Chicago onwards `toISOString()` is already tomorrow, so
+ * this page used to open on a range ending on a day that had not happened
+ * and print that in its header. A service date is a question about San
+ * Antonio. */
 
 export function Reports() {
     const { code = '' } = useParams();
@@ -85,7 +83,7 @@ export function Reports() {
     const pagedDefs = usePaged(report?.definitions ?? []);
     const [msg, setMsg] = useState<string | null>(null);
 
-    const fallback = defaultRange(30, useProjectTimezone(code));
+    const fallback = todayRange(useProjectTimezone(code));
     const from = params.get('from') ?? fallback.from;
     const to = params.get('to') ?? fallback.to;
     const groupBy = params.get('groupBy') ?? 'week';

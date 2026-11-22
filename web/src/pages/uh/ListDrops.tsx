@@ -21,7 +21,7 @@ import { api, ApiError } from '../../lib/api';
 import { Section } from '../../app/Section';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
-import { clockFor } from '../../lib/when';
+import { clockFor, todayRange } from '../../lib/when';
 
 export interface DropSite { id: number; name: string; code: string }
 
@@ -79,8 +79,9 @@ export function ListDrops({ projectCode, timezone, canHandle, canUpload }: {
 
     const [status, setStatus] = useState<'outstanding' | 'handled' | 'all'>('outstanding');
     const [siteId, setSiteId] = useState('');
-    const [from, setFrom] = useState('');
-    const [to, setTo] = useState('');
+    /* Today at both ends, as everywhere. Clearing a box still widens it. */
+    const [from, setFrom] = useState(() => todayRange(timezone).from);
+    const [to, setTo] = useState(() => todayRange(timezone).to);
     const [search, setSearch] = useState('');
 
     /* The hand-over form. */
