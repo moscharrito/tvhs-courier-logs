@@ -154,11 +154,19 @@ export function sequenceStops(
      * code beside the `code` a developer would grep for: telling somebody
      * mid-shift to POST to a URL is not an instruction they can follow.
      *
-     * noOrigin is ticket 1.4, the pharmacy address lookup, which nothing in
-     * the UI triggers yet. missingCoordinates is ticket 1.9 and will not be
-     * fixed by anybody: a patient address may not be sent to the geocoder
-     * this system has, so ordering by distance is permanently unavailable for
-     * the stops themselves. */
+     * noOrigin is ticket 1.4, the pharmacy address lookup, reachable from
+     * Pickup locations.
+     *
+     * missingCoordinates SAID SOMETHING THAT IS NO LONGER TRUE, in a banner
+     * a dispatcher reads. It read "delivery addresses are deliberately never
+     * sent to an address lookup service, so this will not change" -- correct
+     * when it was written, because no agreement covered patient addresses
+     * and ticket 1.9 really was never going to be done. A business associate
+     * agreement landed on 20 November and the clusterer now looks the
+     * addresses up itself before it sequences, so a round in deadline order
+     * is a FAULT to chase rather than the permanent state of the world.
+     * Telling dispatch it will not change teaches them to stop reading the
+     * banner, which is the expensive half of being wrong here. */
     if (origin === null) {
         throw new SequencingError(
             'The pharmacy addresses have not been looked up yet, so there is no point to measure a route from. '
@@ -169,9 +177,10 @@ export function sequenceStops(
     const missing = stops.filter((s) => !hasPoint(s)).map((s) => s.orderId);
     if (missing.length > 0) {
         throw new SequencingError(
-            `${missing.length} of ${stops.length} stops have no coordinates, so the run cannot be ordered by distance. `
-            + 'Delivery addresses are deliberately never sent to an address lookup service, so this will not change. '
-            + 'Order by deadline instead.',
+            `${missing.length} of ${stops.length} stops could not be placed on the map, so this round is in `
+            + 'deadline order rather than driving order. The addresses are looked up automatically, so this is '
+            + 'a bad address or an address lookup that is not answering. Check those deliveries, or ask an '
+            + 'administrator.',
             'sequencing.missingCoordinates',
             { orderIds: missing },
         );

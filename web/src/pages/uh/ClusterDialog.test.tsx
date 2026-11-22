@@ -233,3 +233,183 @@ describe('the order each round is driven in', () => {
         expect(within(ben).getByText('By deadline')).toBeInTheDocument();
     });
 });
+
+/* ──────────────────── the spreadsheet each driver gets (21 November)
+ *
+ * The link used to point at /runs/export.xlsx -- the runs REGISTER --
+ * filtered to that courier and that day. The right filter on the wrong
+ * file: it downloaded, it was called runs-<date>.xlsx whoever it was for,
+ * and it held run metadata with a COUNT of stops rather than the stops. It
+ * now points at the run's own manifest, which means it cannot be offered
+ * until the run exists.
+ */
+describe('the spreadsheet each driver gets', () => {
+    const round = (over: Record<string, unknown> = {}) => ({
+        orderIds: [1, 2, 3],
+        stops: 3,
+        ordering: 'nearest',
+        driveMiles: 12.4,
+        zips: ['78207'],
+        siteIds: [7],
+        earliestDueAt: null,
+        spreadMiles: 2.1,
+        stretched: false,
+        courier: { username: 'ana', name: 'Ana Driver', why: 'home' },
+        ...over,
+    });
+
+    const ready = (runs: Array<{ id: number; courierUsername: string }>) => mockFetch({
+        'GET /api/projects/uh/uh/runs/split*': (url: string) => (
+            url.includes('couriers=')
+                ? { serviceDate: DAY, site, rounds: [round()], urgent: [], notes: [] }
+                : {
+                    serviceDate: DAY,
+                    site,
+                    rounds: [],
+                    urgent: [],
+                    notes: [],
+                    drivers: [driver('ana', 'Ana Driver')],
+                    unmapped: false,
+                    restingHere: 0,
+                }
+        ),
+        'POST /api/projects/uh/uh/runs/split/apply': { runs, rejected: [] },
+    });
+
+    const clusterThenAssign = async () => {
+        open();
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: /^Cluster between/ }));
+        await screen.findByText('Driving');
+        fireEvent.click(screen.getByRole('button', { name: /^Assign/ }));
+    };
+
+    it('links to that run\u2019s own manifest once the run exists', async () => {
+        ready([{ id: 41, courierUsername: 'ana' }]);
+        await clusterThenAssign();
+
+        const link = await screen.findByRole('link', { name: /Excel/ });
+        expect(link).toHaveAttribute('href', '/api/projects/uh/uh/runs/41/manifest.xlsx');
+    });
+
+    it('offers nothing to download before Assign', async () => {
+        /* No run, no manifest. An Excel link that 404s is worse than no
+           link, because the dispatcher has to open the file to find out. */
+        ready([{ id: 41, courierUsername: 'ana' }]);
+        open();
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: /^Cluster between/ }));
+
+        await screen.findByText('Driving');
+        expect(screen.queryByRole('link', { name: /Excel/ })).not.toBeInTheDocument();
+    });
+
+    it('offers nothing for a driver the server did not come back with', async () => {
+        /* A round can be rejected on apply -- an order moved underneath it.
+           Keying the link on what the server created rather than on what is
+           drawn means a driver with no run gets no link rather than a link
+           to somebody else\u2019s. */
+        ready([{ id: 41, courierUsername: 'someone.else' }]);
+        await clusterThenAssign();
+
+        await screen.findByText('Assigned');
+        expect(screen.queryByRole('link', { name: /Excel/ })).not.toBeInTheDocument();
+    });
+});
+
+/* ───────────── it does not repeat its own table back (21 November)
+ *
+ * The server sends five or six sentences with every split and they used to
+ * stack above the table as yellow banners. Read against the rows beneath
+ * them, each one restates a column: the stop range is the Stops column,
+ * the 10-mile warning is Width and its Wide pill, "a driver from another
+ * pharmacy" is the Another counter pill, "in deadline order" is Order, and
+ * the STAT sentence is printed again word for word in the alert below the
+ * table. Six banners saying what the next six rows show is a wall, and a
+ * wall gets scrolled past on the morning one of them matters.
+ *
+ * Pinned, because `notes` is still on the response and putting a .map back
+ * is a one-line change that looks like an improvement.
+ */
+describe('what it does with the server\u2019s notes', () => {
+    it('draws none of them, however many come back', async () => {
+        mockFetch({
+            'GET /api/projects/uh/uh/runs/split*': (url: string) => (
+                url.includes('couriers=')
+                    ? {
+                        serviceDate: DAY,
+                        site,
+                        rounds: [{
+                            orderIds: [1], stops: 1, ordering: 'nearest', driveMiles: 3.1,
+                            zips: ['78207'], siteIds: [7], earliestDueAt: null,
+                            spreadMiles: 1.1, stretched: false,
+                            courier: { username: 'ana', name: 'Ana Driver', why: 'home' },
+                        }],
+                        urgent: [],
+                        notes: [
+                            'Rounds run from 8 to 19 stops.',
+                            '1 round is wider than the 10-mile limit.',
+                            '1 run is offered to a driver from another pharmacy.',
+                        ],
+                    }
+                    : {
+                        serviceDate: DAY,
+                        site,
+                        rounds: [],
+                        urgent: [],
+                        notes: [],
+                        drivers: [driver('ana', 'Ana Driver')],
+                        unmapped: false,
+                        restingHere: 0,
+                    }
+            ),
+        });
+        open();
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: /^Cluster between/ }));
+
+        await screen.findByText('Driving');
+        expect(screen.queryByText(/Rounds run from 8 to 19 stops/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/wider than the 10-mile limit/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/from another pharmacy/)).not.toBeInTheDocument();
+    });
+
+    it('still says the one thing the table cannot: the STATs held back', async () => {
+        /* NOT a note. The STATs are not rows in this table at all, so
+           nothing below says they exist, and a dispatcher who closes the
+           dialog believing the day is covered has four deliveries with an
+           hour on them that nobody is carrying. */
+        mockFetch({
+            'GET /api/projects/uh/uh/runs/split*': (url: string) => (
+                url.includes('couriers=')
+                    ? {
+                        serviceDate: DAY,
+                        site,
+                        rounds: [{
+                            orderIds: [1], stops: 1, ordering: 'nearest', driveMiles: 3.1,
+                            zips: ['78207'], siteIds: [7], earliestDueAt: null,
+                            spreadMiles: 1.1, stretched: false,
+                            courier: { username: 'ana', name: 'Ana Driver', why: 'home' },
+                        }],
+                        urgent: [91, 92, 93, 94],
+                        notes: [],
+                    }
+                    : {
+                        serviceDate: DAY,
+                        site,
+                        rounds: [],
+                        urgent: [],
+                        notes: [],
+                        drivers: [driver('ana', 'Ana Driver')],
+                        unmapped: false,
+                        restingHere: 0,
+                    }
+            ),
+        });
+        open();
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: /^Cluster between/ }));
+
+        await screen.findByText(/4 STAT deliveries are not in these rounds/);
+    });
+});

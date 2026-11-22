@@ -74,6 +74,95 @@ const addressOf = (s: SiteRow): Address => ({
     line1: s.address_line, city: s.city, state: s.state, zip: s.zip,
 });
 
+
+/** What one pass of the delivery lookup did. Ids and reasons, never a street. */
+export interface LocateOutcome {
+    pending: number;
+    located: Array<{ orderId: number; cached: boolean; quality: string }>;
+    failed: Array<{ orderId: number; reason: string }>;
+    /** Set when the daily ceiling stopped the pass part way. */
+    stopped: string | null;
+}
+
+/**
+ * Put a point on every delivery of one service date that has none.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * LIFTED OUT OF POST /orders ON 21 NOVEMBER so the clusterer can call it.
+ *
+ * The button on Pickup locations was the only way to run this, which meant
+ * driving order depended on somebody remembering to press it before they
+ * clustered. They did not, every round came out in deadline order, and the
+ * screen explained itself politely while handing three drivers a zig-zag.
+ * A step that has to be remembered is not a feature.
+ *
+ * CALLING IT TWICE COSTS NOTHING. The WHERE clause takes only rows with no
+ * point, and the lookup caches by address underneath, so the second pass
+ * over a located day does no work and discloses nothing.
+ *
+ * IT IS NOT GATED HERE. The permission is a deployment decision and both
+ * callers check it before calling -- here it would be a third copy of the
+ * same `if`, and a gate nobody can see from the call site is a gate that
+ * gets refactored away.
+ */
+export async function locateDeliveries(
+    { client, lookup, projectId, serviceDate }:
+    { client: Client; lookup: GeoLookup; projectId: number; serviceDate: string },
+): Promise<LocateOutcome> {
+    const rs = await client.execute({
+        sql: `SELECT id, address_line, address_line2, city, state, zip
+                FROM orders
+               WHERE project_id = ? AND service_date = ?
+                 AND (lat IS NULL OR lng IS NULL)
+                 AND status != 'cancelled'
+                 AND TRIM(address_line) != ''
+               ORDER BY id`,
+        args: [projectId, serviceDate],
+    });
+    const pending = rs.rows.map((r) => ({
+        id: Number(r['id']),
+        address: {
+            line1: String(r['address_line']),
+            line2: String(r['address_line2'] ?? '') || undefined,
+            city: String(r['city'] ?? ''),
+            state: String(r['state'] ?? 'TX'),
+            zip: String(r['zip'] ?? ''),
+        } satisfies Address,
+    }));
+
+    /* IDS AND REASONS, NEVER ADDRESSES. This travels into a response that
+       is read in a browser, logged by proxies and pasted into chats. The
+       order id is enough to find the row; the street is not ours to
+       repeat. */
+    const located: LocateOutcome['located'] = [];
+    const failed: LocateOutcome['failed'] = [];
+    let stopped: string | null = null;
+
+    for (const order of pending) {
+        try {
+            const result = await lookup.geocode(order.address, 'patient');
+            await client.execute({
+                sql: `UPDATE orders SET lat = ?, lng = ?, geocode_status = 'ok' WHERE id = ?`,
+                args: [result.point.lat, result.point.lng, order.id],
+            });
+            located.push({ orderId: order.id, cached: result.cached, quality: result.quality });
+        } catch (err) {
+            if (err instanceof GeoQuotaError) { stopped = err.message; break; }
+            if (err instanceof GeoUnavailableError) {
+                await client.execute({
+                    sql: `UPDATE orders SET geocode_status = 'failed' WHERE id = ?`,
+                    args: [order.id],
+                });
+                failed.push({ orderId: order.id, reason: err.message });
+                continue;
+            }
+            throw err;
+        }
+    }
+
+    return { pending: pending.length, located, failed, stopped };
+}
+
 export function createGeocodeRouter(
     { client, lookup, providerName, providerReason, patientAddresses = false }: Deps,
 ): Router {
@@ -235,62 +324,16 @@ export function createGeocodeRouter(
             return;
         }
 
-        const rs = await client.execute({
-            sql: `SELECT id, address_line, address_line2, city, state, zip
-                    FROM orders
-                   WHERE project_id = ? AND service_date = ?
-                     AND (lat IS NULL OR lng IS NULL)
-                     AND status != 'cancelled'
-                     AND TRIM(address_line) != ''
-                   ORDER BY id`,
-            args: [req.project!.id, serviceDate],
+        const { pending, located, failed, stopped } = await locateDeliveries({
+            client, lookup, projectId: req.project!.id, serviceDate,
         });
-        const pending = rs.rows.map((r) => ({
-            id: Number(r['id']),
-            address: {
-                line1: String(r['address_line']),
-                line2: String(r['address_line2'] ?? '') || undefined,
-                city: String(r['city'] ?? ''),
-                state: String(r['state'] ?? 'TX'),
-                zip: String(r['zip'] ?? ''),
-            } satisfies Address,
-        }));
-
-        /* IDS AND REASONS, NEVER ADDRESSES. This response is read in a
-           browser, logged by proxies and pasted into chats. The order id
-           is enough to find the row; the street is not ours to repeat. */
-        const located: Array<{ orderId: number; cached: boolean; quality: string }> = [];
-        const failed: Array<{ orderId: number; reason: string }> = [];
-        let stopped: string | null = null;
-
-        for (const order of pending) {
-            try {
-                const result = await lookup.geocode(order.address, 'patient');
-                await client.execute({
-                    sql: `UPDATE orders SET lat = ?, lng = ?, geocode_status = 'ok' WHERE id = ?`,
-                    args: [result.point.lat, result.point.lng, order.id],
-                });
-                located.push({ orderId: order.id, cached: result.cached, quality: result.quality });
-            } catch (err) {
-                if (err instanceof GeoQuotaError) { stopped = err.message; break; }
-                if (err instanceof GeoUnavailableError) {
-                    await client.execute({
-                        sql: `UPDATE orders SET geocode_status = 'failed' WHERE id = ?`,
-                        args: [order.id],
-                    });
-                    failed.push({ orderId: order.id, reason: err.message });
-                    continue;
-                }
-                throw err;
-            }
-        }
 
         /* COUNTS, AND THE DAY. The audit trail has to be able to answer
            "how many delivery addresses were disclosed, and when" without
            itself becoming a second copy of them. */
         await req.audit('order.geocode', 'project', String(req.project!.id), {
             serviceDate,
-            pending: pending.length,
+            pending,
             located: located.length,
             failed: failed.length,
             /* A cache hit disclosed nothing: it never left this database.
@@ -300,7 +343,7 @@ export function createGeocodeRouter(
 
         res.status(201).json({
             serviceDate,
-            pending: pending.length,
+            pending,
             located,
             failed,
             stopped,

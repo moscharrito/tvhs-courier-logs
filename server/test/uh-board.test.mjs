@@ -148,13 +148,19 @@ describe('sequenceStops', () => {
             expect(e).toBeInstanceOf(SequencingError);
             expect(e.code).toBe('sequencing.missingCoordinates');
             expect(e.detail.orderIds).toEqual([2]);
-            /* Stops have no coordinates because a delivery address may not
-               be sent to the geocoder this system has, so this one is never
-               getting fixed and the message has to say so rather than imply
-               somebody is working on it. Ticket numbers belong beside the
-               code, not in a banner a dispatcher reads mid-shift. */
-            expect(e.message).toMatch(/never sent to an address lookup/);
-            expect(e.message).toMatch(/Order by deadline instead/);
+            /* IT USED TO SAY THIS WAS PERMANENT: delivery addresses are
+               never sent to a lookup service, so a round will never be in
+               driving order. True when it was written and false since the
+               BAA of 20 November -- the clusterer looks them up itself now,
+               so a round in deadline order is a fault to chase. A banner
+               that tells dispatch not to expect a fix is how a fault
+               becomes the weather, and the weather does not get reported.
+
+               Ticket numbers still belong beside the code rather than in a
+               banner somebody reads mid-shift, which is the assertion
+               below. */
+            expect(e.message).toMatch(/could not be placed on the map/);
+            expect(e.message).toMatch(/deadline order rather than driving order/);
             expect(e.message).not.toMatch(/ticket|POST |GET /i);
         }
     });

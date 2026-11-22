@@ -560,6 +560,8 @@ const MATRIX = [
     ['GET', `${UH}/runs/split`, UH_DISPATCH, 'the whole list at one counter, and who is on shift to carry it'],
     ['POST', `${UH}/runs/split/apply`, UH_DISPATCH, 'creates runs and assigns drivers, which is dispatch and nobody else'],
     ['GET', `${UH}/runs/999999`, UH_DISPATCH_AND_COURIER, ''],
+    ['GET', `${UH}/runs/999999/manifest.xlsx`, UH_DISPATCH_AND_COURIER,
+        'a driver’s own stops, scoped exactly as reading the run is'],
     ['PATCH', `${UH}/runs/999999`, UH_DISPATCH, ''],
     ['POST', `${UH}/runs/999999/stops`, UH_REASSIGN, 'scoped to the sites on the membership, which for the Site Manager is all eight'],
     ['DELETE', `${UH}/runs/999999/stops/999999`, UH_REASSIGN, ''],

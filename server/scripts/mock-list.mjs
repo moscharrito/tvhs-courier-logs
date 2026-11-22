@@ -25,6 +25,23 @@
  * a file that looked realistic enough to reuse. A person reading the board
  * should never have to wonder whether a name on it is a real patient.
  *
+ * --streets, AND WHY IT IS NOT THE DEFAULT.
+ *
+ * "14 Rehearsal Way" cannot be geocoded, which was fine for every test this
+ * file was written for: zone, pay and clustering all come from the ZIP, and
+ * the ZIP is real. It stopped being fine on 21 November, when rounds started
+ * being sequenced nearest-first from the counter. A lookup on an invented
+ * street returns the postcode's centre at best, so fifty stops in 78207
+ * share one point and the driving order inside a ZIP is arbitrary -- the
+ * test passes and proves nothing about the thing being tested.
+ *
+ * --streets swaps the street for a real thoroughfare in that ZIP, and the
+ * town with it, so the addresses resolve to real points spread across the
+ * actual neighbourhood. THE NAMES DO NOT CHANGE. "Test Patient Alpha" is
+ * what makes a row unmistakably invented, and a real street with an invented
+ * occupant is still invented -- nobody lives at a house number this picked at
+ * random. A person reading the board must never have to wonder.
+ *
  * THE ZIPS ARE REAL, and they have to be: the zone comes from the ZIP, the
  * driver's pay comes from the zone, and the clustering groups by
  * (pharmacy, ZIP). A file of invented postcodes would cluster into one
@@ -36,6 +53,7 @@
  *   node server/scripts/mock-list.mjs --orders 40        a size you can eyeball
  *   node server/scripts/mock-list.mjs --site discharge   a different counter
  *   node server/scripts/mock-list.mjs --csv              csv instead of xlsx
+ *   node server/scripts/mock-list.mjs --streets          real streets, so it geocodes
  *
  * Writes to docs/forms/ and prints the path. Upload it from the pharmacy's
  * own portal, not from an admin account: the point is the counter's path.
@@ -102,6 +120,42 @@ const nameFor = (i) => {
     return round === 0 ? `Test Patient ${word}` : `Test Patient ${word} ${round + 1}`;
 };
 
+/* A few real thoroughfares per ZIP, and the town the ZIP is actually in --
+ * six of these are not San Antonio, and a lookup told otherwise answers
+ * worse. Streets chosen because they run a long way through their ZIP, so a
+ * house number picked at random still lands inside it.
+ *
+ * NOT A GAZETTEER AND NOT TRYING TO BE. It is enough to spread fifty stops
+ * across a real neighbourhood. A number that falls outside the real range
+ * geocodes to somewhere nearby on the same street, which for a clustering
+ * test is the same answer. */
+const PLACES = {
+    78207: ['San Antonio', ['Guadalupe St', 'S Zarzamora St', 'Castroville Rd', 'SW 19th St']],
+    78202: ['San Antonio', ['N Hackberry St', 'Nolan St', 'N Walters St']],
+    78210: ['San Antonio', ['S New Braunfels Ave', 'Roosevelt Ave', 'E Southcross Blvd']],
+    78201: ['San Antonio', ['Fredericksburg Rd', 'W Woodlawn Ave', 'Blanco Rd']],
+    78203: ['San Antonio', ['S Gevers St', 'Rigsby Ave', 'Burnet St']],
+    78204: ['San Antonio', ['S Flores St', 'Probandt St', 'W Cevallos St']],
+    78205: ['San Antonio', ['E Commerce St', 'Navarro St', 'S Alamo St']],
+    78208: ['San Antonio', ['N New Braunfels Ave', 'E Houston St']],
+    78209: ['San Antonio', ['Broadway St', 'Austin Hwy', 'Nacogdoches Rd']],
+    78211: ['San Antonio', ['SW Military Dr', 'Quintana Rd']],
+    78221: ['San Antonio', ['S Zarzamora St', 'W Southcross Blvd']],
+    78223: ['San Antonio', ['SE Military Dr', 'S WW White Rd']],
+    78220: ['San Antonio', ['Rigsby Ave', 'N Walters St']],
+    78245: ['San Antonio', ['Potranco Rd', 'Marbach Rd']],
+    78254: ['San Antonio', ['Shaenfield Rd', 'Galm Rd']],
+    78258: ['San Antonio', ['Stone Oak Pkwy', 'Hardy Oak Blvd']],
+    78260: ['San Antonio', ['Blanco Rd', 'Evans Rd']],
+    78253: ['San Antonio', ['Culebra Rd', 'Talley Rd']],
+    78023: ['Helotes', ['Bandera Rd', 'Scenic Loop Rd']],
+    78109: ['Converse', ['FM 78', 'Toepperwein Rd']],
+    78148: ['Universal City', ['Pat Booker Rd', 'Kitty Hawk Rd']],
+    78073: ['Von Ormy', ['Somerset Rd']],
+    78015: ['Boerne', ['Old San Antonio Rd', 'Fair Oaks Pkwy']],
+    78163: ['Bulverde', ['Bulverde Rd', 'Ammann Rd']],
+};
+
 const MEDS = ['Oral solids', 'Oral suspension', 'Insulin pen', 'Inhaler', 'Topical cream',
     'Eye drops', 'Antibiotic course', 'Blood pressure tablets', 'Anticoagulant'];
 
@@ -123,15 +177,24 @@ for (let i = 0; i < orders; i += 1) {
     const r = rand();
     const priority = r < 0.06 ? 'STAT' : r < 0.14 ? 'ADHOC' : 'SCHEDULED';
     const controlled = rand() < 0.07;
+    const zip = pick(ZIPS);
+    /* Drawn AFTER the zip and from the same generator, so --seed still
+       reproduces the file exactly. */
+    const place = PLACES[zip];
+    const real = has('streets') && place !== undefined;
+    const town = real ? place[0] : 'San Antonio';
+    const street = real
+        ? `${100 + Math.floor(rand() * 8900)} ${pick(place[1])}`
+        : `${10 + i} Rehearsal Way`;
     rows.push([
         `RX-${String(240000 + i * 7).padStart(6, '0')}`,
         nameFor(i),
         `210-555-${String(1000 + (i % 9000)).padStart(4, '0')}`,
-        `${10 + i} Rehearsal Way`,
+        street,
         rand() < 0.18 ? `Apt ${1 + Math.floor(rand() * 40)}` : '',
-        'San Antonio',
+        town,
         'TX',
-        pick(ZIPS),
+        zip,
         priority,
         rand() < 0.22 ? 2 + Math.floor(rand() * 3) : 1,
         pick(MEDS),
@@ -149,7 +212,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(here, '..', '..', 'docs', 'forms');
 mkdirSync(outDir, { recursive: true });
 const stamp = value('date', new Date().toISOString().slice(0, 10));
-const stem = `mock-list-${site}-${stamp}`;
+const stem = `mock-list-${site}-${stamp}${has('streets') ? '-streets' : ''}`;
 
 async function main() {
     let file;

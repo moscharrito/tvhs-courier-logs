@@ -463,7 +463,15 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
        collection at a counter, and the endpoint behind it, no longer have a
        caller. Its note about route order went with it -- there is nothing
        left that has to be matched before the runs router's /:id. */
-    legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({ client: database.client }));
+    /* The clusterer looks delivery addresses up itself, under the same
+       deployment permission the button on Pickup locations needs, so that
+       a round is in driving order without anybody having to remember a
+       step beforehand. */
+    legacy.app.use('/api/projects/:pid/uh/runs', requireProject, createRunsRouter({
+        client: database.client,
+        lookup: geoLookup,
+        patientAddresses: config.geo.patientGeocodeAllowed,
+    }));
     legacy.app.use('/api/projects/:pid/uh/drivers', requireProject, createDriverRecordsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/returns', requireProject, idempotent, createReturnsRouter({ client: database.client }));
     legacy.app.use('/api/projects/:pid/uh/board', requireProject, createBoardRouter({ client: database.client }));

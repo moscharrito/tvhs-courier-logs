@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import ExcelJS from 'exceljs';
 import { startServer } from './helpers/server.mjs';
 
 const UH = '/api/projects/uh/uh';
@@ -437,5 +438,171 @@ describe('the order each round is driven in', () => {
             [out.body.runs[0].id],
         );
         expect(stops.rows.map((x) => Number(x.order_id))).toEqual([near, middle, far]);
+    });
+});
+
+/* ────────────────────────── the file each driver is handed (21 November)
+ *
+ * WHAT WAS WRONG WITH IT, which is worth writing down because it looked
+ * fine. The dialog's per-driver Excel link pointed at /runs/export.xlsx --
+ * the runs REGISTER -- filtered to that courier and that day. The right
+ * filter on the wrong file: it downloaded cleanly, it was named
+ * runs-2026-11-21.xlsx whoever it was for, and it contained one row of run
+ * metadata with a COUNT of stops rather than the stops. A dispatcher who
+ * clustered fifty deliveries between three drivers got three files with
+ * three lines in them and no address anywhere.
+ *
+ * These are about the manifest that replaced it: that it is the stops, that
+ * they are in the order the clusterer put them in, and that it is named
+ * after the person it is for.
+ */
+describe("the file each driver is handed", () => {
+    const asBuffer = (res, cb) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+    };
+
+    const originAt = (lat, lng) =>
+        sql('UPDATE sites SET lat = ?, lng = ? WHERE id = ?', [lat, lng, siteId]);
+    const pointAt = (orderId, lat, lng) =>
+        sql('UPDATE orders SET lat = ?, lng = ?, geocode_status = ? WHERE id = ?',
+            [lat, lng, 'ok', orderId]);
+
+    /** Cluster the day to one driver, accept it, and hand back the run. */
+    async function clusterToAna() {
+        const seen = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+        const round = seen.body.rounds[0];
+        const out = await admin.post(`${UH}/runs/split/apply`).send({
+            serviceDate: DAY,
+            siteId,
+            rounds: [{ courierUsername: round.courier.username, orderIds: round.orderIds }],
+        });
+        expect(out.status, out.text).toBe(201);
+        return out.body.runs[0];
+    }
+
+    const sheetOf = async (res) => {
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(res.body);
+        return wb;
+    };
+
+    /** The values of one column, top row down, header excluded. */
+    const column = (sheet, header) => {
+        const head = sheet.getRow(1).values;
+        const at = head.indexOf(header);
+        expect(at, `a column called ${header}`).toBeGreaterThan(0);
+        const out = [];
+        sheet.eachRow((row, n) => { if (n > 1) out.push(row.getCell(at).value); });
+        return out;
+    };
+
+    it('is named after the driver, not after the day', async () => {
+        /* Three drivers, three downloads, one folder. "runs-2026-11-21.xlsx"
+           three times over is two files called runs-2026-11-21(2).xlsx and a
+           dispatcher opening each one to find out whose it is. */
+        await orders(siteId, '78207', 2);
+        const run = await clusterToAna();
+
+        const res = await admin.get(`${UH}/runs/${run.id}/manifest.xlsx`).buffer(true).parse(asBuffer);
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/spreadsheetml/);
+        expect(res.headers['content-disposition']).toMatch(/Ana Driver/);
+        expect(res.headers['content-disposition']).not.toMatch(/^.*runs-/);
+    });
+
+    it('holds the stops themselves, one row each, with what is needed at the door', async () => {
+        const made = await orders(siteId, '78207', 3);
+        const run = await clusterToAna();
+
+        const res = await admin.get(`${UH}/runs/${run.id}/manifest.xlsx`).buffer(true).parse(asBuffer);
+        const wb = await sheetOf(res);
+        const stops = wb.getWorksheet('Stops');
+
+        expect(stops.rowCount - 1, 'one row per stop').toBe(made.length);
+        expect(column(stops, 'Stop')).toEqual([1, 2, 3]);
+        /* The things the dispatcher used to get back from the outside
+           assistant, and the things a courier is asked for at the door. */
+        for (const header of ['RX #', 'Patient', 'Phone', 'Address', 'City', 'ZIP', 'Due', 'Handling']) {
+            expect(column(stops, header).length).toBe(made.length);
+        }
+        expect(column(stops, 'Address').every((a) => /Rehearsal Way/.test(String(a)))).toBe(true);
+    });
+
+    it('lists them in the order they are to be driven, nearest stop first', async () => {
+        /* THE WHOLE ASK: "list the orders in each clustered file based on
+           the zip closest to each other". The sheet is read top to bottom,
+           so the row order has to be the sequence the clusterer worked out
+           -- not the order they were imported in and not the order they
+           happen to come out of the table. */
+        await originAt(29.50, -98.50);
+        const [far, near, middle] = await orders(siteId, '78207', 3);
+        await pointAt(far, 29.60, -98.50);
+        await pointAt(near, 29.51, -98.50);
+        await pointAt(middle, 29.55, -98.50);
+
+        const run = await clusterToAna();
+        const res = await admin.get(`${UH}/runs/${run.id}/manifest.xlsx`).buffer(true).parse(asBuffer);
+        const wb = await sheetOf(res);
+
+        const refs = column(wb.getWorksheet('Stops'), 'RX #').map(String);
+        const refOf = async (id) =>
+            String((await sql('SELECT external_ref FROM orders WHERE id = ?', [id])).rows[0].external_ref);
+        expect(refs).toEqual([await refOf(near), await refOf(middle), await refOf(far)]);
+    });
+
+    it('says on the file which kind of order that is', async () => {
+        /* Numbered rows get followed top to bottom whether or not anybody
+           measured a distance. Today nothing is geocoded on this contract,
+           so the honest line is the deadline one -- and a driver handed a
+           sheet that implies the drive was solved when it was not is the
+           failure this whole feature exists to stop. */
+        await originAt(29.50, -98.50);
+        await orders(siteId, '78207', 2);
+        const run = await clusterToAna();
+
+        const res = await admin.get(`${UH}/runs/${run.id}/manifest.xlsx`).buffer(true).parse(asBuffer);
+        const wb = await sheetOf(res);
+        const about = JSON.stringify(wb.getWorksheet('About').getSheetValues());
+
+        expect(about).toMatch(/Stop order/);
+        expect(about).toMatch(/By delivery deadline/);
+        expect(about).toMatch(/2 of 2 stops have no map point/);
+        /* And it declares what is in it, because it is full of patients. */
+        expect(about).toMatch(/Contains patient data/);
+    });
+
+    it('is not another driver\u2019s to download', async () => {
+        await orders(siteId, '78207', 2);
+        const run = await clusterToAna();
+
+        const ben = srv.agent();
+        const in_ = await ben.post('/api/login').send({ username: 'split.ben', password: 'split-pass-1' });
+        expect(in_.status, in_.text).toBe(200);
+        expect((await ben.get(`${UH}/runs/${run.id}/manifest.xlsx`)).status).toBe(403);
+    });
+});
+
+/* ───────────── and WITHOUT the permission, nothing is sent anywhere
+ *
+ * The counterpart to the test in uh-geocode-orders.test.mjs, which boots
+ * with GEO_BAA_COVERS_PATIENT_ADDRESSES set. This suite does not, which is
+ * the state of any deployment without an agreement -- and the clusterer
+ * reaching for a lookup it is not permitted to use would be the leak the
+ * whole gate exists to stop. A `patientAddresses &&` is one refactor away
+ * from being deleted by somebody tidying up, so it is pinned here.
+ */
+describe('a deployment with no agreement', () => {
+    it('clusters without touching the delivery addresses', async () => {
+        const [id] = await orders(siteId, '78207', 1);
+
+        const res = await split(`serviceDate=${DAY}&site=discharge&couriers=split.ana`);
+        expect(res.status, res.text).toBe(200);
+
+        const row = (await sql('SELECT lat, lng, geocode_status FROM orders WHERE id = ?', [id])).rows[0];
+        expect(row.lat).toBeNull();
+        /* 'pending', not 'failed': a failure is a lookup that was tried. */
+        expect(row.geocode_status).toBe('pending');
     });
 });

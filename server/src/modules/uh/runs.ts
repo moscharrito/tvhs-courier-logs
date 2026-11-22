@@ -32,11 +32,13 @@ import { recordOrderEvent, type OrderStateRow } from './order-events';
 import { availableEvents, evaluateSla, TransitionError, type OrderStatus } from './lifecycle';
 import { sequenceStops, SequencingError, type SequenceStop, type SequenceStrategy } from './sequencing';
 import { sendSpreadsheet, tooManyRows, EXPORT_MAX_ROWS } from '../../core/http/spreadsheet';
-import { presentHandling, signingInstruction, handlingFlags, type HandlingRow } from './handling';
+import { presentHandling, signingInstruction, handlingFlags, handlingColumns, type HandlingRow } from './handling';
 import { proposeRuns, staffProposal, balanceAcross, DEFAULT_CLUSTER_SETTINGS, type Clusterable, type RosterDriver } from './cluster';
 import { coverList } from './roster';
 import { zipPointMap } from './zones';
 import { paidBandFor } from './driver-pay';
+import { locateDeliveries } from './geocode';
+import type { GeoLookup } from '../../core/geo/lookup';
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -106,7 +108,24 @@ const presentRun = (r: RunRow) => ({
     createdBy: r.created_by,
 });
 
-export function createRunsRouter({ client }: { client: Client }): Router {
+export function createRunsRouter(
+    { client, lookup, patientAddresses = false }: {
+        client: Client;
+        /* ── THE CLUSTERER LOOKS ADDRESSES UP ITSELF (21 November) ──────
+         *
+         * Optional, and false by default, so a test that does not care
+         * about geography boots without a provider and gets the old
+         * behaviour. legacy.ts passes both.
+         *
+         * It is here rather than left to the button on Pickup locations
+         * because driving order cannot depend on somebody remembering a
+         * step. It was left to the button for one day and every round on
+         * the contract came out in deadline order. */
+        lookup?: GeoLookup;
+        /** config.geo.patientGeocodeAllowed. No lookup happens without it. */
+        patientAddresses?: boolean;
+    },
+): Router {
     const router = Router({ mergeParams: true });
     /* THE LEAD DISPATCHES NOW, AND THIS FILE WAS THE LAST TO HEAR.
      *
@@ -747,6 +766,155 @@ export function createRunsRouter({ client }: { client: Client }): Router {
         });
     }));
 
+    /* ───────────────────────────────── ONE DRIVER'S ROUND, AS THEIR SHEET
+     *
+     * NOT export.xlsx ABOVE, AND THE DIFFERENCE IS THE WHOLE POINT.
+     *
+     * That file is the runs REGISTER: one row per run, a COUNT of stops, no
+     * address and no patient. It answers "who drove what, and how did it
+     * end". The Cluster dialog pointed its per-driver Excel link at it,
+     * filtered to one courier and one day -- so a dispatcher who clustered
+     * fifty deliveries between three drivers and opened a driver's file got
+     * three lines of run metadata and not one stop. It was the wrong file,
+     * correctly filtered, which is why nothing looked broken.
+     *
+     * This is the MANIFEST: the stops themselves, for one run, in the run's
+     * own sequence. It replaces the spreadsheet dispatch used to get back
+     * from an outside assistant, so it carries what that one carried -- the
+     * prescription reference, the patient, the telephone number, the
+     * address, and what has to happen at the door.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * THE ROW ORDER IS THE DRIVING ORDER, because it is read as one.
+     *
+     * ORDER BY s.sequence, which /split/apply wrote 1..n from whatever the
+     * clusterer handed it: nearest-neighbour from the counter where every
+     * stop had a map point, by deadline where one did not. Sorting this file
+     * by ZIP or by name instead would be a quiet lie, because somebody
+     * drives it top to bottom.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * IT IS FULL OF PATIENTS, and it is named after a driver.
+     *
+     * containsPatientData is true and the About sheet says so. The filename
+     * carries the driver's name because a dispatcher downloads one of these
+     * per driver into the same folder, and "runs-2026-11-21.xlsx" three
+     * times over is two files called runs-2026-11-21(2).xlsx.
+     *
+     * Scoped by loadOr404, the same as GET /:id: a courier gets their own
+     * runs and nobody else's. A lead is NOT narrowed to their own counters
+     * here, for the same reason GET /:id does not narrow them -- a run
+     * belongs to a DRIVER, not to a pharmacy, and a round can legitimately
+     * carry work from more than one counter. Narrowing it would hand a lead
+     * half a manifest and no way to tell it was half.
+     */
+    router.get('/:id/manifest.xlsx', readers, wrap(async (req, res) => {
+        const run = await loadOr404(req, res);
+        if (!run) return;
+        const projectId = req.project!.id;
+
+        const rs = await client.execute({
+            sql: `SELECT s.sequence, o.*, ${handlingColumns('o')}, si.name AS site_name
+                    FROM run_stops s
+                    JOIN orders o ON o.id = s.order_id
+                    LEFT JOIN sites si ON si.id = o.site_id
+                   WHERE s.project_id = ? AND s.run_id = ?
+                   ORDER BY s.sequence, s.id
+                   LIMIT ${EXPORT_MAX_ROWS + 1}`,
+            args: [projectId, Number(run.id)],
+        });
+        if (tooManyRows(res, rs.rows.length, 'stops')) return;
+
+        /* The driver's NAME, not their username. The file is handed to a
+           person and filed under one. */
+        const whoRs = await client.execute({
+            sql: 'SELECT name FROM users WHERE username = ?',
+            args: [String(run.courier_username)],
+        });
+        const driverName = String(whoRs.rows[0]?.['name'] ?? '').trim() || String(run.courier_username);
+
+        let located = 0;
+        const rows = rs.rows.map((o) => {
+            const handling = presentHandling(o as unknown as HandlingRow);
+            if (o['lat'] !== null && o['lng'] !== null) located += 1;
+            return {
+                sequence: Number(o['sequence']),
+                reference: String(o['external_ref'] ?? ''),
+                patient: String(o['recipient_name'] ?? ''),
+                /* "not provided" rather than blank: an empty cell reads as a
+                   number we lost, and this is one the pharmacy never sent. */
+                phone: String(o['recipient_phone'] ?? '') || 'not provided',
+                address: String(o['address_line'] ?? ''),
+                unit: String(o['address_line2'] ?? ''),
+                city: String(o['city'] ?? ''),
+                zip: String(o['zip'] ?? ''),
+                zone: o['zone'] === null ? 'out of area' : Number(o['zone']),
+                service: String(o['service_type'] ?? ''),
+                dueAt: o['due_at'] === null ? '' : String(o['due_at']),
+                handling: handlingFlags(handling).join(', '),
+                signing: signingInstruction(handling, String(o['recipient_name'] ?? '')),
+                notes: String(o['delivery_notes'] ?? ''),
+                status: String(o['status'] ?? ''),
+            };
+        });
+
+        const missing = rows.length - located;
+
+        await sendSpreadsheet(req, res, {
+            sheetName: 'Stops',
+            columns: [
+                { header: 'Stop', key: 'sequence', width: 6 },
+                { header: 'RX #', key: 'reference', width: 16 },
+                { header: 'Patient', key: 'patient', width: 24 },
+                { header: 'Phone', key: 'phone', width: 15 },
+                { header: 'Address', key: 'address', width: 30 },
+                { header: 'Apt', key: 'unit', width: 8 },
+                { header: 'City', key: 'city', width: 16 },
+                { header: 'ZIP', key: 'zip', width: 8 },
+                { header: 'Zone', key: 'zone', width: 10 },
+                { header: 'Service', key: 'service', width: 11 },
+                { header: 'Due', key: 'dueAt', width: 22 },
+                { header: 'Handling', key: 'handling', width: 22 },
+                { header: 'Who may sign', key: 'signing', width: 42 },
+                { header: 'Notes', key: 'notes', width: 30 },
+                { header: 'Status', key: 'status', width: 12 },
+            ],
+            rows,
+            filename: `${driverName} ${run.service_date} ${run.label}.xlsx`,
+            about: [
+                ['What this is', `Every stop on ${driverName}'s round, in the order to drive them.`],
+                ['Driver', driverName],
+                ['Run', String(run.label ?? '')],
+                ['Service date', String(run.service_date)],
+                ['Pharmacy', String(rs.rows[0]?.['site_name'] ?? '')],
+                /* SAID, BECAUSE THE SHEET IS READ AS AN ORDER TO DRIVE IN.
+                   Numbered rows get followed top to bottom, and whether that
+                   order came out of the distances or out of the deadlines is
+                   the difference between a tight round and a zig-zag. The
+                   clusterer refuses to sequence by distance unless EVERY
+                   stop has a map point, so the count below is exactly what
+                   decided it. */
+                ['Stop order', missing === 0
+                    ? 'Nearest first from the pharmacy. Every stop has a map point, so this order was '
+                      + 'worked out from the distance between them.'
+                    : `By delivery deadline. ${missing} of ${rows.length} stops have no map point, so the `
+                      + 'distances could not be measured. Look the day up on Pickup locations and cluster '
+                      + 'again for a driving order.'],
+                ['Times', req.project!.timezone],
+            ],
+            /* Patients, telephone numbers and home addresses, all of it. */
+            containsPatientData: true,
+            auditAction: 'run.manifest',
+            auditEntity: 'run',
+            auditEntityId: String(run.id),
+            auditDetail: {
+                courier: String(run.courier_username),
+                serviceDate: String(run.service_date),
+                stopsWithoutPoint: missing,
+            },
+        });
+    }));
+
     /**
      * The noon wave, grouped into routes somebody can drive.
      *
@@ -1202,6 +1370,55 @@ export function createRunsRouter({ client }: { client: Client }): Router {
             username: d.username, name: d.name, homeSiteId: d.homeSiteId,
         }));
         const offShift = chosen.filter((d) => !d.onShift).map((d) => d.name);
+
+        /* ─────────── THE ADDRESSES ARE LOOKED UP FIRST, NOT HOPED FOR
+         *
+         * A ROUND IS DRIVEN IN DRIVING ORDER OR IT IS NOT CLUSTERED. That
+         * is the whole point of the feature and it is not a preference:
+         * dispatch's old routine sent the day's list to an outside
+         * assistant precisely to get stops ordered by proximity, and a
+         * replacement that hands three drivers a list sorted by deadline
+         * has replaced nothing.
+         *
+         * Until today this depended on an administrator pressing "Look up
+         * that day" on Pickup locations before anybody clustered. Nobody
+         * did -- there is no reason they would, the two screens have
+         * nothing to do with each other -- so every round on the contract
+         * came out in deadline order while the dialog explained itself
+         * politely. A step that has to be remembered is not a feature.
+         *
+         * SO THE CLUSTERER DOES IT. Any delivery on this day with no point
+         * is looked up here, before the split is worked out, and the
+         * coordinates are read back from the rows below.
+         *
+         * IT IS A WRITE IN A GET, AND THAT IS DELIBERATE. The sentence at
+         * the top of this handler -- nothing is assigned until Assign --
+         * still holds exactly: no run is created, no order moves, no
+         * courier is given anything. What is written is a cached
+         * coordinate for an address, which is the same write the button
+         * made and is invisible to everyone except the router.
+         *
+         * IT COSTS ALMOST NOTHING TO REPEAT. Only rows with no point are
+         * looked up, and the lookup caches by address underneath, so a
+         * dispatcher who clusters four times pays for the first pass. The
+         * daily ceiling still stops a runaway.
+         *
+         * A FAILURE HERE IS NOT A FAILURE OF THE SPLIT. If the provider is
+         * down or the ceiling is reached, the stops that have points keep
+         * them, the rest fall back to deadline order, and the note below
+         * says which. Refusing to cluster at all because an address could
+         * not be found would leave a dispatcher with no rounds and a van
+         * waiting.
+         */
+        if (patientAddresses && lookup) {
+            try {
+                await locateDeliveries({ client, lookup, projectId: project.id, serviceDate });
+            } catch {
+                /* Swallowed on purpose; see above. The fallback below
+                   reports what is still missing, which is the thing the
+                   dispatcher can act on. */
+            }
+        }
 
         /* Unassigned only, same rule and same reason as /propose: an order
            already on a run belongs to a courier who may have collected it,

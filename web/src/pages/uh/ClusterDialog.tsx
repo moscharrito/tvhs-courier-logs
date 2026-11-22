@@ -92,6 +92,13 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
     const [busy, setBusy] = useState<'' | 'drivers' | 'cluster' | 'assign'>('drivers');
     const [err, setErr] = useState('');
     const [assigned, setAssigned] = useState(false);
+    /* THE RUN IDS, BECAUSE A DRIVER'S SHEET IS A RUN'S SHEET.
+       Keyed by driver, because that is what the row on screen knows.
+       Before this the Excel link went to the runs REGISTER filtered to
+       one courier and one day, which is a file of run metadata with a
+       COUNT of stops in it -- the right filter on the wrong file, so it
+       downloaded cleanly and told the dispatcher nothing. */
+    const [runOf, setRunOf] = useState<Record<string, number>>({});
 
     /* WHO IS STANDING HERE, which is a shorter question than it was.
        The server answers with the drivers mapped to this counter who are
@@ -164,7 +171,10 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
         setBusy('assign');
         setErr('');
         try {
-            const out = await api<{ runs: unknown[]; rejected: unknown[] }>(
+            const out = await api<{
+                runs: Array<{ id: number; courierUsername: string }>;
+                rejected: unknown[];
+            }>(
                 `/api/projects/${projectCode}/uh/runs/split/apply`,
                 {
                     method: 'POST',
@@ -177,6 +187,7 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                     },
                 },
             );
+            setRunOf(Object.fromEntries(out.runs.map((r) => [r.courierUsername, r.id])));
             setAssigned(true);
             onDone(out.runs.length);
         } catch (e) {
@@ -289,7 +300,7 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                             </button>
                             <p className="izy-muted izy-cluster-note">
                                 Grouped by ZIP so each driver stays in one part of the city, then each
-                                round is put in driving order where the addresses allow it.
+                                round is put in driving order — nearest stop first from the counter.
                                 Nothing is assigned until you press Assign.
                             </p>
                         </div>
@@ -298,10 +309,35 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                             <div className="izy-cluster-out">
                                 <h3>{split.rounds.length} {split.rounds.length === 1 ? 'round' : 'rounds'}</h3>
 
-                                {split.notes.map((n) => (
-                                    <p key={n} className="izy-alert warn" role="status">{n}</p>
-                                ))}
+                                {/* ── THE NOTES ARE NOT DRAWN, AND THAT IS THE POINT
+                                    (21 November)
 
+                                    The server sends five or six sentences with
+                                    every split and they used to stack above the
+                                    table as yellow banners. Read them against the
+                                    table underneath and every one is a sentence
+                                    restating a column:
+
+                                      "Rounds run from 8 to 19 stops"   -> Stops
+                                      "1 round is wider than 10 miles"  -> Width,
+                                                                   and its Wide pill
+                                      "1 run is offered to a driver
+                                       from another pharmacy"          -> the
+                                                           Another counter pill
+                                      "3 rounds are in deadline order" -> Order
+                                      "4 STAT deliveries are not in
+                                       this split"                     -> the alert
+                                                           below, word for word
+
+                                    Six banners that say what the next six rows
+                                    show is not six warnings, it is a wall, and a
+                                    wall gets scrolled past -- including on the
+                                    morning one of them matters. The table says it
+                                    in the row it is about.
+
+                                    `notes` is still on the response. The board's
+                                    own planner renders it, and nothing here needs
+                                    the server to stop producing it. */}
                                 <div className="scroller">
                                     <table>
                                         <thead>
@@ -345,13 +381,16 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                                         {r.stretched && <span className="izy-pill off">Wide</span>}
                                                     </td>
                                                     <td>
-                                                        {assigned && r.courier && (
+                                                        {/* The RUN's manifest -- the stops themselves, in
+                                                            the order they are to be driven, named for the
+                                                            driver. Only once the run exists, which is why
+                                                            this column is empty until Assign. */}
+                                                        {assigned && r.courier && runOf[r.courier.username] !== undefined && (
                                                             <a
                                                                 className="izy-btn secondary small"
-                                                                href={`/api/projects/${projectCode}/uh/runs/export.xlsx`
-                                                                    + `?serviceDate=${split.serviceDate}`
-                                                                    + `&courierUsername=${encodeURIComponent(r.courier.username)}`}
-                                                                title={`${r.courier.name}’s round as a spreadsheet`}
+                                                                href={`/api/projects/${projectCode}/uh/runs/`
+                                                                    + `${runOf[r.courier.username]}/manifest.xlsx`}
+                                                                title={`${r.courier.name}’s stops, in driving order`}
                                                             >
                                                                 <DownloadIcon size={15} />
                                                                 Excel

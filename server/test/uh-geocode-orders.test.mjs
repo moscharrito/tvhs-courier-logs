@@ -53,6 +53,14 @@ beforeAll(async () => {
     admin = await srv.login('admin');
     const sites = (await admin.get(`${UH}/sites`)).body;
     siteId = sites.find((s) => s.code === 'discharge').id;
+
+    /* A driver on this contract, for the clustering tests at the foot of
+       the file. The seeded north/south drivers are TVHS, not UH. */
+    await admin.post('/api/users').send({
+        username: 'geo.ana', name: 'Ana Driver', password: 'geo-pass-1', role: 'driver',
+    });
+    await admin.put('/api/users/geo.ana/memberships/uh')
+        .send({ role: 'courier', settings: { homeSiteId: siteId } });
 }, 60_000);
 
 afterAll(async () => { await srv?.stop(); });
@@ -161,5 +169,45 @@ describe('what it writes down', () => {
         expect(res.body.patientAddresses.lookedUp).toBe(true);
         expect(res.body.patientAddresses.why).toMatch(/business associate agreement/i);
         expect(typeof res.body.patientAddresses.located).toBe('number');
+    });
+});
+
+/* ───────────────── nobody has to press the button first (21 November)
+ *
+ * The button on Pickup locations was the only thing that ran the delivery
+ * lookup, so driving order depended on an administrator pressing it before
+ * dispatch clustered. Nobody did, and nobody would: the two screens have
+ * nothing to do with each other. Every round on the contract came out in
+ * deadline order while the dialog explained itself politely.
+ *
+ * GET /runs/split now runs the lookup itself. There is no provider in this
+ * suite, so what is observable here is that it TRIED -- the rows come back
+ * marked failed where before the split left them untouched. That is the
+ * whole of the behaviour; whether Amazon answers is Amazon's business.
+ */
+describe('clustering looks the addresses up by itself', () => {
+    it('marks the day\u2019s deliveries attempted, without anybody calling the lookup', async () => {
+        const id = await order();
+        const before = (await sql('SELECT geocode_status FROM orders WHERE id = ?', [id])).rows[0];
+        expect(before.geocode_status, 'untouched before anybody clusters').toBe('pending');
+
+        const res = await admin.get(`${UH}/runs/split?site=discharge&serviceDate=${DAY}&couriers=geo.ana`);
+        expect(res.status, res.text).toBe(200);
+
+        const after = (await sql('SELECT geocode_status FROM orders WHERE id = ?', [id])).rows[0];
+        expect(after.geocode_status).toBe('failed');
+    });
+
+    it('still answers with a split when the lookup cannot place anything', async () => {
+        /* A FAILED LOOKUP IS NOT A FAILED SPLIT. Refusing to cluster
+           because an address could not be found leaves the dispatcher with
+           no rounds and a van waiting. The rounds come out in deadline
+           order and the note says which. */
+        await order();
+        const res = await admin.get(`${UH}/runs/split?site=discharge&serviceDate=${DAY}&couriers=geo.ana`);
+
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.rounds.length).toBeGreaterThan(0);
+        expect(res.body.rounds.every((r) => r.ordering === 'due')).toBe(true);
     });
 });
