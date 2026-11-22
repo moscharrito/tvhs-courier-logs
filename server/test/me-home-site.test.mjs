@@ -274,3 +274,76 @@ describe('whether the phone may name the counter yet', () => {
         expect(rows.find((p) => p.code === 'tvhs').hasAssignedWork).toBe(false);
     });
 });
+
+/* ──────────── WHETHER THIS ACCOUNT STANDS AT A COUNTER, ON THE SAME ROW
+ *
+ * The contract manager and the three billing logins are `pharmacy`
+ * memberships naming every site. They have no counter, so they have no bench
+ * of packages to sort, and University Health asked on 22 November 2026 for
+ * the sort page off their screens -- the same request, for the same reason,
+ * as the counter panels taken off on 12 November.
+ *
+ * It rides on this row because the side rail is what offers the page, and
+ * the rail has nothing else to read: it is drawn before any project endpoint
+ * is called. The setting itself is modules/uh/portal-capability.ts's, which
+ * says why it is written on the membership rather than worked out by
+ * counting pharmacies.
+ */
+describe('whether a portal account oversees the contract', () => {
+    /** A pharmacy membership with the given settings, signed in. */
+    async function counter(username, settings) {
+        await admin.post('/api/users').send({
+            username, name: `Test ${username}`, password: `${username}-pass-1`, role: 'staff',
+        });
+        await admin.put(`/api/users/${username}/memberships/uh`).send({ role: 'pharmacy', settings });
+        const agent = srv.agent();
+        const login = await agent.post('/api/login').send({ username, password: `${username}-pass-1` });
+        expect(login.status, login.text).toBe(200);
+        return agent;
+    }
+
+    it('says so for an account that carries the setting', async () => {
+        const agent = await counter('oversee.manager', {
+            siteIds: [...uhSiteIds],
+            overseesContract: true,
+        });
+        expect((await uhRow(agent)).overseesContract).toBe(true);
+    });
+
+    it('says no for a counter, which is every pharmacy without it', async () => {
+        const agent = await counter('oversee.counter', { siteIds: [wheatley.id] });
+        /* FALSE, NOT undefined. The rail reads `!== true`, so either would
+           leave the bench in place -- but a field that is sometimes absent
+           is one a later reader writes `!== false` against, and that takes
+           the bench from every counter at once. */
+        expect((await uhRow(agent)).overseesContract).toBe(false);
+    });
+
+    it('will not be granted by the word false, or by any other truthy string', async () => {
+        /* The literal-true rule from portal-capability.ts, which exists
+           because a settings blob is JSON somebody may have hand-edited and
+           the string "false" is truthy. A capability that can be granted by
+           typing the word false is not a capability -- and this one travels
+           through json_extract and Number() on the way here, which is a
+           second place for the same mistake to be made differently. */
+        const agent = await counter('oversee.stringy', {
+            siteIds: [wheatley.id],
+            overseesContract: 'false',
+        });
+        expect((await uhRow(agent)).overseesContract).toBe(false);
+    });
+
+    it('leaves the rest of the row alone, which the picker and the clock read', async () => {
+        const agent = await counter('oversee.intact', {
+            siteIds: [...uhSiteIds],
+            overseesContract: true,
+        });
+        const row = await uhRow(agent);
+        expect(row.role).toBe('pharmacy');
+        expect(row.code).toBe('uh');
+        expect(typeof row.timezone).toBe('string');
+        /* No counter of their own, and the field that says where somebody
+           is based stays null rather than guessing at one of the nine. */
+        expect(row.homeSite).toBeNull();
+    });
+});

@@ -73,11 +73,21 @@ describe('membership bootstrap', () => {
            drive from nowhere and nothing is assigned to them. It is what
            the phone's "You drive from" panel waits for -- a roster entry
            is a plan and an assigned delivery is what makes the plan
-           today's. See me-home-site.test.mjs. */
+           today's. See me-home-site.test.mjs.
+
+           overseesContract joined it on 22 November, and false is right for
+           an administrator for a third version of the same reason: it
+           distinguishes a `pharmacy` membership that stands at one counter
+           from the contract manager and the billing logins that oversee
+           nine, and an administrator is neither. The side rail reads it to
+           decide whether to offer the sort bench, and the rail is drawn
+           before any project endpoint is called, which is why it rides
+           here. See portal-capability.ts for why it is a setting on the
+           membership rather than a count of pharmacies. */
         expect((await admin.get('/api/me/projects')).body).toEqual([
-            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false },
-            { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false },
-            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false },
+            { id: 3, code: 'demo', name: 'Izy Courier Demo', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false, overseesContract: false },
+            { id: 1, code: 'tvhs', name: 'TVHS RMD Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false, overseesContract: false },
+            { id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role: 'admin', homeSite: null, hasAssignedWork: false, overseesContract: false },
         ]);
         const north = await srv.login('north');
         expect((await north.get('/api/me/projects')).body[0]).toMatchObject({ code: 'tvhs', role: 'courier' });

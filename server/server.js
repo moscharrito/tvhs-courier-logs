@@ -273,6 +273,7 @@ app.get('/api/me/projects', requireAuth, async (req, res) => {
                 * Revisit if this ever runs anywhere but sign-in, or if the
                 * orders table reaches a size where a scan per session
                 * shows up. */
+               json_extract(m.settings, '$.overseesContract') AS oversees_contract,
                CASE WHEN m.role = 'courier' AND EXISTS (
                         SELECT 1 FROM orders o
                          WHERE o.project_id = p.id
@@ -316,6 +317,31 @@ app.get('/api/me/projects', requireAuth, async (req, res) => {
          * their site manager. It decides what one panel is confident enough
          * to assert, and that is all it should ever be asked to decide. */
         hasAssignedWork: Number(r.has_assigned_work) === 1,
+        /* ── WHETHER THIS ACCOUNT STANDS AT A COUNTER OR OVERSEES NINE.
+         *
+         * The contract manager and the three billing logins are pharmacy
+         * memberships that name every site. They are not a pharmacy: they
+         * have no counter, no packages on a bench, and nothing to sort.
+         * University Health asked on 22 November 2026 for the sort bench off
+         * their screens, having found it there.
+         *
+         * READ FROM THE MEMBERSHIP, NOT COUNTED. The same setting
+         * modules/uh/portal-capability.ts already reads, and its note says
+         * why counting pharmacies is the wrong test: it is true of these
+         * four accounts today and false the morning a real counter is given
+         * its neighbour's deliveries to watch, at which point a pharmacy
+         * silently loses its bench.
+         *
+         * IT GRANTS NOTHING AND REFUSES NOTHING, which is that file's rule
+         * and is kept here. It decides what the rail offers. The sort
+         * lookup has its own scoping and would answer this account the same
+         * way it always did if they typed the address in.
+         *
+         * `=== 1` after Number, not truthiness: json_extract gives 1 for a
+         * JSON true, and a settings blob somebody hand-edited can hold the
+         * string "false", which is truthy. Number("false") is NaN, so this
+         * says no to it. */
+        overseesContract: Number(r.oversees_contract) === 1,
         homeSite: r.home_site_code == null ? null : {
             code: r.home_site_code,
             name: r.home_site_name,

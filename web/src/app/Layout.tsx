@@ -146,8 +146,23 @@ export function Layout() {
                                 who physically sort the packages into piles
                                 are standing here, and a page they cannot
                                 reach is a page nobody uses. The server
-                                scopes them to their own sites. */}
-                            {item(`/projects/${projects[0].code}/sort`, 'Sort')}
+                                scopes them to their own sites.
+
+                                NOT FOR AN ACCOUNT WITH NO COUNTER. The
+                                contract manager and the billing logins are
+                                pharmacy memberships covering all nine, and a
+                                bench is a physical place: there are no
+                                packages in front of them to sort. Off their
+                                rail since 22 November 2026, with the other
+                                counter tools that were taken off on
+                                12 November for the same reason.
+
+                                `=== true`, so a bundle held across a deploy
+                                -- or any older server that does not send the
+                                field -- leaves the bench where it is rather
+                                than taking it from every counter at once. */}
+                            {projects[0].overseesContract !== true
+                                && item(`/projects/${projects[0].code}/sort`, 'Sort')}
                             {item(`/projects/${projects[0].code}/performance`, 'Performance')}
                             <div className="izy-nav-title">Account</div>
                         </>

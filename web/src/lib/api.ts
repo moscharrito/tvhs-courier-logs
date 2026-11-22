@@ -130,6 +130,15 @@ export interface ProjectMembership {
      * Found on 29 October by signing in as the site manager and clicking
      * every link on the page. */
     role: 'admin' | 'lead' | 'courier' | 'pharmacy';
+    /** True for the contract manager and the billing logins: a `pharmacy`
+     *  membership that oversees every counter rather than standing at one.
+     *
+     *  OPTIONAL FOR THE SAME REASON AS homeSite BELOW. A phone holds its
+     *  bundle across a deploy, so a client that knows this field can be
+     *  talking to a server that does not send it yet. Read it as
+     *  `=== true`, never as `!== false`: absent must mean "a counter", or
+     *  every pharmacy loses its sort bench for the minute a rollout takes. */
+    overseesContract?: boolean;
     /** The counter this person is based at, from the membership's
      *  settings.homeSiteId.
      *

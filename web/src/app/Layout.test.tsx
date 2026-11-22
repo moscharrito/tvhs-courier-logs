@@ -256,3 +256,84 @@ describe('signing out when the queue is not empty', () => {
         await waitFor(() => expect(calls).toContain('POST /api/logout'));
     });
 });
+
+/* ────────────────── THE SORT BENCH, AND WHO HAS NO BENCH
+ *
+ * The contract manager and the three billing logins are `pharmacy`
+ * memberships that name every counter. They are not a counter: there are no
+ * packages in front of them. University Health asked on 22 November 2026 for
+ * the bench off their screens, having found it there -- the same request,
+ * and the same reasoning, as the counter panels taken off on 12 November.
+ *
+ * The rail decides it from the membership rather than by counting
+ * pharmacies: see the note above oversees() in modules/uh/portal-capability.ts
+ * for why counting is the test that quietly breaks the day a real counter is
+ * given its neighbour's deliveries to watch.
+ */
+describe('the sort bench on a counter rail', () => {
+    const counter = [{
+        id: 2, code: 'uh', name: 'UH Pharmacy Courier',
+        timezone: 'America/Chicago', role: 'pharmacy',
+    }];
+
+    const railFor = async (project: Record<string, unknown>) => {
+        mockFetch({
+            'GET /api/session': session,
+            'GET /api/me/projects': [project],
+            'GET /api/login/device': { enrolled: false },
+            /* ENOUGH OF THE PORTAL TO RENDER, even though the rail is
+               what is under test: the rail lives inside whatever page is
+               open, so a page that throws on a stub takes the rail with it
+               and the failure reads as a missing link rather than a broken
+               fixture. Trimming these cost a confusing twenty minutes. */
+            'GET /api/projects/uh/uh/client/summary': {
+                serviceDate: '2026-09-14', timezone: 'America/Chicago',
+                pharmacies: [{ id: 7, code: 'discharge', name: 'Discharge Pharmacy' }],
+                byStatus: {}, total: 0, outstanding: 0, delivered: 0, notDelivered: 0, notes: [],
+            },
+            'GET /api/projects/uh/uh/client/orders*': {
+                from: '2026-09-14', to: '2026-09-14',
+                pharmacies: [{ id: 7, code: 'discharge', name: 'Discharge Pharmacy' }],
+                orders: [], truncated: false, notes: [],
+            },
+            '*': {},
+        });
+        render(
+            <MemoryRouter initialEntries={['/']}>
+                <AuthProvider><App /></AuthProvider>
+            </MemoryRouter>,
+        );
+        await screen.findByRole('link', { name: 'Deliveries' });
+    };
+
+    it('offers it to a pharmacy standing at a counter', async () => {
+        await railFor(counter[0]!);
+        expect(screen.getByRole('link', { name: 'Sort' })).toBeInTheDocument();
+    });
+
+    it('does not offer it to an account that oversees the contract', async () => {
+        await railFor({ ...counter[0]!, overseesContract: true });
+        expect(screen.queryByRole('link', { name: 'Sort' })).toBeNull();
+        /* The rest of their rail is untouched: they still read deliveries
+           and performance, which is what those accounts are for. */
+        expect(screen.getByRole('link', { name: 'Deliveries' })).toBeInTheDocument();
+    });
+
+    it('keeps the bench when the server says nothing at all', async () => {
+        /* `=== true`, not `!== false`. A phone holds its bundle across a
+           deploy, so a client that knows this field can be talking to a
+           server that does not send it yet -- and reading absence as
+           "oversees" would take the bench from every counter at once for
+           the minute a rollout takes. */
+        await railFor(counter[0]!);
+        expect(screen.getByRole('link', { name: 'Sort' })).toBeInTheDocument();
+        expect(counter[0]).not.toHaveProperty('overseesContract');
+    });
+
+    it('is not offered on an account that only oversees, even as false', async () => {
+        /* The literal-true rule from the other direction: an explicit false
+           is a counter, and must keep its bench. */
+        await railFor({ ...counter[0]!, overseesContract: false });
+        expect(screen.getByRole('link', { name: 'Sort' })).toBeInTheDocument();
+    });
+});
