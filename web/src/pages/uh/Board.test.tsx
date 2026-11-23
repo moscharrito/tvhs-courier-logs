@@ -1002,3 +1002,128 @@ describe('Board: what just happened', () => {
         expect(await screen.findByText(/not updating/)).toBeInTheDocument();
     });
 });
+
+/* ───────────── the filters narrow the drivers too (23 November 2026)
+ *
+ * Reported from the Texas Diabetes Institute counter: the header said 75
+ * orders and 68 assigned, and underneath it were three drivers, two of them
+ * reading "0 of 0 done". The server applies the pharmacy filter to the
+ * ORDERS, and a lane's stops are orders -- so the stops narrowed and the
+ * lanes did not, because a run belongs to a driver rather than to a counter
+ * and there is nothing on the run row to filter by.
+ *
+ * A column of drivers carrying nothing at the pharmacy you are looking at
+ * is the roster, not the board.
+ *
+ * The two things this must NOT do are the interesting half: it must not
+ * hide a driver who is simply waiting for work when no filter is set, and
+ * it must not take anybody out of the assignment dropdown, which asks a
+ * different question -- whose counter is this -- and reads the same list.
+ */
+describe('the lanes follow the filters at the top', () => {
+    const working = {
+        run: { id: 10, courierUsername: 'ada.courier', serviceDate: '2026-09-14', label: 'Noon wave', status: 'planned', startedAt: null },
+        courier: courier(),
+        stops: [{ sequence: 1, order: order({ id: 2, status: 'assigned', assignedTo: 'ada.courier' }) }],
+        currentStop: null,
+        counts: { total: 1, remaining: 1, done: 0, overdue: 0 },
+    };
+
+    /* Same day, same contract, on shift, mapped to the same counter -- and
+       nothing of this pharmacy's on the run. On the real board this is a
+       driver whose stops are all at another counter; it is also what a run
+       with no stops at all looks like. Both read "0 of 0 done". */
+    const elsewhere = {
+        run: { id: 11, courierUsername: 'bo.courier', serviceDate: '2026-09-14', label: 'Second wave', status: 'planned', startedAt: null },
+        courier: courier({ username: 'bo.courier', name: 'Bo Courier', homeSiteId: 7, onShift: true }),
+        stops: [],
+        currentStop: null,
+        counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+    };
+
+    const both = (over = {}) => routes({
+        'GET /api/projects/uh/uh/board*': boardData({
+            pool: [{ site: { id: 7, code: 'discharge', name: 'Discharge Pharmacy' }, orders: [order({ id: 1 })], overdue: 0 }],
+            lanes: [working, elsewhere],
+            idleCouriers: [],
+            ...over,
+        }),
+    });
+
+    it('leaves out a driver with nothing at the pharmacy chosen', async () => {
+        renderBoard(both(), '/projects/uh/board?siteId=7');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(await screen.findByRole('region', { name: /Ada Courier/ })).toBeInTheDocument();
+        expect(screen.queryByRole('region', { name: /Bo Courier/ })).not.toBeInTheDocument();
+    });
+
+    it('draws every lane when no filter is set', async () => {
+        /* Unfiltered means unnarrowed, the same rule the Start a run panel
+           follows. A run with nothing on it is a driver waiting for work and
+           the target you drag it onto; hiding that on an unfiltered board
+           would be hiding the thing the board is for. */
+        renderBoard(both(), '/projects/uh/board');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(await screen.findByRole('region', { name: /Ada Courier/ })).toBeInTheDocument();
+        expect(screen.getByRole('region', { name: /Bo Courier/ })).toBeInTheDocument();
+    });
+
+    it('narrows on service and zone as well, not only on the pharmacy', async () => {
+        /* Every filter at the top narrows the orders, so every one of them
+           narrows the lanes. A rule that held for the pharmacy alone would
+           leave the same empty rows behind the moment somebody picked a
+           zone, and the complaint would come back wearing a different hat. */
+        renderBoard(both(), '/projects/uh/board?zone=1');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(await screen.findByRole('region', { name: /Ada Courier/ })).toBeInTheDocument();
+        expect(screen.queryByRole('region', { name: /Bo Courier/ })).not.toBeInTheDocument();
+    });
+
+    it('says how many drivers it left out rather than losing them quietly', async () => {
+        /* A dispatcher who knows nineteen people are out has to be told
+           where the other sixteen went. A row that vanishes without a word
+           is how a board stops being believed. */
+        renderBoard(both(), '/projects/uh/board?siteId=7');
+
+        expect(await screen.findByText(/1 more driver is out today with nothing matching these filters/))
+            .toBeInTheDocument();
+    });
+
+    it('says nothing of the sort when it left nobody out', async () => {
+        renderBoard(both(), '/projects/uh/board');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(screen.queryByText(/nothing matching these filters/)).toBeNull();
+    });
+
+    it('still offers the hidden driver a card from that counter', async () => {
+        /* THE HALF THAT WOULD BE A REGRESSION. The dropdown asks whose
+           counter this is -- home pharmacy or cover -- and it reads the same
+           lane list. A driver whose run is empty here is still the right
+           person to hand this pharmacy's work to, and hiding their LANE must
+           not take them out of the list that hands it over. */
+        renderBoard(both(), '/projects/uh/board?siteId=7');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        const pick = await screen.findByLabelText('Assign order 1 to');
+        expect(within(pick).getByRole('option', { name: /Bo Courier/ })).toBeInTheDocument();
+        expect(within(pick).getByRole('option', { name: /Ada Courier/ })).toBeInTheDocument();
+    });
+
+    it('hides nobody while the board admits it is carrying a subset', async () => {
+        /* Past the card cap the server drops settled work first, so a
+           finished driver's stops can be missing from a response that says
+           so in `carrying`. Hiding them then would turn a stated gap into a
+           disappearance -- the lane would be gone and the count at the top
+           would still be counting its deliveries. */
+        renderBoard(both({ carrying: { shown: 750, of: 1417, limit: 750, truncated: true } }),
+            '/projects/uh/board?siteId=7');
+        await screen.findByRole('heading', { name: 'Dispatch board' });
+
+        expect(await screen.findByRole('region', { name: /Bo Courier/ })).toBeInTheDocument();
+        expect(screen.queryByText(/nothing matching these filters/)).toBeNull();
+    });
+});

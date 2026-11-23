@@ -288,13 +288,62 @@ export function Board() {
        what matches rather than of the whole board. Matching on the driver's
        name and on the run's label, which is where "Wave 3" and "STAT" live
        -- the two things a dispatcher says out loud when looking for one. */
-    const laneMatches = (data?.lanes ?? []).filter((l) => {
+
+    /* ─── THE FILTERS AT THE TOP NARROW THE DRIVERS TOO (23 November 2026)
+     *
+     * Choose a pharmacy and the header, the pool and every stop on every
+     * lane narrow to it -- the server applies the filter to the ORDERS, and
+     * a lane's stops are orders. The lanes themselves did not narrow,
+     * because a run belongs to a DRIVER and not to a counter, so there was
+     * nothing on a run row to filter by.
+     *
+     * The result on screen was a column of drivers reading "0 of 0 done"
+     * under a pharmacy they do not serve: at the Texas Diabetes Institute,
+     * two names with nothing on them above the one name with seventeen. A
+     * dispatcher scrolling that is reading the roster, not the board.
+     *
+     * So a lane whose stops have all been filtered away is not drawn. The
+     * test is counts.total, which the server computes AFTER applying the
+     * filter, so this says exactly "this driver has nothing matching what
+     * you asked for" and nothing else.
+     *
+     * TWO THINGS IT DELIBERATELY DOES NOT DO.
+     *
+     * With no filter set, nothing is hidden -- including a run with no
+     * stops on it at all, which is a driver waiting for work and is the
+     * drop target for giving them some.
+     *
+     * And it hides lanes from the SCREEN only. data.lanes is left whole,
+     * because targetsFor() reads it to decide who may be offered a card at
+     * a counter, and that question is about the driver's home pharmacy
+     * rather than about what they happen to be carrying. Narrowing the list
+     * it reads would quietly take drivers out of the assignment dropdown,
+     * which is the opposite of the problem being fixed.
+     *
+     * TRUNCATION IS NOT AN EMPTY LANE. Past the card cap the server drops
+     * settled work first, so a finished driver's stops can be missing from
+     * a response that is honest about it. Hiding them then would turn a
+     * stated gap into a disappearance, so nothing is hidden while the board
+     * says it is carrying a subset. */
+    const narrowed = ['siteId', 'serviceType', 'zone'].some((k) => (params.get(k) ?? '') !== '');
+    const carryingAll = data?.carrying.truncated !== true;
+    const hasWorkHere = (l: Lane) => !narrowed || !carryingAll || l.counts.total > 0;
+    /** Every lane the filters leave standing, before the Find a driver box
+     *  narrows it further. The box's own threshold counts this rather than
+     *  what it has already matched, or typing a letter would make the box
+     *  that did the typing disappear. */
+    const lanesOnBoard = (data?.lanes ?? []).filter(hasWorkHere);
+    const laneMatches = lanesOnBoard.filter((l) => {
         const q = laneFilter.trim().toLowerCase();
         if (q === '') return true;
         return l.courier.name.toLowerCase().includes(q)
             || l.courier.username.toLowerCase().includes(q)
             || l.run.label.toLowerCase().includes(q);
     });
+    /** Drivers on the board with nothing matching the filters. Said out
+     *  loud below: a row that vanishes without a word is how a board starts
+     *  being mistrusted. */
+    const laneElsewhere = (data?.lanes ?? []).length - lanesOnBoard.length;
     const pagedLanes = usePaged(laneMatches);
 
     if (!project) {
@@ -698,7 +747,11 @@ export function Board() {
                         The pager says the total, which is the part that
                         matters: a page of eight lanes is otherwise
                         indistinguishable from a day with eight drivers. */}
-                    {data.lanes.length > PAGE_SIZE && (
+                    {/* Against what is on the board after the filters, not
+                        against the whole day. A box offering to narrow nine
+                        lanes down from twenty-three is offering to narrow
+                        something the dispatcher cannot see. */}
+                    {lanesOnBoard.length > PAGE_SIZE && (
                         <label className="izy-field izy-lane-filter">Find a driver
                             <input
                                 value={laneFilter}
@@ -710,7 +763,19 @@ export function Board() {
                     )}
                     {pagedLanes.total === 0 && laneFilter !== '' && (
                         <p className="izy-muted">
-                            No driver on the board matches “{laneFilter}”. {data.lanes.length} {data.lanes.length === 1 ? 'lane' : 'lanes'} in all.
+                            No driver on the board matches “{laneFilter}”. {lanesOnBoard.length} {lanesOnBoard.length === 1 ? 'lane' : 'lanes'} in all.
+                        </p>
+                    )}
+                    {/* THE ONES THAT ARE NOT DRAWN, COUNTED. The filters
+                        above hide drivers carrying nothing that matches
+                        them, and a dispatcher who knows nineteen people are
+                        out has to be told where the other sixteen went --
+                        otherwise the board looks like it lost them. */}
+                    {laneElsewhere > 0 && (
+                        <p className="izy-muted">
+                            {laneElsewhere} more {laneElsewhere === 1 ? 'driver is' : 'drivers are'} out
+                            today with nothing matching these filters. Clear them to see
+                            {laneElsewhere === 1 ? ' their lane' : ' their lanes'}.
                         </p>
                     )}
                     {/* ─── A COLUMN OF DRIVERS, NOT A WALL OF CARDS.
