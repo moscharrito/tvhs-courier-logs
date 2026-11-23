@@ -54,7 +54,19 @@ function renderAs(role: string, over: Record<string, unknown> = {}) {
     render(
         <MemoryRouter initialEntries={['/projects/uh']}>
             <AuthProvider>
-                <Routes><Route path="/projects/:code" element={<ProjectHome />} /></Routes>
+                <Routes>
+                    <Route path="/projects/:code" element={<ProjectHome />} />
+                    {/* ── THE TWO PLACES THIS PAGE SENDS PEOPLE.
+
+                        Added 23 November 2026. Without them a redirect lands
+                        on nothing, so there is no moment a test can wait for
+                        and the only thing left to assert is an ABSENCE -- and
+                        an absence is true of every role before the page has
+                        decided anything. See the two tests at the bottom of
+                        this file for what that cost. */}
+                    <Route path="/projects/:code/my-run" element={<p>the driver run</p>} />
+                    <Route path="/projects/:code/deliveries" element={<p>the client portal</p>} />
+                </Routes>
             </AuthProvider>
         </MemoryRouter>,
     );
@@ -187,22 +199,34 @@ describe('an administrator', () => {
 });
 
 describe('everybody else', () => {
+    /* ──────────── AN ABSENCE PROVES NOTHING UNTIL THE PAGE HAS DECIDED
+     *
+     * Both of these asserted that the daily list is not rendered. Neither
+     * waited for anything that could only be true afterwards, and the panel
+     * is absent for EVERY role until /api/me/projects answers -- so both
+     * passed identically against a page that handed a courier or a pharmacy
+     * the whole day of patient addresses. One used `await waitFor` around
+     * the absence, which reads like a wait and is not one: waitFor calls its
+     * callback immediately and resolves on the first pass.
+     *
+     * Found by sweeping the web suite on 23 November, after two gate runs
+     * turned up two unrelated tests that were winning races rather than
+     * waiting.
+     *
+     * THE REDIRECT IS THE BEHAVIOUR, so landing on the destination is the
+     * positive fact to wait for. The absence then means something, because
+     * by that point the page has decided and acted.
+     */
     it('sends a courier to their own run and nowhere near the day\'s addresses', async () => {
-        /* Asserted as an ABSENCE, not by catching a find and calling the
-           result defined -- that passes whatever happens, which is worse
-           than no test. The whole page is a day of patient addresses, so
-           the thing that matters is that none of it renders. */
         renderAs('courier');
-        await waitFor(() => {
-            expect(screen.queryByRole('heading', { name: /daily list/i })).toBeNull();
-        });
+        expect(await screen.findByText('the driver run')).toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: /daily list/i })).toBeNull();
         expect(screen.queryByRole('link', { name: 'Drivers record' })).toBeNull();
     });
 
     it('does not offer a pharmacy the landing page at all', async () => {
-        /* They are redirected to their own portal, so the daily list panel
-           must never render for them. */
         renderAs('pharmacy');
+        expect(await screen.findByText('the client portal')).toBeInTheDocument();
         expect(screen.queryByRole('heading', { name: /daily list/i })).toBeNull();
     });
 });

@@ -246,17 +246,36 @@ describe('ClientPortal', () => {
     it('asks the server for the lot when told to, and stops the screen moving under the reader', async () => {
         /* Several thousand rows must not reload themselves every twenty
            seconds while somebody is reading one. */
+        /* ANSWERED ON WHAT WAS ASKED, NOT ON HOW MANY TIMES.
+
+           This counted calls -- the first was truncated, every later one was
+           not -- which assumes the page fetches exactly once before the
+           click. It does not reliably: an effect that runs twice, or a
+           refresh landing between the wait and the assertion, consumes the
+           truncated answer, and the button under test disappears because the
+           SECOND response said there was nothing left to show. It failed
+           that way once in a full gate run and passed alone every time.
+
+           The real contract is that asking for the lot is a DIFFERENT
+           REQUEST -- it carries limit=10000 -- so keying on that is both
+           deterministic and a stronger statement about the thing being
+           tested. The count is still collected, because the assertion below
+           is about which URLs were asked for. */
         const asked: string[] = [];
         renderPortal(routes({
             [`GET ${BASE}/orders*`]: (url: string) => {
                 asked.push(url);
-                return asked.length === 1
-                    ? list({ truncated: true, total: 7812, maxRows: 10000 })
-                    : list({ truncated: false, total: 7812, maxRows: 10000 });
+                return url.includes('limit=10000')
+                    ? list({ truncated: false, total: 7812, maxRows: 10000 })
+                    : list({ truncated: true, total: 7812, maxRows: 10000 });
             },
         }));
         await settled();
-        fireEvent.click(screen.getByRole('button', { name: 'Show all 7,812' }));
+        /* findBy, not getBy: settled() waits for the heading, which the page
+           renders as soon as the summary and the first list are in hand --
+           it says nothing about this button, which depends on what that list
+           reported. */
+        fireEvent.click(await screen.findByRole('button', { name: 'Show all 7,812' }));
         await settled();
 
         expect(asked.some((u) => u.includes('limit=10000'))).toBe(true);
