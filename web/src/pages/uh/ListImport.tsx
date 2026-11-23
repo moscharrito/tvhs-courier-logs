@@ -903,10 +903,21 @@ export function ListImport({ projectCode, timezone, canImport, canWithdraw, site
                                     "Nobody yet" is the first option and the
                                     default, so the upload a counter has
                                     always done is still one button. Nothing
-                                    about importing depends on this. */}
+                                    about importing depends on this.
+
+                                    "ASSIGN TO", NOT "CLUSTER TO", since
+                                    23 November 2026. This hands the WHOLE
+                                    list to one driver; it splits nothing and
+                                    sorts nothing. Clustering is the button
+                                    below, which groups by ZIP across several
+                                    drivers -- and calling both of them
+                                    clustering taught people that the word
+                                    meant nothing in particular. The state
+                                    behind this has been called assignTo all
+                                    along; only the label disagreed. */}
                                 {canImport === true && candidates.length > 0 && (
                                     <label className="izy-field izy-assign-on-import">
-                                        Cluster to
+                                        Assign to
                                         <select
                                             value={assignTo}
                                             disabled={busy !== null}

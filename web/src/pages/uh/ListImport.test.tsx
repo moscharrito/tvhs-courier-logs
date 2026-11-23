@@ -599,7 +599,7 @@ describe('ListImport', () => {
             driver({ username: 'far.courier', name: 'Far Away', homeSiteId: 9 }),
         ]));
 
-        const pick = await screen.findByLabelText('Cluster to');
+        const pick = await screen.findByLabelText('Assign to');
         expect(within(pick).getByRole('option', { name: 'Ada Fitzgerald' })).toBeInTheDocument();
         /* Off shift today, and based at another counter: neither can take
            this list, so neither is offered. */
@@ -613,14 +613,14 @@ describe('ListImport', () => {
            dropdown. The board's own assignment control reads the same two
            fields for the same reason. */
         await reviewed(withRoster([driver({ username: 'cov.courier', name: 'Cov Er', homeSiteId: 9, alsoCovers: [7] })]));
-        const pick = await screen.findByLabelText('Cluster to');
+        const pick = await screen.findByLabelText('Assign to');
         expect(within(pick).getByRole('option', { name: 'Cov Er' })).toBeInTheDocument();
     });
 
     it('defaults to nobody, so the upload is still one button', async () => {
         await reviewed(withRoster([driver()]));
-        expect(await screen.findByLabelText('Cluster to')).toHaveValue('');
-        expect(within(screen.getByLabelText('Cluster to')).getByRole('option', { name: 'Nobody yet' })).toBeInTheDocument();
+        expect(await screen.findByLabelText('Assign to')).toHaveValue('');
+        expect(within(screen.getByLabelText('Assign to')).getByRole('option', { name: 'Nobody yet' })).toBeInTheDocument();
     });
 
     it('imports without a run when nobody is chosen', async () => {
@@ -664,7 +664,7 @@ describe('ListImport', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Review the file' }));
         await screen.findByText('1 of 3 rows will be imported');
         if (driverUsername !== null) {
-            fireEvent.change(await screen.findByLabelText('Cluster to'), { target: { value: driverUsername } });
+            fireEvent.change(await screen.findByLabelText('Assign to'), { target: { value: driverUsername } });
         }
         fireEvent.click(screen.getByRole('button', { name: /^Import 1 orders?$/ }));
         return { calls, fn };
@@ -703,7 +703,7 @@ describe('ListImport', () => {
            The import is unaffected either way. */
         await reviewed(withRoster([driver({ onShift: false })]));
         expect(await screen.findByText(/Nobody mapped to this pharmacy is on shift/)).toBeInTheDocument();
-        expect(screen.queryByLabelText('Cluster to')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Assign to')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: /^Import 1 orders?$/ })).toBeEnabled();
     });
 

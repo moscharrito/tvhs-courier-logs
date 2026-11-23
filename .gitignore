@@ -252,3 +252,18 @@ sms.ps1
 # sms-audit.ps1: prompts for the Turso token, then runs the read-only
 # patient-text audit. Holds no secret itself; gitignored by habit.
 sms-audit.ps1
+
+# A clean-room instance for screenshots and demo capture: a separate,
+# disposable database so a shared video can never carry a real patient.
+# See server/demo-capture.mjs for why the dev database is not used.
+server/demo-capture.mjs
+server/demo-capture.db
+server/demo-capture.db-*
+server/.demo-capture-admin
+server/demo-capture-setup.mjs
+
+# Demo capture output: a video of the product, its frames and its build
+# script. Kept out of the repo because it is a build artefact and because the
+# frames are screenshots -- of invented data today, which is a discipline
+# rather than a guarantee.
+docs/demo/
