@@ -15,7 +15,7 @@
 import type { Client, InValue } from '@libsql/client';
 import { notifyPharmacyOfOutcome } from './delivery-notices';
 import { notifyDispatchOfStop } from './dispatch-notices';
-import { queueStageNotice } from './patient-sms';
+import { queueStageNotice, queueRoundNotices } from './patient-sms';
 import { EVENT_STAGES, type Stage } from '../../core/notify/sms-template';
 import type { ProjectSettings } from '../../core/projects/settings';
 import {
@@ -356,6 +356,42 @@ export async function recordOrderEvent(client: Client, opts: RecordOptions): Pro
             settings,
             timezone: opts.timezone ?? 'UTC',
             now: event.at,
+        });
+    }
+
+    /* ── AND THE ONE THAT IS NOT A STAGE: BEING GIVEN TO A DRIVER.
+     *
+     * `delivery_today` is excluded from EVENT_STAGES because it is not a
+     * custody event -- it is the "a delivery is coming" text, and until
+     * 22 November 2026 a 7am sweep sent it. The sweep could only promise
+     * "today, 9am-5pm", because at 7am that was all anybody knew, and a
+     * list released after noon got no text at all with nothing saying so.
+     *
+     * Assignment is the moment the message becomes worth sending: the order
+     * has a driver, so it can name them and quote the deadline already on
+     * the order.
+     *
+     * HERE RATHER THAN IN THE CLUSTERER, which is where it was first put
+     * and which was half a feature. Clustering is how most work is handed
+     * out and not how all of it is: a dispatcher reassigning one stop by
+     * hand never passes through split/apply, and those patients would have
+     * been silently skipped. This is the single place every assignment
+     * arrives, by exactly the argument written above the pharmacy notice --
+     * hook the routes and the seventh route added later tells nobody.
+     *
+     * The unique index on (order_id, kind) makes a reassignment safe: a
+     * stop moved from one driver to another has already been announced, and
+     * the second text would contradict the first rather than update it.
+     * That is a real limitation and the right default -- nobody should
+     * learn their delivery changed hands from a second text naming a
+     * different stranger. */
+    if (event.type === 'assigned') {
+        await queueRoundNotices(client, {
+            projectId,
+            now: event.at,
+            timezone: opts.timezone ?? 'UTC',
+            settings,
+            orderIds: [orderId],
         });
     }
 

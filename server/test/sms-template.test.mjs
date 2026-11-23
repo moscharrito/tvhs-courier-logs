@@ -15,10 +15,48 @@ import {
 import { DELIVERY_TODAY, noticeFor } from '../src/modules/uh/patient-sms.ts';
 
 describe('the default wording', () => {
-    it('says the window and the call, which is what was asked for', () => {
-        expect(DELIVERY_TODAY).toContain('between 9:00 AM and 5:00 PM');
-        expect(DELIVERY_TODAY).toMatch(/call you about 20 minutes before arriving/);
+    it('names the driver, quotes the deadline, and offers the way out', () => {
+        /* ── THE WINDOW WENT ON 22 NOVEMBER 2026 AND THAT IS THE POINT.
+         *
+         * It said "between 9:00 AM and 5:00 PM" because the message used to
+         * be sent by a 7am sweep, when the only thing known about a
+         * delivery was that it existed. It is sent when the round is built
+         * now, so the order has a driver and a deadline of its own and the
+         * text can say both. Most of a working day became a time. */
+        expect(DELIVERY_TODAY).toContain('arriving by 2:00 PM');
+        expect(DELIVERY_TODAY).toMatch(/Alex will call about 20 min before/);
         expect(DELIVERY_TODAY).toContain('STOP');
+        /* And the window is gone rather than merely unused: a template that
+           still carried it would be promising 9-to-5 beside a real time. */
+        expect(DELIVERY_TODAY).not.toContain('9:00 AM');
+    });
+
+    it('quotes a deadline that exists rather than an arrival it invented', () => {
+        /* WORTH PINNING BECAUSE THE OBVIOUS BUILD IS WRONG. The natural
+           reading of "tell them when the driver is coming" is a window off
+           the stop's position in the round -- and nothing in this system
+           can produce one. run_stops holds a sequence and no clock, and
+           sequencing.ts orders stops by distance without ever turning that
+           into minutes. Any window from a sequence would be a number made
+           up on the spot and texted to a patient.
+
+           {by} is the order's own due_at: already computed, and already the
+           commitment made to University Health. */
+        const spec = STAGES.delivery_today;
+        expect(spec.placeholders).toContain('by');
+        expect(spec.placeholders).toContain('driver');
+        expect(spec.template).toContain('{by}');
+        expect(spec.template).toContain('{driver}');
+    });
+
+    it('fits in ONE message, which is half of what it used to cost', () => {
+        /* The previous wording was 172 characters -- two segments, charged
+           twice, for every patient every day, since September. Nothing on
+           the settings screen says where the line is, which is why
+           settings-show.mjs prints the count now. */
+        const { encoding, segments } = segmentsFor(DELIVERY_TODAY);
+        expect(encoding).toBe('GSM-7');
+        expect(segments).toBe(1);
     });
 
     it('still names nobody', () => {
@@ -30,13 +68,20 @@ describe('the default wording', () => {
     it('is what a project with no settings sends', () => {
         /* The constant and the settings default are the same sentence, so
            they cannot drift into two different promises. */
-        expect(noticeFor(resolveSettings({}), 'delivery_today')).toBe(DELIVERY_TODAY);
+        expect(noticeFor(resolveSettings({}), 'delivery_today', undefined, {
+            driver: 'Alex', by: '2:00 PM',
+        })).toBe(DELIVERY_TODAY);
     });
 
-    it('fits in two messages', () => {
-        const { encoding, segments } = segmentsFor(DELIVERY_TODAY);
-        expect(encoding).toBe('GSM-7');
-        expect(segments).toBeLessThanOrEqual(2);
+    it('renders nothing readable when the per-delivery words are missing', () => {
+        /* NOT A STYLE POINT. An unfilled render reads "arriving by .  will
+           call about 20 min before", which assertMinimal passes happily
+           because there is nothing disclosing about it. queueRoundNotices
+           sends no text at all rather than that one, and this is the shape
+           it is refusing. */
+        const bare = noticeFor(resolveSettings({}), 'delivery_today');
+        expect(bare).toContain('arriving by .');
+        expect(bare).not.toBe(DELIVERY_TODAY);
     });
 });
 

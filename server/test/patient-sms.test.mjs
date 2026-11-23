@@ -80,15 +80,27 @@ const fakeTexter = (outcome = () => ({ kind: 'sent', providerId: 'SM123' })) => 
 
 describe('what a patient is told', () => {
     it('names a courier and nothing else', () => {
-        /* University Health asked for the delivery window and the check-in
-           call to be in it, and for the wording to be editable. This is the
-           rendered default; sms-template.test.mjs covers what an edit may
-           and may not turn it into. */
+        /* University Health asked for the check-in call to be in it and for
+           the wording to be editable. sms-template.test.mjs covers what an
+           edit may and may not turn it into.
+
+           RENDERED WITH SAMPLE VALUES, and the constant is only a sample
+           since 22 November 2026: the wording carries a driver and a
+           deadline now, both of which exist per delivery, so there is no
+           such thing as THE default message any more -- only the default
+           wording. The constant exists so that an edit to that wording
+           which names a pharmacy stops the server booting.
+
+           AND IT IS ONE SEGMENT. Anything over 160 characters is charged
+           twice, for every patient, every day -- the previous wording was
+           172 and had been paying that since September with nothing on any
+           screen saying so. */
         expect(DELIVERY_TODAY).toBe(
-            'Izy Global Services has a delivery scheduled for you today between 9:00 AM and 5:00 PM. '
-            + 'Our driver will call you about 20 minutes before arriving. '
-            + 'Reply STOP to stop these messages.',
+            'Izy Global Services has a delivery for you today, arriving by 2:00 PM. '
+            + 'Alex will call about 20 min before. '
+            + 'Reply STOP to opt out.',
         );
+        expect(DELIVERY_TODAY.length).toBeLessThanOrEqual(160);
     });
 
     it('carries no word that would disclose why on a lock screen', () => {
@@ -332,6 +344,22 @@ describe('a text at each stage', () => {
         'SELECT kind, body FROM patient_messages WHERE order_id = ? ORDER BY kind', [orderId],
     );
 
+    /* ── EVERY ORDER HERE NOW CARRIES AN EXTRA MESSAGE, FROM atTheDoor.
+     *
+     * It puts the order on a run, which records an `assigned` custody event,
+     * which since 22 November 2026 is what queues the "a delivery is coming"
+     * text -- see the end of recordOrderEvent. The stage tests below are
+     * about what each custody event says, so they read their own row by kind
+     * rather than by position: ORDER BY kind puts delivery_today first for
+     * picked_up and second for delivered, and an index would have been right
+     * by luck in one test and wrong in another. */
+    const DELIVERY_TODAY_KIND = 'delivery_today';
+    const stageRows = async (orderId) => (await queued(orderId))
+        .filter((r) => String(r.kind) !== DELIVERY_TODAY_KIND);
+    const bodyOf = async (orderId, kind) => String(
+        (await queued(orderId)).find((r) => String(r.kind) === kind)?.body ?? '',
+    );
+
     it('texts when a delivery is completed', async () => {
         await clear();
         const o = await atTheDoor();
@@ -340,12 +368,12 @@ describe('a text at each stage', () => {
         });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
 
-        const got = await queued(o.id);
-        expect(got.map((r) => String(r.kind))).toEqual(['delivered']);
-        expect(String(got[0].body)).toMatch(/your delivery was completed at \d+:\d\d (AM|PM)/);
+        expect((await stageRows(o.id)).map((r) => String(r.kind))).toEqual(['delivered']);
+        const body = await bodyOf(o.id, 'delivered');
+        expect(body).toMatch(/your delivery was completed at \d+:\d\d (AM|PM)/);
         /* The time is the project's, not UTC, because that is what a person
            reads off their own clock. */
-        expect(String(got[0].body)).not.toContain('{time}');
+        expect(body).not.toContain('{time}');
     });
 
     it('texts when an attempt fails, and says nothing about why', async () => {
@@ -354,8 +382,8 @@ describe('a text at each stage', () => {
         const res = await ada.post(`${ORDERS}/${o.id}/events`).send({ type: 'attempted', reason: 'no_access' });
         expect(res.status, JSON.stringify(res.body)).toBe(201);
 
-        const got = await queued(o.id);
-        expect(got.map((r) => String(r.kind))).toEqual(['attempted']);
+        expect((await stageRows(o.id)).map((r) => String(r.kind))).toEqual(['attempted']);
+        const got = [{ body: await bodyOf(o.id, 'attempted') }];
         /* The failure reason is operational detail and stays on our side. */
         expect(String(got[0].body)).not.toMatch(/no.access/i);
         expect(String(got[0].body)).toMatch(/could not complete it/);
@@ -365,8 +393,11 @@ describe('a text at each stage', () => {
         await clear();
         const o = await atTheDoor();
         /* Collected and arrived both happened above. Neither is switched on,
-           so neither may have written anything. */
-        expect(await queued(o.id)).toEqual([]);
+           so neither may have written anything -- and the morning notice
+           that being assigned DOES write is not a stage, so it is filtered
+           out rather than quietly making this pass for the wrong reason. */
+        expect(await stageRows(o.id)).toEqual([]);
+        expect((await queued(o.id)).map((r) => String(r.kind))).toEqual([DELIVERY_TODAY_KIND]);
     });
 
     it('texts once however many times a courier taps', async () => {
@@ -379,7 +410,7 @@ describe('a text at each stage', () => {
             signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
         /* The unique index on (order_id, kind), not the caller remembering. */
-        expect(await queued(o.id)).toHaveLength(1);
+        expect(await stageRows(o.id)).toHaveLength(1);
     });
 
     it('writes nothing for an order with no phone number', async () => {
@@ -388,6 +419,9 @@ describe('a text at each stage', () => {
         await ada.post(`${ORDERS}/${o.id}/deliver`).send({
             signedName: 'Recipient', courierFormFileId: await storedForm(srv),
         });
+        /* Nothing at all, not even the assignment notice: a patient with no
+           number is counted as unreachable at every stage rather than at
+           some of them. */
         expect(await queued(o.id)).toEqual([]);
     });
 
@@ -400,8 +434,14 @@ describe('a text at each stage', () => {
 
         const texter = fakeTexter();
         const out = await sendQueued(client, texter, quiet);
-        expect(out.sent).toBe(1);
-        expect(texter.sent[0].body).toMatch(/your delivery was completed/);
+        /* TWO, since 22 November: the morning notice written when the order
+           was put on a run, and the outcome written when it was delivered.
+           Found by what they say rather than by position -- the send order
+           is the insert order and that is not a thing this test is about. */
+        expect(out.sent).toBe(2);
+        const bodies = texter.sent.map((t) => String(t.body));
+        expect(bodies.some((b) => /your delivery was completed/.test(b))).toBe(true);
+        expect(bodies.some((b) => /has a delivery for you today/.test(b))).toBe(true);
     });
 });
 

@@ -398,6 +398,21 @@ export function createRunsRouter(
                 order,
                 actor: actorOf(req),
                 settings: resolveSettings(req.project!.settings),
+                /* ── THE ZONE, WHICH THIS DID NOT PASS AND NOW MUST.
+                 *
+                 * recordOrderEvent defaults it to UTC when it is absent --
+                 * deliberately, so a notification is written in the wrong
+                 * zone rather than not written at all. That was a fair
+                 * trade while the only reader was a pharmacy notice with a
+                 * timestamp on it.
+                 *
+                 * Since 22 November an assignment also texts the patient
+                 * the time their delivery is due, and San Antonio is six
+                 * hours behind UTC: an order due at 4:08pm would have told
+                 * somebody 10:08 PM. A wrong time in a patient's text is
+                 * worse than no time at all, because they will plan around
+                 * it. */
+                timezone: req.project!.timezone,
                 event: { type: 'assigned', at: new Date(), courierUsername: run.courier_username },
             });
         } catch (err) {
@@ -1738,15 +1753,79 @@ export function createRunsRouter(
             created.push({ ...presentRun(run), stops: await stopsOf(project.id, Number(run.id)) });
         }
 
+        /* ── WHAT THE PATIENTS WERE TOLD, COUNTED RATHER THAN DONE HERE.
+         *
+         * The texts went out one stop at a time as the loop above ran:
+         * addStop records an `assigned` custody event, and that is where
+         * the notice is queued now -- see the end of recordOrderEvent in
+         * order-events.ts for why it belongs at the event and not here.
+         * This handler queued them itself for about an hour on 22 November
+         * 2026, which worked and was half a feature: a dispatcher moving
+         * one stop by hand never comes through split/apply, and those
+         * patients were silently skipped.
+         *
+         * So this only reports. Two counts rather than a running total,
+         * because the number dispatch want after clustering a day is "how
+         * many of these patients are being told", not "how many rows did
+         * that particular call insert" -- and with the hook upstream those
+         * two answers are different, the second one always being nought.
+         *
+         * NO PHONE IS THE OTHER HALF AND IT IS THE USEFUL ONE. A patient
+         * the pharmacy sent us with no number is a person who will not be
+         * told, and that is a thing somebody at the counter can fix if they
+         * ever hear about it. */
+        const toldRs = await client.execute({
+            sql: `SELECT COUNT(*) AS n FROM patient_messages
+                   WHERE project_id = ? AND kind = 'delivery_today'
+                     AND order_id IN (${ids.map(() => '?').join(',')})`,
+            args: [project.id, ...ids],
+        });
+        const noPhoneRs = await client.execute({
+            sql: `SELECT COUNT(*) AS n FROM orders
+                   WHERE project_id = ? AND delivery_kind = 'patient'
+                     AND TRIM(COALESCE(recipient_phone, '')) = ''
+                     AND id IN (${ids.map(() => '?').join(',')})`,
+            args: [project.id, ...ids],
+        });
+        const texted = {
+            queued: Number(toldRs.rows[0]?.['n'] ?? 0),
+            noPhone: Number(noPhoneRs.rows[0]?.['n'] ?? 0),
+        };
+
+        /* ── THE OLD COMMENT, KEPT FOR WHY THIS MOMENT MATTERS AT ALL.
+         *
+         * Until 22 November 2026 a patient's text came from a sweep between
+         * 7am and noon, and said "today, 9am-5pm" because at 7am that was
+         * genuinely all anybody knew. Here the round exists: the delivery
+         * has a driver, so the message can name them.
+         *
+         * AFTER the stops are written and after the audit row, deliberately.
+         * A text is the one thing in this handler that cannot be taken back
+         * -- the runs can be deleted and the stops reassigned, and eight
+         * hundred people cannot be un-texted -- so nothing is sent until
+         * the thing it describes is actually on the board.
+         *
+         * NEVER THROWS, and the response does not depend on it. A clustering
+         * run that worked is not undone by a message that was not queued,
+         * and queueRoundNotices swallows its own failures for that reason.
+         * What it returns is reported below rather than logged, because
+         * "how many patients did that tell" is a question dispatch will
+         * have the first morning this is switched on.
+         *
+         * ONLY THE ORDERS THIS CALL PLACED, which is what `ids` is. */
+
         await req.audit('run.split', 'site', String(body.siteId), {
             serviceDate: body.serviceDate,
             rounds: body.rounds.length,
             stops: ids.length,
             couriers: body.rounds.map((r) => r.courierUsername),
             rejected: rejected.length,
+            /* Counts only. A phone number is never written to the trail. */
+            texted: texted.queued,
+            noPhone: texted.noPhone,
         });
 
-        res.status(201).json({ runs: created, rejected });
+        res.status(201).json({ runs: created, rejected, texted });
     }));
 
     router.get('/', readers, wrap(async (req, res) => {

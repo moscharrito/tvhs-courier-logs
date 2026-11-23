@@ -34,7 +34,7 @@
  * courier is probably outside.
  */
 
-import type { Client } from '@libsql/client';
+import type { Client, InValue } from '@libsql/client';
 import type { Logger } from '../../core/http/logger';
 import { assertMinimal, toE164, type Texter } from '../../core/notify/twilio';
 import { renderTemplate, windowText, type Stage } from '../../core/notify/sms-template';
@@ -46,7 +46,26 @@ import { DEFAULT_PROJECT_SETTINGS, type ProjectSettings } from '../../core/proje
  *  University Health asked to edit it and it is their patients reading it.
  *  This is what a project that has never been configured sends, and it is
  *  what the settings default to, so the two cannot drift apart. */
-export const DELIVERY_TODAY = noticeFor(DEFAULT_PROJECT_SETTINGS, 'delivery_today');
+export const DELIVERY_TODAY = noticeFor(
+    DEFAULT_PROJECT_SETTINGS,
+    'delivery_today',
+    undefined,
+    /* ── A SAMPLE, AND SINCE 22 NOVEMBER 2026 THAT IS ALL IT IS.
+     *
+     * This used to be rendered with nothing filled in, which was fine while
+     * the wording had no per-delivery words in it. It has two now, so an
+     * unfilled render reads "arriving by .  will call about 20 min before"
+     * -- a sentence nobody should ever see, and which assertMinimal below
+     * would happily pass because there is nothing disclosing about it.
+     *
+     * So it is rendered with representative values and used ONLY as the
+     * import-time check on the wording: if somebody edits the default into
+     * something that names a pharmacy, the server refuses to start instead
+     * of texting it to eight hundred people. It is no longer a fallback
+     * body, because a sender without settings cannot know whether the
+     * project is paused and must send nothing at all. */
+    { driver: 'Alex', by: '2:00 PM' },
+);
 
 /* A sanity check that runs at import rather than at send: if somebody edits
    the default wording into something that names a pharmacy, the server
@@ -63,13 +82,32 @@ assertMinimal(DELIVERY_TODAY);
  *
  * `at` is only needed by stages whose wording can mention a time.
  */
-export function noticeFor(settings: ProjectSettings, stage: Stage, at?: { when: Date; timezone: string }): string {
+export function noticeFor(
+    settings: ProjectSettings,
+    stage: Stage,
+    at?: { when: Date; timezone: string },
+    /* ── PER ORDER, WHICH THE REST OF THIS IS NOT.
+     *
+     * The note above says this is rendered once per queue run so that a
+     * settings change midway cannot produce two different promises on the
+     * same day. That still holds and is still the reason: what is read once
+     * is the TEMPLATE. These two vary per delivery by their nature -- a
+     * round has one driver and each stop its own deadline -- so they arrive
+     * as arguments rather than being read from anywhere.
+     *
+     * Both are optional and both render empty when absent, because every
+     * other stage uses this function and none of them has a driver or a
+     * deadline to talk about. */
+    per?: { driver?: string; by?: string },
+): string {
     const s = settings.patientSms;
     const body = renderTemplate(s.stages[stage].template, {
         company: s.company,
         window: windowText(s.windowStart, s.windowEnd),
         callMinutes: String(s.callMinutes),
         time: at ? clockIn(at.when, at.timezone) : '',
+        driver: per?.driver ?? '',
+        by: per?.by ?? '',
     });
     /* Checked again here, not only on save. A row stored before this
        validation existed, or edited around the endpoint, must still not go
@@ -164,6 +202,150 @@ export interface QueueResult {
  * Idempotent by the unique index rather than by checking first: two ticks
  * racing would both pass a check and only one can pass the constraint.
  */
+/**
+ * Tell the patients on a round that it is coming, now that it exists.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TRIGGERED BY THE ROUND, NOT BY THE CLOCK. Changed 22 November 2026.
+ *
+ * The old trigger was a sweep between 7am and noon. It had two faults and
+ * only one of them was visible. A list released after noon got no notice at
+ * all, silently -- nothing on any screen said a word about it. And at 7am
+ * nothing is known about a delivery except that it exists, so the sentence
+ * could promise no more than "today, 9am-5pm".
+ *
+ * Clustering is the moment both of those are fixed: the order has a driver
+ * and its place in somebody's day is settled, so the text can name the
+ * driver and quote the deadline.
+ *
+ * ONLY ORDERS WITH A COURIER. That is what makes the message truthful, and
+ * it is also the one way this can go quiet: a delivery assigned by hand
+ * rather than through the clusterer never passes this way. The morning
+ * sweep is kept for exactly that reason -- see the scheduler -- and it now
+ * queues the same per-order sentence rather than a vaguer one, so the two
+ * paths cannot produce different promises for the same day.
+ *
+ * `orderIds` narrows it to a round that has just been built. Without it the
+ * whole day is considered, which is what the sweep wants.
+ */
+export async function queueRoundNotices(
+    client: Client,
+    opts: {
+        projectId: number;
+        /** Omit when `orderIds` already says which deliveries are meant. The
+         *  sweep needs it; the assignment hook has one order and no day. */
+        serviceDate?: string;
+        now: Date;
+        timezone: string;
+        settings: ProjectSettings;
+        orderIds?: number[];
+    },
+): Promise<QueueResult> {
+    const result: QueueResult = { queued: 0, noPhone: 0 };
+    /* NO SETTINGS MEANS NO MESSAGE. A caller that cannot supply them cannot
+       have checked whether this project is paused, and "send the built-in
+       default" is the wrong answer to that: the pause is the only thing
+       standing between a half-configured project and eight hundred texts. */
+    if (!opts.settings) return result;
+    if (opts.settings.patientSms.paused) return result;
+    if (!opts.settings.patientSms.stages.delivery_today.enabled) return result;
+    if (opts.orderIds !== undefined && opts.orderIds.length === 0) return result;
+    /* One or the other, or there is no question being asked: without either
+       this would consider every order the project has ever held. */
+    if (opts.serviceDate === undefined && opts.orderIds === undefined) return result;
+
+    try {
+        const day = opts.serviceDate === undefined ? '' : 'AND o.service_date = ?';
+        const narrow = opts.orderIds === undefined
+            ? ''
+            : `AND o.id IN (${opts.orderIds.map(() => '?').join(',')})`;
+        const args: InValue[] = [opts.projectId];
+        if (opts.serviceDate !== undefined) args.push(opts.serviceDate);
+        if (opts.orderIds !== undefined) args.push(...opts.orderIds);
+        const rs = await client.execute({
+            /* The same exclusions as every other path here: a facility is a
+               goods-in desk with no patient behind it, and a settled order
+               is not coming. The courier join is what is new -- a name on
+               the message is the point of moving the trigger. */
+            sql: `SELECT o.id, o.recipient_phone, o.due_at, o.assigned_to_username
+                    FROM orders o
+                   WHERE o.project_id = ?
+                     ${day}
+                     AND o.delivery_kind = 'patient'
+                     AND o.assigned_to_username IS NOT NULL
+                     AND o.status NOT IN ('cancelled', 'delivered', 'failed')
+                     ${narrow}`,
+            args,
+        });
+
+        /* Every driver on these rows once, rather than a lookup per patient:
+           a round is one driver and a day is a handful of them. */
+        const usernames = [...new Set(rs.rows
+            .map((r) => String(r['assigned_to_username'] ?? ''))
+            .filter((u) => u !== ''))];
+        const firstNames = await driverFirstNames(client, opts.projectId, usernames);
+
+        for (const row of rs.rows) {
+            const phone = String(row['recipient_phone'] ?? '').trim();
+            if (phone === '') { result.noPhone += 1; continue; }
+
+            const due = String(row['due_at'] ?? '');
+            const driver = firstNames.get(String(row['assigned_to_username'] ?? '')) ?? '';
+            /* NO DRIVER NAME AND NO DEADLINE MEANS NO MESSAGE, rather than a
+               message with a hole where a name should be. "  will call about
+               20 min before" is worse than silence, and a deadline this
+               cannot read would render "arriving by ." to a patient. */
+            if (driver === '' || due === '') { continue; }
+
+            const body = noticeFor(opts.settings, 'delivery_today', undefined, {
+                driver,
+                by: clockIn(new Date(due), opts.timezone),
+            });
+            try {
+                await client.execute({
+                    sql: `INSERT INTO patient_messages
+                            (project_id, order_id, phone, kind, body, created_at)
+                          VALUES (?, ?, ?, 'delivery_today', ?, ?)`,
+                    args: [opts.projectId, Number(row['id']), phone, body, opts.now.toISOString()],
+                });
+                result.queued += 1;
+            } catch {
+                /* The unique index: already told. Re-clustering a list must
+                   not text the same patient a second time, and this is what
+                   makes that true rather than a rule somebody remembers. */
+            }
+        }
+    } catch {
+        /* A round that was built is not unbuilt by a text that was not
+           queued. Same rule as every other notification path here. */
+    }
+    return result;
+}
+
+/** First names for a handful of drivers, from the users table.
+ *
+ *  FIRST NAME ONLY. A patient needs to know who is knocking, not a courier's
+ *  surname -- the same line the client portal draws, for the same reason. An
+ *  account with no name on it returns nothing and the caller sends no text
+ *  rather than a nameless one. */
+async function driverFirstNames(
+    client: Client, projectId: number, usernames: string[],
+): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (usernames.length === 0) return out;
+    const rs = await client.execute({
+        sql: `SELECT u.username, u.name FROM users u
+                JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
+               WHERE u.username IN (${usernames.map(() => '?').join(',')})`,
+        args: [projectId, ...usernames],
+    });
+    for (const r of rs.rows) {
+        const first = String(r['name'] ?? '').trim().split(/\s+/)[0] ?? '';
+        if (first !== '') out.set(String(r['username']), first);
+    }
+    return out;
+}
+
 export async function queueMorningNotices(
     client: Client,
     opts: { projectId: number; serviceDate: string; now: Date; settings?: ProjectSettings },

@@ -201,6 +201,54 @@ async function main() {
     console.log(`    hours       ${hours.start}-${hours.end}, ${(hours.days ?? []).length} days a week`);
     console.log('');
 
+    /* ─────────────── WHETHER WE ARE TEXTING PATIENTS, WHICH IS A THING
+     * NOBODY COULD CHECK.
+     *
+     * Everything needed to text eight hundred patients has been built and
+     * wired into the scheduler since September. One boolean in the DATABASE
+     * decides whether any of it runs, its default in the source is `paused`,
+     * and a deploy never moves one -- which is the whole reason this script
+     * exists and exactly the way auto-assign was believed off for three days
+     * while a sweep handed out work.
+     *
+     * The stage list matters as much as the pause: the pause is the main
+     * switch and each stage has its own, so "not paused" is not the same as
+     * "sending", and a stage switched on while paused sends nothing. */
+    console.log('  ─────────────────────────────── texts to patients\n');
+    const sms = s.patientSms ?? {};
+    if (sms.stages === undefined) {
+        console.log('    This server did not return a patientSms section at all.');
+        console.log('    An older build, or a project that has never had one.\n');
+    } else {
+        console.log(`  ${sms.paused === true ? 'PAUSED' : 'LIVE  '}  the main switch`);
+        console.log(sms.paused === true
+            ? '       Nothing is sent and nothing is queued. Stages below are what'
+              + ' WOULD run.\n'
+            : '       Patients ARE being texted, for every stage marked on below.\n');
+
+        for (const [name, stage] of Object.entries(sms.stages ?? {})) {
+            console.log(`    ${stage?.enabled === true ? 'on ' : 'off'}  ${name}`);
+        }
+        console.log('');
+        console.log(`    sender      "${sms.company ?? ''}"`);
+        console.log(`    window      ${sms.windowStart ?? '?'}-${sms.windowEnd ?? '?'} (what the wording promises)`);
+        console.log(`    call ahead  ${sms.callMinutes ?? '?'} min\n`);
+
+        /* THE LENGTH IS MONEY AND IT IS INVISIBLE. Anything over 160
+           characters is two messages, charged twice, and the wording is
+           editable by the client -- so a sentence added in a settings form
+           doubles the bill with nothing on the screen saying so. A rough
+           count is better than none; the exact one is GSM 03.38 and lives
+           in core/notify/sms-template.ts. */
+        for (const [name, stage] of Object.entries(sms.stages ?? {})) {
+            const len = String(stage?.template ?? '').length;
+            if (len > 160) {
+                console.log(`    ${name}: roughly ${len} characters, which is TWO messages per patient.`);
+            }
+        }
+        console.log('');
+    }
+
     console.log('  Nothing was changed. This reads the project and prints it.');
 }
 

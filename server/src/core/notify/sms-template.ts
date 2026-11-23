@@ -31,7 +31,7 @@
 import { assertMinimal } from './twilio';
 
 /** What may appear in braces. Anything else is a typo, not a variable. */
-export const PLACEHOLDERS = ['company', 'window', 'callMinutes', 'time'] as const;
+export const PLACEHOLDERS = ['company', 'window', 'callMinutes', 'time', 'driver', 'by'] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
 export type TemplateVars = Record<Placeholder, string>;
@@ -43,6 +43,11 @@ export const SAMPLE_VARS: TemplateVars = {
     window: 'between 9:00 AM and 5:00 PM',
     callMinutes: '20',
     time: '2:15 PM',
+    /* A first name only, which is what the round knows and all a patient
+       needs. See driverFirstName in modules/uh/patient-sms.ts. */
+    driver: 'Alex',
+    /* The deadline already on the order, not an invented arrival time. */
+    by: '2:00 PM',
 };
 
 /**
@@ -83,14 +88,41 @@ export interface StageSpec {
 
 export const STAGES = {
     delivery_today: {
-        label: 'Morning notice',
-        when: 'Once, on the morning of a delivery that is going out.',
-        placeholders: ['company', 'window', 'callMinutes'],
+        label: 'Out for delivery',
+        /* ── WHEN THIS FIRES CHANGED ON 22 NOVEMBER 2026.
+         *
+         * It used to be a clock: a sweep between 7am and noon, sending the
+         * same sentence to everybody on the day's list. Two things were
+         * wrong with that. A list released after noon got NO notice at all
+         * and nothing said so; and at 7am nothing is known about the
+         * delivery beyond the fact that it exists, so the message could
+         * only promise "today, 9am-5pm", which is most of a working day.
+         *
+         * It fires when a round is built now. By then the order has a
+         * driver, so the text can name them. */
+        when: 'Once, when the round carrying the delivery is built.',
+        placeholders: ['company', 'by', 'driver', 'callMinutes', 'window'],
         enabledByDefault: true,
+        /* ── UNDER 160 CHARACTERS, WHICH IS A PRICE AND NOT A STYLE.
+         *
+         * Anything longer is two messages and is charged twice, for every
+         * patient, every day. The previous wording was 172 and had been
+         * paying that since September without anybody seeing it -- there is
+         * nothing on the settings screen that says where the line is, which
+         * is why settings-show.mjs now prints the count.
+         *
+         * {by} IS THE ORDER'S OWN DEADLINE, NOT AN ESTIMATE. Nothing in
+         * this system predicts an arrival time: run_stops holds a sequence
+         * and no clock, and sequencing.ts orders stops by distance without
+         * ever converting that to minutes. A window invented from a stop's
+         * position would be a promise made up on the spot and sent to a
+         * patient. The due time is already computed, already the commitment
+         * made to University Health, and is the only honest narrow number
+         * available. */
         template:
-            '{company} has a delivery scheduled for you today {window}. '
-            + 'Our driver will call you about {callMinutes} minutes before arriving. '
-            + 'Reply STOP to stop these messages.',
+            '{company} has a delivery for you today, arriving by {by}. '
+            + '{driver} will call about {callMinutes} min before. '
+            + 'Reply STOP to opt out.',
     },
     picked_up: {
         label: 'On the way',

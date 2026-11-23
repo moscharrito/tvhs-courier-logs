@@ -606,3 +606,173 @@ describe('a deployment with no agreement', () => {
         expect(row.geocode_status).toBe('pending');
     });
 });
+
+/* ────────────── TELLING THE PATIENTS, WHICH IS WHY CLUSTERING IS THE MOMENT
+ *
+ * Until 22 November 2026 a patient's "a delivery is coming" text came from a
+ * sweep between 7am and noon. It had two faults and only one was visible: a
+ * list released after noon got no text at all and nothing said so, and at
+ * 7am nothing is known about a delivery beyond its existence, so the message
+ * could promise no more than "today, 9am-5pm".
+ *
+ * Clustering is where both are fixed. The order has a driver by then, so the
+ * text can name them and quote the deadline already on the order.
+ */
+describe('the texts a round sends when it is built', () => {
+    const queued = async () => (await sql(
+        "SELECT order_id, body FROM patient_messages WHERE kind = 'delivery_today' ORDER BY order_id",
+    )).rows;
+
+    /* Its own copy: the one in "accepting it" is scoped to that block. */
+    async function proposeThenApply(couriers) {
+        const r = await split(`serviceDate=${DAY}&site=discharge&couriers=${couriers}`);
+        expect(r.status, r.text).toBe(200);
+        return admin.post(`${UH}/runs/split/apply`).send({
+            serviceDate: DAY,
+            siteId,
+            rounds: r.body.rounds.map((x) => ({
+                courierUsername: x.courier.username, orderIds: x.orderIds,
+            })),
+        });
+    }
+
+    /* The shared orders() helper writes no phone, because most of this file
+       is about geography. A patient with no number is a real and common row
+       -- the pharmacy's data quality, which queueRoundNotices counts rather
+       than swallows instead of pretending everyone was told. These set one
+       deliberately, and one test leaves a row without. */
+    async function withPhones(ids, skipLast = false) {
+        const reach = skipLast ? ids.slice(0, -1) : ids;
+        for (const [i, id] of reach.entries()) {
+            await sql(
+                'UPDATE orders SET recipient_phone = ? WHERE id = ?',
+                [`210555${String(1000 + i)}`, id],
+            );
+        }
+        return ids;
+    }
+
+    /** Switch patient texts on for this project, since they ship paused. */
+    async function smsOn(over = {}) {
+        const res = await admin.patch('/api/projects/uh/settings').send({
+            patientSms: { paused: false, ...over },
+        });
+        expect(res.status, res.text).toBe(200);
+    }
+
+    it('writes one per patient on the round, naming the driver', async () => {
+        await smsOn();
+        await withPhones(await orders(siteId, '78207', 4), true);
+        const out = await proposeThenApply('split.ana,split.ben');
+        expect(out.status, out.text).toBe(201);
+
+        const rows = await queued();
+        expect(rows.length).toBe(3);
+        /* The fourth had no number. Counted and reported rather than
+           quietly dropped: one patient who will not be told is a thing
+           somebody at the pharmacy can fix, and only if they hear of it. */
+        expect(out.body.texted.noPhone).toBe(1);
+        /* The count travels back in the response, because "how many
+           patients did that just tell" is the first question dispatch will
+           have the morning this is switched on. */
+        expect(out.body.texted.queued).toBe(rows.length);
+
+        for (const r of rows) {
+            const body = String(r.body);
+            /* A real time off the order's own due_at, not a 9-to-5 window,
+               and a first name rather than "our driver". */
+            expect(body, body).toMatch(/arriving by \d{1,2}:\d{2} (AM|PM)/);
+            /* The sender's own name leads. Not a regex on one word: the
+               default company is three of them. */
+            expect(body, body).toContain('has a delivery for you today');
+            expect(body, body).toContain('will call about');
+            expect(body, body).toContain('STOP');
+            /* One segment. Two is twice the bill, every patient, every day. */
+            expect(body.length, body).toBeLessThanOrEqual(160);
+        }
+    });
+
+    it('does not tell the same patient twice when a list is re-clustered', async () => {
+        /* Dispatch re-cluster a day when something changes. The unique index
+           on (order_id, kind) is what makes that safe rather than a rule
+           somebody has to remember, and this is the test that it holds
+           through the real route. */
+        await smsOn();
+        await withPhones(await orders(siteId, '78207', 3));
+        await proposeThenApply('split.ana');
+        const first = await queued();
+        expect(first.length).toBeGreaterThan(0);
+
+        await proposeThenApply('split.ana,split.ben');
+        expect((await queued()).length).toBe(first.length);
+    });
+
+    it('tells a patient whose stop was assigned by hand, not by the clusterer', async () => {
+        /* ── THE HOLE THIS FEATURE SHIPPED WITH FOR AN HOUR.
+         *
+         * The notice was first queued by split/apply, which is how most
+         * work is handed out and not how all of it is. A dispatcher
+         * building a run by hand, or moving one stop onto somebody else's,
+         * never comes through that handler -- so those patients were
+         * silently skipped, and nothing on any screen would have said so.
+         *
+         * It is hooked to the `assigned` custody event now, which every
+         * route recording an assignment passes through. This builds a run
+         * the other way to prove it. */
+        await smsOn();
+        const made = await withPhones(await orders(siteId, '78207', 2));
+        const before = (await queued()).length;
+
+        const run = await admin.post(`${UH}/runs`)
+            .send({ courierUsername: 'split.cal', serviceDate: DAY, orderIds: made });
+        expect(run.status, run.text).toBe(201);
+
+        const rows = await queued();
+        expect(rows.length).toBe(before + 2);
+        for (const r of rows.slice(-2)) {
+            expect(String(r.body)).toMatch(/arriving by \d{1,2}:\d{2} (AM|PM)/);
+        }
+    });
+
+    it('quotes the deadline in the project zone, not in UTC', async () => {
+        /* San Antonio is six hours behind UTC, so an order due at 4:08pm
+           reads 10:08 PM to anybody who forgot to pass the zone --
+           recordOrderEvent defaults it to UTC rather than refusing to write
+           the notice, which is the right trade for a pharmacy timestamp and
+           the wrong one for a time a patient will plan their afternoon
+           around. addStop did not pass it until this was caught. */
+        await smsOn();
+        const made = await withPhones(await orders(siteId, '78207', 1));
+        const before = (await queued()).length;
+        const run = await admin.post(`${UH}/runs`)
+            .send({ courierUsername: 'split.cal', serviceDate: DAY, orderIds: made });
+        expect(run.status, run.text).toBe(201);
+
+        const row = (await queued())[before];
+        const due = String((await sql('SELECT due_at FROM orders WHERE id = ?', [made[0]])).rows[0].due_at);
+        const expected = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true,
+        }).format(new Date(due));
+        expect(String(row.body)).toContain(`arriving by ${expected}`);
+    });
+
+    it('sends nothing at all while the project is paused', async () => {
+        /* Paused is the main switch and it ships on. Everything else here
+           is built and wired; this one boolean is what stands between a
+           half-configured project and eight hundred texts. */
+        const res = await admin.patch('/api/projects/uh/settings').send({
+            patientSms: { paused: true },
+        });
+        expect(res.status, res.text).toBe(200);
+
+        /* Counted before and after rather than expecting an empty table:
+           the tests above this one queued real messages, and a paused
+           project must leave those alone rather than there being none. */
+        const before = (await queued()).length;
+        await withPhones(await orders(siteId, '78207', 3));
+        const out = await proposeThenApply('split.ana');
+        expect(out.status, out.text).toBe(201);
+        expect(out.body.texted.queued).toBe(0);
+        expect((await queued()).length).toBe(before);
+    });
+});

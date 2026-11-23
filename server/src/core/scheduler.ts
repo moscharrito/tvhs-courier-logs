@@ -31,7 +31,7 @@ import { sweepDayStart } from '../modules/uh/day-start';
 import { sweepStaleShifts } from '../modules/uh/shift-sweep';
 import { sweepMailWatch } from './notify/mail-watch';
 import { dispatchPending } from './notify/dispatch';
-import { inMorningWindow, queueMorningNotices, sendQueued } from '../modules/uh/patient-sms';
+import { inMorningWindow, queueRoundNotices, sendQueued } from '../modules/uh/patient-sms';
 import { sendDailyReport } from '../modules/uh/daily-report';
 import { dailyFigures } from '../modules/uh/reports';
 import { resolveSettings } from './projects/settings';
@@ -146,10 +146,32 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
              * contract will have a different one. Queued here and sent below:
              * see modules/uh/patient-sms.ts for why writing and sending are
              * separate, and why the unique index rather than this tick is what
-             * stops a two-minute sweep texting somebody all morning. */
+             * stops a two-minute sweep texting somebody all morning.
+             *
+             * ── THIS IS A BACKSTOP NOW, NOT THE TRIGGER. Changed
+             * 22 November 2026.
+             *
+             * Clustering tells the patients on a round the moment that round
+             * is built -- see the end of split/apply in modules/uh/runs.ts --
+             * which is when a driver and a deadline exist and the message can
+             * say something useful.
+             *
+             * What that misses is a delivery given to a driver BY HAND,
+             * which never passes through the clusterer. This catches those,
+             * and queues the identical per-order sentence rather than the
+             * vaguer one it used to send, so the two paths cannot promise a
+             * patient two different things on the same day.
+             *
+             * It still only looks at orders with a courier on them, so a
+             * morning sweep before anybody has been assigned does nothing
+             * and the clusterer is left to it. One hole remains and it is
+             * written down rather than papered over: a delivery assigned by
+             * hand AFTER this window closes at noon gets no text. Hooking
+             * the assignment event itself would close it, and would be a
+             * third trigger for one message. */
             if (texter?.available && inMorningWindow(new Date(), timezone)) {
-                const notices = await queueMorningNotices(client, {
-                    projectId, serviceDate: todayIn(timezone), now: new Date(),
+                const notices = await queueRoundNotices(client, {
+                    projectId, serviceDate: todayIn(timezone), now: new Date(), timezone,
                     /* The project's own wording and delivery window, rather
                        than the built-in default: this is the text the client
                        edited and the one they expect their patients to get. */

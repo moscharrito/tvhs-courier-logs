@@ -126,8 +126,13 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
             window: windowText(start, end),
             callMinutes: String(minutes),
             /* A fixed sample rather than the clock, so a preview taken twice
-               reads the same and a screenshot of it stays true. */
+               reads the same and a screenshot of it stays true. The driver
+               and the deadline are samples for the same reason: both are
+               per-delivery at send time and neither exists while somebody
+               is editing the wording. */
             time: '2:15 PM',
+            driver: 'Alex',
+            by: '2:00 PM',
         };
         try {
             const text = validateTemplate(template, vars, stage);
@@ -180,6 +185,10 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
                         window: windowText(current.windowStart, current.windowEnd),
                         callMinutes: String(current.callMinutes),
                         time: '2:15 PM',
+                        /* Samples, as above: a driver and a deadline exist
+                           per delivery and not while a template is read. */
+                        driver: 'Alex',
+                        by: '2:00 PM',
                     }, name);
                 } catch (err) {
                     /* Stored wording that would now be refused. Shown rather
