@@ -75,6 +75,7 @@ import { createIdempotency } from './core/http/idempotency';
 import { createFileStorage } from './core/files/storage';
 import { createFilesProbe } from './core/files/probe';
 import { recentMailState } from './core/notify/outbox';
+import { recentSmsState } from './modules/uh/patient-sms';
 import { createMailQueueRouter } from './core/notify/queue';
 import { createBoardRouter } from './modules/uh/board';
 import { createClientPortalRouter } from './modules/uh/client-portal';
@@ -221,6 +222,7 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
            a dry run against production. */
         filesHealth: filesProbe.state,
         smsConfigured: texter.available,
+        smsRecent: () => recentSmsState(database.client),
         /* So "is tracking actually on in production" is a curl rather than a
            line in a boot log nobody outside the Render dashboard can read. */
         trackingRetentionDays: config.retention.locationTraceDays,

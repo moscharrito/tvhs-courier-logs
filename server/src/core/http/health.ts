@@ -116,6 +116,21 @@ interface Deps {
     /** Whether patient texting is configured. Not the number it sends from:
      *  a from-number is on the list above of things that never appear here. */
     smsConfigured?: boolean | undefined;
+    /** What the patient-text queue has actually done, which outranks the
+     *  field above it exactly as mailRecent outranks mailConfigured.
+     *
+     *  THE FAULT THIS CLOSES, and it is the mail fault again with the names
+     *  changed. The first real test of patient texting sent nothing, and
+     *  this endpoint said `sms: "configured"` throughout -- true, and
+     *  meaning only that three Twilio values are present. The thing actually
+     *  stopping every message was `patientSms.paused`, which DEFAULTS TO
+     *  TRUE, lives in the database rather than the repository, and is moved
+     *  by no deploy. Nothing on this endpoint, in the portal or in any log
+     *  said so.
+     *
+     *  See recentSmsState in modules/uh/patient-sms.ts for what it reports
+     *  and why none of it is a phone number. */
+    smsRecent?: (() => Promise<string>) | undefined;
     /** The planner's statistics, as of the last optimise. A function rather
      *  than a value because it changes after boot, and because asking the
      *  database on every health check would add five queries to an endpoint
@@ -142,7 +157,7 @@ export const STALE_AFTER_MINUTES = 10;
 
 export function createHealthRouter({
     client, version, commit, sweepIntervalSeconds, mailConfigured, mailRecent, mailAttempts, filesConfigured,
-    smsConfigured, statistics, filesHealth, trackingRetentionDays,
+    smsConfigured, smsRecent, statistics, filesHealth, trackingRetentionDays,
 }: Deps): Router {
     const router = Router();
     const started = Date.now();
@@ -245,6 +260,13 @@ export function createHealthRouter({
             }
         };
 
+        /* Same contract as mailState: never throws, and says less rather
+           than failing the endpoint. */
+        const smsState = async (): Promise<string> => {
+            if (!smsRecent) return 'configured';
+            try { return await smsRecent(); } catch { return 'configured'; }
+        };
+
         const ok = db === 'ok';
         res.status(ok ? 200 : 503).json({
             status: ok ? 'ok' : 'degraded',
@@ -281,7 +303,7 @@ export function createHealthRouter({
                    Anybody without access to that log -- which includes
                    everyone who is not holding the Render dashboard -- had no
                    way to answer "are the messages going out?" at all. */
-                sms: smsConfigured ? 'configured' : 'off',
+                sms: smsConfigured ? await smsState() : 'off',
             },
             /* Off means a doorstep delivery is refused outright rather than
                recorded without its photograph, so this is an operational

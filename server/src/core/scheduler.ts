@@ -164,11 +164,19 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
              *
              * It still only looks at orders with a courier on them, so a
              * morning sweep before anybody has been assigned does nothing
-             * and the clusterer is left to it. One hole remains and it is
-             * written down rather than papered over: a delivery assigned by
-             * hand AFTER this window closes at noon gets no text. Hooking
-             * the assignment event itself would close it, and would be a
-             * third trigger for one message. */
+             * and the clusterer is left to it.
+             *
+             * THE HOLE THIS PARAGRAPH USED TO DESCRIBE IS CLOSED. A delivery
+             * assigned by hand after noon got no text; the `assigned` custody
+             * event now queues one, so every assignment reaches this message
+             * whatever the hour. See modules/uh/order-events.ts.
+             *
+             * This sweep is kept anyway, and it is not a duplicate. The
+             * unique index on (order_id, kind) means the second trigger to
+             * reach an order writes nothing, so what this now covers is the
+             * order assigned before the hook existed, or by a path that
+             * somehow bypasses recordOrderEvent -- a backstop that costs one
+             * query a minute and cannot double-text anybody. */
             if (texter?.available && inMorningWindow(new Date(), timezone)) {
                 const notices = await queueRoundNotices(client, {
                     projectId, serviceDate: todayIn(timezone), now: new Date(), timezone,
@@ -177,7 +185,8 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                        edited and the one they expect their patients to get. */
                     settings: resolveSettings(settings),
                 });
-                if (notices.queued > 0 || notices.noPhone > 0) {
+                const skipped = notices.noPhone + notices.noDriver + notices.noDeadline;
+                if (notices.queued > 0 || skipped > 0) {
                     logger.info('sms.queued', {
                         project: String(p['code']),
                         queued: notices.queued,
@@ -186,6 +195,14 @@ export function startScheduler({ client, logger, intervalSeconds, mailer, portal
                            will not be told, and somebody should be able to
                            see how many there are. */
                         noPhone: notices.noPhone,
+                        /* And the two that used to be bare `continue`s. An
+                           order assigned to a username with no name on it, or
+                           with no due_at to quote, is skipped for a good
+                           reason and was skipped invisibly -- which is how a
+                           feature that works looks identical to one that does
+                           not. See patient-sms.ts. */
+                        noDriver: notices.noDriver,
+                        noDeadline: notices.noDeadline,
                     });
                 }
             }

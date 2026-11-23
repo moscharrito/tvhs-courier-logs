@@ -38,7 +38,7 @@ import type { Client, InValue } from '@libsql/client';
 import type { Logger } from '../../core/http/logger';
 import { assertMinimal, toE164, type Texter } from '../../core/notify/twilio';
 import { renderTemplate, windowText, type Stage } from '../../core/notify/sms-template';
-import { DEFAULT_PROJECT_SETTINGS, type ProjectSettings } from '../../core/projects/settings';
+import { DEFAULT_PROJECT_SETTINGS, resolveSettings, type ProjectSettings } from '../../core/projects/settings';
 
 /** The whole message. Read it as a stranger would, on a lock screen.
  *
@@ -194,6 +194,11 @@ export interface QueueResult {
     /** Orders with no phone number on them. Counted, because it is the
      *  pharmacy's data quality and somebody should be able to see it. */
     noPhone: number;
+    /** Assigned to a username this project has no name for, so the text
+     *  would have had a hole where the driver goes. */
+    noDriver: number;
+    /** No due_at, so there is no honest "arriving by" to quote. */
+    noDeadline: number;
 }
 
 /**
@@ -241,7 +246,7 @@ export async function queueRoundNotices(
         orderIds?: number[];
     },
 ): Promise<QueueResult> {
-    const result: QueueResult = { queued: 0, noPhone: 0 };
+    const result: QueueResult = { queued: 0, noPhone: 0, noDriver: 0, noDeadline: 0 };
     /* NO SETTINGS MEANS NO MESSAGE. A caller that cannot supply them cannot
        have checked whether this project is paused, and "send the built-in
        default" is the wrong answer to that: the pause is the only thing
@@ -294,8 +299,17 @@ export async function queueRoundNotices(
             /* NO DRIVER NAME AND NO DEADLINE MEANS NO MESSAGE, rather than a
                message with a hole where a name should be. "  will call about
                20 min before" is worse than silence, and a deadline this
-               cannot read would render "arriving by ." to a patient. */
-            if (driver === '' || due === '') { continue; }
+               cannot read would render "arriving by ." to a patient.
+
+               COUNTED SEPARATELY SINCE 23 NOVEMBER 2026, and that is most of
+               what this commit is. These were two bare `continue`s. An order
+               meeting every other condition produced no text, no row, no log
+               line and no number -- so "I assigned it and nothing arrived"
+               had no answer anywhere in the system, which is how the first
+               live test of this feature ended. The skip is still the right
+               behaviour; being unable to see it was not. */
+            if (driver === '') { result.noDriver += 1; continue; }
+            if (due === '') { result.noDeadline += 1; continue; }
 
             const body = noticeFor(opts.settings, 'delivery_today', undefined, {
                 driver,
@@ -346,60 +360,6 @@ async function driverFirstNames(
     return out;
 }
 
-export async function queueMorningNotices(
-    client: Client,
-    opts: { projectId: number; serviceDate: string; now: Date; settings?: ProjectSettings },
-): Promise<QueueResult> {
-    const result: QueueResult = { queued: 0, noPhone: 0 };
-    /* The body is stored on the row, so a wording change affects what is sent
-       next and never what somebody has already been told. */
-    /* PAUSED STOPS IT BEFORE THE ROW EXISTS. A message not written is a
-       message that cannot be sent by a later sweep that forgot to ask. */
-    if (opts.settings?.patientSms.paused) return result;
-    const body = opts.settings ? noticeFor(opts.settings, 'delivery_today') : DELIVERY_TODAY;
-    /* Off means no row is written at all, so nothing can be sent by accident
-       later by a sweep that does not re-read the setting. */
-    if (opts.settings && !opts.settings.patientSms.stages.delivery_today.enabled) return result;
-    try {
-        const rs = await client.execute({
-            /* A FACILITY IS NOT TEXTED.
-             *
-             * Thirteen a day move between two University Health buildings
-             * with no patient on the other end. The phone on such a row is a
-             * goods-in desk, and "a courier has a delivery for you today" is
-             * at best noise and at worst a message about medication sent to a
-             * number nobody vetted for it. */
-            sql: `SELECT o.id, o.recipient_phone FROM orders o
-                  WHERE o.project_id = ? AND o.service_date = ?
-                    AND o.delivery_kind = 'patient'
-                    AND o.status NOT IN ('cancelled', 'delivered', 'failed')`,
-            args: [opts.projectId, opts.serviceDate],
-        });
-
-        for (const row of rs.rows) {
-            const phone = String(row['recipient_phone'] ?? '').trim();
-            if (phone === '') { result.noPhone += 1; continue; }
-            try {
-                await client.execute({
-                    sql: `INSERT INTO patient_messages
-                            (project_id, order_id, phone, kind, body, created_at)
-                          VALUES (?, ?, ?, 'delivery_today', ?, ?)`,
-                    args: [opts.projectId, Number(row['id']), phone, body, opts.now.toISOString()],
-                });
-                result.queued += 1;
-            } catch {
-                /* The unique index. Already queued for this order, which is
-                   the correct outcome and not worth a log line per order per
-                   tick. */
-            }
-        }
-    } catch {
-        /* A delivery that happens is not undone by a text that was not
-           queued. Same rule as every other notification path here. */
-    }
-    return result;
-}
-
 export interface SendResult {
     considered: number;
     sent: number;
@@ -410,6 +370,94 @@ export interface SendResult {
 
 /** Enough to clear a morning, few enough not to look like a burst. */
 export const BATCH = 50;
+
+/**
+ * ONE SENTENCE FOR /health SAYING WHETHER PATIENT TEXTING IS HAPPENING.
+ *
+ * The parallel of recentMailState in notify/outbox.ts, written for the same
+ * reason and after the same kind of afternoon. /health said `sms:
+ * "configured"` -- which means the three Twilio values are present and
+ * nothing more -- while the first real test of this feature sent nothing at
+ * all, and no field, log line or screen anywhere said why.
+ *
+ * THE PAUSE IS FIRST BECAUSE IT OUTRANKS EVERYTHING BELOW IT. It defaults to
+ * TRUE, it lives in the database rather than the repository, and a deploy
+ * never moves it. A paused project queues nothing and sends nothing, so
+ * every count below reads zero and looks like a quiet day. That is the
+ * auto-assign lesson in settings-check.ps1 pointed the other way: there a
+ * switch was believed off for three days while it was on.
+ *
+ * NO PHONE NUMBER AND NO MESSAGE BODY, here or anywhere near this endpoint.
+ * The counts are of rows; the rows are addressed to patients.
+ */
+export async function recentSmsState(client: Client): Promise<string> {
+    const paused: string[] = [];
+    const live: string[] = [];
+    try {
+        const rs = await client.execute('SELECT code, settings FROM projects ORDER BY id');
+        for (const r of rs.rows) {
+            let stored: Record<string, unknown> = {};
+            try {
+                stored = JSON.parse(String(r['settings'] ?? '{}')) as Record<string, unknown>;
+            } catch { stored = {}; }
+            const code = String(r['code']);
+            if (resolveSettings(stored).patientSms.paused) paused.push(code); else live.push(code);
+        }
+    } catch {
+        /* Said rather than thrown: a health check that 500s because one extra
+           query was slow is worse than one that says less. */
+        return 'configured, but the projects could not be read';
+    }
+
+    let waiting = 0; let sent = 0; let failed = 0;
+    let lastFailure = '';
+    try {
+        const rs = await client.execute(
+            `SELECT
+                 SUM(CASE WHEN sent_at IS NULL THEN 1 ELSE 0 END) AS waiting,
+                 SUM(CASE WHEN sent_at IS NOT NULL AND failed_reason = '' THEN 1 ELSE 0 END) AS sent,
+                 SUM(CASE WHEN failed_reason != '' THEN 1 ELSE 0 END) AS failed
+               FROM patient_messages`,
+        );
+        const row = rs.rows[0];
+        waiting = Number(row?.['waiting'] ?? 0);
+        sent = Number(row?.['sent'] ?? 0);
+        failed = Number(row?.['failed'] ?? 0);
+        if (failed > 0) {
+            /* The reason this process recorded, not the patient's number and
+               not the body. failed_reason is written by fail() below from
+               Twilio's own message or from assertMinimal, and both describe
+               the fault rather than the recipient. Truncated because an
+               unauthenticated endpoint is no place for an essay. */
+            const last = await client.execute(
+                `SELECT failed_reason FROM patient_messages
+                  WHERE failed_reason != '' ORDER BY id DESC LIMIT 1`,
+            );
+            lastFailure = String(last.rows[0]?.['failed_reason'] ?? '').slice(0, 120);
+        }
+    } catch {
+        return 'configured, but the queue could not be read';
+    }
+
+    const counts = `${sent} sent, ${waiting} waiting`
+        + (failed > 0 ? `, ${failed} failed` : '')
+        + (lastFailure === '' ? '' : ` -- last failure: ${lastFailure}`);
+
+    /* ONE PAUSED PROJECT MUST NOT SPEAK FOR THE OTHERS, which the first
+       draft of this got wrong. TVHS does not text patients and never will,
+       so a line that leads with "PAUSED for tvhs" would read as an outage
+       every day of the year and would hide the only project the question is
+       ever about. A pause leads the sentence only when EVERY project has
+       one -- which is the state that actually means no text can be sent by
+       anybody -- and is otherwise a parenthesis. */
+    const aside = paused.length === 0 ? '' : ` (paused for ${paused.join(', ')})`;
+    if (live.length === 0) {
+        return `PAUSED for every project -- nothing is queued and nothing will send: ${counts}`;
+    }
+    if (sent === 0 && waiting === 0 && failed === 0) return `configured, nothing queued yet${aside}`;
+    if (sent === 0 && waiting > 0) return `configured, NOTHING SENT YET: ${counts}${aside}`;
+    return `sending: ${counts}${aside}`;
+}
 
 /**
  * Send what is waiting. Never throws.

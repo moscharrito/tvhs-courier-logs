@@ -62,6 +62,61 @@ describe('GET /health', () => {
     });
 
     /* ─────────────────────────────────────────────────────────────────────
+     * "configured" IS NOT AN ANSWER, AND IT COST A SECOND EVENING.
+     *
+     * It is the third time this endpoint has had this exact fault. `files`
+     * read "configured" for weeks against a bucket refusing every upload.
+     * `mail` read "configured, nothing sent yet" for a day while SES
+     * answered 403 to everything. Then on 22 November the first real test of
+     * patient texting sent nothing at all and this field said "configured"
+     * -- true, and meaning only that three Twilio values were present.
+     *
+     * What was actually stopping it was patientSms.paused, which defaults to
+     * TRUE and lives in the database. Nothing on this endpoint, in any log
+     * or on any screen distinguished that from a quiet afternoon.
+     * ───────────────────────────────────────────────────────────────────── */
+    it('lets the sms queue answer for itself, the way mail does', async () => {
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client,
+            version: '1.2.3',
+            smsConfigured: true,
+            smsRecent: async () => 'PAUSED for every project -- nothing is queued and nothing will send: 0 sent, 0 waiting',
+        }));
+        const res = await request(app).get('/health');
+        expect(res.body.scheduler.sms).toContain('PAUSED');
+    });
+
+    it('still says configured when nothing can tell it more', async () => {
+        /* The callers that predate the field, and the test fixtures written
+           as literals. Without this they would publish the word "undefined"
+           on an unauthenticated endpoint -- the trap mailAttempts already
+           has a note about. */
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client, version: '1.2.3', smsConfigured: true,
+        }));
+        expect((await request(app).get('/health')).body.scheduler.sms).toBe('configured');
+    });
+
+    it('does not fail the endpoint when the queue cannot be read', async () => {
+        /* Same contract as mailState. A health check that 500s because one
+           extra query was slow is worse than one that says less -- and on
+           Render a 500 here is what takes the instance out of rotation. */
+        const app = express();
+        app.use(createHealthRouter({
+            client: srv.core.client,
+            version: '1.2.3',
+            smsConfigured: true,
+            smsRecent: async () => { throw new Error('libsql is having a moment'); },
+        }));
+        const res = await request(app).get('/health');
+        expect(res.status).toBe(200);
+        expect(res.body.scheduler.sms).toBe('configured');
+        expect(JSON.stringify(res.body)).not.toContain('having a moment');
+    });
+
+    /* ─────────────────────────────────────────────────────────────────────
      * WHICH CODE IS ACTUALLY RUNNING.
      *
      * `version` is package.json's, and it has read 1.0.0 across every deploy

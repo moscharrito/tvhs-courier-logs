@@ -34,14 +34,39 @@ function renderBar(routes: Record<string, unknown>) {
     return mocked;
 }
 
+/* ─────────── WAIT FOR THE WORD, NOT THE BUTTON
+ *
+ * "Go on shift" is the button's label while the first read is still in
+ * flight -- it is merely DISABLED -- so findByRole resolves on the very
+ * first render, before the server has answered anything. Two tests below
+ * leaned on that: one then read the word synchronously and got "Checking…",
+ * and one clicked a disabled button, which does nothing at all.
+ *
+ * Both passed almost always, because the mocked fetch usually settles in
+ * the same flush findByRole waits on. One of them failed in a full gate run
+ * on a loaded machine, which is the only place the race is ever lost, and
+ * is the worst possible place to discover it.
+ *
+ * The word is the thing that actually changes, so the word is what to wait
+ * for. Three states: "Checking…", then "On shift", "Off shift" or
+ * "Shift unknown". */
+const settled = (word: 'On shift' | 'Off shift') => screen.findByText(word);
+
 describe('the shift control', () => {
     it('offers a way on when the courier is off shift', async () => {
         renderBar({ [`GET ${MINE}`]: off });
-        expect(await screen.findByRole('button', { name: 'Go on shift' })).toBeInTheDocument();
         /* TWO WORDS, NOT A SENTENCE. The explanation beside the dot went on
            2 November: it stood at the top of the one screen a driver works
            from all day, and by the second day nobody reads it. */
-        expect(screen.getByText('Off shift')).toBeInTheDocument();
+        expect(await settled('Off shift')).toBeInTheDocument();
+
+        const button = screen.getByRole('button', { name: 'Go on shift' });
+        expect(button).toBeInTheDocument();
+        /* ENABLED, which the original never checked and which is the whole
+           difference between this state and the one before it. A disabled
+           button with the same label is what the courier sees while the read
+           is in flight. */
+        expect(button).toBeEnabled();
     });
 
     it('offers a way off when they are on', async () => {
@@ -58,7 +83,11 @@ describe('the shift control', () => {
             [`GET ${MINE}`]: off,
             [`POST /api/projects/uh/uh/shifts/start`]: { ok: true },
         });
-        fireEvent.click(await screen.findByRole('button', { name: 'Go on shift' }));
+        /* After the read, not before it: clicking the disabled button this
+           renders in the meantime does nothing, and the assertion below
+           would then wait out its timeout for a POST that was never sent. */
+        await settled('Off shift');
+        fireEvent.click(screen.getByRole('button', { name: 'Go on shift' }));
         await waitFor(() => {
             expect(mocked.calls).toContain('POST /api/projects/uh/uh/shifts/start');
         });

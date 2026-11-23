@@ -11,7 +11,8 @@ import { startServer, storedForm } from './helpers/server.mjs';
 import { STAGE_NAMES } from '../src/core/notify/sms-template.ts';
 import { assertMinimal, toE164, createTexter, OPTED_OUT } from '../src/core/notify/twilio.ts';
 import {
-    DELIVERY_TODAY, inMorningWindow, queueMorningNotices, sendQueued, BATCH,
+    DELIVERY_TODAY, inMorningWindow, queueRoundNotices,
+    recentSmsState, sendQueued, BATCH,
 } from '../src/modules/uh/patient-sms.ts';
 
 const UH = '/api/projects/uh/uh';
@@ -25,6 +26,18 @@ beforeAll(async () => {
     client = srv.core.client;
     projectId = Number((await client.execute("SELECT id FROM projects WHERE code = 'uh'")).rows[0].id);
     dischargeId = (await admin.get(`${UH}/sites`)).body.find((s) => s.code === 'discharge').id;
+
+    await admin.post('/api/users').send({
+        username: DRIVER, name: DRIVER_NAME, password: 'sms-pass-1', role: 'driver',
+    });
+    await admin.put(`/api/users/${DRIVER}/memberships/uh`).send({ role: 'courier', settings: {} });
+    /* UNPAUSED FOR THE FILE. queueMorningNotices ignored the pause when it
+       was handed no settings, which is how the blocks below ever queued
+       anything -- the project ships paused and nothing here switched it on.
+       queueRoundNotices refuses without settings and obeys the pause in
+       them, correctly, so it has to be said out loud. The `paused` describe
+       sets and restores it for itself. */
+    await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
 });
 afterAll(async () => { await srv.stop(); });
 
@@ -58,6 +71,67 @@ const clear = async () => {
     await client.execute('DELETE FROM patient_messages');
     await client.execute('DELETE FROM patient_optouts');
 };
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * WHY THESE TESTS WERE REPOINTED, ON 23 NOVEMBER 2026
+ *
+ * Until this morning twenty tests in this file drove queueMorningNotices.
+ * They passed. NOTHING IN src CALLED IT.
+ *
+ * On 22 November the trigger moved from a morning clock to the moment a
+ * round is built -- a list released after noon was getting no notice at all
+ * -- and queueRoundNotices was written and wired into the scheduler and the
+ * assignment hook. The old function was left standing, and this file went
+ * on proving it worked.
+ *
+ * So the first real test of patient texting sent nothing to anybody while
+ * the suite was green, because the suite was green about a function with no
+ * callers. That is a worse fault than the silence it hid.
+ *
+ * The two functions do not ask the same question, which is the whole of the
+ * work below. queueRoundNotices additionally requires:
+ *
+ *   - settings, always, because a caller that cannot supply them cannot have
+ *     checked whether the project is PAUSED;
+ *   - a courier on the order, with a name this project can resolve, because
+ *     the text names them;
+ *   - a due_at, because the text quotes it.
+ *
+ * Hence `textable()` and `roundNotices()`. Everything else each test
+ * asserted is unchanged -- the unique index, the cancelled and delivered
+ * exclusions, the facility rule, the opt-out, the pause. They assert it
+ * about the code that actually runs now.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** A courier on THIS contract. driverFirstNames joins memberships for this
+ *  project, so a driver seeded for TVHS resolves to no name here and every
+ *  order would be skipped -- which would make the assertions below pass for
+ *  a reason that has nothing to do with what they claim.
+ *
+ *  THE NAME IS INVENTED AND WAS CHECKED FOR IT. The first draft used a
+ *  plausible San Antonio surname which turned out to appear four times in
+ *  the production backups in this working copy -- so it belonged to a real
+ *  person, and this repository is public. Grep before inventing a name. */
+const DRIVER = 'sms.courier';
+const DRIVER_NAME = 'Nerissa Quillane';
+
+/** An order the round path will actually text about. */
+async function textable(over = {}) {
+    const o = await order(over);
+    await client.execute({
+        sql: `UPDATE orders SET status = 'assigned', service_date = ?,
+                 assigned_to_username = ?, due_at = COALESCE(due_at, ?)
+               WHERE id = ?`,
+        args: [today(), DRIVER, new Date(Date.now() + 3600000).toISOString(), Number(o.id)],
+    });
+    return o;
+}
+
+/** What the scheduler sweep calls, with the arguments it calls it with. */
+const roundNotices = async (over = {}) => queueRoundNotices(client, {
+    projectId, serviceDate: today(), now: new Date(),
+    timezone: 'America/Chicago', settings: await settingsNow(), ...over,
+});
 
 /** A texter that records instead of calling Twilio. */
 const fakeTexter = (outcome = () => ({ kind: 'sent', providerId: 'SM123' })) => {
@@ -148,12 +222,12 @@ describe('what a patient is told', () => {
 /* ------------------------------------------------------- who gets one */
 
 describe('who is queued', () => {
-    it('writes one notice per delivery going out today', async () => {
+    it('writes one notice per delivery on the round', async () => {
         await clear();
-        const one = await order();
-        const two = await order();
+        const one = await textable();
+        const two = await textable();
 
-        const res = await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        const res = await roundNotices();
         expect(res.queued).toBeGreaterThanOrEqual(2);
 
         const queued = await rows('SELECT order_id FROM patient_messages');
@@ -166,10 +240,10 @@ describe('who is queued', () => {
         /* The unique index, not the caller, is what stops a scheduler that
            ticks every two minutes texting somebody all morning. */
         await clear();
-        const o = await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        const o = await textable();
+        await roundNotices();
+        await roundNotices();
+        await roundNotices();
 
         const mine = await rows('SELECT id FROM patient_messages WHERE order_id = ?', [o.id]);
         expect(mine).toHaveLength(1);
@@ -177,18 +251,18 @@ describe('who is queued', () => {
 
     it('does not announce a delivery that was cancelled', async () => {
         await clear();
-        const o = await order();
+        const o = await textable();
         await client.execute({ sql: "UPDATE orders SET status = 'cancelled' WHERE id = ?", args: [o.id] });
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await roundNotices();
         expect(await rows('SELECT id FROM patient_messages WHERE order_id = ?', [o.id])).toHaveLength(0);
     });
 
     it('does not announce one that already arrived', async () => {
         /* A text at 8am about a parcel that came at 7.40 is worse than none. */
         await clear();
-        const o = await order();
+        const o = await textable();
         await client.execute({ sql: "UPDATE orders SET status = 'delivered' WHERE id = ?", args: [o.id] });
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await roundNotices();
         expect(await rows('SELECT id FROM patient_messages WHERE order_id = ?', [o.id])).toHaveLength(0);
     });
 
@@ -196,8 +270,8 @@ describe('who is queued', () => {
         /* The pharmacy's data quality. An order with no number is a patient
            who will not be told, and somebody should see how many there are. */
         await clear();
-        await order({ recipientPhone: '' });
-        const res = await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable({ recipientPhone: '' });
+        const res = await roundNotices();
         expect(res.noPhone).toBeGreaterThanOrEqual(1);
     });
 
@@ -215,8 +289,8 @@ describe('who is queued', () => {
 describe('sending', () => {
     it('sends what is queued and records the provider id', async () => {
         await clear();
-        await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable();
+        await roundNotices();
 
         const texter = fakeTexter();
         const res = await sendQueued(client, texter, quiet);
@@ -229,8 +303,8 @@ describe('sending', () => {
 
     it('does not send twice', async () => {
         await clear();
-        await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable();
+        await roundNotices();
         await sendQueued(client, fakeTexter(), quiet);
 
         const second = fakeTexter();
@@ -241,8 +315,8 @@ describe('sending', () => {
 
     it('leaves a failure unsent so the next tick retries it', async () => {
         await clear();
-        await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable();
+        await roundNotices();
 
         const angry = fakeTexter(() => ({ kind: 'failed', message: 'Twilio refused it: 500' }));
         expect((await sendQueued(client, angry, quiet)).failed).toBeGreaterThan(0);
@@ -257,8 +331,8 @@ describe('sending', () => {
            Relying on the carrier alone would mean rediscovering their
            decision once per order, forever. */
         await clear();
-        await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable();
+        await roundNotices();
 
         const refuser = fakeTexter(() => ({ kind: 'opted_out' }));
         expect((await sendQueued(client, refuser, quiet)).optedOut).toBeGreaterThan(0);
@@ -268,8 +342,8 @@ describe('sending', () => {
         expect(String(opts[0].phone)).toBe('2105550100');
 
         /* A later order to the same number is queued but never sent. */
-        await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable();
+        await roundNotices();
         const after = fakeTexter();
         await sendQueued(client, after, quiet);
         expect(after.sent).toHaveLength(0);
@@ -277,8 +351,8 @@ describe('sending', () => {
 
     it('does nothing at all when texting is not configured', async () => {
         await clear();
-        await order();
-        await queueMorningNotices(client, { projectId, serviceDate: today(), now: new Date() });
+        await textable();
+        await roundNotices();
         const off = { available: false, reason: 'not configured', async send() { throw new Error('should not be called'); } };
         expect(await sendQueued(client, off, quiet)).toEqual({ considered: 0, sent: 0, failed: 0, optedOut: 0 });
     });
@@ -511,14 +585,19 @@ describe('a facility transfer', () => {
 
     beforeAll(async () => {
         await clear();
-        transfer = await order({ deliveryKind: 'facility', recipientName: 'Business Center III', idRequired: true });
-        patient = await order();
+        /* BOTH ARMED, which is the point. If the transfer were simply left
+           unassigned it would be skipped for want of a driver and this block
+           would prove nothing about delivery_kind at all. Give it everything
+           a patient delivery has and the only thing left excluding it is the
+           rule under test. */
+        transfer = await textable({
+            deliveryKind: 'facility', recipientName: 'Business Center III', idRequired: true,
+        });
+        patient = await textable();
     });
 
-    it('is never queued a morning notice', async () => {
-        const out = await queueMorningNotices(client, {
-            projectId, serviceDate: today(), now: new Date(),
-        });
+    it('is never queued a notice when the round is built', async () => {
+        const out = await roundNotices();
         expect(out.queued).toBeGreaterThan(0);
         const queued = await rows('SELECT order_id FROM patient_messages');
         const ids = queued.map((r) => Number(r.order_id));
@@ -535,14 +614,10 @@ describe('a facility transfer', () => {
            this file leave orders behind, and an absolute assertion here would
            be testing their state rather than this one's. */
         await clear();
-        const before = await queueMorningNotices(client, {
-            projectId, serviceDate: today(), now: new Date(),
-        });
-        await order({ deliveryKind: 'facility', recipientPhone: '' });
+        const before = await roundNotices();
+        await textable({ deliveryKind: 'facility', recipientPhone: '' });
         await clear();
-        const after = await queueMorningNotices(client, {
-            projectId, serviceDate: today(), now: new Date(),
-        });
+        const after = await roundNotices();
         expect(after.noPhone).toBe(before.noPhone);
     });
 
@@ -586,16 +661,16 @@ describe('paused', () => {
         expect(resolveSettings(null).patientSms.paused).toBe(true);
     });
 
-    it('queues no morning notice at all', async () => {
-        const settings = await settingsNow();
-        const out = await queueMorningNotices(client, {
-            projectId, serviceDate: today(), now: new Date(), settings,
-        });
+    it('queues no notice at all when a round is built', async () => {
+        await textable();
+        const out = await roundNotices();
         expect(out.queued).toBe(0);
         expect(await rows('SELECT id FROM patient_messages')).toEqual([]);
     });
 
     it('writes nothing when a delivery is recorded either', async () => {
+        /* order(), not textable(): this one posts its OWN assigned event,
+           and the transition table refuses assigned -> assigned. */
         const o = await order();
         await admin.post(`${ORDERS}/${o.id}/events`).send({ type: 'assigned', courierUsername: 'stage.courier' });
         await admin.post(`${ORDERS}/${o.id}/events`).send({ type: 'picked_up', signedName: 'Tech' });
@@ -609,9 +684,8 @@ describe('paused', () => {
            would mean that morning's patients are never told at all once it
            resumes. */
         await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
-        const before = await queueMorningNotices(client, {
-            projectId, serviceDate: today(), now: new Date(), settings: await settingsNow(),
-        });
+        await textable();
+        const before = await roundNotices();
         expect(before.queued).toBeGreaterThan(0);
 
         await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: true } });
@@ -629,5 +703,247 @@ describe('paused', () => {
         const texter = fakeTexter();
         const out = await sendQueued(client, texter, quiet, []);
         expect(out.sent).toBeGreaterThan(0);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * WHY NOTHING ARRIVED, WHICH NOTHING IN THIS SYSTEM COULD ANSWER
+ *
+ * Written on 23 November 2026, the morning after the first real test of
+ * patient texting sent nothing to anybody. Every one of these pins a
+ * sentence that did not exist that morning.
+ *
+ * The chain has six links -- Twilio credentials, the project pause, the
+ * stage switch, a phone number, a driver with a name, a deadline to quote
+ * -- and five of them failed SILENTLY. /health said `sms: "configured"`,
+ * which was true and meant only that three environment variables were
+ * present. There was no log line, no field and no screen that distinguished
+ * "switched off" from "working, nothing to do".
+ *
+ * This is the mail fault of 20 November with the nouns changed, and it is in
+ * the file twice now, so the tests are here rather than the lesson being
+ * learned a third time.
+ * ═══════════════════════════════════════════════════════════════════════ */
+describe('whether anybody can tell that texting is off', () => {
+    /* Three projects exist from the migrations: tvhs, uh and demo. That is
+       the whole point of the aside -- see below. */
+    async function setPause(code, value) {
+        const row = (await client.execute({
+            sql: 'SELECT id, settings FROM projects WHERE code = ?', args: [code],
+        })).rows[0];
+        const stored = JSON.parse(String(row.settings ?? '{}'));
+        stored.patientSms = { ...(stored.patientSms ?? {}), paused: value };
+        await client.execute({
+            sql: 'UPDATE projects SET settings = ? WHERE id = ?',
+            args: [JSON.stringify(stored), row.id],
+        });
+    }
+    const allCodes = async () => (await rows('SELECT code FROM projects ORDER BY id'))
+        .map((r) => String(r.code));
+
+    async function pauseEverything(value) {
+        for (const code of await allCodes()) await setPause(code, value);
+    }
+
+    /** A queued row without going through any of the queueing paths: this
+     *  block is about the sentence, not about who wrote the row. */
+    async function waitingRow(phone = '2105550199') {
+        const order_ = await order({ recipientPhone: phone });
+        await client.execute({
+            sql: `INSERT INTO patient_messages
+                    (project_id, order_id, phone, kind, body, created_at)
+                  VALUES (?, ?, ?, 'delivery_today', ?, ?)`,
+            args: [projectId, Number(order_.id), phone,
+                   'Izy Global Services has a delivery for you today.',
+                   new Date().toISOString()],
+        });
+        return order_;
+    }
+
+    it('leads with the pause when no project can send at all', async () => {
+        /* THE STATE PRODUCTION WAS IN, and the one the old field reported as
+           "configured". paused defaults to TRUE, lives in the database and
+           is moved by no deploy, so this is what a freshly shipped feature
+           looks like until somebody deliberately switches it on. */
+        await clear();
+        await pauseEverything(true);
+        const said = await recentSmsState(client);
+        expect(said, said).toMatch(/^PAUSED for every project/);
+        expect(said, said).toContain('nothing is queued and nothing will send');
+    });
+
+    it('does not let a contract that never texts speak for one that does', async () => {
+        /* TVHS does not text patients and never will, so a line leading with
+           "PAUSED for tvhs" would read as an outage every day of the year
+           and would bury the only project anybody is asking about. The first
+           draft of recentSmsState did exactly that. */
+        await clear();
+        await pauseEverything(true);
+        await setPause('uh', false);
+        const said = await recentSmsState(client);
+        expect(said, said).not.toMatch(/^PAUSED/);
+        /* Still said, because a pause somebody forgot is worth seeing -- as
+           a parenthesis rather than a headline. */
+        expect(said, said).toContain('paused for');
+        expect(said, said).toContain('tvhs');
+    });
+
+    it('distinguishes a quiet day from a queue that is going nowhere', async () => {
+        /* The distinction the old field could not draw, and the reason the
+           first live test produced no diagnosis: zero sent reads identically
+           whether nothing was due or everything is stuck. */
+        await clear();
+        await pauseEverything(true);
+        await setPause('uh', false);
+        expect(await recentSmsState(client)).toContain('nothing queued yet');
+
+        await waitingRow();
+        const said = await recentSmsState(client);
+        expect(said, said).toContain('NOTHING SENT YET');
+        expect(said, said).toContain('1 waiting');
+    });
+
+    it('says it is sending once something actually went', async () => {
+        await clear();
+        await pauseEverything(true);
+        await setPause('uh', false);
+        await waitingRow();
+
+        const texter = fakeTexter();
+        expect((await sendQueued(client, texter, quiet)).sent).toBe(1);
+        const said = await recentSmsState(client);
+        expect(said, said).toMatch(/^sending:/);
+        expect(said, said).toContain('1 sent');
+    });
+
+    it('names the reason a send failed, and never the patient', async () => {
+        /* The reason is the half that decides the fix -- the same argument as
+           redact() in notify/ses.ts, which was added when "400
+           MessageRejected" turned out to be three different faults.
+
+           AND THE NUMBER IS NOT IN IT. /health is unauthenticated. A phone
+           number on it is a disclosure, and a phone number next to the words
+           "delivery" and "patient" is a worse one. */
+        await clear();
+        await pauseEverything(true);
+        await setPause('uh', false);
+        const phone = '2105550177';
+        await waitingRow(phone);
+
+        const refuser = fakeTexter(() => ({ kind: 'opted_out' }));
+        expect((await sendQueued(client, refuser, quiet)).optedOut).toBe(1);
+
+        const said = await recentSmsState(client);
+        expect(said, said).toContain('1 failed');
+        expect(said, said).toContain('last failure: recipient has opted out');
+        expect(said, said).not.toContain(phone);
+        expect(said, said).not.toContain('5550177');
+    });
+});
+
+/* ───────────────── THE TWO SKIPS THAT LEFT NO TRACE AT ALL
+ *
+ * queueRoundNotices refuses to send a text with a hole in it: no driver name
+ * means no "{driver} will call", and no due_at means no "arriving by {by}".
+ * Both are the right call -- "  will call about 20 min before" is worse than
+ * silence.
+ *
+ * Until 23 November both were bare `continue` statements. No row, no count,
+ * no log line. An order that met every other condition produced nothing and
+ * nothing anywhere said so, which is indistinguishable from a feature that
+ * is switched off. The skip is unchanged; what is new is that it is visible.
+ */
+describe('the skips that used to be invisible', () => {
+    /* A COURIER ON THIS CONTRACT, created here rather than borrowed from
+       CREDS. south.driver is seeded for TVHS, and driverFirstNames joins
+       memberships for THIS project -- so borrowing it would have made every
+       order in this block a noDriver, and the two tests below would have
+       passed for a reason that had nothing to do with what they assert.
+       That is exactly what the first run of them did.
+
+       THE NAME IS INVENTED AND WAS CHECKED FOR IT. The first draft used a
+       plausible San Antonio surname, which turned out to appear four times
+       in the production backups in this working copy -- so it belonged to a
+       real person, and writing it into a test fixture on a PUBLIC
+       repository would have published it. Grep before inventing a name. */
+    const DRIVER = 'sms.rosa';
+
+    async function readyToText(over = {}) {
+        const o = await order();
+        await client.execute({
+            sql: `UPDATE orders SET status = 'assigned', service_date = ?,
+                     assigned_to_username = ?, due_at = ?
+                   WHERE id = ?`,
+            args: [over.serviceDate ?? today(),
+                   over.driver === undefined ? DRIVER : over.driver,
+                   over.dueAt === undefined ? new Date(Date.now() + 3600000).toISOString() : over.dueAt,
+                   Number(o.id)],
+        });
+        return o;
+    }
+
+    /* BY ORDER ID, NOT BY DAY, and for two reasons. It is the shape the
+       assignment hook in order-events.ts calls with -- one order, no day --
+       so this covers the path that actually runs in production. And it
+       isolates: asking for "today" would sweep up every order the rest of
+       this file has left assigned, which is how the first draft of these
+       three tests counted three drivers it had never set up. */
+    const run = async (id) => queueRoundNotices(client, {
+        projectId, orderIds: [Number(id)], now: new Date(),
+        timezone: 'America/Chicago', settings: await settingsNow(),
+    });
+
+    /* Unpaused for this whole block: a pause returns before any of these
+       conditions is even looked at, which would make every count zero and
+       every assertion below pass for the wrong reason. */
+    beforeAll(async () => {
+        await admin.post('/api/users').send({
+            username: DRIVER, name: 'Nerissa Quillane', password: 'sms-pass-1', role: 'driver',
+        });
+        await admin.put(`/api/users/${DRIVER}/memberships/uh`).send({ role: 'courier', settings: {} });
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+    });
+
+    it('counts a driver this project has no name for', async () => {
+        await clear();
+        const o = await readyToText({ driver: 'nobody.here' });
+        const out = await run(o.id);
+        expect(out.queued).toBe(0);
+        expect(out.noDriver).toBe(1);
+        /* Not miscounted as the pharmacy's fault: the phone is fine and the
+           deadline is fine, and sending somebody to chase the pharmacy for a
+           number they already supplied is how a diagnosis wastes a morning. */
+        expect(out.noPhone).toBe(0);
+        expect(out.noDeadline).toBe(0);
+    });
+
+    it('counts a delivery with no deadline to quote', async () => {
+        await clear();
+        const o = await readyToText({ dueAt: null });
+        const out = await run(o.id);
+        expect(out.queued).toBe(0);
+        expect(out.noDeadline).toBe(1);
+        expect(out.noDriver).toBe(0);
+    });
+
+    it('still queues the one that has both, naming the driver and the time', async () => {
+        /* The control. Without it the two above would pass against a
+           function that queues nothing at all. */
+        await clear();
+        const o = await readyToText();
+        const out = await run(o.id);
+        expect(out.queued).toBe(1);
+        expect(out.noDriver).toBe(0);
+        expect(out.noDeadline).toBe(0);
+
+        const [row] = await rows(
+            "SELECT body FROM patient_messages WHERE kind = 'delivery_today'",
+        );
+        const body = String(row.body);
+        /* FIRST NAME ONLY. A patient needs to know who is knocking, not a
+           courier's surname -- the same line the client portal draws. */
+        expect(body, body).toContain('Nerissa');
+        expect(body, body).not.toContain('Quillane');
+        expect(body, body).toMatch(/arriving by \d{1,2}:\d{2} (AM|PM)/);
     });
 });
