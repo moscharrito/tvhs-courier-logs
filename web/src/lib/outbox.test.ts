@@ -723,3 +723,70 @@ describe('the sign-out question itself', () => {
         expect(two).toContain('they cannot be recovered');
     });
 });
+
+/* ───────────── A FLUSH THAT OUTLIVES THE QUEUE IT WAS FLUSHING
+ *
+ * flush() awaits on every iteration, so there is always a moment where the
+ * database underneath it can be replaced. `sending` stops two flushes
+ * starting at once; it never stopped one carrying on into somebody else's
+ * queue.
+ *
+ * Found on 23 November 2026 as a web test that failed once in a full gate
+ * run and passed every time alone: a flush left in flight by one test woke
+ * inside the next, rejected that test's freshly queued entry, and the test
+ * was told two things had been refused when it had queued one.
+ *
+ * The same reset runs on SIGN-OUT, which is the half that is not a test
+ * concern: a loop surviving it would post the previous courier's work under
+ * the next one's session, by a route the username check inside the loop
+ * cannot see.
+ */
+describe('a flush whose queue is replaced underneath it', () => {
+    it('stands down instead of working on the new one', async () => {
+        setOnline(true);
+        await enqueue({ url: url(1), body: {}, label: 'The old round' });
+
+        /* A send that parks, so the loop is provably mid-flight when the
+           reset lands rather than by luck of scheduling. */
+        let release = () => {};
+        const parked = new Promise<void>((r) => { release = r; });
+        let sends = 0;
+        vi.stubGlobal('fetch', vi.fn(async () => {
+            sends += 1;
+            await parked;
+            return new Response('{}', { status: 201, headers: { 'Content-Type': 'application/json' } });
+        }));
+
+        const inFlight = flush();
+        await vi.waitFor(() => expect(sends).toBe(1));
+
+        /* The queue is replaced: new database, new everything. */
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        resetOutboxForTests();
+        await enqueue({ url: url(2), body: {}, label: 'The new round' });
+
+        release();
+        await inFlight;
+
+        /* The stale loop must not have touched the new queue. Before the
+           generation guard it carried straight on, sent this entry and
+           removed it -- so the owner of the new queue saw work vanish that
+           it had never flushed. */
+        const left = await queued();
+        expect(left.map((e) => e.label)).toEqual(['The new round']);
+        expect(sends).toBe(1);
+        expect(await rejections()).toEqual([]);
+    });
+
+    it('leaves the lock in a state the next flush can take', async () => {
+        /* The other half: the stale loop must not clear `sending` on its way
+           out, or it unlocks a flush that is already running. Proved by the
+           next flush working at all. */
+        setOnline(true);
+        await enqueue({ url: url(3), body: {}, label: 'After the reset' });
+        const { calls } = fetchReturning({ status: 201 });
+        await flush();
+        expect(calls).toHaveLength(1);
+        expect(await queued()).toEqual([]);
+    });
+});

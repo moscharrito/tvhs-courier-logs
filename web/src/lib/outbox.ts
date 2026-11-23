@@ -552,13 +552,41 @@ async function putPhoto(
  * call from anywhere: a second call while one is running does nothing, because
  * two drains racing would send the same entry twice and, worse, out of order.
  */
+/** Incremented whenever the queue is replaced; see the note in flush(). */
+let generation = 0;
+
 export async function flush(): Promise<void> {
     if (sending) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { await notify(); return; }
     sending = true;
+    /* ─── WHICH QUEUE THIS LOOP BELONGS TO.
+     *
+     * `sending` stops two flushes running at once. It cannot stop a flush
+     * that is already running from carrying on after the queue underneath it
+     * has been REPLACED -- and this loop awaits on every iteration, so there
+     * are plenty of moments for that to happen.
+     *
+     * It showed up as a test failing once in a full gate run and never
+     * alone: a flush left in flight by one test woke up inside the next
+     * one, found that test's freshly queued entry, and rejected it. The
+     * test then flushed it a second time and was told two things had been
+     * refused when it had queued one. Both said "Delivery for Ines Vargas",
+     * because every test in the file queues the same label, which is what
+     * made the duplicate look like a render bug rather than a leak.
+     *
+     * It is not only a test concern. The same reset runs on SIGN-OUT, and a
+     * loop surviving that would post the previous courier's work under the
+     * next one's session -- the exact thing the username check below exists
+     * to prevent, arriving by a route that check cannot see.
+     */
+    const mine = generation;
     await notify();
     try {
         for (;;) {
+            /* The queue was reset under us: this loop is now about a
+               database nobody is reading any more. Stop, and leave the
+               bookkeeping to whoever did the resetting. */
+            if (generation !== mine) return;
             const entries = await queued();
             const entry = entries[0];
             if (!entry) break;
@@ -634,8 +662,13 @@ export async function flush(): Promise<void> {
             await notify();
         }
     } finally {
-        sending = false;
-        await notify();
+        /* Only if this loop still owns the queue. A reset has already set
+           `sending` false and the flush that replaced us may be running, so
+           clearing it here would unlock a second concurrent flush. */
+        if (generation === mine) {
+            sending = false;
+            await notify();
+        }
     }
 }
 
@@ -796,6 +829,9 @@ export function startOutbox(intervalMs = 30_000): () => void {
 
 /** Test seam: forget the open database between cases. */
 export function resetOutboxForTests(): void {
+    /* Bumped FIRST, so any flush already in flight sees it on its next
+       iteration and stands down before touching the new database. */
+    generation += 1;
     dbPromise = null;
     usable = null;
     sending = false;
