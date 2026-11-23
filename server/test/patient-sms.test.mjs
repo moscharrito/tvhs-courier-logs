@@ -97,8 +97,7 @@ describe('what a patient is told', () => {
            screen saying so. */
         expect(DELIVERY_TODAY).toBe(
             'Izy Global Services has a delivery for you today, arriving by 2:00 PM. '
-            + 'Alex will call about 20 min before. '
-            + 'Reply STOP to opt out.',
+            + 'Alex will call about 20 min before.',
         );
         expect(DELIVERY_TODAY.length).toBeLessThanOrEqual(160);
     });
@@ -109,8 +108,24 @@ describe('what a patient is told', () => {
         }
     });
 
-    it('tells them how to stop, because that is the only control they have', () => {
-        expect(DELIVERY_TODAY).toContain('Reply STOP');
+    it('no longer carries an opt-out line, and STOP still works anyway', () => {
+        /* ── THE LINE WENT ON 22 NOVEMBER 2026. THE MECHANISM DID NOT.
+         *
+         * This test used to read "tells them how to stop, because that is
+         * the only control they have", and the reasoning was sound. What
+         * made it removable is that it was never the mechanism: a patient
+         * texting STOP is handled by Twilio before anything reaches this
+         * application, the number is suppressed at their end, and every
+         * later send to it comes back as error 21610 whatever our wording
+         * says. sendQueued reads that and writes the opt-out permanently --
+         * see 'stops sending to a number that has opted out' below, which
+         * is unchanged and is where the control actually lives.
+         *
+         * So the control is still theirs; it is no longer advertised. US
+         * carriers and the A2P 10DLC registration this traffic needs both
+         * expect the disclosure, and whether to carry it belongs to
+         * whoever runs the campaign rather than to this file. */
+        expect(DELIVERY_TODAY).not.toContain('STOP');
     });
 
     it('refuses a body somebody edited into a disclosure', () => {

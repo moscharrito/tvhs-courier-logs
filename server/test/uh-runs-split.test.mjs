@@ -686,7 +686,11 @@ describe('the texts a round sends when it is built', () => {
                default company is three of them. */
             expect(body, body).toContain('has a delivery for you today');
             expect(body, body).toContain('will call about');
-            expect(body, body).toContain('STOP');
+            /* No opt-out line since 22 November. STOP still works -- Twilio
+               suppresses the number at their end and sendQueued records it
+               -- it is simply no longer advertised. See the note where the
+               validator's STOP rule used to be, in sms-template.ts. */
+            expect(body, body).not.toContain('STOP');
             /* One segment. Two is twice the bill, every patient, every day. */
             expect(body.length, body).toBeLessThanOrEqual(160);
         }

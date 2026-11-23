@@ -121,8 +121,7 @@ export const STAGES = {
          * available. */
         template:
             '{company} has a delivery for you today, arriving by {by}. '
-            + '{driver} will call about {callMinutes} min before. '
-            + 'Reply STOP to opt out.',
+            + '{driver} will call about {callMinutes} min before.',
     },
     picked_up: {
         label: 'On the way',
@@ -131,8 +130,7 @@ export const STAGES = {
         enabledByDefault: false,
         template:
             '{company}: your delivery is on its way. '
-            + 'The driver will call you about {callMinutes} minutes before arriving. '
-            + 'Reply STOP to stop these messages.',
+            + 'The driver will call you about {callMinutes} minutes before arriving.',
     },
     arrived: {
         label: 'Driver is here',
@@ -140,8 +138,7 @@ export const STAGES = {
         placeholders: ['company'],
         enabledByDefault: false,
         template:
-            '{company}: our driver is at your address with your delivery now. '
-            + 'Reply STOP to stop these messages.',
+            '{company}: our driver is at your address with your delivery now.',
     },
     delivered: {
         label: 'Delivered',
@@ -152,8 +149,7 @@ export const STAGES = {
            courier is coming is told how it ended, and nothing in between. */
         enabledByDefault: true,
         template:
-            '{company}: your delivery was completed at {time}. Thank you. '
-            + 'Reply STOP to stop these messages.',
+            '{company}: your delivery was completed at {time}. Thank you.',
     },
     attempted: {
         label: 'Could not deliver',
@@ -164,8 +160,7 @@ export const STAGES = {
         enabledByDefault: true,
         template:
             '{company}: we tried to deliver today and could not complete it. '
-            + 'We will be in touch to arrange another time. '
-            + 'Reply STOP to stop these messages.',
+            + 'We will be in touch to arrange another time.',
     },
     returned: {
         label: 'Returned to sender',
@@ -177,8 +172,7 @@ export const STAGES = {
            screen saying a pharmacy sent something back says why. */
         template:
             '{company}: we could not complete today\'s delivery, so the item has gone back to the sender. '
-            + 'Please contact them to arrange a new date. '
-            + 'Reply STOP to stop these messages.',
+            + 'Please contact them to arrange a new date.',
     },
 } as const satisfies Record<string, StageSpec>;
 
@@ -309,12 +303,29 @@ export function validateTemplate(
        could be written here: it names the word it objected to. */
     assertMinimal(rendered);
 
-    if (!/\bSTOP\b/.test(rendered)) {
-        throw new TemplateError(
-            'The message has to tell people how to opt out. '
-            + 'Keep a sentence with the word STOP in it, such as "Reply STOP to stop these messages."',
-        );
-    }
+    /* ── THE "IT MUST SAY STOP" RULE WAS HERE AND WAS REMOVED.
+     *
+     * Asked for on 22 November 2026. It refused any wording without the
+     * word STOP in it, which made the sentence unremovable by anybody
+     * editing a template on the settings screen.
+     *
+     * WHAT DID NOT CHANGE, AND IS THE PART WORTH KNOWING: a patient can
+     * still text STOP and it still works. Twilio handles that at their end,
+     * before a message ever reaches this application -- the number is
+     * suppressed on their side and every later send to it comes back as
+     * error 21610 whatever our wording says. sendQueued still reads that,
+     * still records the opt-out permanently in patient_optouts, and the
+     * send query still joins it.
+     *
+     * None of that was touched, because removing it would not re-enable
+     * sending to those people. It would mean retrying a number Twilio will
+     * never accept, forever, counting each refusal as a fresh failure and
+     * reporting a queue that is going nowhere as one that is merely slow.
+     *
+     * So this removed what the message SAYS, not what happens. US carriers
+     * and the A2P 10DLC registration this traffic needs both expect the
+     * disclosure to be present; whether to carry it is a decision for
+     * whoever runs the campaign, not a rule for this file to enforce. */
 
     const { segments } = segmentsFor(rendered);
     if (segments > MAX_SEGMENTS) {

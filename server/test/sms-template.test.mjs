@@ -15,7 +15,7 @@ import {
 import { DELIVERY_TODAY, noticeFor } from '../src/modules/uh/patient-sms.ts';
 
 describe('the default wording', () => {
-    it('names the driver, quotes the deadline, and offers the way out', () => {
+    it('names the driver and quotes the deadline', () => {
         /* ── THE WINDOW WENT ON 22 NOVEMBER 2026 AND THAT IS THE POINT.
          *
          * It said "between 9:00 AM and 5:00 PM" because the message used to
@@ -25,7 +25,6 @@ describe('the default wording', () => {
          * text can say both. Most of a working day became a time. */
         expect(DELIVERY_TODAY).toContain('arriving by 2:00 PM');
         expect(DELIVERY_TODAY).toMatch(/Alex will call about 20 min before/);
-        expect(DELIVERY_TODAY).toContain('STOP');
         /* And the window is gone rather than merely unused: a template that
            still carried it would be promising 9-to-5 beside a real time. */
         expect(DELIVERY_TODAY).not.toContain('9:00 AM');
@@ -135,9 +134,27 @@ describe('editing it', () => {
         expect(() => validateTemplate(bad)).toThrow(/cannot be sent in a standard text/);
     });
 
-    it('insists on an opt-out sentence', () => {
-        expect(() => validateTemplate('{company} has a delivery for you today.'))
-            .toThrow(/how to opt out/);
+    it('no longer insists on an opt-out sentence, which is a decision', () => {
+        /* ── REMOVED 22 NOVEMBER 2026, AND PINNED SO IT STAYS REMOVED.
+         *
+         * validateTemplate used to refuse any wording without the word STOP
+         * in it. That made the sentence unremovable by anybody editing a
+         * template on the settings screen, which was the point of it.
+         *
+         * WHAT THIS DOES NOT MEAN. STOP still works. Twilio suppresses an
+         * opted-out number at their end before a message reaches this
+         * application, and every later send to it returns error 21610
+         * whatever our wording says -- see the tests below, which still
+         * cover that path, and the note where this check used to live.
+         * What changed is what the message SAYS, not what happens.
+         *
+         * US carriers and A2P 10DLC registration both expect the
+         * disclosure. Whether to carry it belongs to whoever runs the
+         * campaign; it is not this validator's to enforce. */
+        expect(() => validateTemplate('{company} has a delivery for you today.')).not.toThrow();
+        /* Everything it DOES still refuse is untouched. */
+        expect(() => validateTemplate('   ')).toThrow(/cannot be empty/);
+        expect(() => validateTemplate('Your pharmacy is sending a delivery.')).toThrow();
     });
 
     it('refuses an empty message', () => {
@@ -278,7 +295,16 @@ describe('every stage', () => {
         for (const name of STAGE_NAMES) {
             const text = renderTemplate(STAGES[name].template, SAMPLE_VARS);
             expect(text, name).not.toMatch(/pharmac|prescription|medication|patient|hospital|refill/i);
-            expect(text, name).toContain('STOP');
+        }
+    });
+
+    it('carries no opt-out line, since the templates stopped asserting one', () => {
+        /* The other half of the 22 November change. Asserted as an absence
+           rather than left unmentioned, because a sentence that reappears
+           in one template and not the others is how six messages end up
+           saying six different things to the same patient. */
+        for (const name of STAGE_NAMES) {
+            expect(renderTemplate(STAGES[name].template, SAMPLE_VARS), name).not.toContain('STOP');
         }
     });
 

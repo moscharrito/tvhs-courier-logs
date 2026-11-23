@@ -55,6 +55,19 @@
  *   node server/scripts/mock-list.mjs --csv              csv instead of xlsx
  *   node server/scripts/mock-list.mjs --streets          real streets, so it geocodes
  *   node server/scripts/mock-list.mjs --stat             include STAT rows, which a real list has not got
+ *   node server/scripts/mock-list.mjs --phone 2105551234  YOUR number, row one only
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * --phone, AND WHY ONLY ONE ROW GETS IT.
+ *
+ * Every other number here is 210-555-xxxx, the reserved range, which reaches
+ * nobody -- deliberately, because this file exists to be imported carelessly
+ * and often. Testing the patient text needs exactly one row that reaches a
+ * real handset, and exactly one: a flag that put your number on all 241 rows
+ * would text you 241 times the first time somebody clustered the day.
+ *
+ * It goes on the FIRST row, so it is the one at the top of the import
+ * preview and the name you will recognise on the board.
  *
  * Writes to docs/forms/ and prints the path. Upload it from the pharmacy's
  * own portal, not from an admin account: the point is the counter's path.
@@ -168,6 +181,15 @@ const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 
 /* Headers as somebody else's system writes them, not as ours reads them.
  * Every one of these is in the synonym table in import-parse.ts. */
+/* Digits only on the way in, so 210-555-1234, (210) 555-1234 and
+   2105551234 all land the same. import-parse.ts normalises again at the
+   other end, and the two agreeing is what makes the row findable after. */
+const mine = String(value('phone', '')).replace(/\D/g, '');
+if (mine !== '' && mine.length < 10) {
+    console.error(`  --phone needs a full ten-digit number. Got ${mine.length} digits.`);
+    process.exit(1);
+}
+
 const HEADERS = ['RX #', 'Patient Name', 'Phone', 'Address', 'Apt', 'City', 'State', 'Zip Code',
     'Priority', '# OF PIECES', 'Medication', 'Delivery Instructions', 'Signature', 'ID', 'Fridge', 'Controlled'];
 
@@ -205,10 +227,15 @@ for (let i = 0; i < orders; i += 1) {
     const street = real
         ? `${100 + Math.floor(rand() * 8900)} ${pick(place[1])}`
         : `${10 + i} Rehearsal Way`;
+    /* Row one only. See the note at the top: a real number on every row is
+       a way to text yourself the whole list. */
+    const phone = i === 0 && mine !== ''
+        ? mine
+        : `210-555-${String(1000 + (i % 9000)).padStart(4, '0')}`;
     rows.push([
         `RX-${String(240000 + i * 7).padStart(6, '0')}`,
         nameFor(i),
-        `210-555-${String(1000 + (i % 9000)).padStart(4, '0')}`,
+        phone,
         street,
         rand() < 0.18 ? `Apt ${1 + Math.floor(rand() * 40)}` : '',
         town,
