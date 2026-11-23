@@ -493,19 +493,36 @@ describe('exporting the proofs from the orders screen', () => {
             .getAttribute('href')).toContain('/uh/client/orders-with-pod.zip');
     });
 
-    it('carries the day across under the name the bundler reads it by', async () => {
-        /* THE ONE THAT WOULD HAVE BEEN SILENT. This screen filters by
-           `serviceDate`; the bundle route anchors on from/to and takes
-           `date` as the shorthand for both. Passing this screen's query
-           string straight through drops the day and bundles whatever the
-           default range is -- a much bigger file, about the wrong week,
-           with nothing on screen saying so. */
-        renderOrders(baseRoutes, '/projects/uh/orders?serviceDate=2026-09-14');
+    it('carries the range across, which is what the bundler anchors on', async () => {
+        /* This screen took a single Service date until 22 November 2026 and
+           had to hand the bundler `date`, its shorthand for both ends. It
+           has From and To now, which is the route's own vocabulary, so they
+           go straight across. `serviceDate` must not: the server honours it
+           as a separate narrowing, and sending both would describe the
+           bundle twice and disagree with itself if they ever differed. */
+        renderOrders(baseRoutes, '/projects/uh/orders?from=2026-09-01&to=2026-09-14');
         await screen.findByRole('heading', { name: 'Orders' });
         const href = screen.getByRole('link', { name: 'Export with proof of delivery' })
             .getAttribute('href') ?? '';
-        expect(href).toContain('date=2026-09-14');
+        expect(href).toContain('from=2026-09-01');
+        expect(href).toContain('to=2026-09-14');
         expect(href).not.toContain('serviceDate');
+    });
+
+    it('still understands a link that carries the old single day', async () => {
+        /* A bookmark, or a link somebody pasted into a ticket. The server
+           still applies ?serviceDate=, so dropping it from the screen would
+           filter the list to a day the boxes did not show -- which reads as
+           a broken filter rather than an old link. Both ends take it. */
+        renderOrders(baseRoutes, '/projects/uh/orders?serviceDate=2026-09-14');
+        await screen.findByRole('heading', { name: 'Orders' });
+        expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-09-14');
+        expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2026-09-14');
+
+        const href = screen.getByRole('link', { name: 'Export with proof of delivery' })
+            .getAttribute('href') ?? '';
+        expect(href).toContain('from=2026-09-14');
+        expect(href).toContain('to=2026-09-14');
     });
 
     it('passes on only the filters that route understands', async () => {
@@ -536,5 +553,60 @@ describe('exporting the proofs from the orders screen', () => {
             expect(screen.queryByRole('link', { name: 'Export with proof of delivery' })).toBeNull();
         });
         expect(mocked).toBeTruthy();
+    });
+});
+
+/* ─────────────── A RANGE ON THE ORDERS SCREEN, NOT A DAY
+ *
+ * Asked for on 22 November 2026. One "Service date" box answers "what
+ * happened on the second" and cannot answer "what have we not evidenced
+ * this month" -- which is the question the two exports beside it exist
+ * for. The server has taken from/to on this endpoint all along; only the
+ * screen was missing them.
+ */
+describe('filtering the orders screen by a range', () => {
+    it('opens on today at both ends, like every other date filter', async () => {
+        /* todayRange in lib/when.ts, which is the rule the whole system
+           follows since this morning. Asserted as "the same date in both"
+           rather than against a literal, so the test does not expire. */
+        renderOrders(baseRoutes);
+        await screen.findByRole('heading', { name: 'Orders' });
+        const from = (screen.getByLabelText('From') as HTMLInputElement).value;
+        const to = (screen.getByLabelText('To') as HTMLInputElement).value;
+        expect(from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(to).toBe(from);
+    });
+
+    it('asks the server for the range, under the names it reads', async () => {
+        const { calls } = mockFetch(baseRoutes);
+        render(
+            <MemoryRouter initialEntries={['/projects/uh/orders?from=2026-09-01&to=2026-09-30']}>
+                <AuthProvider>
+                    <Routes><Route path="/projects/:code/orders" element={<Orders />} /></Routes>
+                </AuthProvider>
+            </MemoryRouter>,
+        );
+        await screen.findByRole('heading', { name: 'Orders' });
+        await waitFor(() => {
+            expect(calls.some((c) => c.includes('/uh/orders?')
+                && c.includes('from=2026-09-01') && c.includes('to=2026-09-30'))).toBe(true);
+        });
+        /* The count above the table has to describe the same rows as the
+           table, so the summary takes the range too. */
+        expect(calls.some((c) => c.includes('/uh/orders/summary?')
+            && c.includes('from=2026-09-01'))).toBe(true);
+    });
+
+    it('puts a changed date in the URL, so the view can be sent to somebody', async () => {
+        renderOrders(baseRoutes);
+        await screen.findByRole('heading', { name: 'Orders' });
+        fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-09-01' } });
+        await waitFor(() => {
+            expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-09-01');
+        });
+        /* And the Excel export follows the boxes rather than the default,
+           because it is a plain link carrying the same query string. */
+        expect(screen.getByRole('link', { name: 'Export to Excel' }).getAttribute('href'))
+            .toContain('from=2026-09-01');
     });
 });

@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { clockFor } from '../../lib/when';
+import { clockFor, todayRange } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
@@ -111,7 +111,8 @@ export function Orders() {
     const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
     /* The header already names the project's zone; these times are in it. */
-    const clock = clockFor(useProjectTimezone(code));
+    const timezone = useProjectTimezone(code);
+    const clock = clockFor(timezone);
     const [params, setParams] = useSearchParams();
 
     const [orders, setOrders] = useState<OrderRow[] | null>(null);
@@ -145,14 +146,31 @@ export function Orders() {
     const [searchingFor, setSearchingFor] = useState('');
 
     const query = params.toString();
+    /* ── THE DAY THIS OPENS ON, AND THE OLD LINKS THAT STILL WORK.
+     *
+     * todayRange is the rule every date filter follows since 22 November:
+     * both ends on today until somebody changes them. See lib/when.ts.
+     *
+     * `serviceDate` is read as a fallback rather than dropped. The server
+     * still honours it, so a bookmark or a pasted link carrying one would
+     * otherwise filter the list to a day the boxes did not show -- a
+     * screen disagreeing with itself, which reads as a bug in the filter.
+     * Seeding both ends with it makes the link mean what it meant. */
+    const opening = todayRange(timezone);
+    const day = params.get('serviceDate') ?? '';
+    const from = (params.get('from') ?? '') || day || opening.from;
+    const to = (params.get('to') ?? '') || day || opening.to;
     /* The same filters the bundle route understands, under the names it
        reads them by. It shares none of this screen's vocabulary beyond the
        four below, so anything else -- the courier, the one search box, the
        proof filter -- is left off rather than passed and ignored. */
     const podQuery = (() => {
         const out = new URLSearchParams();
-        const day = params.get('serviceDate');
-        if (day) out.set('date', day);
+        /* from/to straight through, because that is what the bundle route
+           anchors on natively -- it only ever took `date` as shorthand for
+           both ends, which is what this screen used to have to offer. */
+        out.set('from', from);
+        out.set('to', to);
         for (const key of ['siteId', 'status', 'serviceType']) {
             const value = params.get(key);
             if (value) out.set(key, value);
@@ -250,6 +268,7 @@ export function Orders() {
     };
     const get = (key: string) => params.get(key) ?? '';
 
+
     return (
         <>
             <h1>Orders</h1>
@@ -278,8 +297,26 @@ export function Orders() {
                     search box ends up in the URL, and URLs reach browser history, proxies and logs.
                 </p>
                 <div className="izy-row">
-                    <label className="izy-field">Service date
-                        <input type="date" value={get('serviceDate')} onChange={(e) => set('serviceDate', e.target.value)} />
+                    {/* ── A RANGE, NOT A DAY. Asked for on 22 November 2026.
+                        This was one "Service date" box, which answers "what
+                        happened on the second" and cannot answer "what have
+                        we not evidenced this month" -- and the two exports
+                        beside it are exactly the thing somebody wants a
+                        month of.
+
+                        The server has taken from/to on this endpoint all
+                        along; only the screen was missing them.
+
+                        A SINGLE DAY IS STILL ONE CLICK: the two boxes hold
+                        the same date, which is what a bookmark carrying the
+                        old ?serviceDate= resolves to -- see `day` above, so
+                        a saved link narrows the way it always did rather
+                        than silently widening to today. */}
+                    <label className="izy-field">From
+                        <input type="date" value={from} onChange={(e) => set('from', e.target.value)} />
+                    </label>
+                    <label className="izy-field">To
+                        <input type="date" value={to} onChange={(e) => set('to', e.target.value)} />
                     </label>
                     <label className="izy-field">Pharmacy
                         <select value={get('siteId')} onChange={(e) => set('siteId', e.target.value)}>
