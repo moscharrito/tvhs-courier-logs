@@ -248,3 +248,7 @@ dupefix.ps1
 # sms.ps1: reads whether patients are being texted, and arms/pauses it
 # LOCALLY only. The production arming command is typed in full on purpose.
 sms.ps1
+
+# sms-audit.ps1: prompts for the Turso token, then runs the read-only
+# patient-text audit. Holds no secret itself; gitignored by habit.
+sms-audit.ps1
