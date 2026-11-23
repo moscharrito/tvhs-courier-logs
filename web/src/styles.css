@@ -1984,6 +1984,9 @@ body {
 /* Icon and word on one line, which is the rule in app/Icons.tsx: the glyph
    makes it findable at a glance, the word is what it is actually called. */
 .izy-cluster table .izy-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* Excel and Image in one cell. They wrap onto two rows rather than widening
+   the column, because the column they would steal from is the ZIP list. */
+.izy-cluster-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .izy-cluster-do {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
     margin-top: 14px; font-size: 13px;

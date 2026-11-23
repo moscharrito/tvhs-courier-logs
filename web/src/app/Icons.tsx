@@ -18,10 +18,11 @@
  * them, because the label beside them is the accessible name. An icon that
  * needed its own label would mean a control that is missing one.
  *
- * Two shapes here are NOT in the app: a telephone and a package going back.
- * Both are controls the app does not have — the app dials through the
- * platform and returns are still web-only — so they are drawn to match
- * rather than copied.
+ * Three shapes here are NOT in the app: a telephone, a package going back,
+ * and a picture. All three are controls the app does not have — the app
+ * dials through the platform, returns are still web-only, and the round
+ * picture is a dispatcher's button rather than a driver's — so they are
+ * drawn to match rather than copied.
  * ───────────────────────────────────────────────────────────────────────── */
 
 export interface IconProps {
@@ -191,6 +192,28 @@ export function DownloadIcon({ size = 24, color = 'currentColor', strokeWidth = 
             <path d="M12 3.5v10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
             <path d="M8.5 10.5 12 14l3.5-3.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
             <path d="M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        </svg>
+    );
+}
+
+/* A framed picture: the same round as a PNG, beside the spreadsheet.
+ *
+ * A photograph rather than a second downward arrow, because the two
+ * buttons sit in one table cell and both of them download — the arrow is
+ * what they have in common, so it cannot be what tells them apart. The
+ * glyph says what comes out, and the word beside it says it again. */
+export function ImageIcon({ size = 24, color = 'currentColor', strokeWidth = 1.8 }: IconProps) {
+    return (
+        <svg {...frame(size)}>
+            <rect x={3.5} y={5} width={17} height={14} rx={2.5} stroke={color} strokeWidth={strokeWidth} />
+            <circle cx={9} cy={10} r={1.6} stroke={color} strokeWidth={strokeWidth} />
+            <path
+                d="M4 16.5l3.9-3.9a1.8 1.8 0 0 1 2.5 0l2.3 2.3 1.9-1.9a1.8 1.8 0 0 1 2.5 0L20 15"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
         </svg>
     );
 }

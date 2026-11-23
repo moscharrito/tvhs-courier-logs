@@ -42,7 +42,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, why, ApiError } from '../../lib/api';
 import { Loading } from '../../app/Loading';
-import { DownloadIcon } from '../../app/Icons';
+import { DownloadIcon, ImageIcon } from '../../app/Icons';
+import { roundImage, roundImageName, saveBlob, type RoundStop } from '../../lib/round-image';
 
 interface Driver {
     username: string;
@@ -99,6 +100,11 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
        COUNT of stops in it -- the right filter on the wrong file, so it
        downloaded cleanly and told the dispatcher nothing. */
     const [runOf, setRunOf] = useState<Record<string, number>>({});
+    /* WHOSE PICTURE IS BEING DRAWN. A username rather than a boolean,
+       because the label has to change on the button that was pressed and
+       not on all of them -- a dispatcher downloading four rounds in a row
+       needs to see which one they are waiting for. */
+    const [drawing, setDrawing] = useState('');
 
     /* WHO IS STANDING HERE, which is a shorter question than it was.
        The server answers with the drivers mapped to this counter who are
@@ -202,6 +208,49 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
             setBusy('');
         }
     }, [projectCode, split, onDone]);
+
+    /* ─── THE SAME ROUND, AS A PICTURE.
+     *
+     * The Excel button beside this one is for the desk. This one is for
+     * the handset: a .xlsx on an Android phone is a prompt to install
+     * something, and a PNG opens in the message it arrived in.
+     *
+     * The stops come from the run's own endpoint rather than from `split`
+     * above, because `split` carries order IDS and counts -- it never had
+     * a name or an address in it, and reading them from the run is also
+     * what puts the read in the audit log. Drawing happens in
+     * lib/round-image; everything this function does is fetch, name the
+     * file and report a failure in the dialog's own error strip rather
+     * than in a console nobody has open.
+     */
+    const picture = useCallback(async (round: Round) => {
+        const who = round.courier;
+        if (!who) return;
+        const runId = runOf[who.username];
+        if (runId === undefined) return;
+
+        setDrawing(who.username);
+        setErr('');
+        try {
+            const run = await api<{ stops?: RoundStop[] }>(
+                `/api/projects/${projectCode}/uh/runs/${runId}`,
+            );
+            const png = await roundImage(
+                {
+                    driver: who.name,
+                    site: site.name,
+                    serviceDate,
+                    ...(round.ordering === undefined ? {} : { ordering: round.ordering }),
+                },
+                run.stops ?? [],
+            );
+            saveBlob(png, roundImageName(who.name, serviceDate));
+        } catch (e) {
+            setErr(why(e, `${who.name}’s round could not be drawn as a picture.`));
+        } finally {
+            setDrawing('');
+        }
+    }, [projectCode, runOf, site.name, serviceDate]);
 
     const flip = (username: string) => {
         setSplit(null);
@@ -343,7 +392,10 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                         <thead>
                                             <tr>
                                                 <th>Driver</th><th>Stops</th><th>Order</th><th>ZIPs</th>
-                                                <th>Width</th><th>{assigned ? 'Spreadsheet' : ''}</th>
+                                                {/* "Download" and not "Spreadsheet": there are two
+                                                    files behind this column now, and only one of
+                                                    them is a spreadsheet. */}
+                                                <th>Width</th><th>{assigned ? 'Download' : ''}</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -384,17 +436,39 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                                         {/* The RUN's manifest -- the stops themselves, in
                                                             the order they are to be driven, named for the
                                                             driver. Only once the run exists, which is why
-                                                            this column is empty until Assign. */}
+                                                            this column is empty until Assign.
+
+                                                            TWO FILES, THE SAME STOPS. Excel is for the
+                                                            desk: fifteen columns, and what somebody wants
+                                                            when they want it on paper. Image is for the
+                                                            handset -- a .xlsx reaching an Android phone is
+                                                            a prompt to install something, while a PNG
+                                                            opens in the message it arrived in and stays
+                                                            readable where the signal does not. Both carry
+                                                            patients, and the picture says so on itself. */}
                                                         {assigned && r.courier && runOf[r.courier.username] !== undefined && (
-                                                            <a
-                                                                className="izy-btn secondary small"
-                                                                href={`/api/projects/${projectCode}/uh/runs/`
-                                                                    + `${runOf[r.courier.username]}/manifest.xlsx`}
-                                                                title={`${r.courier.name}’s stops, in driving order`}
-                                                            >
-                                                                <DownloadIcon size={15} />
-                                                                Excel
-                                                            </a>
+                                                            <div className="izy-cluster-files">
+                                                                <a
+                                                                    className="izy-btn secondary small"
+                                                                    href={`/api/projects/${projectCode}/uh/runs/`
+                                                                        + `${runOf[r.courier.username]}/manifest.xlsx`}
+                                                                    title={`${r.courier.name}’s stops, in driving order`}
+                                                                >
+                                                                    <DownloadIcon size={15} />
+                                                                    Excel
+                                                                </a>
+                                                                <button
+                                                                    type="button"
+                                                                    className="izy-btn secondary small"
+                                                                    disabled={drawing !== ''}
+                                                                    onClick={() => { void picture(r); }}
+                                                                    title={`${r.courier.name}’s stops as a picture, `
+                                                                        + 'to send to their phone'}
+                                                                >
+                                                                    <ImageIcon size={15} />
+                                                                    {drawing === r.courier.username ? 'Drawing…' : 'Image'}
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -417,8 +491,9 @@ export function ClusterDialog({ projectCode, site, serviceDate, onClose, onDone 
                                         <>
                                             <span className="izy-pill">Assigned</span>
                                             <span className="izy-muted">
-                                                Each driver has their round on their phone. The spreadsheets above
-                                                are the same work, if somebody wants it on paper.
+                                                Each driver has their round on their phone already. The downloads
+                                                above are the same work twice over — Excel for the desk, Image to
+                                                send to a driver who wants to see it without opening the app.
                                             </span>
                                         </>
                                     ) : (
