@@ -12,6 +12,9 @@ import { clockFor, instantIn, stampFor, todayIn } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Section } from '../../app/Section';
 import type { Site } from './Sites';
+/* The two-step warning lives in one file now, shared with the dispatch
+   board. See DeleteOrder.tsx for why a second copy of it was the risk. */
+import { DeleteOrderControl, describeRemoval, type Removed } from './DeleteOrder';
 
 interface Created {
     id: number;
@@ -34,15 +37,6 @@ interface Taken {
     dueAt: string | null;
     siteId: number;
     assignedTo: string | null;
-}
-
-/** What the delete actually removed, so the screen can say it. */
-interface Removed {
-    id: number;
-    was: { reference: string; status: string };
-    onInvoices: string[];
-    filesDeleted: number;
-    runsRemoved: number;
 }
 
 const EMPTY = {
@@ -134,7 +128,6 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
        forty-nine of fifty-one and conclude it is not there. */
     const [total, setTotal] = useState(0);
     const [looking, setLooking] = useState(false);
-    const [confirming, setConfirming] = useState<number | null>(null);
 
     const loadSites = useCallback(async () => {
         try { setSites(await api<Site[]>(`/api/projects/${projectCode}/uh/sites`)); } catch { setSites([]); }
@@ -143,7 +136,13 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
 
     const find = useCallback(async () => {
         setLooking(true);
-        setConfirming(null);
+        /* This used to close an open confirmation, back when the open one
+           was tracked up here by order id. DeleteOrderControl owns that now
+           and each row keys it by the order, so a confirmation cannot
+           outlive its row or land on a different one: the search either
+           returns that order, and the control is the same component with
+           the same order under it, or it does not, and the control
+           unmounts with the row. */
         try {
             const q = new URLSearchParams({ serviceType: filterService, limit: '50' });
             if (filterDate !== '') q.set('serviceDate', filterDate);
@@ -166,17 +165,7 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
         setMsg(null);
         try {
             const gone = await api<Removed>(`${base}/${order.id}`, { method: 'DELETE', json: {} });
-            const invoiced = gone.onInvoices.length > 0
-                ? ` It was on ${gone.onInvoices.length === 1 ? 'an invoice' : 'invoices'}, which is now short a line.`
-                : '';
-            const files = gone.filesDeleted > 0
-                ? ` ${gone.filesDeleted} ${gone.filesDeleted === 1 ? 'photograph' : 'photographs'} went with it.`
-                : '';
-            setMsg({
-                kind: 'ok',
-                text: `Order ${gone.id}${gone.was.reference ? ` (${gone.was.reference})` : ''} deleted permanently.${invoiced}${files}`,
-            });
-            setConfirming(null);
+            setMsg({ kind: 'ok', text: describeRemoval(gone) });
             /* Re-read rather than splicing it out: the delete can empty a
                planned run, and the list should show what is actually there
                rather than what this screen thinks is left. */
@@ -417,44 +406,14 @@ export function NewOrder({ projectCode, timezone, canCreate, canDelete }: {
                                 <td>{o.status}{o.assignedTo ? ` · ${o.assignedTo}` : ''}</td>
                                 <td>{o.dueAt ? clock(o.dueAt) : ''}</td>
                                 <td>
-                                    {!canDelete ? null : confirming === o.id ? (
-                                        /* TWO STEPS, AND THE SECOND ONE SAYS WHAT GOES.
-
-                                           A single order is not a list: the thing about
-                                           to be destroyed fits on the screen, so the
-                                           person can be made to read it rather than
-                                           warned in the abstract. The status is in the
-                                           sentence because deleting a delivered stop is
-                                           a different act from deleting one nobody has
-                                           touched, and only the operator can tell which
-                                           one this is. */
-                                        <>
-                                            <span className="izy-muted">
-                                                Delete #{o.id} for {o.recipientName}
-                                                {o.status === 'delivered' || o.status === 'failed'
-                                                    ? `, which is already ${o.status}, `
-                                                    : ' '}
-                                                permanently? There is no undo.
-                                            </span>
-                                            {' '}
-                                            <button className="izy-btn danger" type="button" disabled={busy} onClick={() => { void remove(o); }}>
-                                                Delete permanently
-                                            </button>
-                                            {' '}
-                                            <button className="izy-btn secondary" type="button" disabled={busy} onClick={() => setConfirming(null)}>
-                                                Keep
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <button
-                                            className="izy-btn secondary"
-                                            type="button"
+                                    {!canDelete ? null : (
+                                        <DeleteOrderControl
+                                            orderId={o.id}
+                                            recipientName={o.recipientName}
+                                            status={o.status}
                                             disabled={busy}
-                                            aria-label={`Delete order ${o.id} for ${o.recipientName}`}
-                                            onClick={() => { setConfirming(o.id); setMsg(null); }}
-                                        >
-                                            Delete
-                                        </button>
+                                            onDelete={() => remove(o)}
+                                        />
                                     )}
                                 </td>
                             </tr>

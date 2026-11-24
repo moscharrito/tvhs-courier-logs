@@ -28,6 +28,9 @@ import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
 import type { Site } from './Sites';
 import { mergeBoard, type BoardView, type BoardWire, type SiteRef } from '../../lib/board';
+/* Shared with the take-an-order panel, so the warning before something
+   unrecoverable is worded once. See DeleteOrder.tsx. */
+import { DeleteOrderControl, describeRemoval, type Removed } from './DeleteOrder';
 
 const POLL_MS = 15_000;
 
@@ -373,6 +376,49 @@ export function Board() {
         }
     }
 
+    /* ── WHO MAY DESTROY AN ORDER FROM HERE.
+     *
+     * The same pair the server allows -- requireProjectRole('admin','lead')
+     * on DELETE /orders/:id -- and the same pair the take-an-order panel
+     * already offers it to. Three screens agreeing by accident is how they
+     * stop agreeing, so this is written as the thing it is: not "admin",
+     * which is what was asked for in words, but dispatch, which is what the
+     * route enforces. Offering it to a lead the server refuses would draw a
+     * button that 403s, and a button that 403s reads as a broken product
+     * rather than as a permission somebody does not have.
+     *
+     * A courier never sees the board at all; a pharmacy may raise an order
+     * and read its own back, and destroying one is not theirs to do. */
+    const canDelete = project?.role === 'admin' || project?.role === 'lead';
+
+    /** Destroy one waiting order. There is no undo and no cancel here.
+     *
+     * NOT act(), because the sentence afterwards is not a constant: what a
+     * person needs told is what went WITH it -- an invoice now short a
+     * line, photographs gone from the bucket -- and only the response
+     * knows. describeRemoval builds it, shared with the order panel so the
+     * two screens cannot drift on how a deletion is reported.
+     *
+     * It reloads the board rather than splicing the card out, exactly as
+     * assign does: deleting the last order on a planned run empties the
+     * run, and the board should show what is there rather than what this
+     * screen believes is left. */
+    const remove = async (order: BoardOrder) => {
+        setBusy(true);
+        setMsg(null);
+        try {
+            const gone = await api<Removed>(`${base}/orders/${order.id}`, { method: 'DELETE', json: {} });
+            setMsg({ kind: 'ok', text: describeRemoval(gone) });
+            await load();
+        } catch (err) {
+            setMsg(err instanceof ApiError
+                ? { kind: 'error', text: err.message, details: err.details }
+                : { kind: 'error', text: 'Could not delete that order' });
+        } finally {
+            setBusy(false);
+        }
+    };
+
     /** Put an order on a run, or on a driver who has not got one yet.
      *
      * The target is `run:<id>` or `courier:<username>`, because the dropdown
@@ -649,6 +695,8 @@ export function Board() {
                             laneOptions={targetsFor(group.site.id)}
                             onDragStart={setDragging}
                             assign={assign}
+                            canDelete={canDelete}
+                            remove={remove}
                         />
                     ))}
                   </section>
@@ -940,13 +988,15 @@ export function Board() {
  * that has to be true: a dispatcher must never be able to mistake a page of
  * eight for the whole of what is waiting.
  */
-function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign }: {
+function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign, canDelete, remove }: {
     group: { site: SiteRef; orders: BoardOrder[]; overdue: number };
     projectCode: string;
     busy: boolean;
     laneOptions: Array<{ value: string; label: string }>;
     onDragStart: (id: number | null) => void;
     assign: (orderId: number, target: string) => void | Promise<void>;
+    canDelete: boolean;
+    remove: (order: BoardOrder) => void | Promise<void>;
 }) {
     /* SIX, NOT THE USUAL EIGHT. Nine counters are nine of these stacked down
        one column, so the page size here multiplies by nine rather than
@@ -971,19 +1021,49 @@ function PoolGroup({ group, projectCode, busy, laneOptions, onDragStart, assign 
                     onDragStart={() => onDragStart(o.id)}
                     onDragEnd={() => onDragStart(null)}
                     projectCode={projectCode}
-                    action={laneOptions.length === 0 ? null : (
-                        <label className="izy-assign">
-                            <span className="izy-visually-hidden">Assign order {o.id} to</span>
-                            <select
-                                aria-label={`Assign order ${o.id} to`}
-                                value=""
-                                disabled={busy}
-                                onChange={(e) => { if (e.target.value) void assign(o.id, e.target.value); }}
-                            >
-                                <option value="">Assign to...</option>
-                                {laneOptions.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-                            </select>
-                        </label>
+                    /* ── DELETE SITS UNDER "ASSIGN TO...", AND IS NOT INSIDE
+                         THE SAME CONDITION.
+
+                         The select is drawn only when there is somewhere to
+                         assign to; with nobody on shift, laneOptions is
+                         empty and the whole action cell used to be null.
+                         That is exactly the morning somebody needs to throw
+                         away the ad hoc call that was taken twice -- no
+                         drivers yet, a pool full of work that has not
+                         started. Tying the delete to the presence of a
+                         driver would hide it at the only time the pool is
+                         certainly untouched.
+
+                         The two are separate conditions for that reason,
+                         and the cell is null only when neither applies. */
+                    action={laneOptions.length === 0 && !canDelete ? null : (
+                        <>
+                            {laneOptions.length > 0 && (
+                                <label className="izy-assign">
+                                    <span className="izy-visually-hidden">Assign order {o.id} to</span>
+                                    <select
+                                        aria-label={`Assign order ${o.id} to`}
+                                        value=""
+                                        disabled={busy}
+                                        onChange={(e) => { if (e.target.value) void assign(o.id, e.target.value); }}
+                                    >
+                                        <option value="">Assign to...</option>
+                                        {laneOptions.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                                    </select>
+                                </label>
+                            )}
+                            {canDelete && (
+                                <div className="izy-assign-delete">
+                                    <DeleteOrderControl
+                                        orderId={o.id}
+                                        recipientName={o.recipientName}
+                                        status={o.status}
+                                        disabled={busy}
+                                        onDelete={() => remove(o)}
+                                    />
+                                </div>
+                            )}
+                        </>
                     )}
                 />
             ))}

@@ -1127,3 +1127,104 @@ describe('the lanes follow the filters at the top', () => {
         expect(screen.queryByText(/nothing matching these filters/)).toBeNull();
     });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * DESTROYING AN ORDER FROM THE POOL.
+ *
+ * Asked for on 24 November: a way to throw away the ad hoc call taken
+ * twice, from the screen where it is noticed, instead of going to the
+ * take-an-order panel and searching for it again.
+ *
+ * The thing these tests are really protecting is that it takes two presses
+ * and that the second one names the order. DELETE /orders/:id removes the
+ * row, its custody events, its messages and its photographs, and there is
+ * no undo -- so "a Delete button renders" is not the property worth
+ * asserting. What goes on the wire, and what has to happen before it does,
+ * is.
+ */
+describe('deleting an order out of the pool', () => {
+    const gone = {
+        id: 1,
+        was: { reference: 'RX-1', status: 'ready' },
+        onInvoices: [],
+        filesDeleted: 0,
+        runsRemoved: 0,
+    };
+
+    it('offers Delete under the assign dropdown', async () => {
+        renderBoard();
+        expect(await screen.findByRole('button', { name: 'Delete order 1 for Ines Vargas' }))
+            .toBeInTheDocument();
+    });
+
+    it('sends nothing on the first press, and names the order instead', async () => {
+        /* One click on something unrecoverable is the whole hazard. */
+        const { calls } = renderBoard();
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete order 1 for Ines Vargas' }));
+        expect(screen.getByText(/Delete #1 for Ines Vargas/)).toBeInTheDocument();
+        expect(screen.getByText(/permanently\? There is no undo/)).toBeInTheDocument();
+        expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
+    });
+
+    it('Keep puts it back and still sends nothing', async () => {
+        const { calls } = renderBoard();
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete order 1 for Ines Vargas' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+        expect(screen.queryByText(/There is no undo/)).not.toBeInTheDocument();
+        expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
+    });
+
+    it('deletes on the second press and says what went with it', async () => {
+        const { calls } = renderBoard(routes({
+            'DELETE /api/projects/uh/uh/orders/1': { ...gone, onInvoices: ['INV-3'], filesDeleted: 2 },
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete order 1 for Ines Vargas' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+
+        await waitFor(() => {
+            expect(calls.some((c) => c === 'DELETE /api/projects/uh/uh/orders/1')).toBe(true);
+        });
+        /* The two consequences nobody sees coming from a row in a pool. */
+        expect(await screen.findByText(/deleted permanently/)).toBeInTheDocument();
+        expect(screen.getByText(/short a line/)).toBeInTheDocument();
+        expect(screen.getByText(/2 photographs went with it/)).toBeInTheDocument();
+    });
+
+    it('re-reads the board rather than trusting its own copy', async () => {
+        /* Deleting the last order on a planned run empties the run, which
+           this screen cannot work out for itself. */
+        const { calls } = renderBoard(routes({
+            'DELETE /api/projects/uh/uh/orders/1': gone,
+        }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete order 1 for Ines Vargas' }));
+        const before = calls.filter((c) => c.startsWith('GET /api/projects/uh/uh/board')).length;
+        fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+        await waitFor(() => {
+            expect(calls.filter((c) => c.startsWith('GET /api/projects/uh/uh/board')).length)
+                .toBeGreaterThan(before);
+        });
+    });
+
+    it('still offers it with nobody on shift, when there is no dropdown', async () => {
+        /* The morning the pool is certainly untouched is the morning no
+           driver has started, and that used to be the one morning the whole
+           action cell was empty. */
+        renderBoard(routes({
+            'GET /api/projects/uh/uh/board*': toWire(screenBoard({ lanes: [], couriers: [], idleCouriers: [] })),
+        }));
+        expect(await screen.findByRole('button', { name: 'Delete order 1 for Ines Vargas' }))
+            .toBeInTheDocument();
+        expect(screen.queryByRole('combobox', { name: 'Assign order 1 to' })).toBeNull();
+    });
+
+    it('does not offer it to a pharmacy account', async () => {
+        /* A pharmacy may raise an order and read its own back. Destroying
+           one is not theirs to do, and the server says so too -- the button
+           is hidden so it cannot be a 403 somebody reports as a bug. */
+        renderBoard(routes({
+            'GET /api/me/projects': [{ ...projects[0], role: 'pharmacy' }],
+        }));
+        await screen.findByText('Ines Vargas');
+        expect(screen.queryByRole('button', { name: /^Delete order/ })).toBeNull();
+    });
+});

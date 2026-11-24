@@ -273,6 +273,24 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .izy-stop-current { border-color: var(--izy-green); box-shadow: inset 3px 0 0 var(--izy-green); }
 .izy-stop .izy-btn, .izy-stop select { margin-top: 6px; font-size: 12px; }
 .izy-assign select { width: 100%; padding: 5px 8px; border: 1px solid var(--izy-line); border-radius: 6px; background: #fff; }
+/* Delete, directly under "Assign to...". The gap is the whole point: these
+   are the two things that can happen to a waiting order and one of them
+   cannot be undone, so they do not sit flush against each other where a
+   mis-aimed click lands on the wrong one. */
+.izy-assign-delete { margin-top: 6px; }
+/* The confirmation, kept inside the cell it was raised from. The board's
+   stop rows are a grid whose last track sizes to content, so a question
+   laid out in a line widened that one row and left it out of step with
+   every row around it. See DeleteOrderControl. */
+.izy-confirm-delete { display: block; }
+/* Capped to roughly the width of the select above it, so the question
+   WRAPS instead of widening the track. Block alone was not enough: the
+   sentence is one long line, max-content is that line, and the column grew
+   to fit it. Board only -- the order panel puts this in a table cell that
+   has the room. */
+.izy-assign-delete .izy-confirm-delete { max-width: 200px; }
+.izy-confirm-delete > .izy-muted { display: block; margin-bottom: 6px; }
+.izy-confirm-delete-do { display: flex; gap: 6px; flex-wrap: wrap; }
 .izy-stat-warn { color: #92400e; }
 .izy-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .izy-call { display: inline-block; margin-bottom: 14px; text-decoration: none; }
