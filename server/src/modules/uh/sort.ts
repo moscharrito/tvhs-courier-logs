@@ -86,10 +86,31 @@ export function createSortRouter({ client }: { client: Client }): Router {
     /* WHO SORTS. Admin and lead are dispatch; pharmacy is the counter staff
        who physically hold the packages, scoped to their own sites by
        scopeFor below so a counter can only ever resolve its own deliveries.
-       A courier is NOT here: a driver holding a package already has their
-       own round on their phone, and this route would let them ask about
-       somebody else's patients. */
-    const sorters = requireProjectRole('admin', 'lead', 'pharmacy');
+
+       ── A COURIER WAS NOT HERE UNTIL 24 NOVEMBER 2026, and the objection
+       that kept them out is worth restating rather than deleting: "a driver
+       holding a package already has their own round on their phone, and
+       this route would let them ask about somebody else's patients."
+
+       The first half stopped being true in practice. The round on their
+       phone is a list of names and addresses; the thing in their hand is a
+       waybill with a telephone number on it. Matching one to the other by
+       eye is exactly the job this route exists to remove, and it is no
+       easier for the driver doing it than for the counter staff who asked
+       for the route in the first place.
+
+       THE SECOND HALF IS STILL TRUE AND IS ANSWERED BY SCOPE RATHER THAN BY
+       EXCLUSION. The branch below pins a courier to runs that are theirs,
+       so the question they can ask is "is this one mine, and where does it
+       sit in my round" -- never "whose is it". Somebody else's package
+       comes back as no match at all, which is the same answer they would
+       get for a parcel from another contract and tells them nothing they
+       were not already holding. */
+    const sorters = requireProjectRole('admin', 'lead', 'pharmacy', 'courier');
+
+    const roleOf = (req: Request) => req.membership?.role ?? '';
+    const isCourier = (req: Request) => roleOf(req) === 'courier';
+    const actorOf = (req: Request) => req.session.user?.username ?? '';
 
     router.post('/lookup', sorters, wrap(async (req, res) => {
         const parsed = Lookup.safeParse(req.body);
@@ -146,12 +167,35 @@ export function createSortRouter({ client }: { client: Client }): Router {
         const lead = leadScope(req);
         if (lead) { where.push(lead.sql); args.push(...lead.args); }
 
-        const portal = scopeFor(req.membership?.role, req.membership?.settings ?? {});
-        if (!portal.wholeProject) {
-            if (portal.siteIds.length === 0) where.push('1 = 0');
-            else {
-                where.push(`o.site_id IN (${portal.siteIds.map(() => '?').join(',')})`);
-                args.push(...portal.siteIds);
+        /* ── A COURIER IS PINNED TO THEIR OWN ROUND, AND THIS BRANCH IS WHAT
+           MAKES THE ROLE SAFE TO ADMIT AT ALL.
+
+           `r` is LEFT JOINed above, so requiring a username on it also drops
+           every order sitting on no run yet. That is the right answer rather
+           than an accident of the join: unassigned work is nobody's pile,
+           and least of all a driver's. Same shape as the narrowing in
+           runs.ts, which pins a courier to their own runs for the same
+           reason.
+
+           IT IS AN ELSE, NOT A FURTHER CLAUSE, and that is the bug this
+           nearly shipped with. scopeFor() returns wholeProject:false with an
+           empty siteIds for every role it does not name, and 'courier' is
+           not one of the three it names -- so letting a courier fall through
+           to it would push `1 = 0` and answer "no such package" to every
+           question a driver ever asked, for ever, with a button on their
+           screen to ask it. A 403 would have been kinder: it at least says
+           something is wrong. */
+        if (isCourier(req)) {
+            where.push('r.courier_username = ?');
+            args.push(actorOf(req));
+        } else {
+            const portal = scopeFor(req.membership?.role, req.membership?.settings ?? {});
+            if (!portal.wholeProject) {
+                if (portal.siteIds.length === 0) where.push('1 = 0');
+                else {
+                    where.push(`o.site_id IN (${portal.siteIds.map(() => '?').join(',')})`);
+                    args.push(...portal.siteIds);
+                }
             }
         }
 

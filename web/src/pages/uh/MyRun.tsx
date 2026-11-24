@@ -131,7 +131,7 @@ export function mapsUrl(stop: Pick<Stop, 'address' | 'city' | 'zip'>): string {
 
 export function MyRun() {
     const { code = '' } = useParams();
-    const { user, projects } = useAuth();
+    const { projects } = useAuth();
     const project = projects.find((p) => p.code === code);
     /* A deadline a courier is driving against. It is the project's clock,
        whatever this phone thinks the time is. */
@@ -256,8 +256,13 @@ export function MyRun() {
      * day this is, with the picker beside them saying which. The date
      * itself is in one place on the screen now instead of three. */
     const subtitle = (
-        <>
-            {user?.name !== undefined && user.name !== '' && <>{user.name} · </>}
+        <span className="izy-subhead-row">
+            {/* ─── THE DRIVER'S OWN NAME IS NOT HERE, removed 24 November
+              * 2026. It told the one person reading this screen the one
+              * thing on it they already knew, and it was the longest item
+              * on a line that has to hold a date picker and a count on a
+              * 390px phone -- so it was also the reason the line wrapped.
+              * Whose round this is is answered by having signed in. */}
             <label className="izy-daypick">
                 <CalendarIcon size={14} />
                 <span className="izy-visually-hidden">Show the round for a day</span>
@@ -268,14 +273,45 @@ export function MyRun() {
                     onChange={(e) => setDay(e.target.value === '' ? null : e.target.value)}
                 />
             </label>
-            {' · '}{done} of {stops.length} done
+            {' · '}
+            <span className="izy-nowrap">{done} of {stops.length} done</span>
             {!isToday && (
                 <>
                     {' · '}
                     <button type="button" className="izy-linkish" onClick={() => setDay(null)}>Back to today</button>
                 </>
             )}
-        </>
+            {/* ─── SORT PACKAGES, HARD RIGHT, DIRECTLY UNDER GO ON SHIFT.
+              *
+              * It began on this line beside the count, which is where it
+              * was asked for and where it did not fit: the line already
+              * carries a date picker, and at 390px it wrapped whatever was
+              * done to the separators. Stacking it under the shift control
+              * inside the heading row fixed the wrap and cost a third row,
+              * leaving a hole on the left where the date should have been.
+              *
+              * So it is pushed to the end of THIS line instead. Two rows,
+              * both ragged against their own margin: the day and the count
+              * on the left, the shift and the bench on the right, each pair
+              * one above the other. The link still lands directly beneath
+              * Go on shift, which is what was asked for -- it is the row
+              * that moved, not the column.
+              *
+              * The bench is a physical place: parcels in a heap, a waybill
+              * taped to each, and the question "is this one mine". It is
+              * asked BEFORE anything is collected -- the screen that asked
+              * for it read "0 of 0 done" -- so it does not wait for stops
+              * to exist. It does not follow the day picker either: the
+              * bench answers from today and tomorrow whatever day is being
+              * looked at, because a package in your hand is a package in
+              * your hand.
+              *
+              * A link, not a sheet: dispatch and the counter already use
+              * this page, and a second smaller copy would be two things to
+              * keep in step. The server pins a courier to their own round
+              * -- see the courier branch in modules/uh/sort.ts. */}
+            <Link className="izy-linkish izy-subhead-end" to={`/projects/${code}/sort`}>Sort packages</Link>
+        </span>
     );
 
     return (
@@ -298,6 +334,31 @@ export function MyRun() {
                     list) is about the day being looked at, and a heading
                     that said "Today" over last Tuesday's round would be the
                     single most misleading word on the page. */}
+                {/* ─── SORT PACKAGES SITS UNDER THE SHIFT CONTROL.
+                    It spent an afternoon on the heading line beside the
+                    count, which is where it was asked for and where it did
+                    not fit: that line already carries a date picker, and at
+                    390px it wrapped whatever was done to the separators.
+
+                    Under Go on shift it has a column to itself, it is right
+                    against the edge the shift control already sets, and the
+                    two things a driver touches before the round starts are
+                    now one above the other instead of diagonally apart.
+
+                    The bench is a physical place: parcels in a heap, a
+                    waybill taped to each, and the question "is this one
+                    mine". It is asked BEFORE anything is collected -- the
+                    screen that asked for it read "0 of 0 done" -- so it
+                    does not wait for stops to exist, and it does not follow
+                    the day picker either. The bench answers from today and
+                    tomorrow whatever day is being looked at, because a
+                    package in your hand is a package in your hand.
+
+                    A link, not a sheet: dispatch and the counter already
+                    use this page, and a second smaller copy of it would be
+                    two things to keep in step. The server pins a courier to
+                    their own round -- see the courier branch in
+                    modules/uh/sort.ts. */}
                 <ScreenHeader
                     title={isToday ? 'Today' : 'Earlier day'}
                     subtitle={subtitle}

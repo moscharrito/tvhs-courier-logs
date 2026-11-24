@@ -797,6 +797,13 @@ a.izy-btn { display: inline-block; text-decoration: none; }
 }
 .izy-linkish:focus-visible { outline: 3px solid var(--izy-green-2); outline-offset: 2px; border-radius: 4px; }
 
+/* Keeps a separator with the thing it separates. The driver's heading line
+   carries a name, a date picker, a count and a link, and at 390px it wraps
+   -- which left the first line ending on a dangling "·", reading like a
+   sentence that had lost its last word. Photographed at phone width before
+   and after; it is not a hypothetical. */
+.izy-nowrap { white-space: nowrap; }
+
 /* Narrows the lanes on the board. Sits above a grid that is already
    several cards wide, so it is capped rather than stretched: a search box
    the width of the screen reads as a page header, not as a filter. */
@@ -1222,6 +1229,19 @@ body {
 .izy-screen-head-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--izy-s-sm); }
 .izy-main .izy-screen-head h1 { margin: 0; font-size: var(--izy-t-display); font-weight: 800; letter-spacing: -0.01em; }
 .izy-screen-head-right { flex: 0 0 auto; }
+/* The driver's heading, second line: the day and the count flush left, the
+   sort bench flush right, directly under the shift control on the line
+   above. A flex row INSIDE the subtitle paragraph rather than a change to
+   .izy-screen-sub, because that class dresses the subtitle of every screen
+   in the product and only this one has something to put at the far end.
+
+   A flex container trims the whitespace off a bare text node, so the " · "
+   separators that read correctly in normal flow came out welded to the
+   next word ("·0 of 0 done"). The gap puts the space back on both sides of
+   each one rather than smuggling it into the strings, where the next
+   person to reflow this line would lose it again. */
+.izy-subhead-row { display: flex; width: 100%; align-items: center; flex-wrap: wrap; gap: 6px; }
+.izy-subhead-end { margin-left: auto; }
 .izy-main .izy-screen-head .izy-screen-sub { margin: var(--izy-s-xs) 0 0; font-size: var(--izy-t-meta); color: var(--izy-muted); }
 
 /* ── The run frame ─────────────────────────────────────────────────────────

@@ -92,11 +92,33 @@ const UH_DISPATCH = ['lead', 'projectAdmin', 'platformAdmin'];
 const UH_DISPATCH_AND_COURIER = ['lead', 'courier', 'projectAdmin', 'platformAdmin'];
 const UH_MANAGE = UH_STAFF;
 const UH_CLIENT_VIEW = ['pharmacy', 'projectAdmin', 'platformAdmin'];
-/* THE SORT BENCH. Dispatch and the counter staff who physically put the
-   packages into piles. A courier is deliberately not here: they already
+/* THE SORT BENCH. Dispatch, the counter staff who physically put the
+   packages into piles, and -- since 24 November 2026 -- the drivers, who
+   now pull their own parcels out of the heap themselves.
+
+   A COURIER WAS DELIBERATELY NOT HERE, and the reason is worth keeping
+   where the next person to widen this list will read it: "they already
    have their own round on their phone, and this route would let them ask
-   about somebody else's patients. */
-const UH_SORT = ['pharmacy', 'lead', 'projectAdmin', 'platformAdmin'];
+   about somebody else's patients."
+
+   The second half is still true, and admitting the role did not answer
+   it -- a scope did. modules/uh/sort.ts pins a courier to their own runs,
+   so another driver's package comes back as no match at all. THIS ROW
+   CANNOT SEE THAT. It proves the door is open, not that the room is
+   partitioned; uh-sort.test.mjs covers the partition, and that pair is
+   the whole guarantee. Do not read a green row here as "couriers may
+   sort anything". */
+const UH_SORT = ['pharmacy', 'lead', 'courier', 'projectAdmin', 'platformAdmin'];
+/* THE PROOF-OF-DELIVERY EXPORT, which used to share the constant above
+   because the two happened to allow the same four roles.
+
+   THEY ARE NOT THE SAME RULE AND THE SHARING WAS A TRAP. Admitting couriers
+   to the sort bench silently admitted them to a zip of every delivery and
+   every proof, patient data and all -- one word, in a file whose whole job
+   is to make that impossible. This test caught it, which is the argument
+   for the file; splitting the constant is the argument for not relying on
+   it twice. Two rules that agree today are still two rules. */
+const UH_CLIENT_EXPORT = ['pharmacy', 'lead', 'projectAdmin', 'platformAdmin'];
 /* The daily list: a pharmacy sends its own, and DISPATCH SENDS ANYBODY'S.
    `lead` is the contract's dispatcher since 7.20 and the lists mostly arrive
    by email for them to upload, so the one screen that starts the day cannot
@@ -615,7 +637,7 @@ const MATRIX = [
        orders router -- which is how the two proof-of-delivery documents
        drifted apart before pod-photos.ts. A lead is still scoped by their
        membership's siteIds inside it, exactly as a pharmacy is. */
-    ['GET', `${UH}/client/orders-with-pod.zip`, UH_SORT, 'the deliveries and every proof of delivery, patient data included'],
+    ['GET', `${UH}/client/orders-with-pod.zip`, UH_CLIENT_EXPORT, 'the deliveries and every proof of delivery, patient data included'],
     ['GET', `${UH}/client/orders/999999`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/orders/999999/pod.pdf`, UH_CLIENT_VIEW, ''],
     /* The doorstep photograph. Same viewers as the delivery it belongs to,

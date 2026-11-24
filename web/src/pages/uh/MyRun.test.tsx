@@ -234,6 +234,41 @@ describe('MyRun', () => {
         expect(await screen.findByText('No stops assigned to you today.')).toBeInTheDocument();
     });
 
+    /* ─── THE WAY IN TO THE SORT BENCH.
+     *
+     * The bench shipped wired to the pharmacy rail and nowhere else, and was
+     * reported within the hour by somebody who could not find it. The lesson
+     * recorded then was that "a link called Sort packages renders" would have
+     * passed throughout, because the component was never the problem -- the
+     * place it was linked from was. So these assert the HREF. */
+    it('offers the sort bench from the heading, pointed at the bench', async () => {
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.getByRole('link', { name: 'Sort packages' }))
+            .toHaveAttribute('href', '/projects/uh/sort');
+    });
+
+    it('does not tell the driver their own name', async () => {
+        /* It was the longest thing on the heading line and the only thing
+           on the whole screen its one reader already knew. Pinned because
+           nothing else would notice it coming back: the session carries the
+           name regardless, so printing it again is a one-word change. */
+        renderRun(base());
+        await screen.findByRole('heading', { name: 'Today' });
+        expect(screen.queryByText(/Ada Courier/)).not.toBeInTheDocument();
+    });
+
+    it('offers it with nothing assigned yet, which is when it is used', async () => {
+        /* The screen that asked for this read "0 of 0 done": a driver stood
+           at the counter before the round exists, holding a parcel. Hiding
+           the link until there were stops would hide it at exactly the
+           moment it is wanted. */
+        renderRun(base({ 'GET /api/projects/uh/uh/runs/mine': mine({ runs: [] }) }));
+        expect(await screen.findByText('No stops assigned to you today.')).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Sort packages' }))
+            .toHaveAttribute('href', '/projects/uh/sort');
+    });
+
     it('says it cannot reach dispatch, instead of implying there is no work', async () => {
         // A courier in a basement with no signal must not read an empty
         // screen as "you are finished for the day".

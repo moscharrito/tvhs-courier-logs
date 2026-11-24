@@ -184,11 +184,77 @@ describe('what it will not answer', () => {
         expect(ids).not.toContain(later);
     });
 
-    it('is closed to a courier, who has their own round already', async () => {
+});
+
+describe('what a courier may resolve', () => {
+    /* ── THIS ROUTE WAS CLOSED TO COURIERS UNTIL 24 NOVEMBER 2026, and the
+       test here asserted the 403. The objection was that it "would let them
+       ask about somebody else's patients", which is answered now by scope
+       rather than by the door: a driver is pinned to their own runs.
+
+       So the replacement is not one test but three, because "a courier gets
+       a 200" on its own would pass just as happily if the scope had been
+       left off entirely. The two that matter are the ones that come back
+       EMPTY, each paired with an admin lookup proving the delivery is there
+       to be found. */
+
+    async function asAna() {
         const ana = srv.agent();
         const signed = await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
         expect(signed.status, signed.text).toBe(200);
-        expect((await look(ana, { phone: '210-555-7001' })).status).toBe(403);
+        return ana;
+    }
+
+    it('finds a package on their own round, and says where it sits', async () => {
+        const mine = await order({ phone: '210-555-7020' });
+        await carriedBy('sort.ana', [mine]);
+
+        const res = await look(await asAna(), { phone: '210-555-7020' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches.map((m) => m.orderId)).toEqual([mine]);
+        /* The stop number is the half of the answer the round on their phone
+           already gives them; the other half is that this parcel is that
+           stop, which is the thing they are standing there trying to work out. */
+        expect(res.body.matches[0].driver.username).toBe('sort.ana');
+        expect(res.body.matches[0].driver.stop).toBe(1);
+    });
+
+    it('says nothing at all about a package on another driver’s round', async () => {
+        await admin.post('/api/users').send({
+            username: 'sort.bo', name: 'Bo Courier', password: 'sort-pass-1', role: 'driver',
+        });
+        await admin.put('/api/users/sort.bo/memberships/uh').send({ role: 'courier', settings: {} });
+
+        const mine = await order({ phone: '210-555-7021' });
+        const theirs = await order({ phone: '210-555-7021' });
+        await carriedBy('sort.ana', [mine]);
+        await carriedBy('sort.bo', [theirs]);
+
+        const res = await look(await asAna(), { phone: '210-555-7021' });
+        expect(res.status, res.text).toBe(200);
+        const ids = res.body.matches.map((m) => m.orderId);
+        expect(ids).toContain(mine);
+        /* Not "it belongs to Bo". Not the patient's name. No row at all. */
+        expect(ids).not.toContain(theirs);
+
+        /* Scope, not absence: an admin asking the same question sees both. */
+        const both = (await look(admin, { phone: '210-555-7021' })).body.matches.map((m) => m.orderId);
+        expect(both).toEqual(expect.arrayContaining([mine, theirs]));
+    });
+
+    it('leaves out a delivery that is on no round yet, it being nobody’s pile', async () => {
+        /* `r` is LEFT JOINed, so this is the behaviour that falls out of
+           requiring a courier username on it -- asserted rather than
+           assumed, because a later change to that join would silently hand
+           drivers the unassigned pool. */
+        const loose = await order({ phone: '210-555-7022' });
+
+        const res = await look(await asAna(), { phone: '210-555-7022' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches.map((m) => m.orderId)).not.toContain(loose);
+
+        const seen = (await look(admin, { phone: '210-555-7022' })).body.matches.map((m) => m.orderId);
+        expect(seen).toContain(loose);
     });
 });
 
