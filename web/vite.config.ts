@@ -26,6 +26,51 @@ const require = createRequire(import.meta.url);
  * warehouse's wifi, to read ten digits off a printed line. The large one
  * earns its size on prose and scanned books.
  */
+/* ── A SERVICE WORKER THAT CHANGES WHEN THE APPLICATION DOES ──────────
+ *
+ * public/sw.js is copied into the build verbatim, and it used to carry a
+ * hard-coded cache version. A browser decides a worker has been updated
+ * by comparing the bytes of that file, so a deploy that rewrote the
+ * whole application shipped a byte-identical worker: no update was ever
+ * detected and no cache was ever cleared.
+ *
+ * On 25 November that cost an hour. A fix went out, the bench tested it
+ * inside a minute and reported the old behaviour word for word, and the
+ * fix was correct -- the handset was running the morning's JavaScript
+ * and nothing anywhere could tell it so.
+ *
+ * So the token in sw.js is replaced with something that differs per
+ * build. The entry bundle's own content hash is the honest choice: it is
+ * derived from the code, so an identical build produces an identical
+ * worker and does NOT throw a bench's cache away for nothing.
+ */
+function workerVersion(): Plugin {
+    return {
+        name: 'izy-worker-version',
+        apply: 'build',
+        /* After the bundle is written, because that is when the entry's
+           hashed name exists to be read. */
+        generateBundle(_options, bundle) {
+            const entry = Object.values(bundle).find(
+                (c) => c.type === 'chunk' && c.isEntry,
+            );
+            const stamp = entry && entry.type === 'chunk'
+                ? entry.fileName.replace(/[^A-Za-z0-9]/g, '-')
+                : String(Date.now());
+            const src = fs.readFileSync(path.join('public', 'sw.js'), 'utf8');
+            if (!src.includes('__BUILD_ID__')) {
+                this.error('public/sw.js no longer carries __BUILD_ID__; the worker would '
+                    + 'never update and no deploy would ever reach an open page.');
+            }
+            this.emitFile({
+                type: 'asset',
+                fileName: 'sw.js',
+                source: src.replaceAll('__BUILD_ID__', stamp),
+            });
+        },
+    };
+}
+
 function readerAssets(): Plugin {
     const core = path.dirname(require.resolve('tesseract.js-core/package.json'));
     const lang = path.dirname(require.resolve('@tesseract.js-data/eng/package.json'));
@@ -80,7 +125,7 @@ function readerAssets(): Plugin {
 // the legacy TVHS assets to the server on :3000 (`npm run dev -w server`).
 // Build: output goes to web/dist, which the server serves at / in production.
 export default defineConfig({
-    plugins: [react(), readerAssets()],
+    plugins: [react(), readerAssets(), workerVersion()],
     server: {
         port: 5173,
         proxy: {

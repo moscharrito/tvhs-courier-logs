@@ -124,13 +124,51 @@ export function useFreshBuild(): boolean {
         const timer = setInterval(() => { void check(); }, EVERY_MS);
         const onShow = () => { void check(); };
         document.addEventListener('visibilitychange', onShow);
+
+        /* ── AND THE MESSAGE FROM OUTSIDE THE PAGE.
+         *
+         * The poll above only runs while somebody is looking. The
+         * service worker's activate handler fires whether they are or
+         * not, and from this build onwards it says so -- see
+         * public/sw.js. Belt and braces on purpose: the poll works
+         * without a worker at all, and the message works the instant a
+         * new worker takes over rather than up to five minutes later. */
+        const onWorker = (e: MessageEvent) => {
+            if ((e.data as { type?: string } | null)?.type === 'tag:updated') setStale(true);
+        };
+        navigator.serviceWorker?.addEventListener('message', onWorker);
+
         return () => {
             clearInterval(timer);
             document.removeEventListener('visibilitychange', onShow);
+            navigator.serviceWorker?.removeEventListener('message', onWorker);
         };
     }, [check]);
 
     return stale;
+}
+
+/**
+ * Which build this page is, in eight characters.
+ *
+ * ── WHY IT IS ON THE SCREEN AT ALL.
+ *
+ * Twice on 25 November a fix was reported as not working, and both times
+ * the question that mattered was "is the handset running the build that
+ * contains it". Answering it took fetching production's index.html,
+ * downloading the bundle it named and grepping the bundle for a sentence
+ * -- none of which the person holding the phone can do, and all of which
+ * this makes unnecessary. They read it off the rail.
+ *
+ * It is the entry bundle's content hash, so it IS the code: two phones
+ * showing the same stamp are running the same application, and a phone
+ * whose stamp does not move after a deploy has not picked it up.
+ */
+export function BuildStamp() {
+    const asset = loadedAssets()[0] ?? '';
+    const hash = /index-([A-Za-z0-9_-]+)\.js$/.exec(asset)?.[1];
+    if (hash === undefined) return null;
+    return <span className="izy-build-stamp" title={`Build ${hash}`}>build {hash}</span>;
 }
 
 /**

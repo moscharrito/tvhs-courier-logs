@@ -7,6 +7,8 @@
  * is where a mistake would be silent and a timer is not.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect } from 'vitest';
 import { assetsIn, isDifferentBuild, loadedAssets } from './FreshBuild';
 
@@ -73,5 +75,49 @@ describe('deciding whether to say anything', () => {
 
     it('stays quiet when it cannot tell what is running either', () => {
         expect(isDifferentBuild([], assetsIn(page('index-NEW22222.js')))).toBe(false);
+    });
+});
+
+/* ── THE WORKER'S HALF OF IT.
+ *
+ * A browser decides a service worker has changed by comparing the bytes
+ * of public/sw.js. It carried a hard-coded cache version until
+ * 25 November, so every deploy shipped a byte-identical worker, no
+ * update was ever detected, and no handset ever learned that the
+ * application had changed. These are static assertions about that file
+ * because the failure is total, silent, and costs an hour each time
+ * somebody rediscovers it.
+ */
+describe('the service worker can tell a deploy happened', () => {
+    const sw = readFileSync('public/sw.js', 'utf8');
+
+    it('carries the token the build replaces, or it can never update', () => {
+        /* vite.config.ts fails the build if this is missing. The test is
+           here so the reason is written down next to the consequence. */
+        expect(sw).toContain('__BUILD_ID__');
+        expect(sw).not.toMatch(/const VERSION = 'tag-shell-v\d+'/);
+    });
+
+    it('tells the open page when it takes over', () => {
+        expect(sw).toContain("type: 'tag:updated'");
+        expect(sw).toContain('clients.matchAll');
+    });
+
+    it('throws the previous build’s caches away first', () => {
+        expect(sw).toMatch(/caches\.keys\(\)/);
+        expect(sw).toMatch(/caches\.delete\(k\)/);
+    });
+
+    it('does not navigate anybody by itself', () => {
+        /* A reload firing under a dispatcher mid-form, or looping if the
+           detection is ever wrong. The page decides; the bar has a
+           button on it. The notification handler's own navigate() is a
+           different thing and is allowed. */
+        const activate = sw.slice(sw.indexOf("addEventListener('activate'"), sw.indexOf("addEventListener('fetch'"));
+        /* Comments stripped first: the handler's own note explains at
+           length why it does NOT call client.navigate(), and a test that
+           reads prose would fail on the explanation. */
+        const code = activate.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+        expect(code).not.toContain('navigate');
     });
 });

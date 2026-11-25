@@ -18,7 +18,21 @@
  * IndexedDB with an explicit lifetime, not this cache.
  */
 
-const VERSION = 'tag-shell-v1';
+/* ── THE VERSION IS THE BUILD, from 25 November, and that is the whole
+   point of it.
+ 
+   It was the literal string 'tag-shell-v1' and never changed. A browser
+   decides a service worker has been updated by comparing the BYTES of
+   this file against the one it has; a deploy that rewrote the entire
+   application left this file identical, so no update was ever detected,
+   the old caches were never cleared, and nothing on a handset ever
+   learned that anything had changed.
+ 
+   web/vite.config.ts replaces the token below at build time. Each deploy
+   therefore ships a different sw.js, the browser notices on its next
+   update check, the activate handler throws away every cache from the
+   previous build, and the open page is told. */
+const VERSION = 'tag-shell-__BUILD_ID__';
 const SHELL = ['/', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -33,11 +47,31 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-    event.waitUntil(
-        caches.keys()
-            .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
-            .then(() => self.clients.claim()),
-    );
+    event.waitUntil((async () => {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)));
+        await self.clients.claim();
+
+        /* ── AND TELL WHOEVER IS LOOKING AT IT.
+         *
+         * A page that has been open on a bench all day is running the
+         * JavaScript it downloaded that morning, and until now nothing
+         * could tell it otherwise: it is the page itself that would have
+         * to notice, and it cannot notice anything about code it is not
+         * running. This is the one message that arrives from outside it.
+         *
+         * IT DOES NOT NAVIGATE THEM. client.navigate() would work and
+         * would reload a dispatcher mid-form, or loop if this is ever
+         * wrong. The page decides what to do with it -- see
+         * app/FreshBuild.tsx, which puts a bar up with a button on it.
+         *
+         * A page from an older build does not listen for this and will
+         * ignore it, which is correct and is also why the caches above
+         * are cleared whether anybody is listening or not: that at least
+         * makes their NEXT load a clean one. */
+        const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const client of windows) client.postMessage({ type: 'tag:updated', version: VERSION });
+    })());
 });
 
 /** Anything that could carry patient data, or that changes what the user sees. */

@@ -2135,3 +2135,13 @@ body {
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .izy-fresh-build { background: #052e16; }
 }
+
+/* The running build, in the rail under Sign out. Quiet enough to ignore
+   all day and specific enough to settle an argument. */
+.izy-build-stamp {
+    display: block; margin-top: 10px;
+    font-size: 0.7rem; letter-spacing: 0.02em;
+    color: var(--izy-muted, #888); opacity: 0.75;
+    overflow-wrap: anywhere;
+}
+.izy-side.is-collapsed .izy-build-stamp { display: none; }

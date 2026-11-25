@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
-import { FreshBuild } from './FreshBuild';
+import { BuildStamp, FreshBuild } from './FreshBuild';
 import { initials } from '../lib/initials';
 import { confirmSignOut } from '../lib/outbox';
 import { counterName, isCourierOnly, isPharmacyOnly, projectHref } from '../lib/pharmacy';
@@ -217,6 +217,11 @@ export function Layout() {
                             <span className="izy-nav-ini" aria-hidden="true"><ExitIcon /></span>
                         </button>
                     </div>
+                    {/* Which build this is, so "did my fix reach the
+                        handset" is a thing somebody can read off the
+                        screen rather than something only a grep of the
+                        deployed bundle can answer. See FreshBuild.tsx. */}
+                    <BuildStamp />
                 </div>
             </aside>
             {/* Hidden above 900px, where the rail is the navigation and has
