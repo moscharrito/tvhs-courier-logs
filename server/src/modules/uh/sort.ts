@@ -69,15 +69,6 @@ const MIN_DIGITS = 4;
 const Lookup = z.object({
     /** As read off the sheet or typed. Punctuation and spaces are fine. */
     phone: z.string().trim().min(1).max(40),
-    /**
-     * How far ahead to look, in days from today.
-     *
-     * Sorting happens the evening before as often as the morning of, so
-     * "today" alone would answer "no such delivery" to a package that is
-     * on tomorrow's list and sitting in somebody's hand. Two days covers
-     * that without turning the answer into a history lesson.
-     */
-    days: z.number().int().min(0).max(14).optional(),
 });
 
 export function createSortRouter({ client }: { client: Client }): Router {
@@ -133,11 +124,9 @@ export function createSortRouter({ client }: { client: Client }): Router {
         }
 
         const project = req.project!;
-        const from = todayIn(project.timezone);
-        const days = parsed.data.days ?? 2;
-        const until = new Date(`${from}T00:00:00Z`);
-        until.setUTCDate(until.getUTCDate() + days);
-        const to = until.toISOString().slice(0, 10);
+        /* Only to mark which of the answers is today's on the way out.
+           Nothing is filtered by it. */
+        const today = todayIn(project.timezone);
 
         const where: string[] = ['o.project_id = ?'];
         const args: InValue[] = [project.id];
@@ -221,8 +210,27 @@ export function createSortRouter({ client }: { client: Client }): Router {
             }
         }
 
-        /* THE DATE WINDOW IS ON THE QUERY, NOT ON `where`, because the
-           second query below is the same question without it. */
+        /* ─────────────────────── NO DATE WINDOW AT ALL, FROM 25 NOVEMBER.
+         *
+         * It used to answer from today and the next two days only. The
+         * reasoning was that what goes in a pile is today's work, and a
+         * wider answer would be a history lesson. In use it was neither
+         * of those things -- it was a scanner that said "no such
+         * delivery" about deliveries we hold, and nobody at the bench
+         * could tell that from a bad read. Two separate hours went on
+         * hunting for a bug that was this rule working as designed.
+         *
+         * So: scan a number, get every delivery we have with that
+         * number, newest first. The date is on every card and the ones
+         * that are not today are marked, which is the same information
+         * the window was trying to enforce -- offered to somebody who
+         * can see the package, rather than used to hide the answer from
+         * them.
+         *
+         * WHAT STILL NARROWS IT is scope and nothing else: a lead's
+         * counters, a pharmacy's sites, a courier's own runs. Those are
+         * about whose data it is, not about when it happened, and they
+         * are applied below exactly as before. */
         const find = (extra: string[], extraArgs: InValue[], order: string, limit: number) => client.execute({
             sql: `SELECT o.id, o.external_ref, o.recipient_name, o.service_date, o.service_type,
                          o.status, o.zone, ${handlingColumns('o')},
@@ -241,10 +249,10 @@ export function createSortRouter({ client }: { client: Client }): Router {
             args: [...args, ...extraArgs],
         });
 
-        const rs = await find(
-            ['o.service_date >= ?', 'o.service_date <= ?'], [from, to],
-            'o.service_date, o.id', 25,
-        );
+        /* Newest first, so the package most likely to be in somebody's
+           hand is the first card and a patient with a year of deliveries
+           does not bury today's under March's. */
+        const rs = await find([], [], 'o.service_date DESC, o.id DESC', 25);
 
         /* ONE PRESENTER, because the second query below returns the same
            rows and a client that got a different shape from the fallback
@@ -283,45 +291,6 @@ export function createSortRouter({ client }: { client: Client }): Router {
 
         const matches = rs.rows.map((r) => present(r as unknown as Record<string, unknown>));
 
-        /* ───────────── AND WHEN THE WINDOW FOUND NOTHING, LOOK PAST IT.
-         *
-         * "No delivery with that number is on today's or tomorrow's list"
-         * was the whole of the answer, and it is the same sentence for two
-         * completely different situations: a number we have never seen,
-         * and a delivery we know perfectly well that happened last Tuesday.
-         * The first is a bad read or a wrong package. The second is a
-         * sorter holding a sheet, looking at a screen that is behaving as
-         * though it has never heard of it, with no way to tell which.
-         *
-         * Reported on 25 November from the bench, scanning a sheet for an
-         * order that existed and was assigned.
-         *
-         * SO THE SECOND QUESTION IS ASKED ONLY WHEN THE FIRST FOUND
-         * NOTHING, and its answer is kept separate: `matches` is still
-         * only what is on today's or tomorrow's list, because that is what
-         * decides which pile a package goes in and nothing here may blur
-         * it. `elsewhere` is there to be read, not acted on.
-         *
-         * NO WIDER THAN THE CALLER ALREADY IS. `where` still carries the
-         * lead's counters, the pharmacy's sites and the courier's own
-         * runs; only the two date clauses are dropped. A pharmacy can
-         * already export its own history and a driver can already see
-         * their own round, so this reaches no further back than a page
-         * each of them already has -- it just answers in one second rather
-         * than five minutes.
-         */
-        const elsewhere = matches.length > 0 ? [] : (await find(
-            ['(o.service_date < ? OR o.service_date > ?)'],
-            /* Three binds: the two in the WHERE, then the one in the
-               ORDER BY. SQLite numbers `?` across the whole statement, so
-               the order of this array is the order they appear in the
-               SQL, not the order of the clauses they belong to. */
-            [from, to, from],
-            /* Nearest to today first: the likeliest explanation of a sheet
-               in somebody's hand is yesterday's round, not March. */
-            'ABS(JULIANDAY(o.service_date) - JULIANDAY(?)) ASC, o.id DESC', 3,
-        ).then((r) => r.rows.map((row) => present(row as unknown as Record<string, unknown>))));
-
         /* DIGITS, NOT THE NUMBER. How many were offered says whether this
            was a scan or a typed tail, which is what anybody reviewing the
            trail would want to know. The number itself would make this table
@@ -330,15 +299,12 @@ export function createSortRouter({ client }: { client: Client }): Router {
             digits: digits.length,
             matched: matches.length,
             orderIds: matches.map((m) => m.orderId),
-            /* The fallback is a read of deliveries outside the window, so
-               it is the half of this route most worth being able to find
-               in the trail later. */
-            elsewhere: elsewhere.map((m) => m.orderId),
-            from,
-            to,
         });
 
-        res.json({ from, to, matches, elsewhere });
+        /* `today` is for marking, not filtering: the screen puts a date on
+           any card that is not today's so a sorter cannot mistake an old
+           delivery for the one in their hand. */
+        res.json({ today, matches });
     }));
 
     return router;

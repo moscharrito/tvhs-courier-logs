@@ -122,9 +122,8 @@ export function Sort({ projectCode }: { projectCode: string }) {
     /** Every number the sheet gave up, in the order they were asked. */
     const [asked, setAsked] = useState<string[]>([]);
     const [matches, setMatches] = useState<Match[] | null>(null);
-    /** Deliveries with this number that are NOT on today's or tomorrow's
-     *  list. Only ever filled when `matches` came back empty. */
-    const [elsewhere, setElsewhere] = useState<Match[]>([]);
+    /** The project's today, for marking cards that are not it. */
+    const [today, setToday] = useState('');
     /** A read came back with no number in it. Guidance, never an error. */
     const [missed, setMissed] = useState(false);
 
@@ -215,7 +214,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
         setBusy('looking');
         setErr('');
         setMatches(null);
-        setElsewhere([]);
+        setToday('');
         setAsked(wanted);
         try {
             /* A POST, and the number is in the BODY. A telephone number
@@ -223,25 +222,20 @@ export function Sort({ projectCode }: { projectCode: string }) {
                reaches browser history, proxies and every log that keeps a
                request line. See modules/uh/search.ts on the server. */
             const got = await Promise.all(wanted.map((phone) => api<{
-                matches: Match[]; elsewhere?: Match[];
+                matches: Match[]; today?: string;
             }>(
                 `/api/projects/${projectCode}/uh/sort/lookup`,
                 { method: 'POST', json: { phone } },
             )));
             const byOrder = new Map<number, Match>();
             for (const one of got) for (const m of one.matches) byOrder.set(m.orderId, m);
-            setMatches([...byOrder.values()]);
-            /* ONLY WHEN TODAY HAS NOTHING, which is also the only time the
-               server fills it. Two numbers can disagree -- the mobile on
-               today's list and the landline on last week's -- and in that
-               case the one in the pile wins and the other is noise.
-               `?? []` because a browser holding a cached bundle can
-               outlive the server that grew this field. */
-            setElsewhere(byOrder.size > 0 ? [] : (() => {
-                const past = new Map<number, Match>();
-                for (const one of got) for (const m of one.elsewhere ?? []) past.set(m.orderId, m);
-                return [...past.values()];
-            })());
+            /* NEWEST FIRST ACROSS BOTH NUMBERS. Each lookup comes back in
+               date order, but a mobile and a landline are two lookups and
+               merging them by order id would interleave the dates. The
+               package in somebody's hand is the most likely to be recent,
+               so that one goes at the top. */
+            setMatches([...byOrder.values()].sort((a, b) => b.serviceDate.localeCompare(a.serviceDate)));
+            setToday(got.find((g) => typeof g.today === 'string')?.today ?? '');
         } catch (e) {
             setErr(why(e, 'That number could not be looked up.'));
         } finally {
@@ -308,7 +302,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
     }, [live, settled, err, look]);
 
     const clear = () => {
-        setMatches(null); setElsewhere([]); setAsked([]); setErr(''); setMissed(false);
+        setMatches(null); setToday(''); setAsked([]); setErr(''); setMissed(false);
     };
 
     return (
@@ -404,34 +398,21 @@ export function Sort({ projectCode }: { projectCode: string }) {
                         <button type="button" className="izy-btn secondary small" onClick={clear}>Clear</button>
                     </div>
 
-                    {/* ── NOTHING TODAY, AND WHETHER WE KNOW THE NUMBER AT
-                        ALL. One sentence used to cover both, and they are
-                        different problems: a number nobody has ever sent
-                        us is a bad read or the wrong package, and a
-                        delivery that went out last Tuesday is a sorter
-                        holding a sheet in front of a screen pretending
-                        not to recognise it. */}
-                    {matches.length === 0 && elsewhere.length === 0 && (
+                    {/* NO DATE IN THIS SENTENCE ANY MORE, because there is
+                        no date in the question. Nothing we hold with that
+                        number means a bad read or the wrong package, and
+                        those are the only two things left for it to be. */}
+                    {matches.length === 0 && (
                         <p className="izy-alert warn" role="status">
-                            No delivery with {asked.length === 1 ? 'that number' : 'either number'} is
-                            on today’s or tomorrow’s list, and we have none on any other day
-                            either. Check the digits against the sheet.
+                            We have no delivery at all with
+                            {' '}{asked.length === 1 ? 'that number' : 'either number'} on
+                            this account. Check the digits against the sheet.
                         </p>
                     )}
 
-                    {matches.length === 0 && elsewhere.length > 0 && (
-                        <p className="izy-alert warn" role="status">
-                            Not on today’s or tomorrow’s list. {elsewhere.length === 1
-                                ? 'There is one delivery'
-                                : `There are ${elsewhere.length} deliveries`} with
-                            {' '}{asked.length === 1 ? 'that number' : 'one of those numbers'} on
-                            another day, below. Do not put this package in a pile on
-                            {' '}{elsewhere.length === 1 ? 'its' : 'their'} account.
-                        </p>
-                    )}
-
-                    {matches.map((m) => <Found key={m.orderId} m={m} />)}
-                    {elsewhere.map((m) => <Found key={m.orderId} m={m} otherDay />)}
+                    {matches.map((m) => (
+                        <Found key={m.orderId} m={m} otherDay={today !== '' && m.serviceDate !== today} />
+                    ))}
                 </div>
             )}
         </div>
@@ -441,20 +422,24 @@ export function Sort({ projectCode }: { projectCode: string }) {
 /**
  * One delivery that matched, as the bench reads it.
  *
- * `otherDay` is the same card for a delivery that is NOT on today's or
- * tomorrow's list. It says so on its face rather than relying on the
- * sentence above it, because the two lists are drawn one after the other
- * and the only thing standing between a sorter and putting last
- * Tuesday's package in today's pile is knowing which they are looking
- * at. The driver's name is deliberately not the big type on it: on this
- * card the date is the thing that matters.
+ * `otherDay` is the same card for a delivery that is not on today's
+ * list.
+ *
+ * IT IS A MARK, NOT A FILTER, AND THAT IS THE WHOLE DESIGN NOW. The
+ * lookup used to refuse to answer about anything but today, which made
+ * a scanner that says "no such delivery" about deliveries we hold --
+ * indistinguishable, at a bench, from a bad read. Every match is shown
+ * instead, and the ones that are not today wear the date on their face
+ * so nobody puts last Tuesday's package in today's pile. The driver's
+ * name is deliberately smaller on these: on an old card the date is the
+ * thing that matters.
  */
 function Found({ m, otherDay = false }: { m: Match; otherDay?: boolean }) {
     return (
         <article className={`izy-sort-card${otherDay ? ' is-other-day' : ''}`}>
             {otherDay && (
                 <p className="izy-sort-when">
-                    <span className="izy-pill warn">another day</span>
+                    <span className="izy-pill warn">not today</span>
                     {' '}{m.serviceDate}
                 </p>
             )}

@@ -171,19 +171,69 @@ describe('what it will not answer', () => {
         expect(res.body.matches).toHaveLength(0);
     });
 
-    it('looks at today and the next two days, and no further', async () => {
-        /* Sorting happens the evening before as often as the morning of,
-           so today alone would answer "no such delivery" to a package in
-           somebody's hand. A week would turn the answer into history. */
-        const soon = await order({ phone: '210-555-7008', on: plus(1) });
-        const later = await order({ phone: '210-555-7008', on: plus(9) });
+});
 
+/* ── NO DATE WINDOW AT ALL, FROM 25 NOVEMBER.
+ *
+ * It answered from today and the next two days only, on the reasoning
+ * that what goes in a pile is today's work. In use it was a scanner
+ * that said "no such delivery" about deliveries we hold, and at a bench
+ * that is indistinguishable from a bad read -- two separate hours went
+ * on hunting a bug that was this rule working as designed.
+ *
+ * Every delivery with the number now comes back, newest first, and the
+ * screen marks the ones that are not today. Marking, not hiding.
+ */
+describe('every delivery with that number, whenever it was', () => {
+    it('answers about a delivery from weeks ago', async () => {
+        const old = await order({ phone: '210-555-7008', on: plus(-30) });
         const res = await look(admin, { phone: '210-555-7008' });
-        const ids = res.body.matches.map((m) => m.orderId);
-        expect(ids).toContain(soon);
-        expect(ids).not.toContain(later);
+        expect(res.body.matches.map((m) => m.orderId)).toContain(old);
     });
 
+    it('answers about one further ahead than the old window reached', async () => {
+        const later = await order({ phone: '210-555-7009', on: plus(9) });
+        const res = await look(admin, { phone: '210-555-7009' });
+        expect(res.body.matches.map((m) => m.orderId)).toContain(later);
+    });
+
+    it('puts the newest first, so today is not buried under March', async () => {
+        await order({ phone: '210-555-7010', on: plus(-60) });
+        const now = await order({ phone: '210-555-7010' });
+        await order({ phone: '210-555-7010', on: plus(-20) });
+
+        const res = await look(admin, { phone: '210-555-7010' });
+        expect(res.body.matches).toHaveLength(3);
+        expect(res.body.matches[0].orderId).toBe(now);
+    });
+
+    it('says what today is, so the screen can mark the rest', async () => {
+        /* Marking is the whole replacement for the window: the sorter
+           still has to know which card is the package in their hand. The
+           project's clock decides, not the handset's. */
+        await order({ phone: '210-555-7011', on: plus(-2) });
+        const res = await look(admin, { phone: '210-555-7011' });
+        expect(res.body.today).toBe(today);
+        expect(res.body.matches[0].serviceDate).not.toBe(res.body.today);
+    });
+
+    it('still narrows by scope, which was never about dates', async () => {
+        /* A courier is pinned to their own runs. Dropping the window
+           must not have dropped that with it. */
+        const theirs = await order({ phone: '210-555-7012', on: plus(-5) });
+        await carriedBy('sort.bo', [theirs]);
+
+        const ana = srv.agent();
+        await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
+        const res = await look(ana, { phone: '210-555-7012' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches).toEqual([]);
+
+        /* And an admin finds it, so the line above is scope and not a
+           delivery that was never there. */
+        expect((await look(admin, { phone: '210-555-7012' })).body.matches
+            .map((m) => m.orderId)).toContain(theirs);
+    });
 });
 
 /* ── WHEN THE WINDOW FINDS NOTHING, SAY WHETHER WE KNOW THE NUMBER.
@@ -194,64 +244,34 @@ describe('what it will not answer', () => {
  * earlier day. "Not on today's list" and "never heard of it" were the
  * same sentence, and there was no way to tell which had happened.
  */
-describe('a delivery that is real but not on today’s list', () => {
-    it('says so, with the patient and the driver, instead of nothing', async () => {
+describe('an older delivery comes back whole', () => {
+    it('carries the patient and the driver, not just an order id', async () => {
+        /* What the bench asked for in the first place: scan it, and be
+           told who has it and whose it is, whenever it was loaded. */
         const old = await order({ phone: '210-555-7101', on: plus(-6), name: 'Earlier Patient' });
         await carriedBy('sort.ana', [old]);
 
         const res = await look(admin, { phone: '210-555-7101' });
         expect(res.status, res.text).toBe(200);
-        /* STILL NOT A MATCH. What goes in a pile today is unchanged; this
-           is there to be read, not acted on. */
-        expect(res.body.matches).toHaveLength(0);
-        expect(res.body.elsewhere.map((m) => m.orderId)).toEqual([old]);
-        expect(res.body.elsewhere[0].patient).toBe('Earlier Patient');
-        expect(res.body.elsewhere[0].driver.name).toBeTruthy();
-        expect(res.body.elsewhere[0].serviceDate).toBe(plus(-6));
-    });
-
-    it('keeps quiet about other days when today has an answer', async () => {
-        /* The sorter has what they came for. A second list under it is
-           noise at best and a wrong pile at worst. */
-        const old = await order({ phone: '210-555-7102', on: plus(-4) });
-        const now = await order({ phone: '210-555-7102' });
-
-        const res = await look(admin, { phone: '210-555-7102' });
-        expect(res.body.matches.map((m) => m.orderId)).toEqual([now]);
-        expect(res.body.elsewhere).toEqual([]);
-        expect(JSON.stringify(res.body.elsewhere)).not.toContain(String(old));
+        const found = res.body.matches.find((m) => m.orderId === old);
+        expect(found, JSON.stringify(res.body.matches)).toBeTruthy();
+        expect(found.patient).toBe('Earlier Patient');
+        expect(found.driver.name).toBeTruthy();
+        expect(found.serviceDate).toBe(plus(-6));
     });
 
     it('is empty when the number is genuinely unknown', async () => {
         const res = await look(admin, { phone: '210-555-7103' });
         expect(res.body.matches).toEqual([]);
-        expect(res.body.elsewhere).toEqual([]);
     });
 
-    it('offers the nearest days first, and not a history lesson', async () => {
-        await order({ phone: '210-555-7104', on: plus(-40) });
-        const near = await order({ phone: '210-555-7104', on: plus(-1) });
-        await order({ phone: '210-555-7104', on: plus(-30) });
-        await order({ phone: '210-555-7104', on: plus(-20) });
-
-        const res = await look(admin, { phone: '210-555-7104' });
-        expect(res.body.elsewhere).toHaveLength(3);
-        expect(res.body.elsewhere[0].orderId).toBe(near);
-    });
-
-    it('reaches no further than the caller already does', async () => {
-        /* THE WHOLE SAFETY OF LOOKING PAST THE WINDOW. Only the two date
-           clauses are dropped; a courier is still pinned to their own
-           runs, so somebody else's old delivery is not a back door. */
-        const old = await order({ phone: '210-555-7105', on: plus(-3) });
-        await carriedBy('sort.bo', [old]);
-
-        const ana = srv.agent();
-        await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
-        const res = await look(ana, { phone: '210-555-7105' });
-        expect(res.status, res.text).toBe(200);
-        expect(res.body.matches).toEqual([]);
-        expect(res.body.elsewhere).toEqual([]);
+    it('no longer reports a separate list for other days', async () => {
+        /* There is one list now. A second one existed only to work round
+           the window and would be a shape the screen has to explain. */
+        await order({ phone: '210-555-7106', on: plus(-8) });
+        const res = await look(admin, { phone: '210-555-7106' });
+        expect(res.body.matches).toHaveLength(1);
+        expect(res.body.elsewhere).toBeUndefined();
     });
 });
 

@@ -120,10 +120,13 @@ describe('looking a number up', () => {
     });
 
     it('says when nothing matched at all', async () => {
-        mockFetch({ [LOOKUP]: { matches: [], elsewhere: [] } });
+        mockFetch({ [LOOKUP]: { matches: [] } });
         scanned('Mobile: 210-555-0199');
 
-        await screen.findByText(/we have none on any other day either/);
+        /* No date in the sentence, because there is no date in the
+           question any more. Nothing we hold with that number leaves a
+           bad read or the wrong package, and nothing else. */
+        await screen.findByText(/no delivery at all with that number on this account/i);
     });
 
     /* ── NOTHING TODAY IS TWO DIFFERENT ANSWERS.
@@ -134,62 +137,77 @@ describe('looking a number up', () => {
      * an earlier day. "Not on today's list" and "never heard of it" read
      * identically, so there was no way to tell a bad read from a package
      * for another day. */
-    it('shows the delivery it found on another day, with its driver', async () => {
+    it('shows a delivery from months ago, with its driver and patient', async () => {
+        /* The date window is gone: scan a number, get what we hold.
+           Being old is not a reason to be told "no such delivery". */
         mockFetch({
             [LOOKUP]: {
-                matches: [],
-                elsewhere: [match({ serviceDate: '2026-09-02', status: 'delivered' })],
+                today: '2026-11-25',
+                matches: [match({ serviceDate: '2026-09-02', status: 'delivered' })],
             },
         });
         scanned('Mobile: 210-555-0147');
 
-        await screen.findByText(/There is one delivery/);
-        const card = screen.getByText('Ana Driver').closest('article')!;
+        const card = (await screen.findByText('Ana Driver')).closest('article')!;
         expect(card).toHaveTextContent('Test Patient Alpha');
-        /* Twice on purpose -- once on the banner and once in the facts --
+        /* Twice on purpose -- once on the marker and once in the facts --
            so toHaveTextContent rather than a getByText that would refuse
            two matches. */
         expect(card).toHaveTextContent('2026-09-02');
     });
 
-    it('marks it as another day on its face, not only in the sentence', async () => {
-        /* The two lists are drawn one after the other, and the only
-           thing between a sorter and putting last Tuesday's package in
-           today's pile is knowing which they are reading. */
+    it('marks anything that is not today, so it cannot go in today’s pile', async () => {
         mockFetch({
-            [LOOKUP]: { matches: [], elsewhere: [match({ serviceDate: '2026-09-02' })] },
+            [LOOKUP]: { today: '2026-11-25', matches: [match({ serviceDate: '2026-09-02' })] },
         });
         scanned('Mobile: 210-555-0147');
 
         const card = (await screen.findByText('Ana Driver')).closest('article')!;
-        expect(within(card).getByText('another day')).toBeInTheDocument();
+        expect(within(card).getByText('not today')).toBeInTheDocument();
     });
 
-    it('does not offer another day when today already answered', async () => {
-        /* The sorter has what they came for; a second list under it is
-           noise at best and a wrong pile at worst. The server sends none
-           either, so this is belt and braces on the half that renders. */
+    it('leaves today’s own delivery unmarked', async () => {
+        /* The mark has to mean something. On the card that IS today's
+           work, a warning pill would be noise that teaches the bench to
+           ignore the pill on the one that matters. */
         mockFetch({
-            [LOOKUP]: {
-                matches: [match()],
-                elsewhere: [match({ orderId: 99, patient: 'Older Patient' })],
-            },
+            [LOOKUP]: { today: '2026-11-25', matches: [match({ serviceDate: '2026-11-25' })] },
         });
         scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
-        expect(screen.queryByText('Older Patient')).not.toBeInTheDocument();
-        expect(screen.queryByText('another day')).not.toBeInTheDocument();
+        expect(screen.queryByText('not today')).not.toBeInTheDocument();
     });
 
-    it('still renders against a server that has never heard of elsewhere', async () => {
+    it('puts the newest first when two numbers found different days', async () => {
+        /* A mobile and a landline are two lookups, and merging them by
+           order id would interleave the dates. The package in somebody's
+           hand is the most likely to be recent. */
+        mockFetch({
+            [LOOKUP]: {
+                today: '2026-11-25',
+                matches: [
+                    match({ orderId: 61, serviceDate: '2026-09-02', patient: 'Older Patient' }),
+                    match({ orderId: 62, serviceDate: '2026-11-25', patient: 'Newer Patient' }),
+                ],
+            },
+        });
+        scanned('Mobile: 210-555-0147, 210-555-0199');
+
+        await screen.findByText('Newer Patient');
+        const cards = [...document.querySelectorAll('.izy-sort-card')];
+        expect(cards[0]).toHaveTextContent('Newer Patient');
+    });
+
+    it('marks nothing when the server did not say what today is', async () => {
         /* A browser holding a cached bundle outlives the server that
-           grew the field. A page that throws here is worse than one
-           missing a line. */
-        mockFetch({ [LOOKUP]: { matches: [match()] } });
+           grew the field. Marking everything "not today" on a guess
+           would be worse than marking nothing. */
+        mockFetch({ [LOOKUP]: { matches: [match({ serviceDate: '2026-09-02' })] } });
         scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
+        expect(screen.queryByText('not today')).not.toBeInTheDocument();
     });
 
     it('shows every match when four digits found more than one', async () => {
@@ -342,7 +360,7 @@ describe('scanning the sheet', () => {
         const { calls } = mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
-        await screen.findByText(/No delivery with/);
+        await screen.findByText(/no delivery at all/i);
         expect(calls.filter((c) => c.includes('/sort/lookup')).length).toBeLessThanOrEqual(3);
     });
 
