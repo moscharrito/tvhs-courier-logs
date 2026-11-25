@@ -188,6 +188,25 @@ function Count({ n, label, onPick }: { n: number; label: string; onPick: () => v
     );
 }
 
+/* ─── WHO IS CARRYING TODAY'S WORK.
+ *
+ * Deliberately thinner than the dispatch board's lane, and the server is
+ * what makes it thin: see the /drivers route in modules/uh/client-portal.ts
+ * for why the counts are over this counter's own orders, why the name is a
+ * first name, and why there is no last-seen clock. Nothing here can widen
+ * any of that -- a field the server does not send cannot be drawn. */
+interface PortalDriver {
+    name: string;
+    onShift: boolean;
+    counts: { total: number; remaining: number; done: number };
+}
+
+interface DriversResponse {
+    serviceDate: string;
+    drivers: PortalDriver[];
+    notes: string[];
+}
+
 export function ClientPortal() {
     const { code = '' } = useParams();
     const { projects } = useAuth();
@@ -202,6 +221,7 @@ export function ClientPortal() {
 
     const [summary, setSummary] = useState<SummaryResponse | null>(null);
     const [list, setList] = useState<ListResponse | null>(null);
+    const [drivers, setDrivers] = useState<DriversResponse | null>(null);
     const [open, setOpen] = useState<number | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
     /* Whether this reader has asked for the whole range rather than the first
@@ -250,16 +270,28 @@ export function ClientPortal() {
     const load = useCallback(async () => {
         setMsg(null);
         try {
-            const [s, l] = await Promise.all([
+            const [s, l, d] = await Promise.all([
                 api<SummaryResponse>(`${base}/summary`),
                 api<ListResponse>(`${base}/orders${listQs ? `?${listQs}` : ''}`),
+                /* The day being looked at, not today: a pharmacist who has
+                   put yesterday in the date box is asking who carried
+                   yesterday's work, and a driver list stuck on today would
+                   be the one thing on the screen describing a different
+                   day. `from` is the opening today-range when nobody has
+                   touched the boxes. */
+                api<DriversResponse>(`${base}/drivers?date=${encodeURIComponent(from)}`),
             ]);
             setSummary(s);
             setList(l);
+            setDrivers(d);
         } catch (err) {
             setMsg(err instanceof ApiError ? err.message : 'Could not load your deliveries.');
         }
-    }, [base, listQs]);
+        /* `from` as well as listQs. It is already inside listQs today, so
+           this changes nothing at runtime -- it is here so that a later
+           edit which drops the date from the list query does not quietly
+           freeze the driver list on whatever day it first loaded. */
+    }, [base, listQs, from]);
     useEffect(() => { void load(); }, [load]);
 
     /* The screen stays current on its own, because this sits open on a
@@ -544,6 +576,71 @@ export function ClientPortal() {
                     browser history, proxies and server logs.
                 </p>
             </div>
+
+            {/* ─────────────────────────────────────────────────────────────
+                WHO IS CARRYING IT. Above the deliveries, because "is anyone
+                out with my work" is the question asked first and answered
+                in one line, where "where is delivery 9047" is asked second
+                and answered by the table below.
+
+                VIEW ONLY, and there is nothing here to make read-only: the
+                board's lane carries Return to pool and a sequence a
+                dispatcher can drag, and none of it is rendered on this
+                page. Who carries what is a dispatch decision taken by
+                somebody who can see every counter, which is exactly what a
+                pharmacy cannot.
+                ───────────────────────────────────────────────────────── */}
+            {drivers !== null && drivers.drivers.length > 0 && (
+                <div className="izy-card">
+                    <h2 id="portal-drivers-heading">Drivers out with your deliveries</h2>
+                    <p className="izy-muted">
+                        {drivers.serviceDate}
+                        {' · '}
+                        {/* SAID OUT LOUD, because a pharmacist who knows a
+                            driver has twenty stops will otherwise read "4 of
+                            6 done" as the driver's whole day and conclude
+                            they have stopped working. */}
+                        counts are your own deliveries only, not the driver’s whole round
+                    </p>
+                    {/* Named by its own heading. There are three tables on
+                        this page and "table" said three times is no use to
+                        anybody navigating by them. */}
+                    <table className="izy-table" aria-labelledby="portal-drivers-heading">
+                        <thead>
+                            <tr>
+                                <th scope="col">Driver</th>
+                                <th scope="col">Your deliveries</th>
+                                <th scope="col">Working</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {drivers.drivers.map((d) => (
+                                <tr key={d.name}>
+                                    <td>{d.name}</td>
+                                    <td>
+                                        {d.counts.done} of {d.counts.total} done
+                                        {d.counts.remaining > 0 && (
+                                            <span className="izy-muted">
+                                                {' · '}{d.counts.remaining} still out
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td>
+                                        {/* The bare pill is already the green
+                                            one; `muted` is the grey. There is
+                                            no `ok` modifier, and asking for
+                                            one would have rendered green and
+                                            looked right. */}
+                                        <span className={d.onShift ? 'izy-pill' : 'izy-pill muted'}>
+                                            {d.onShift ? 'on shift' : 'off shift'}
+                                        </span>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
 
             <div className="izy-card">
                 {/* WHAT THIS LIST IS, SAID IN WORDS, for somebody who got

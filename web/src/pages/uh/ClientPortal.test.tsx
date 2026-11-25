@@ -63,6 +63,10 @@ const routes = (over = {}) => ({
        `orders*` would otherwise answer the detail request with the list. */
     [`GET ${BASE}/orders/21`]: detail(),
     [`GET ${BASE}/orders*`]: list(),
+    /* Empty by default, so the section is absent from every other test on
+       this page rather than appearing in all of them. Its own tests below
+       override it. */
+    [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', drivers: [], notes: [] },
     ...over,
 });
 
@@ -826,5 +830,84 @@ describe('the proof of return', () => {
         const proof = await openProof({});
         expect(proof).not.toHaveTextContent('The signed sheet for the return attempt');
         expect(proof).toHaveTextContent('Ines Vargas');
+    });
+});
+
+/* ───────────────── WHO IS CARRYING IT ───────────────────────────────────
+ *
+ * Asked for on 24 November 2026: the dispatch board's lane list, on the
+ * pharmacy's own portal. What it must NOT be is the dispatch board's lane
+ * list -- no Return to pool, no sequence to drag, no other counter's
+ * numbers. The server is what keeps the figures honest (see the /drivers
+ * route); these cover what this page does with them.
+ */
+describe('the drivers out with a pharmacy’s deliveries', () => {
+    const withDrivers = (drivers: unknown[]) => routes({
+        [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', drivers, notes: [] },
+    });
+
+    const ada = {
+        name: 'Ada', onShift: true, counts: { total: 6, remaining: 2, done: 4 },
+    };
+
+    it('lists who has the work and how far along they are', async () => {
+        renderPortal(withDrivers([ada]));
+        await settled();
+        expect(screen.getByRole('heading', { name: /Drivers out with your deliveries/i }))
+            .toBeInTheDocument();
+        /* Scoped to this table, and read off the row rather than with
+           getByText: "Ada" is the courier on the deliveries table below
+           too, and within a row the cell and the span inside it both carry
+           the count, which getByText refuses as two matches. */
+        const table = screen.getByRole('table', { name: /Drivers out with your deliveries/i });
+        const row = within(table).getByRole('row', { name: /Ada/ });
+        expect(row).toHaveTextContent('4 of 6 done');
+        expect(row).toHaveTextContent('2 still out');
+    });
+
+    it('says the counts are theirs, not the driver’s whole day', async () => {
+        /* Without this line "4 of 6 done" reads as the driver's round, and
+           a pharmacist concludes a driver with twenty stops has stopped
+           working. */
+        renderPortal(withDrivers([ada]));
+        await settled();
+        expect(screen.getByText(/your own deliveries only, not the driver/i))
+            .toBeInTheDocument();
+    });
+
+    it('shows whether they are working', async () => {
+        renderPortal(withDrivers([
+            ada,
+            { name: 'Bo', onShift: false, counts: { total: 2, remaining: 0, done: 2 } },
+        ]));
+        await settled();
+        expect(screen.getByText('on shift')).toBeInTheDocument();
+        expect(screen.getByText('off shift')).toBeInTheDocument();
+    });
+
+    it('offers nothing to press: it is a view and not a console', async () => {
+        /* THE POINT OF THE WHOLE SECTION BEING READ ONLY. The board's lane
+           carries Return to pool and an assign control; a pharmacy saying
+           who should carry what is a dispatch decision taken by somebody
+           who can see every counter. */
+        renderPortal(withDrivers([ada]));
+        await settled();
+        expect(screen.queryByRole('button', { name: /return to pool/i })).toBeNull();
+        expect(screen.queryByRole('button', { name: /assign/i })).toBeNull();
+        expect(screen.queryByRole('combobox', { name: /assign/i })).toBeNull();
+    });
+
+    it('is absent entirely when nobody is carrying anything', async () => {
+        /* Not an empty table with a heading over it: on a counter screen
+           that reads as a fault. */
+        renderPortal();
+        await settled();
+        expect(screen.queryByRole('heading', { name: /Drivers out with your deliveries/i })).toBeNull();
+    });
+
+    it('asks for the day the page is showing', async () => {
+        const { calls } = renderPortal(withDrivers([ada]));
+        await settled();
+        expect(calls.some((c) => c.includes('/client/drivers?date='))).toBe(true);
     });
 });

@@ -1309,6 +1309,105 @@ export function createClientPortalRouter(
         });
     }));
 
+    /* ------------------------------------------------------------- drivers */
+
+    /**
+     * Who is carrying this pharmacy's deliveries today, and how far along.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * IT IS THE DISPATCH BOARD'S LANE LIST, AND IT IS NOT THE SAME DATA.
+     *
+     * Asked for on 24 November: a counter wants to know who has their work
+     * and whether it is moving, which they could previously only get by
+     * opening every order one at a time. The board already draws exactly
+     * that list for dispatch, so the temptation was to hand the board's
+     * payload to the portal. Three things are wrong with that, and each one
+     * is a disclosure rather than a detail.
+     *
+     * ── THE COUNTS ARE OVER THIS PHARMACY'S OWN ORDERS, NOT THE ROUND.
+     *
+     * The board says "19 of 23 done" meaning the driver's whole day. A
+     * driver carries Wheatley's work and Robert B. Green's in one van, so
+     * that number tells Wheatley how much Green sent. Here the arithmetic
+     * is done over the caller's scoped sites only: "3 of 5 done" means five
+     * of YOUR deliveries, and a counter cannot size another counter's day
+     * by subtraction.
+     *
+     * ── A FIRST NAME, because that is the rule this whole file is written
+     * under and it does not get an exception for being on a new screen.
+     * courierFirstName can only ever return less than the whole name.
+     *
+     * ── NO LAST-SEEN. The board's pill says "on shift · 11 min ago", which
+     * is a presence trace: it tells a client roughly where our staff were
+     * and when. Whether somebody is working today is operationally fair --
+     * it is the difference between "nobody has started yet" and "it is
+     * coming" -- so the shift flag stays and the clock goes.
+     *
+     * READ ONLY. There is no assignment, no resequencing and no returning a
+     * stop to the pool here. A pharmacy saying who should carry what is a
+     * dispatch decision taken by somebody who can see every counter.
+     */
+    router.get('/drivers', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const { scope, sites } = await scopedSites(req);
+        const serviceDate = typeof req.query['date'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query['date'])
+            ? req.query['date']
+            : todayIn(project.timezone);
+
+        /* Same shape as /summary above: an unscoped viewer gets 1 = 0 and
+           therefore nothing, never everything. */
+        const where = scope.wholeProject
+            ? { sql: 'o.project_id = ?', args: [project.id] as InValue[] }
+            : sites.length === 0
+                ? { sql: '1 = 0', args: [] as InValue[] }
+                : { sql: `o.project_id = ? AND o.site_id IN (${sites.map(() => '?').join(',')})`, args: [project.id, ...sites.map((s) => s.id)] };
+
+        /* THROUGH THE RUN, not through orders.assigned_to_username. The run
+           is what dispatch actually built and what the driver's phone is
+           reading; the column on the order is a denormalisation of it. A
+           cancelled run carries nobody. */
+        const rs = await client.execute({
+            sql: `SELECT r.courier_username AS username,
+                         u.name AS name,
+                         COUNT(*) AS total,
+                         SUM(CASE WHEN o.status IN (${OPEN_STATUSES.map(() => '?').join(',')}) THEN 1 ELSE 0 END) AS open_now,
+                         MAX(CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END) AS on_shift
+                    FROM orders o
+                    JOIN run_stops rs ON rs.order_id = o.id
+                    JOIN runs r ON r.id = rs.run_id AND r.status != 'cancelled'
+                    LEFT JOIN users u ON u.username = r.courier_username
+                    LEFT JOIN shifts sh ON sh.courier_username = r.courier_username
+                                       AND sh.project_id = ? AND sh.ended_at IS NULL
+                   WHERE ${where.sql} AND o.service_date = ? AND o.status != 'cancelled'
+                   GROUP BY r.courier_username, u.name
+                   ORDER BY u.name, r.courier_username`,
+            args: [...OPEN_STATUSES, project.id, ...where.args, serviceDate],
+        });
+
+        const drivers = rs.rows.map((r) => {
+            const total = Number(r['total']);
+            const remaining = Number(r['open_now']);
+            return {
+                /* No username. It is the handle our staff sign in with and
+                   it is not a client's to hold. */
+                name: courierFirstName(String(r['name'] ?? ''), 'A courier'),
+                onShift: Number(r['on_shift']) === 1,
+                counts: { total, remaining, done: total - remaining },
+            };
+        });
+
+        await req.audit('client.drivers', 'order', serviceDate, {
+            sites: sites.length, drivers: drivers.length,
+        });
+
+        res.json({
+            serviceDate,
+            timezone: project.timezone,
+            drivers,
+            notes: scopeNote(sites, scope),
+        });
+    }));
+
     /* ------------------------------------------------------------- detail */
 
     router.get('/orders/:id', viewer, wrap(async (req, res) => {
