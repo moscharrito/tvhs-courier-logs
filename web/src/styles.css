@@ -258,6 +258,15 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
    because a box inside a list of rows is the card this stopped being. */
 .izy-stop-row.is-current { box-shadow: inset 3px 0 0 var(--izy-green); padding-left: 10px; }
 .izy-stop-row-do .izy-btn, .izy-stop-row-do select { font-size: 12px; }
+/* THE SAME ROW WITH NOTHING TO PRESS. The pharmacy portal draws the
+   board's lane read-only, so the third track -- the board's control cell --
+   has no cell to hold. Dropping the track rather than rendering an empty
+   one keeps the address column from being squeezed by a gap reserved for a
+   button that is never coming. */
+.izy-stop-row.is-view-only { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+@media (max-width: 760px) {
+    .izy-stop-row.is-view-only { grid-template-columns: 1fr; }
+}
 
 /* ON A PHONE the three tracks become one. A dispatcher is usually at a
    desk, but the board is opened from a car park often enough. */

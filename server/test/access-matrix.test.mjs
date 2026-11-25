@@ -618,7 +618,7 @@ const MATRIX = [
     ['GET', `${UH}/client/reports`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/summary`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/drivers`, UH_CLIENT_VIEW,
-        'who is carrying this counter’s own deliveries, first names and their own counts only'],
+        'who is carrying this counter’s own deliveries, and which stops: first names, their own stops and their own counts, nothing to press'],
     ['GET', `${UH}/client/orders`, UH_CLIENT_VIEW, ''],
     /* The same reach as the list it mirrors, and that is the point: it is the
        same query through gatherOrders. It carries patient names and addresses

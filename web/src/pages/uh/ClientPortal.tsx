@@ -190,21 +190,86 @@ function Count({ n, label, onPick }: { n: number; label: string; onPick: () => v
 
 /* ─── WHO IS CARRYING TODAY'S WORK.
  *
- * Deliberately thinner than the dispatch board's lane, and the server is
- * what makes it thin: see the /drivers route in modules/uh/client-portal.ts
- * for why the counts are over this counter's own orders, why the name is a
- * first name, and why there is no last-seen clock. Nothing here can widen
- * any of that -- a field the server does not send cannot be drawn. */
-interface PortalDriver {
-    name: string;
-    onShift: boolean;
-    counts: { total: number; remaining: number; done: number };
+ * The dispatch board's lane, with every control taken off it. What the
+ * server will and will not put in here -- this counter's stops only, a
+ * first name, no last-seen, no position -- is decided in the /drivers
+ * route in modules/uh/client-portal.ts, and nothing on this page can
+ * widen it: a field the server does not send cannot be drawn. */
+interface PortalLane {
+    run: { id: number; label: string };
+    courier: { name: string; onShift: boolean };
+    /** In run sequence. The numbers have gaps: a gap is another counter's stop. */
+    stops: Array<{ sequence: number; order: ClientOrder }>;
+    /** The next one of THIS pharmacy's stops still to do. */
+    currentStopOrderId: number | null;
+    counts: { total: number; remaining: number; done: number; overdue: number };
 }
 
 interface DriversResponse {
     serviceDate: string;
-    drivers: PortalDriver[];
+    lanes: PortalLane[];
     notes: string[];
+}
+
+/**
+ * The stops inside one lane, paged.
+ *
+ * Its own pager, like the board's, because one page number shared across
+ * every lane would turn "page 2" into a different driver's second page.
+ */
+function PortalLaneStops({ lane, clock }: { lane: PortalLane; clock: (iso: string | null) => string }) {
+    const paged = usePaged(lane.stops);
+    if (lane.stops.length === 0) return <div className="izy-muted">No stops yet.</div>;
+    return (
+        <>
+            {paged.rows.map((stop) => (
+                <PortalStopRow
+                    key={stop.order.id}
+                    order={stop.order}
+                    sequence={stop.sequence}
+                    current={lane.currentStopOrderId === stop.order.id}
+                    clock={clock}
+                />
+            ))}
+            <Pager of={paged} noun="stops" />
+        </>
+    );
+}
+
+/**
+ * One stop, as a row, in the board's own shape and classes.
+ *
+ * TWO COLUMNS WHERE THE BOARD HAS THREE. The third is the board's control
+ * cell, and there is no control to put in it. The row is not a link
+ * either: #9047 on the board opens our staff order page, which is not a
+ * page a pharmacy has. Their way into a delivery is the Proof button on
+ * the list below, which is already theirs.
+ */
+function PortalStopRow({ order, sequence, current, clock }: {
+    order: ClientOrder;
+    sequence: number;
+    current: boolean;
+    clock: (iso: string | null) => string;
+}) {
+    const label = slaLabel(order.sla);
+    return (
+        <div className={`izy-stop-row is-view-only${current ? ' is-current' : ''}`}>
+            <div className="izy-stop-row-what">
+                <b>{sequence}. </b>
+                #{order.id}
+                {' '}<span className="izy-muted">{order.serviceType}</span>
+                {order.zone === null
+                    ? <> <span className="izy-pill warn">out of area</span></>
+                    : <> <span className="izy-pill muted">zone {order.zone}</span></>}
+                {label.text && <> <span className={`izy-pill ${label.tone === 'muted' ? 'muted' : label.tone}`}>{label.text}</span></>}
+            </div>
+            <div className="izy-stop-row-who">
+                <div>{order.recipientName}</div>
+                <div className="izy-muted">{order.address}, {order.city} {order.zip}</div>
+                <div className="izy-muted">due {clock(order.dueAt)} · {order.status}</div>
+            </div>
+        </div>
+    );
 }
 
 export function ClientPortal() {
@@ -579,19 +644,25 @@ export function ClientPortal() {
 
             {/* ─────────────────────────────────────────────────────────────
                 WHO IS CARRYING IT. Above the deliveries, because "is anyone
-                out with my work" is the question asked first and answered
-                in one line, where "where is delivery 9047" is asked second
-                and answered by the table below.
+                out with my work" is the question asked first, and "where is
+                delivery 9047" is asked second and answered by the table
+                below.
 
-                VIEW ONLY, and there is nothing here to make read-only: the
-                board's lane carries Return to pool and a sequence a
-                dispatcher can drag, and none of it is rendered on this
-                page. Who carries what is a dispatch decision taken by
-                somebody who can see every counter, which is exactly what a
-                pharmacy cannot.
+                THE DISPATCH BOARD'S LANE, which is what was asked for: the
+                same fold, the same stop rows, the same pager inside it.
+                What is not here is everything that writes -- Return to
+                pool, the two sequence buttons, and dragging a stop between
+                drivers. All three would let one counter rearrange a run
+                that is carrying another counter's work. The server sends no
+                control either, so this is not a screen that could be made
+                live by someone editing only this file.
+
+                The stops are this pharmacy's stops. See the /drivers route
+                in modules/uh/client-portal.ts for why, and for why the
+                sequence numbers therefore have gaps in them.
                 ───────────────────────────────────────────────────────── */}
-            {drivers !== null && drivers.drivers.length > 0 && (
-                <div className="izy-card">
+            {drivers !== null && drivers.lanes.length > 0 && (
+                <>
                     <h2 id="portal-drivers-heading">Drivers out with your deliveries</h2>
                     <p className="izy-muted">
                         {drivers.serviceDate}
@@ -600,46 +671,51 @@ export function ClientPortal() {
                             driver has twenty stops will otherwise read "4 of
                             6 done" as the driver's whole day and conclude
                             they have stopped working. */}
-                        counts are your own deliveries only, not the driver’s whole round
+                        every figure here is your own deliveries only, not the driver’s whole round
                     </p>
-                    {/* Named by its own heading. There are three tables on
-                        this page and "table" said three times is no use to
-                        anybody navigating by them. */}
-                    <table className="izy-table" aria-labelledby="portal-drivers-heading">
-                        <thead>
-                            <tr>
-                                <th scope="col">Driver</th>
-                                <th scope="col">Your deliveries</th>
-                                <th scope="col">Working</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {drivers.drivers.map((d) => (
-                                <tr key={d.name}>
-                                    <td>{d.name}</td>
-                                    <td>
-                                        {d.counts.done} of {d.counts.total} done
-                                        {d.counts.remaining > 0 && (
-                                            <span className="izy-muted">
-                                                {' · '}{d.counts.remaining} still out
-                                            </span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        {/* The bare pill is already the green
-                                            one; `muted` is the grey. There is
-                                            no `ok` modifier, and asking for
-                                            one would have rendered green and
-                                            looked right. */}
-                                        <span className={d.onShift ? 'izy-pill' : 'izy-pill muted'}>
-                                            {d.onShift ? 'on shift' : 'off shift'}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                    <div className="izy-board-lanes">
+                        {drivers.lanes.map((lane) => (
+                            <Section
+                                /* Keyed by run, like the board, so one
+                                   driver's second wave folds separately --
+                                   and so a counter that only watches the
+                                   morning run can fold the rest once and
+                                   have it stay. */
+                                key={lane.run.id}
+                                id={`uh.portal.lane.${lane.run.id}`}
+                                className="izy-lane"
+                                title={lane.courier.name}
+                                summary={(
+                                    <>
+                                        {lane.counts.done} of {lane.counts.total} done
+                                        {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
+                                    </>
+                                )}
+                                actions={(
+                                    /* The bare pill is already the green one;
+                                       `muted` is the grey. There is no `ok`
+                                       modifier, and asking for one would have
+                                       rendered green and looked right.
+
+                                       No last-seen clock beside it, unlike
+                                       the board's. Whether somebody is
+                                       working today is operationally fair to
+                                       tell a client; roughly where our staff
+                                       were eleven minutes ago is not. */
+                                    <span className={lane.courier.onShift ? 'izy-pill' : 'izy-pill muted'}>
+                                        {lane.courier.onShift ? 'on shift' : 'off shift'}
+                                    </span>
+                                )}
+                            >
+                                <p className="izy-muted">
+                                    {lane.run.label.trim() || 'Run'} {lane.run.id} · {lane.counts.done} of {lane.counts.total} done
+                                    {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
+                                </p>
+                                <PortalLaneStops lane={lane} clock={clock} />
+                            </Section>
+                        ))}
+                    </div>
+                </>
             )}
 
             <div className="izy-card">
