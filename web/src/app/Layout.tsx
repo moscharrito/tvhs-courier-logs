@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { SyncStatus } from './SyncStatus';
+import { FreshBuild } from './FreshBuild';
 import { initials } from '../lib/initials';
 import { confirmSignOut } from '../lib/outbox';
 import { counterName, isCourierOnly, isPharmacyOnly, projectHref } from '../lib/pharmacy';
@@ -229,6 +230,11 @@ export function Layout() {
                 />
             )}
             <main className="izy-main">
+                {/* ABOVE EVERYTHING, because what it warns about is that
+                    everything below it may be stale -- including, on a bad
+                    day, a driver's own round. A page pinned to a bench
+                    phone's home screen never reloads on its own. */}
+                <FreshBuild />
                 {/* Before anything else on the screen, and only for somebody
                     who drives: on an iPhone the camera works in Safari and
                     nowhere else, and a courier who finds that out at a

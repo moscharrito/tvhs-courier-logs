@@ -2115,3 +2115,23 @@ body {
     .izy-sort-facts { grid-template-columns: 1fr; }
     .izy-sort-do .izy-btn { width: 100%; }
 }
+
+/* ── A NEWER BUILD IS BEING SERVED THAN THE ONE RUNNING.
+   See app/FreshBuild.tsx for how it is detected and why it offers rather
+   than reloading. Full width and at the top of the content: the thing it
+   is warning about is that everything under it may be wrong, so it does
+   not get to be a discreet corner toast. */
+.izy-fresh-build {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--izy-line, #ddd);
+    border-left: 4px solid var(--izy-green, #166534);
+    border-radius: 8px;
+    background: #f0fdf4;
+    font-size: 0.95rem;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .izy-fresh-build { background: #052e16; }
+}
