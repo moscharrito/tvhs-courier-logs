@@ -58,10 +58,57 @@
  * two have to agree -- if the box on screen and the box read here drift
  * apart, a sorter lines up a number that is not the one being read, which
  * looks exactly like bad recognition and is not.
+ *
+ * THEY DID NOT AGREE, AND THAT IS WHAT cropFor FIXES.
+ *
+ * GUIDE is a fraction of the VIEWFINDER, which is a 4:3 box, and the box
+ * is filled with `object-fit: cover`. A phone's back camera hands over a
+ * 16:9 frame, so a quarter of its width is cropped away before anything
+ * is drawn -- and this file was reading the strip as a fraction of the
+ * WHOLE frame. The read extended about 190 pixels past each edge of the
+ * green box into picture the sorter could not see, which is how our own
+ * number, printed top right and nowhere near the guide, kept turning up
+ * in the candidates. cropFor maps the drawn box into frame coordinates
+ * so the strip read is the strip shown.
  */
 
-/** The guide rectangle, as a fraction of the frame. CSS matches this. */
-export const GUIDE = { x: 0.06, y: 0.38, w: 0.88, h: 0.24 };
+/**
+ * The guide rectangle, as a fraction of the VIEWFINDER. CSS matches this.
+ *
+ * Wider than it was, from 25 November: at 88% the bench was still having
+ * to line a sheet up left to right, and the whole point of the box is
+ * that filling it is something you can do without looking. The width is
+ * nearly all of the frame now; the height is unchanged, because the
+ * height is what keeps the rest of the sheet's forty numbers out.
+ */
+export const GUIDE = { x: 0.03, y: 0.38, w: 0.94, h: 0.24 };
+
+/** The viewfinder's shape, from .izy-sort-view's aspect-ratio. */
+export const VIEW_ASPECT = 4 / 3;
+
+/**
+ * Where the guide actually falls on a camera frame of this size.
+ *
+ * `object-fit: cover` scales the frame until it fills the 4:3 box and
+ * throws the overflow away evenly, so only part of the frame is ever on
+ * screen. Everything here is in that visible part.
+ */
+export function cropFor(fw: number, fh: number): { sx: number; sy: number; sw: number; sh: number } {
+    const frame = fw / fh;
+    /* How much of the frame survives the crop, each way. A wide frame in
+       a squarer box loses width; a square frame in a wide box loses
+       height. One of these is always 1. */
+    const keepW = frame > VIEW_ASPECT ? VIEW_ASPECT / frame : 1;
+    const keepH = frame > VIEW_ASPECT ? 1 : frame / VIEW_ASPECT;
+    const offX = (1 - keepW) / 2;
+    const offY = (1 - keepH) / 2;
+    return {
+        sx: Math.round(fw * (offX + GUIDE.x * keepW)),
+        sy: Math.round(fh * (offY + GUIDE.y * keepH)),
+        sw: Math.max(1, Math.round(fw * GUIDE.w * keepW)),
+        sh: Math.max(1, Math.round(fh * GUIDE.h * keepH)),
+    };
+}
 
 /** Recognition is slow on a small image and barely slower on a big one. */
 const UPSCALE = 2;
@@ -115,10 +162,20 @@ async function reader(): Promise<Recogniser> {
                far less likely to offer an S where a 5 is when S is not a
                character it may return. phone-scan.ts still forgives the
                substitutions, because this only narrows the alphabet and
-               does not guarantee it. */
+               does not guarantee it.
+
+               THE COMMA AND THE SLASH EARN THEIR PLACE, added 25 November.
+               A RECIPIENT panel often carries two numbers written
+               "210-555-0147, 210-555-0199" or with a slash between them.
+               Neither character was on this list, so the reader returned
+               its best guess at a digit instead -- or nothing, leaving a
+               space -- and phone-scan.ts saw one twenty-digit run and
+               threw the pair away. They are separators between numbers,
+               never characters inside one, which is exactly how
+               phone-scan.ts treats them. */
                 stage = 'setting the reader up';
                 await made.setParameters({
-                    tessedit_char_whitelist: '0123456789()-. ',
+                    tessedit_char_whitelist: '0123456789()-./, ',
                 });
                 return made;
             } catch (e) {
@@ -153,12 +210,10 @@ async function reader(): Promise<Recogniser> {
  * that costs nothing to remove here.
  */
 function strip(el: HTMLVideoElement): HTMLCanvasElement {
-    const fw = el.videoWidth;
-    const fh = el.videoHeight;
-    const sx = Math.round(fw * GUIDE.x);
-    const sy = Math.round(fh * GUIDE.y);
-    const sw = Math.round(fw * GUIDE.w);
-    const sh = Math.round(fh * GUIDE.h);
+    /* Through cropFor, not off the raw frame. See the note at the top:
+       the viewfinder crops before the sorter sees anything, and reading
+       the uncropped fractions meant reading well outside the green box. */
+    const { sx, sy, sw, sh } = cropFor(el.videoWidth, el.videoHeight);
 
     const canvas = document.createElement('canvas');
     canvas.width = sw * UPSCALE;

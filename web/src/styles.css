@@ -2071,20 +2071,23 @@ body {
    recognition and is not. Change both or neither. */
 .izy-sort-guide {
     position: absolute;
-    left: 6%; top: 38%; width: 88%; height: 24%;
+    left: 3%; top: 38%; width: 94%; height: 24%;
     border: 2px solid #4ade80;
     border-radius: 6px;
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.38);
     pointer-events: none;
 }
 
-/* CENTRED, because it is the only thing to press and the thumb goes to
-   the middle of the screen. */
-.izy-sort-do { display: flex; justify-content: center; }
+/* CENTRED, because the eye goes to the middle of the screen and this is
+   now the only thing on the page that moves. */
+.izy-sort-do { display: flex; justify-content: center; min-height: 44px; align-items: center; }
+/* The page reads by itself, so this line is the whole of the feedback.
+   A fixed height above it, because a status that changes length must not
+   shift the answer underneath it up and down while somebody reads. */
+.izy-sort-state { margin: 0; text-align: center; color: var(--izy-muted, #666); font-size: 0.95rem; }
 .izy-sort-do .izy-btn { min-width: 220px; }
 .izy-sort-note { display: block; text-align: center; margin-top: 10px; }
 .izy-btn.big { font-size: 1.15rem; padding: 14px 22px; }
-.izy-sort-pick { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 
 .izy-sort-out { margin-top: 18px; }
 .izy-sort-asked { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }

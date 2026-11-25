@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { Sort } from './Sort';
 import { mockFetch } from '../../test/setup';
 
@@ -18,7 +18,7 @@ const scanSupported = vi.fn(() => true);
 vi.mock('../../lib/read-sheet', () => ({
     readDigits: (...a: unknown[]) => readDigits(...a),
     scanSupported: () => scanSupported(),
-    GUIDE: { x: 0.06, y: 0.38, w: 0.88, h: 0.24 },
+    GUIDE: { x: 0.03, y: 0.38, w: 0.94, h: 0.24 },
 }));
 
 const LOOKUP = 'POST /api/projects/uh/uh/sort/lookup';
@@ -38,11 +38,13 @@ const match = (over: Record<string, unknown> = {}) => ({
 
 const open = () => render(<Sort projectCode="uh" />);
 
-/** Read this off the sheet, then wait for the answer to land. */
-async function scanned(text: string) {
+/** Longer than the loop's own gap, so "it did not read again" means it. */
+const quiet = () => new Promise((r) => { setTimeout(r, 500); });
+
+/** Put this on the sheet in front of the camera. The page does the rest. */
+function scanned(text: string) {
     readDigits.mockResolvedValue(text);
-    open();
-    fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
+    return open();
 }
 
 /** jsdom has no camera. Give the page one that works. */
@@ -61,6 +63,14 @@ function withCamera(ok = true) {
     Object.defineProperty(HTMLMediaElement.prototype, 'play', {
         configurable: true, value: vi.fn(async () => {}),
     });
+    /* AND A PICTURE IN IT. jsdom reports videoWidth 0 forever, which is
+       what a real camera reports in the moment between being attached
+       and painting its first frame -- and the page waits rather than
+       reading, correctly, because reading a frame of nothing costs a
+       second of worker time per go. Without a size here every test
+       below waits for a loop that is right to never start. */
+    Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', { configurable: true, value: 1920 });
+    Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', { configurable: true, value: 1080 });
     return track;
 }
 
@@ -81,7 +91,7 @@ describe('looking a number up', () => {
            referrer headers and every log that keeps a request line. This
            is the assertion that stops somebody making it a GET. */
         const { calls, bodies } = mockFetch({ [LOOKUP]: { matches: [match()] } });
-        await scanned('Mobile: 210-555-0147');
+        scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
         expect(bodies[LOOKUP]).toEqual({ phone: '2105550147' });
@@ -90,7 +100,7 @@ describe('looking a number up', () => {
 
     it('puts the driver first and the rest underneath', async () => {
         mockFetch({ [LOOKUP]: { matches: [match()] } });
-        await scanned('Mobile: 210-555-0147');
+        scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
         expect(screen.getByText(/Wheatley 1 · stop 4/)).toBeInTheDocument();
@@ -103,7 +113,7 @@ describe('looking a number up', () => {
         /* A package nobody has must not go into a pile, and silence would
            send it into one. */
         mockFetch({ [LOOKUP]: { matches: [match({ driver: null })] } });
-        await scanned('Mobile: 210-555-0147');
+        scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Not assigned yet');
         expect(screen.getByText(/Leave it out of the piles/)).toBeInTheDocument();
@@ -111,7 +121,7 @@ describe('looking a number up', () => {
 
     it('says when nothing matched at all', async () => {
         mockFetch({ [LOOKUP]: { matches: [] } });
-        await scanned('Mobile: 210-555-0199');
+        scanned('Mobile: 210-555-0199');
 
         await screen.findByText(/No delivery with that number/);
     });
@@ -125,7 +135,7 @@ describe('looking a number up', () => {
                 ],
             },
         });
-        await scanned('Mobile: 210-555-0147');
+        scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Ana Driver');
         expect(screen.getByText('Ben Driver')).toBeInTheDocument();
@@ -133,7 +143,7 @@ describe('looking a number up', () => {
 
     it('shows the handling, which decides where it is put down', async () => {
         mockFetch({ [LOOKUP]: { matches: [match({ handling: ['Fridge', 'Controlled'] })] } });
-        await scanned('Mobile: 210-555-0147');
+        scanned('Mobile: 210-555-0147');
 
         const card = (await screen.findByText('Ana Driver')).closest('article')!;
         expect(within(card).getByText('Fridge')).toBeInTheDocument();
@@ -141,51 +151,147 @@ describe('looking a number up', () => {
 });
 
 describe('scanning the sheet', () => {
-    it('reads one number and goes straight to the answer', async () => {
+    it('reads one number and goes straight to the answer, with nothing pressed', async () => {
         readDigits.mockResolvedValue('PHONE (IMPORTANT) Mobile: 210-555-0147');
         const { bodies } = mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
         await screen.findByText('Ana Driver');
         expect(bodies[LOOKUP]).toEqual({ phone: '2105550147' });
     });
 
-    it('asks which one when the sheet offered two', async () => {
-        /* Guessing would eventually put a package in the wrong van, which
-           costs a redelivery and a call from somebody who did not get
-           their medication. Two buttons costs a second. */
+    it('looks both up rather than asking which one, when the sheet offered two', async () => {
+        /* IT USED TO ASK, and asking was the wrong shape of safe. A
+           sorter handed "which of these is the patient's?" is holding a
+           parcel, not the patient's file: the mobile and the landline
+           look alike to them, so the tap was a coin toss wearing a
+           confirmation's clothes. Both are looked up and every delivery
+           that comes back is shown, named, to be read against the sheet
+           in their other hand. */
         readDigits.mockResolvedValue('Alt 210-555-0000 Mobile: 210-555-0147');
+        const { calls } = mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(screen.queryByText(/Which number is the patient/)).not.toBeInTheDocument();
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(2);
+    });
+
+    it('shows one card when both numbers are the same patient', async () => {
+        /* Which is the ordinary case: a mobile and a landline on one
+           panel belong to one person, so both lookups return the same
+           delivery. Two identical cards would read as two packages. */
+        readDigits.mockResolvedValue('Mobile: 210-555-0147, 210-555-0199');
         mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
-        await screen.findByText(/Which number is the patient/);
-        expect(screen.getByRole('button', { name: '210-555-0147' })).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: '210-555-0000' })).toBeInTheDocument();
+        await screen.findByText('Ana Driver');
+        expect(screen.getAllByText('Ana Driver')).toHaveLength(1);
+    });
+
+    it('says which numbers it asked about, not just the one that answered', async () => {
+        readDigits.mockResolvedValue('Mobile: 210-555-0147, 210-555-0199');
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(screen.getByText(/210-555-0147 · 210-555-0199/)).toBeInTheDocument();
     });
 
     it('never offers our own number, which is on every sheet', async () => {
         readDigits.mockResolvedValue('IZY GLOBAL SERVICES 832-715-8986');
-        mockFetch({ [LOOKUP]: { matches: [] } });
+        const { bodies } = mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
-        await screen.findByText(/No telephone number could be read/);
+        await screen.findByText(/Fill the green box with the RECIPIENT panel/);
+        expect(bodies[LOOKUP]).toBeUndefined();
     });
 
-    it('tells the sorter what to do about a bad read', async () => {
-        /* WHAT TO CHANGE, not that it failed. "Could not read" on its own
-           gets the same shot taken again. With no keypad left as a way
-           round, the advice IS the recovery. */
+    it('tells the sorter what to do about a bad read, without calling it an error', async () => {
+        /* WHAT TO CHANGE, not that it failed. And a status rather than
+           an alert: a read that found nothing is the ordinary state
+           between two sheets, the page is reading several times a
+           second, and an error at that rate teaches people to ignore
+           errors. */
         readDigits.mockResolvedValue('nothing here at all');
         mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Scan' }));
-        const said = await screen.findByRole('alert');
+        const said = await screen.findByRole('status');
         expect(said).toHaveTextContent(/Fill the green box with the RECIPIENT panel/);
         expect(said).toHaveTextContent(/hold the sheet flat/);
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('keeps reading until a number turns up', async () => {
+        /* A press was one shot: a frame that happened to be blurred was
+           a failure the sorter had to notice and repeat. Holding the
+           sheet steady is now the whole of the recovery. */
+        readDigits.mockResolvedValue('nothing here at all');
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText(/Fill the green box/);
+        await waitFor(() => { expect(readDigits.mock.calls.length).toBeGreaterThan(1); });
+
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        await screen.findByText('Ana Driver');
+    });
+
+    it('stops reading once there is an answer on the screen', async () => {
+        /* Otherwise the next sheet on the bench is read over the answer
+           the sorter is still looking at.
+
+           THE TOTAL, not the count either side of a wait. Sampling after
+           the answer appears is too late to catch this: the effect that
+           restarts a loop has already run by then, so a page that failed
+           to stop still showed the same number before and after. One
+           read for one answer is the thing that is actually true. */
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        await quiet();
+        expect(readDigits).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts reading again on Clear', async () => {
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        const stopped = readDigits.mock.calls.length;
+        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        await waitFor(() => { expect(readDigits.mock.calls.length).toBeGreaterThan(stopped); });
+    });
+
+    it('will not fire a request for every number a bad read invented', async () => {
+        /* One route, one number, so each candidate is a round trip on
+           warehouse wifi with a sorter stood waiting. A read that found
+           five was a bad read and more requests will not save it. */
+        readDigits.mockResolvedValue(
+            '210-555-0001 210-555-0002, 210-555-0003 / 210-555-0004, 210-555-0005');
+        const { calls } = mockFetch({ [LOOKUP]: { matches: [] } });
+        open();
+
+        await screen.findByText(/No delivery with/);
+        expect(calls.filter((c) => c.includes('/sort/lookup')).length).toBeLessThanOrEqual(3);
+    });
+
+    it('reports a broken reader once and stops, rather than sixty times a minute', async () => {
+        /* A blocked worker or a browser without WebAssembly does not get
+           better by being asked again, and a loop around it would bury
+           the handset. */
+        readDigits.mockRejectedValue(new Error('Failed starting the reader'));
+        mockFetch({ [LOOKUP]: { matches: [] } });
+        open();
+
+        await screen.findByRole('alert');
+        const tried = readDigits.mock.calls.length;
+        await quiet();
+        expect(readDigits.mock.calls.length).toBe(tried);
     });
 });
 
@@ -193,15 +299,14 @@ describe('when the camera will not play', () => {
     it('says so, and offers another go rather than a dead page', async () => {
         /* A refused permission or another app holding the camera. The
            page cannot do its job, so it has to say what happened and
-           give a way to retry -- this is the ONE case that gets a button
-           other than Scan. */
+           give a way to retry -- this is the ONE case on the page that
+           has a button at all. */
         withCamera(false);
         mockFetch({ [LOOKUP]: { matches: [] } });
         open();
 
         await screen.findByRole('alert');
         expect(await screen.findByRole('button', { name: 'Try the camera again' })).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Scan' })).not.toBeInTheDocument();
     });
 
     it('says when the browser cannot run the reader at all', async () => {
@@ -211,15 +316,16 @@ describe('when the camera will not play', () => {
         expect(screen.getByText(/cannot run the reader/)).toBeInTheDocument();
     });
 
-    it('has no Stop button, and no keypad', async () => {
-        /* Both were asked for and both were removed. The keypad was my
-           own addition as a way through a bad read; the bench did not
-           want a second way to do the job and a text box on a page meant
-           to be used one-handed is a text box nobody fills in. */
+    it('has nothing to press at all while the camera is working', async () => {
+        /* A Stop button and a keypad were each asked for and each
+           removed. Scan went on 25 November, because a press costs a
+           hand the sorter has not got and moves the picture at the
+           moment it needs to be still. */
+        readDigits.mockResolvedValue('nothing here at all');
         mockFetch({ [LOOKUP]: { matches: [] } });
         open();
-        await screen.findByRole('button', { name: 'Scan' });
-        expect(screen.queryByRole('button', { name: /Stop camera/i })).not.toBeInTheDocument();
+        await screen.findByRole('status');
+        expect(screen.queryAllByRole('button')).toEqual([]);
         expect(screen.queryByLabelText(/Last four digits/)).not.toBeInTheDocument();
     });
 
@@ -231,8 +337,9 @@ describe('when the camera will not play', () => {
            it. */
         const track = withCamera();
         mockFetch({ [LOOKUP]: { matches: [] } });
+        readDigits.mockResolvedValue('nothing here at all');
         const view = open();
-        await screen.findByRole('button', { name: 'Scan' });
+        await screen.findByRole('status');
         view.unmount();
         expect(track.stop).toHaveBeenCalled();
     });

@@ -148,3 +148,96 @@ describe('when it cannot be sure', () => {
         expect(findPhones('Mobile: (210) 555-0147')[0]!.seen).toBe('(210) 555-0147');
     });
 });
+
+/* ── TWO NUMBERS ON ONE LINE.
+ *
+ * Asked for on 25 November, from the bench: a RECIPIENT panel often
+ * carries a mobile and a landline together. Three ways it comes back
+ * from a reader, and all three used to produce nothing at all.
+ */
+describe('a panel with two numbers on it', () => {
+    it('separates them on a comma', () => {
+        const got = findPhones('Mobile: 210-555-0147, 210-555-0199');
+        expect(got.map((c) => c.digits)).toEqual(['2105550147', '2105550199']);
+    });
+
+    it('separates them on a slash', () => {
+        const got = findPhones('PHONE 210-555-0147/210-555-0199');
+        expect(got.map((c) => c.digits)).toEqual(['2105550147', '2105550199']);
+    });
+
+    it('separates them with spaces around the slash, as it is usually written', () => {
+        const got = findPhones('Mobile 2105550147 / 2105550199');
+        expect(got.map((c) => c.digits)).toEqual(['2105550147', '2105550199']);
+    });
+
+    it('still finds both when the separator did not survive the read', () => {
+        /* THE ONE THAT MATTERS. The reader drops a faint comma and hands
+           back one twenty-digit run. The old code weighed it once,
+           found it was not ten digits and threw away both numbers --
+           and a sorter saw "no telephone number could be read" on a
+           sheet with two printed on it. */
+        const got = findPhones('Mobile: 210-555-0147 210-555-0199');
+        expect(got.map((c) => c.digits)).toEqual(['2105550147', '2105550199']);
+    });
+
+    it('splits a run of plain digits the same way', () => {
+        const got = findPhones('PHONE 21055501472105550199');
+        expect(got.map((c) => c.digits)).toEqual(['2105550147', '2105550199']);
+    });
+
+    it('carries the label to both, so neither is pushed below a stray', () => {
+        /* They were printed under the same PHONE heading. Ranking one
+           above the other on a label they share would be inventing a
+           preference between the patient's two numbers. */
+        const got = findPhones('stray 210-555-0000 ... Mobile: 210-555-0147, 210-555-0199');
+        expect(got.slice(0, 2).map((c) => c.digits)).toEqual(['2105550147', '2105550199']);
+        expect(got.map((c) => c.near)).toEqual([true, true, false]);
+    });
+});
+
+/* ── AND WHAT SPLITTING MUST NOT DO.
+ *
+ * Cutting a long run into ten-digit pieces is the dangerous half of the
+ * change above: done eagerly it would manufacture telephone numbers out
+ * of the prescription numbers that fill the middle of every sheet.
+ */
+describe('what it refuses to split', () => {
+    it('does not cut two Rx numbers into a telephone number', () => {
+        /* Eighteen digits. Not a multiple of ten, so the branch cannot
+           be reached at all -- which is why the multiple is the gate. */
+        expect(findPhones('Rx: 912345671 912345672')).toEqual([]);
+    });
+
+    it('does not cut a reference and an Rx into one either', () => {
+        expect(findPhones('REFERENCE: 04000001 Rx: 912345671')).toEqual([]);
+    });
+
+    it('throws away the whole run when only half of it reads as a number', () => {
+        /* Twenty digits, so it reaches the branch -- and the second ten
+           starts with a 0, which no area code does. Keeping the good
+           half would be the guess this file exists to avoid: the run was
+           never two numbers side by side, so neither reading is safe. */
+        expect(findPhones('PHONE 21055501470155550199')).toEqual([]);
+    });
+
+    it('leaves a number written with spaces in it alone', () => {
+        /* "210 555 0147" is ONE number. The whole run is weighed before
+           anything is cut, which is the only reason this survives. */
+        expect(findPhones('Mobile: 210 555 0147').map((c) => c.digits)).toEqual(['2105550147']);
+    });
+
+    it('finds the number in a line of things that are not numbers', () => {
+        /* Twenty-seven digits, no clean multiple, so the pieces are
+           weighed one at a time and only the one that is a number
+           survives. */
+        const got = findPhones('210-555-0147 04000001 912345671');
+        expect(got.map((c) => c.digits)).toEqual(['2105550147']);
+    });
+
+    it('is still not fooled by the whole sheet', () => {
+        /* The widened run ceiling is the risk this guards: a line of the
+           real form must not now read as a telephone number. */
+        expect(findPhones(SHEET).map((c) => c.digits)).toEqual(['2105550147']);
+    });
+});
