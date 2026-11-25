@@ -2097,6 +2097,13 @@ body {
     padding: 16px;
     margin-bottom: 12px;
 }
+/* A delivery that is NOT on today's or tomorrow's list, drawn under the
+   ones that are. Dimmer and marked on its face: the two lists run one
+   after the other, and the only thing between a sorter and putting last
+   Tuesday's package in today's pile is knowing which they are reading. */
+.izy-sort-card.is-other-day { border-style: dashed; opacity: 0.88; }
+.izy-sort-when { margin: 0 0 8px; font-size: 0.9rem; }
+.izy-sort-card.is-other-day .izy-sort-driver { font-size: 1.4rem; }
 .izy-sort-driver { display: block; font-size: 2rem; line-height: 1.15; }
 .izy-sort-driver.none { font-size: 1.4rem; opacity: 0.75; }
 .izy-sort-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 12px 0 0; }

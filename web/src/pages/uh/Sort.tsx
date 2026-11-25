@@ -122,6 +122,9 @@ export function Sort({ projectCode }: { projectCode: string }) {
     /** Every number the sheet gave up, in the order they were asked. */
     const [asked, setAsked] = useState<string[]>([]);
     const [matches, setMatches] = useState<Match[] | null>(null);
+    /** Deliveries with this number that are NOT on today's or tomorrow's
+     *  list. Only ever filled when `matches` came back empty. */
+    const [elsewhere, setElsewhere] = useState<Match[]>([]);
     /** A read came back with no number in it. Guidance, never an error. */
     const [missed, setMissed] = useState(false);
 
@@ -212,19 +215,33 @@ export function Sort({ projectCode }: { projectCode: string }) {
         setBusy('looking');
         setErr('');
         setMatches(null);
+        setElsewhere([]);
         setAsked(wanted);
         try {
             /* A POST, and the number is in the BODY. A telephone number
                identifies a patient, and a patient's identifier in a URL
                reaches browser history, proxies and every log that keeps a
                request line. See modules/uh/search.ts on the server. */
-            const got = await Promise.all(wanted.map((phone) => api<{ matches: Match[] }>(
+            const got = await Promise.all(wanted.map((phone) => api<{
+                matches: Match[]; elsewhere?: Match[];
+            }>(
                 `/api/projects/${projectCode}/uh/sort/lookup`,
                 { method: 'POST', json: { phone } },
             )));
             const byOrder = new Map<number, Match>();
             for (const one of got) for (const m of one.matches) byOrder.set(m.orderId, m);
             setMatches([...byOrder.values()]);
+            /* ONLY WHEN TODAY HAS NOTHING, which is also the only time the
+               server fills it. Two numbers can disagree -- the mobile on
+               today's list and the landline on last week's -- and in that
+               case the one in the pile wins and the other is noise.
+               `?? []` because a browser holding a cached bundle can
+               outlive the server that grew this field. */
+            setElsewhere(byOrder.size > 0 ? [] : (() => {
+                const past = new Map<number, Match>();
+                for (const one of got) for (const m of one.elsewhere ?? []) past.set(m.orderId, m);
+                return [...past.values()];
+            })());
         } catch (e) {
             setErr(why(e, 'That number could not be looked up.'));
         } finally {
@@ -291,7 +308,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
     }, [live, settled, err, look]);
 
     const clear = () => {
-        setMatches(null); setAsked([]); setErr(''); setMissed(false);
+        setMatches(null); setElsewhere([]); setAsked([]); setErr(''); setMissed(false);
     };
 
     return (
@@ -387,56 +404,96 @@ export function Sort({ projectCode }: { projectCode: string }) {
                         <button type="button" className="izy-btn secondary small" onClick={clear}>Clear</button>
                     </div>
 
-                    {matches.length === 0 && (
+                    {/* ── NOTHING TODAY, AND WHETHER WE KNOW THE NUMBER AT
+                        ALL. One sentence used to cover both, and they are
+                        different problems: a number nobody has ever sent
+                        us is a bad read or the wrong package, and a
+                        delivery that went out last Tuesday is a sorter
+                        holding a sheet in front of a screen pretending
+                        not to recognise it. */}
+                    {matches.length === 0 && elsewhere.length === 0 && (
                         <p className="izy-alert warn" role="status">
                             No delivery with {asked.length === 1 ? 'that number' : 'either number'} is
-                            on today’s or tomorrow’s list. Check the
-                            digits, or the package is for a later day.
+                            on today’s or tomorrow’s list, and we have none on any other day
+                            either. Check the digits against the sheet.
                         </p>
                     )}
 
-                    {matches.map((m) => (
-                        <article key={m.orderId} className="izy-sort-card">
-                            {/* THE ANSWER, IN THE BIGGEST TYPE ON THE PAGE. It
-                                is read at arm's length over a trolley. */}
-                            {m.driver ? (
-                                <strong className="izy-sort-driver">{m.driver.name}</strong>
-                            ) : (
-                                <strong className="izy-sort-driver none">Not assigned yet</strong>
-                            )}
-                            {m.driver && m.driver.stop !== null && (
-                                <span className="izy-muted">
-                                    {m.driver.run} · stop {m.driver.stop}
-                                </span>
-                            )}
-                            {!m.driver && (
-                                <span className="izy-muted">
-                                    Nobody is carrying this one. Leave it out of the piles and tell dispatch.
-                                </span>
-                            )}
-                            {/* Enough to be sure it is the package in hand.
-                                The patient is named because a four-digit
-                                match is not unique and the sheet in the
-                                sorter's other hand has the name on it. No
-                                address: that is on the sheet too, and a
-                                screen in a warehouse is read over more
-                                shoulders than a sheet is. */}
-                            <dl className="izy-sort-facts">
-                                <div><dt>Patient</dt><dd>{m.patient}</dd></div>
-                                <div><dt>Pharmacy</dt><dd>{m.pharmacy}</dd></div>
-                                <div><dt>Date</dt><dd>{m.serviceDate}</dd></div>
-                                {m.reference !== '' && <div><dt>Ref</dt><dd>{m.reference}</dd></div>}
-                                <div><dt>State</dt><dd>{m.status}</dd></div>
-                            </dl>
-                            {m.handling.length > 0 && (
-                                <p className="izy-sort-flags">
-                                    {m.handling.map((f) => <span key={f} className="izy-pill warn">{f}</span>)}
-                                </p>
-                            )}
-                        </article>
-                    ))}
+                    {matches.length === 0 && elsewhere.length > 0 && (
+                        <p className="izy-alert warn" role="status">
+                            Not on today’s or tomorrow’s list. {elsewhere.length === 1
+                                ? 'There is one delivery'
+                                : `There are ${elsewhere.length} deliveries`} with
+                            {' '}{asked.length === 1 ? 'that number' : 'one of those numbers'} on
+                            another day, below. Do not put this package in a pile on
+                            {' '}{elsewhere.length === 1 ? 'its' : 'their'} account.
+                        </p>
+                    )}
+
+                    {matches.map((m) => <Found key={m.orderId} m={m} />)}
+                    {elsewhere.map((m) => <Found key={m.orderId} m={m} otherDay />)}
                 </div>
             )}
         </div>
+    );
+}
+
+/**
+ * One delivery that matched, as the bench reads it.
+ *
+ * `otherDay` is the same card for a delivery that is NOT on today's or
+ * tomorrow's list. It says so on its face rather than relying on the
+ * sentence above it, because the two lists are drawn one after the other
+ * and the only thing standing between a sorter and putting last
+ * Tuesday's package in today's pile is knowing which they are looking
+ * at. The driver's name is deliberately not the big type on it: on this
+ * card the date is the thing that matters.
+ */
+function Found({ m, otherDay = false }: { m: Match; otherDay?: boolean }) {
+    return (
+        <article className={`izy-sort-card${otherDay ? ' is-other-day' : ''}`}>
+            {otherDay && (
+                <p className="izy-sort-when">
+                    <span className="izy-pill warn">another day</span>
+                    {' '}{m.serviceDate}
+                </p>
+            )}
+            {/* THE ANSWER, IN THE BIGGEST TYPE ON THE PAGE. It
+                is read at arm's length over a trolley. */}
+            {m.driver ? (
+                <strong className="izy-sort-driver">{m.driver.name}</strong>
+            ) : (
+                <strong className="izy-sort-driver none">Not assigned yet</strong>
+            )}
+            {m.driver && m.driver.stop !== null && (
+                <span className="izy-muted">
+                    {m.driver.run} · stop {m.driver.stop}
+                </span>
+            )}
+            {!m.driver && !otherDay && (
+                <span className="izy-muted">
+                    Nobody is carrying this one. Leave it out of the piles and tell dispatch.
+                </span>
+            )}
+            {/* Enough to be sure it is the package in hand.
+                The patient is named because a four-digit
+                match is not unique and the sheet in the
+                sorter's other hand has the name on it. No
+                address: that is on the sheet too, and a
+                screen in a warehouse is read over more
+                shoulders than a sheet is. */}
+            <dl className="izy-sort-facts">
+                <div><dt>Patient</dt><dd>{m.patient}</dd></div>
+                <div><dt>Pharmacy</dt><dd>{m.pharmacy}</dd></div>
+                <div><dt>Date</dt><dd>{m.serviceDate}</dd></div>
+                {m.reference !== '' && <div><dt>Ref</dt><dd>{m.reference}</dd></div>}
+                <div><dt>State</dt><dd>{m.status}</dd></div>
+            </dl>
+            {m.handling.length > 0 && (
+                <p className="izy-sort-flags">
+                    {m.handling.map((f) => <span key={f} className="izy-pill warn">{f}</span>)}
+                </p>
+            )}
+        </article>
     );
 }

@@ -139,18 +139,40 @@ export function createSortRouter({ client }: { client: Client }): Router {
         until.setUTCDate(until.getUTCDate() + days);
         const to = until.toISOString().slice(0, 10);
 
-        const where: string[] = ['o.project_id = ?', 'o.service_date >= ?', 'o.service_date <= ?'];
-        const args: InValue[] = [project.id, from, to];
+        const where: string[] = ['o.project_id = ?'];
+        const args: InValue[] = [project.id];
 
         /* TEN DIGITS IS THE WHOLE NUMBER AND MATCHES EXACTLY. Anything
            shorter is the tail of one, which is what the manual fallback
            sends, and matches on the end rather than anywhere inside: a
            "contains" on 4 digits would match an area code and return half
            a pharmacy's day. Stored normalised (import-parse.ts), so there
-           is nothing to strip on this side. */
+           is nothing to strip on this side.
+
+           ── AND THE CELL THAT HELD TWO NUMBERS.
+
+           normalizePhone() strips every non-digit and keeps the rest, so a
+           spreadsheet cell reading "210-555-0147 / 210-555-0199" is stored
+           as TWENTY digits. The equality above can never match either half
+           of that, and nothing anywhere says so: the delivery simply
+           cannot be looked up, for ever. University Health's own form has
+           a Mobile and a Home box on it, so a column with both in it is
+           not a hypothetical shape.
+
+           The second branch finds a whole number inside such a value, and
+           only on a ten-digit boundary -- `instr` alone would match a
+           needle lying across the seam between two numbers and answer with
+           somebody else's delivery. The boundary rule is only sound when
+           the stored length is itself a multiple of ten, which is exactly
+           the case it is for. */
         if (digits.length >= 10) {
-            where.push('o.recipient_phone = ?');
-            args.push(digits.slice(-10));
+            const ten = digits.slice(-10);
+            where.push(`(o.recipient_phone = ?
+                         OR (length(o.recipient_phone) > 10
+                             AND length(o.recipient_phone) % 10 = 0
+                             AND instr(o.recipient_phone, ?) > 0
+                             AND (instr(o.recipient_phone, ?) - 1) % 10 = 0))`);
+            args.push(ten, ten, ten);
         } else {
             where.push('o.recipient_phone LIKE ?');
             args.push(`%${digits}`);
@@ -199,7 +221,9 @@ export function createSortRouter({ client }: { client: Client }): Router {
             }
         }
 
-        const rs = await client.execute({
+        /* THE DATE WINDOW IS ON THE QUERY, NOT ON `where`, because the
+           second query below is the same question without it. */
+        const find = (extra: string[], extraArgs: InValue[], order: string, limit: number) => client.execute({
             sql: `SELECT o.id, o.external_ref, o.recipient_name, o.service_date, o.service_type,
                          o.status, o.zone, ${handlingColumns('o')},
                          s.name AS site_name,
@@ -211,13 +235,21 @@ export function createSortRouter({ client }: { client: Client }): Router {
                     LEFT JOIN run_stops rs2 ON rs2.order_id = o.id
                     LEFT JOIN runs r ON r.id = rs2.run_id AND r.status != 'cancelled'
                     LEFT JOIN users u ON u.username = r.courier_username
-                   WHERE ${where.join(' AND ')}
-                   ORDER BY o.service_date, o.id
-                   LIMIT 25`,
-            args,
+                   WHERE ${[...where, ...extra].join(' AND ')}
+                   ORDER BY ${order}
+                   LIMIT ${limit}`,
+            args: [...args, ...extraArgs],
         });
 
-        const matches = rs.rows.map((o) => {
+        const rs = await find(
+            ['o.service_date >= ?', 'o.service_date <= ?'], [from, to],
+            'o.service_date, o.id', 25,
+        );
+
+        /* ONE PRESENTER, because the second query below returns the same
+           rows and a client that got a different shape from the fallback
+           would have to learn two. */
+        const present = (o: Record<string, unknown>) => {
             const handling = presentHandling(o as unknown as HandlingRow);
             return {
                 orderId: Number(o['id']),
@@ -247,7 +279,48 @@ export function createSortRouter({ client }: { client: Client }): Router {
                             ? null : Number(o['stop_number']),
                     },
             };
-        });
+        };
+
+        const matches = rs.rows.map((r) => present(r as unknown as Record<string, unknown>));
+
+        /* ───────────── AND WHEN THE WINDOW FOUND NOTHING, LOOK PAST IT.
+         *
+         * "No delivery with that number is on today's or tomorrow's list"
+         * was the whole of the answer, and it is the same sentence for two
+         * completely different situations: a number we have never seen,
+         * and a delivery we know perfectly well that happened last Tuesday.
+         * The first is a bad read or a wrong package. The second is a
+         * sorter holding a sheet, looking at a screen that is behaving as
+         * though it has never heard of it, with no way to tell which.
+         *
+         * Reported on 25 November from the bench, scanning a sheet for an
+         * order that existed and was assigned.
+         *
+         * SO THE SECOND QUESTION IS ASKED ONLY WHEN THE FIRST FOUND
+         * NOTHING, and its answer is kept separate: `matches` is still
+         * only what is on today's or tomorrow's list, because that is what
+         * decides which pile a package goes in and nothing here may blur
+         * it. `elsewhere` is there to be read, not acted on.
+         *
+         * NO WIDER THAN THE CALLER ALREADY IS. `where` still carries the
+         * lead's counters, the pharmacy's sites and the courier's own
+         * runs; only the two date clauses are dropped. A pharmacy can
+         * already export its own history and a driver can already see
+         * their own round, so this reaches no further back than a page
+         * each of them already has -- it just answers in one second rather
+         * than five minutes.
+         */
+        const elsewhere = matches.length > 0 ? [] : (await find(
+            ['(o.service_date < ? OR o.service_date > ?)'],
+            /* Three binds: the two in the WHERE, then the one in the
+               ORDER BY. SQLite numbers `?` across the whole statement, so
+               the order of this array is the order they appear in the
+               SQL, not the order of the clauses they belong to. */
+            [from, to, from],
+            /* Nearest to today first: the likeliest explanation of a sheet
+               in somebody's hand is yesterday's round, not March. */
+            'ABS(JULIANDAY(o.service_date) - JULIANDAY(?)) ASC, o.id DESC', 3,
+        ).then((r) => r.rows.map((row) => present(row as unknown as Record<string, unknown>))));
 
         /* DIGITS, NOT THE NUMBER. How many were offered says whether this
            was a scan or a typed tail, which is what anybody reviewing the
@@ -257,11 +330,15 @@ export function createSortRouter({ client }: { client: Client }): Router {
             digits: digits.length,
             matched: matches.length,
             orderIds: matches.map((m) => m.orderId),
+            /* The fallback is a read of deliveries outside the window, so
+               it is the half of this route most worth being able to find
+               in the trail later. */
+            elsewhere: elsewhere.map((m) => m.orderId),
             from,
             to,
         });
 
-        res.json({ from, to, matches });
+        res.json({ from, to, matches, elsewhere });
     }));
 
     return router;

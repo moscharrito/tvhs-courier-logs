@@ -120,10 +120,76 @@ describe('looking a number up', () => {
     });
 
     it('says when nothing matched at all', async () => {
-        mockFetch({ [LOOKUP]: { matches: [] } });
+        mockFetch({ [LOOKUP]: { matches: [], elsewhere: [] } });
         scanned('Mobile: 210-555-0199');
 
-        await screen.findByText(/No delivery with that number/);
+        await screen.findByText(/we have none on any other day either/);
+    });
+
+    /* ── NOTHING TODAY IS TWO DIFFERENT ANSWERS.
+     *
+     * Reported from the bench on 25 November: a sheet was scanned, both
+     * numbers came off it correctly, and the page said no delivery had
+     * either of them -- for an order that existed and was assigned, on
+     * an earlier day. "Not on today's list" and "never heard of it" read
+     * identically, so there was no way to tell a bad read from a package
+     * for another day. */
+    it('shows the delivery it found on another day, with its driver', async () => {
+        mockFetch({
+            [LOOKUP]: {
+                matches: [],
+                elsewhere: [match({ serviceDate: '2026-09-02', status: 'delivered' })],
+            },
+        });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText(/There is one delivery/);
+        const card = screen.getByText('Ana Driver').closest('article')!;
+        expect(card).toHaveTextContent('Test Patient Alpha');
+        /* Twice on purpose -- once on the banner and once in the facts --
+           so toHaveTextContent rather than a getByText that would refuse
+           two matches. */
+        expect(card).toHaveTextContent('2026-09-02');
+    });
+
+    it('marks it as another day on its face, not only in the sentence', async () => {
+        /* The two lists are drawn one after the other, and the only
+           thing between a sorter and putting last Tuesday's package in
+           today's pile is knowing which they are reading. */
+        mockFetch({
+            [LOOKUP]: { matches: [], elsewhere: [match({ serviceDate: '2026-09-02' })] },
+        });
+        scanned('Mobile: 210-555-0147');
+
+        const card = (await screen.findByText('Ana Driver')).closest('article')!;
+        expect(within(card).getByText('another day')).toBeInTheDocument();
+    });
+
+    it('does not offer another day when today already answered', async () => {
+        /* The sorter has what they came for; a second list under it is
+           noise at best and a wrong pile at worst. The server sends none
+           either, so this is belt and braces on the half that renders. */
+        mockFetch({
+            [LOOKUP]: {
+                matches: [match()],
+                elsewhere: [match({ orderId: 99, patient: 'Older Patient' })],
+            },
+        });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Ana Driver');
+        expect(screen.queryByText('Older Patient')).not.toBeInTheDocument();
+        expect(screen.queryByText('another day')).not.toBeInTheDocument();
+    });
+
+    it('still renders against a server that has never heard of elsewhere', async () => {
+        /* A browser holding a cached bundle outlives the server that
+           grew the field. A page that throws here is worse than one
+           missing a line. */
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Ana Driver');
     });
 
     it('shows every match when four digits found more than one', async () => {

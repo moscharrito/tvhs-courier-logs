@@ -186,6 +186,114 @@ describe('what it will not answer', () => {
 
 });
 
+/* ── WHEN THE WINDOW FINDS NOTHING, SAY WHETHER WE KNOW THE NUMBER.
+ *
+ * Reported from the bench on 25 November: a sheet was scanned, the
+ * numbers were read off it correctly, and the page said no delivery had
+ * either of them -- for an order that existed and was assigned, on an
+ * earlier day. "Not on today's list" and "never heard of it" were the
+ * same sentence, and there was no way to tell which had happened.
+ */
+describe('a delivery that is real but not on today’s list', () => {
+    it('says so, with the patient and the driver, instead of nothing', async () => {
+        const old = await order({ phone: '210-555-7101', on: plus(-6), name: 'Earlier Patient' });
+        await carriedBy('sort.ana', [old]);
+
+        const res = await look(admin, { phone: '210-555-7101' });
+        expect(res.status, res.text).toBe(200);
+        /* STILL NOT A MATCH. What goes in a pile today is unchanged; this
+           is there to be read, not acted on. */
+        expect(res.body.matches).toHaveLength(0);
+        expect(res.body.elsewhere.map((m) => m.orderId)).toEqual([old]);
+        expect(res.body.elsewhere[0].patient).toBe('Earlier Patient');
+        expect(res.body.elsewhere[0].driver.name).toBeTruthy();
+        expect(res.body.elsewhere[0].serviceDate).toBe(plus(-6));
+    });
+
+    it('keeps quiet about other days when today has an answer', async () => {
+        /* The sorter has what they came for. A second list under it is
+           noise at best and a wrong pile at worst. */
+        const old = await order({ phone: '210-555-7102', on: plus(-4) });
+        const now = await order({ phone: '210-555-7102' });
+
+        const res = await look(admin, { phone: '210-555-7102' });
+        expect(res.body.matches.map((m) => m.orderId)).toEqual([now]);
+        expect(res.body.elsewhere).toEqual([]);
+        expect(JSON.stringify(res.body.elsewhere)).not.toContain(String(old));
+    });
+
+    it('is empty when the number is genuinely unknown', async () => {
+        const res = await look(admin, { phone: '210-555-7103' });
+        expect(res.body.matches).toEqual([]);
+        expect(res.body.elsewhere).toEqual([]);
+    });
+
+    it('offers the nearest days first, and not a history lesson', async () => {
+        await order({ phone: '210-555-7104', on: plus(-40) });
+        const near = await order({ phone: '210-555-7104', on: plus(-1) });
+        await order({ phone: '210-555-7104', on: plus(-30) });
+        await order({ phone: '210-555-7104', on: plus(-20) });
+
+        const res = await look(admin, { phone: '210-555-7104' });
+        expect(res.body.elsewhere).toHaveLength(3);
+        expect(res.body.elsewhere[0].orderId).toBe(near);
+    });
+
+    it('reaches no further than the caller already does', async () => {
+        /* THE WHOLE SAFETY OF LOOKING PAST THE WINDOW. Only the two date
+           clauses are dropped; a courier is still pinned to their own
+           runs, so somebody else's old delivery is not a back door. */
+        const old = await order({ phone: '210-555-7105', on: plus(-3) });
+        await carriedBy('sort.bo', [old]);
+
+        const ana = srv.agent();
+        await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
+        const res = await look(ana, { phone: '210-555-7105' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches).toEqual([]);
+        expect(res.body.elsewhere).toEqual([]);
+    });
+});
+
+/* ── A SPREADSHEET CELL WITH TWO NUMBERS IN IT.
+ *
+ * normalizePhone strips every non-digit and keeps the rest, so
+ * "210-555-0147 / 210-555-0199" is stored as twenty digits and an
+ * equality on either half never matches. University Health's own form
+ * has a Mobile box and a Home box on it, so a column carrying both is
+ * not a hypothetical shape -- and the failure is silent: the delivery
+ * simply cannot be looked up, ever, and nothing says why.
+ */
+describe('an order whose telephone column held two numbers', () => {
+    it('is found by the first of them', async () => {
+        const id = await order({ phone: '210-555-7201 / 210-555-7202' });
+        const res = await look(admin, { phone: '210-555-7201' });
+        expect(res.body.matches.map((m) => m.orderId)).toEqual([id]);
+    });
+
+    it('is found by the second of them', async () => {
+        const id = await order({ phone: '210-555-7203 / 210-555-7204' });
+        const res = await look(admin, { phone: '210-555-7204' });
+        expect(res.body.matches.map((m) => m.orderId)).toEqual([id]);
+    });
+
+    it('is not found by digits lying across the seam between them', async () => {
+        /* A plain `instr` would match here and answer with a delivery
+           belonging to somebody else entirely. The stored value is
+           2105557205 2105557206 run together; this needle is the last
+           six of the first and the first four of the second. */
+        await order({ phone: '210-555-7205 / 210-555-7206' });
+        const res = await look(admin, { phone: '5572052105' });
+        expect(res.body.matches).toEqual([]);
+    });
+
+    it('leaves a single stored number matching exactly, as it always did', async () => {
+        const id = await order({ phone: '210-555-7207' });
+        const res = await look(admin, { phone: '210-555-7207' });
+        expect(res.body.matches.map((m) => m.orderId)).toEqual([id]);
+    });
+});
+
 describe('what a courier may resolve', () => {
     /* ── THIS ROUTE WAS CLOSED TO COURIERS UNTIL 24 NOVEMBER 2026, and the
        test here asserted the 403. The objection was that it "would let them
