@@ -66,7 +66,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, why } from '../../lib/api';
 import { cameraAdvice } from '../../lib/browser';
-import { findPhones } from '../../lib/phone-scan';
+import { findPhones, findPlaces } from '../../lib/phone-scan';
 import { readDigits, scanSupported } from '../../lib/read-sheet';
 
 interface Match {
@@ -98,6 +98,25 @@ interface OtherRound {
 }
 
 /**
+ * One thing off the sheet that a delivery can be found by.
+ *
+ * A telephone number, or a doorstep -- the house number and the ZIP,
+ * printed two lines above the number and in the green box already.
+ *
+ * THE SECOND ONE EXISTS BECAUSE THE FIRST DOES NOT ALWAYS WORK, and
+ * that is a fact about University Health's paper rather than about this
+ * code: their spreadsheet sends one phone column, their label prints
+ * the patient's contact block, and where those disagree the number a
+ * sorter can see is one we were never sent. See the Lookup schema in
+ * modules/uh/sort.ts for the measurements that chose the doorstep over
+ * the patient's name, and read-sheet.ts for the whitelist it did not
+ * have to widen.
+ */
+type LookupKey = { phone: string } | { house: string; zip: string };
+
+const isPhone = (k: LookupKey): k is { phone: string } => 'phone' in k;
+
+/**
  * Between one read and the next.
  *
  * A read is most of a second on a bench handset, so this is not the rate
@@ -120,6 +139,18 @@ const GAP = 350;
  */
 const MOST_NUMBERS = 3;
 
+/**
+ * How many lookups one read may fire in total.
+ *
+ * Numbers and doorsteps together, because the cost being bought is
+ * round trips on warehouse wifi with a sorter stood waiting and the
+ * route does not care which kind each one is. Four is two numbers and
+ * two addresses, which is the whole of a RECIPIENT panel; past that the
+ * box is holding the sheet rather than the panel and more requests will
+ * not rescue the read.
+ */
+const MOST_KEYS = 4;
+
 const pause = (ms: number) => new Promise((r) => { setTimeout(r, ms); });
 
 /** 210-555-0147 out of 2105550147, for reading back off a screen. */
@@ -135,8 +166,11 @@ export function Sort({ projectCode }: { projectCode: string }) {
     const [busy, setBusy] = useState<'' | 'camera' | 'looking'>('');
     const [err, setErr] = useState('');
     /** More than one number on the sheet survived. The sorter picks. */
-    /** Every number the sheet gave up, in the order they were asked. */
+    /** Every key the sheet gave up, written out, in the order asked. */
     const [asked, setAsked] = useState<string[]>([]);
+    /** Whether any of them was a doorstep, which changes what we say
+     *  when nothing comes back. */
+    const [askedDoor, setAskedDoor] = useState(false);
     const [matches, setMatches] = useState<Match[] | null>(null);
     /** Held, but on somebody else's round. Driver only -- no patient. */
     const [otherRounds, setOtherRounds] = useState<OtherRound[]>([]);
@@ -227,24 +261,25 @@ export function Sort({ projectCode }: { projectCode: string }) {
      * wifi with a sorter stood waiting. findPhones ranks the labelled
      * ones first, so the cap takes from the good end.
      */
-    const look = useCallback(async (numbers: string[]) => {
-        const wanted = numbers.slice(0, MOST_NUMBERS);
+    const look = useCallback(async (keys: LookupKey[]) => {
+        const wanted = keys.slice(0, MOST_KEYS);
         setBusy('looking');
         setErr('');
         setMatches(null);
         setOtherRounds([]);
         setToday('');
-        setAsked(wanted);
+        setAsked(wanted.map((k) => (isPhone(k) ? pretty(k.phone) : `no. ${k.house} · ${k.zip}`)));
+        setAskedDoor(wanted.some((k) => !isPhone(k)));
         try {
             /* A POST, and the number is in the BODY. A telephone number
                identifies a patient, and a patient's identifier in a URL
                reaches browser history, proxies and every log that keeps a
                request line. See modules/uh/search.ts on the server. */
-            const got = await Promise.all(wanted.map((phone) => api<{
+            const got = await Promise.all(wanted.map((key) => api<{
                 matches: Match[]; today?: string; otherRounds?: OtherRound[];
             }>(
                 `/api/projects/${projectCode}/uh/sort/lookup`,
-                { method: 'POST', json: { phone } },
+                { method: 'POST', json: key },
             )));
             const byOrder = new Map<number, Match>();
             for (const one of got) for (const m of one.matches) byOrder.set(m.orderId, m);
@@ -308,11 +343,22 @@ export function Sort({ projectCode }: { projectCode: string }) {
                 try {
                     const text = await readDigits(el);
                     if (cancelled) return;
-                    const found = findPhones(text);
-                    /* ANY NUMBER AT ALL GOES STRAIGHT THROUGH, however
+                    /* BOTH KEYS OFF ONE READ, and both looked up
+                       rather than the doorstep being held back for
+                       when the number fails. Holding it back would
+                       cost a second round trip on exactly the sheets
+                       this was built for -- the ones where the number
+                       on the label is not the number we were sent --
+                       and those are not the rare case at this
+                       contract. Duplicates collapse by order id. */
+                    const keys: LookupKey[] = [
+                        ...findPhones(text).slice(0, MOST_NUMBERS).map((c) => ({ phone: c.digits })),
+                        ...findPlaces(text).map((d) => ({ house: d.house, zip: d.zip })),
+                    ];
+                    /* ANYTHING AT ALL GOES STRAIGHT THROUGH, however
                        many there were. See look() for why two numbers
                        are no longer a question put to the sorter. */
-                    if (found.length > 0) { await look(found.map((c) => c.digits)); return; }
+                    if (keys.length > 0) { await look(keys); return; }
                     setMissed(true);
                 } catch (e) {
                     if (cancelled) return;
@@ -335,7 +381,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
 
     const clear = () => {
         setMatches(null); setOtherRounds([]); setToday(''); setAsked([]);
-        setErr(''); setMissed(false);
+        setAskedDoor(false); setErr(''); setMissed(false);
     };
 
     return (
@@ -424,10 +470,8 @@ export function Sort({ projectCode }: { projectCode: string }) {
                             result needs to see what the camera took off
                             the sheet, and a panel with two numbers on it
                             is now two lookups behind one answer. */}
-                        <span className="izy-muted">
-                            {asked.length === 1 ? 'Looked up' : 'Looked up both'}
-                        </span>
-                        {' '}{asked.map(pretty).join(' · ')}
+                        <span className="izy-muted">Looked up</span>
+                        {' '}{asked.join(' · ')}
                         <button type="button" className="izy-btn secondary small" onClick={clear}>Clear</button>
                     </div>
 
@@ -441,9 +485,16 @@ export function Sort({ projectCode }: { projectCode: string }) {
                         nothing in the contract carries that number. */}
                     {matches.length === 0 && otherRounds.length === 0 && (
                         <p className="izy-alert warn" role="status">
-                            We have no delivery at all with
-                            {' '}{asked.length === 1 ? 'that number' : 'either number'} on
-                            this account. Check the digits against the sheet.
+                            {askedDoor
+                                /* The address was read too, so "check the
+                                   digits" is no longer the whole advice:
+                                   the panel was understood and nothing we
+                                   hold matches any of it. */
+                                ? <>We have no delivery at all on this account matching what the
+                                    camera read. Check it against the sheet.</>
+                                : <>We have no delivery at all with
+                                    {' '}{asked.length === 1 ? 'that number' : 'either number'} on
+                                    this account. Check the digits against the sheet.</>}
                         </p>
                     )}
 

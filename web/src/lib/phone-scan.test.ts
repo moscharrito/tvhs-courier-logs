@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { findPhones, OUR_NUMBERS } from './phone-scan';
+import { findPhones, findPlaces, OUR_NUMBERS } from './phone-scan';
 
 /** Roughly what a reader returns for the whole sheet. */
 const SHEET = `
@@ -239,5 +239,106 @@ describe('what it refuses to split', () => {
         /* The widened run ceiling is the risk this guards: a line of the
            real form must not now read as a telephone number. */
         expect(findPhones(SHEET).map((c) => c.digits)).toEqual(['2105550147']);
+    });
+});
+
+
+/* ───────────────── THE DOOR, NOT THE TELEPHONE ─────────────────────
+ *
+ * The house number and the ZIP, which are two lines above the number and
+ * in the green box already. They exist because University Health's label
+ * prints a contact block and their spreadsheet sends one phone column,
+ * so the number on the sheet is not always a number we hold.
+ *
+ * Both halves are digits, which is the point: the reader's whitelist does
+ * not change. These cases are mostly about NOT offering a doorstep that
+ * is really a piece count, a zone or the tail of a mobile.
+ */
+describe('finding the doorstep', () => {
+    it('reads the house number and the ZIP off a delivery address', () => {
+        expect(findPlaces('DELIVERY ADDRESS 1100 Rehearsal Way, SAN ANTONIO TX 78207, BEXAR'))
+            .toEqual([{ house: '1100', zip: '78207', seen: '1100 \u2026 78207' }]);
+    });
+
+    it('offers both addresses on the sheet rather than guessing', () => {
+        /* Ours at the top, the patient's in the RECIPIENT box. Same rule
+           as two telephone numbers: both go, neither is chosen. */
+        const found = findPlaces(SHEET);
+        expect(found.length).toBeGreaterThanOrEqual(1);
+        expect(found.map((f) => `${f.house}/${f.zip}`)).toContain('1100/78207');
+    });
+
+    it('never offers more than two, however many numbers are on the page', () => {
+        expect(findPlaces(SHEET).length).toBeLessThanOrEqual(2);
+    });
+
+    it('does not take the last four of a mobile for a house number', () => {
+        /* THE CASE THAT WOULD HAVE BEEN WRONG ON EVERY SHEET. A phone is
+           excluded by WHERE IT SITS, not by its value -- "0147" is a
+           perfectly good house number, and the run in front of a ZIP is
+           exactly where one would be looked for. */
+        expect(findPlaces('Mobile: 210-555-0147\nSAN ANTONIO TX 78207')).toEqual([]);
+    });
+
+    it('takes the real house number when there is one under the mobile', () => {
+        /* The other half of the case above: the mobile is passed over
+           because of where it sits, not because nothing was on offer. */
+        expect(findPlaces('210-555-0147\n8812 Rehearsal Way SAN ANTONIO TX 78213'))
+            .toEqual([{ house: '8812', zip: '78213', seen: '8812 \u2026 78213' }]);
+    });
+
+    it('still finds the door when the ZIP and the mobile share a line', () => {
+        /* A run stops at a newline but not at a space, so this arrives
+           as ONE run which readsAs correctly reports as a telephone
+           number. Marking the whole run as telephone would swallow the
+           ZIP with it, and the doorstep would go quiet on exactly the
+           panels this was built for -- see phoneSpans, which is why the
+           marking is done piece by piece. */
+        expect(findPlaces('8812 , 78213   210-555-0199'))
+            .toEqual([{ house: '8812', zip: '78213', seen: '8812 \u2026 78213' }]);
+        expect(findPhones('8812 , 78213   210-555-0199').map((c) => c.digits))
+            .toEqual(['2105550199']);
+    });
+
+    it('reads a ZIP+4 as a ZIP, not as nine digits', () => {
+        expect(findPlaces('8812 Rehearsal Way, SAN ANTONIO TX 78213-1844'))
+            .toEqual([{ house: '8812', zip: '78213', seen: '8812 \u2026 78213' }]);
+    });
+
+    it('does not read a prescription number as a ZIP and a route', () => {
+        /* Nine digits is an Rx, and a ZIP+4 branch that split it would
+           make an address out of every line down the middle of the sheet. */
+        expect(findPlaces('Rx: 912345671')).toEqual([]);
+    });
+
+    it('will not reach across the page for a house number', () => {
+        /* A piece count at the top and a ZIP at the bottom are not an
+           address, however little else is on the sheet. */
+        const far = `# OF PIECES 7${' '.repeat(90)}SAN ANTONIO TX 78207`;
+        expect(findPlaces(far)).toEqual([]);
+    });
+
+    it('refuses a run too long to be a house number', () => {
+        expect(findPlaces('REFERENCE 0400000112 SAN ANTONIO TX 78207')).toEqual([]);
+    });
+
+    it('says nothing when there is no ZIP in the box at all', () => {
+        /* The commonest real case: the panel is framed on the phone line
+           and the address is above the cut. The scan falls back to the
+           telephone number, which is where it was before this existed. */
+        expect(findPlaces('PHONE (IMPORTANT) Mobile: 210-555-0147')).toEqual([]);
+    });
+
+    it('does not repeat the same doorstep twice', () => {
+        expect(findPlaces('1100 Rehearsal Way 78207 / 1100 Rehearsal Way 78207'))
+            .toHaveLength(1);
+    });
+
+    it('leaves the telephone numbers alone', () => {
+        /* The two readers see the same text and must not eat each
+           other's answers. */
+        const text = 'DELIVERY ADDRESS 1100 Rehearsal Way, SAN ANTONIO TX 78207\nMobile: 210-555-0147';
+        expect(findPhones(text).map((c) => c.digits)).toEqual(['2105550147']);
+        expect(findPlaces(text).map((c) => c.zip)).toEqual(['78207']);
     });
 });

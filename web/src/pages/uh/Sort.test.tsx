@@ -354,6 +354,122 @@ describe('a package on somebody else’s round', () => {
     });
 });
 
+/* ────────────────── THE DOORSTEP AS WELL ─────────────────────────
+ *
+ * University Health's spreadsheet sends one phone column; their label
+ * prints the patient's contact block. Where those disagree the number a
+ * sorter can read is one we were never sent, and before 25 November
+ * that was indistinguishable at the bench from a bad read.
+ *
+ * The house number and the ZIP are in the green box already, two lines
+ * above the number, and both halves are digits so the reader's
+ * whitelist did not have to change. What these cover is the page end:
+ * that it asks, that it says what it asked, and that it does not draw
+ * the same parcel twice when both keys find it.
+ */
+describe('reading the doorstep off the same panel', () => {
+    const PANEL = '8812 Rehearsal Way SAN ANTONIO TX 78213\nMobile: 210-555-0147';
+
+    it('asks about the address as well as the number, off one read', async () => {
+        /* BOTH, NOT THE ADDRESS AS A SECOND ATTEMPT. Holding it back
+           until the number failed would cost a round trip on exactly
+           the sheets this exists for. */
+        readDigits.mockResolvedValue(PANEL);
+        const { calls } = mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(2);
+    });
+
+    it('sends the house number and the ZIP, not the whole address', async () => {
+        readDigits.mockResolvedValue('8812 Rehearsal Way SAN ANTONIO TX 78213');
+        const { bodies } = mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(bodies[LOOKUP]).toEqual({ house: '8812', zip: '78213' });
+    });
+
+    it('answers a panel with no telephone number on it at all', async () => {
+        /* 90 of the 5,515 deliveries in the November snapshot carry no
+           phone. Before this there was no way to look any of them up. */
+        readDigits.mockResolvedValue('8812 Rehearsal Way SAN ANTONIO TX 78213');
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+    });
+
+    it('says the doorstep it asked about, in words a sorter can check', async () => {
+        readDigits.mockResolvedValue(PANEL);
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(screen.getByText(/210-555-0147 · no\. 8812 · 78213/)).toBeInTheDocument();
+    });
+
+    it('draws one card when the number and the address found the same parcel', async () => {
+        /* Which is the ordinary case, and the reason both keys can be
+           fired at once without the screen reading as two packages. */
+        readDigits.mockResolvedValue(PANEL);
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(screen.getAllByText('Ana Driver')).toHaveLength(1);
+    });
+
+    it('stops at four lookups however much the box is holding', async () => {
+        /* Round trips on warehouse wifi with a sorter stood waiting.
+           Past four the box has the sheet in it, not the panel, and
+           more requests will not rescue the read. */
+        readDigits.mockResolvedValue(
+            'Mobile: 210-555-0147, 210-555-0199, 210-555-0188, 210-555-0177\n'
+            + '1 Rehearsal Way SAN ANTONIO TX 78201\n'
+            + '22 Rehearsal Way SAN ANTONIO TX 78202\n'
+            + '333 Rehearsal Way SAN ANTONIO TX 78203',
+        );
+        const { calls } = mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(calls.filter((c) => c.includes('/sort/lookup')).length).toBeLessThanOrEqual(4);
+    });
+
+    it('stops telling them to check the digits once it read the address too', async () => {
+        /* "Check the digits against the sheet" is the right advice when
+           a number is all we had. When the panel was understood and
+           nothing we hold matches any of it, the digits are not the
+           thing to go back and look at. */
+        readDigits.mockResolvedValue(PANEL);
+        mockFetch({ [LOOKUP]: { matches: [], otherRounds: [] } });
+        open();
+
+        await screen.findByText(/matching what the camera read/i);
+        expect(screen.queryByText(/Check the digits against the sheet/)).not.toBeInTheDocument();
+    });
+
+    it('keeps the old sentence when a number was all the panel gave', async () => {
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        mockFetch({ [LOOKUP]: { matches: [], otherRounds: [] } });
+        open();
+
+        await screen.findByText(/no delivery at all with that number on this account/i);
+    });
+
+    it('forgets the doorstep on Clear', async () => {
+        readDigits.mockResolvedValue(PANEL);
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        expect(screen.queryByText(/no\. 8812/)).not.toBeInTheDocument();
+    });
+});
+
 describe('scanning the sheet', () => {
     it('reads one number and goes straight to the answer, with nothing pressed', async () => {
         readDigits.mockResolvedValue('PHONE (IMPORTANT) Mobile: 210-555-0147');

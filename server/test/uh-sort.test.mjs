@@ -314,6 +314,160 @@ describe('an order whose telephone column held two numbers', () => {
     });
 });
 
+/* ────────────────── THE DOORSTEP, FROM 25 NOVEMBER ────────────────
+ *
+ * The telephone number only finds a delivery if it is the number
+ * University Health sent us, and their label prints a contact block
+ * while their spreadsheet sends one phone column. Where those disagree
+ * no scan can match, which is the whole of the 25 November failure.
+ *
+ * The house number and the ZIP are the second key. Measured over the
+ * 5,515 deliveries in the November snapshot it lands on exactly one
+ * address 90.2% of the time, against the phone's 95.3% -- and unlike
+ * the patient's name it costs nothing at the reader, both halves being
+ * digits. See the note on the Lookup schema in modules/uh/sort.ts.
+ */
+describe('finding it by the doorstep instead', () => {
+    /** An order at a known address, so the house number is ours to pick. */
+    async function at(addressLine, zip, over = {}) {
+        seq += 1;
+        const r = await admin.post(`${UH}/orders`).send({
+            siteId,
+            serviceType: 'adhoc',
+            recipientName: over.name ?? `Door Patient ${seq}`,
+            recipientPhone: over.phone ?? '',
+            addressLine,
+            zip,
+            description: 'Oral solids',
+            quantity: 1,
+        });
+        expect(r.status, r.text).toBe(201);
+        if (over.on) await sql('UPDATE orders SET service_date = ? WHERE id = ?', [over.on, r.body.id]);
+        return r.body.id;
+    }
+
+    it('answers with the driver for a house number and a ZIP', async () => {
+        const id = await at('8812 Rehearsal Way', '78213');
+        await carriedBy('sort.ana', [id]);
+
+        const res = await look(admin, { house: '8812', zip: '78213' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches.map((m) => m.orderId)).toContain(id);
+        expect(res.body.matches.find((m) => m.orderId === id).driver.name).toBe('Ana Driver');
+    });
+
+    it('finds one that carries no telephone number at all', async () => {
+        /* THE REASON THIS EXISTS, in its purest form: 90 of the 5,515
+           deliveries in the snapshot hold no phone, and before this
+           there was no way to look any of them up. */
+        const id = await at('4648 Rehearsal Way', '78213');
+        const res = await look(admin, { house: '4648', zip: '78213' });
+        expect(res.body.matches.map((m) => m.orderId)).toContain(id);
+    });
+
+    it('does not answer about the house next door', async () => {
+        /* "47 Oak" must not come back for a scan that read 4, and
+           "1234 Oak" must not come back for 123. The trailing space in
+           the LIKE is the whole of that, so it is asserted. */
+        const short = await at('4 Rehearsal Way', '78231');
+        const long = await at('4000 Rehearsal Way', '78231');
+
+        const res = await look(admin, { house: '4', zip: '78231' });
+        const ids = res.body.matches.map((m) => m.orderId);
+        expect(ids).toContain(short);
+        expect(ids).not.toContain(long);
+    });
+
+    it('does not answer about the same house in another ZIP', async () => {
+        const here = await at('4700 Rehearsal Way', '78232');
+        const there = await at('4700 Rehearsal Way', '78233');
+
+        const ids = (await look(admin, { house: '4700', zip: '78232' })).body.matches
+            .map((m) => m.orderId);
+        expect(ids).toContain(here);
+        expect(ids).not.toContain(there);
+    });
+
+    it('is not fooled by the digits turning up later in the address', async () => {
+        /* A LIKE without the anchor would match "Apartment 4700" and
+           hand the bench somebody else's parcel. */
+        const elsewhere = await at('12 Rehearsal Way Apt 4700', '78234');
+        const ids = (await look(admin, { house: '4700', zip: '78234' })).body.matches
+            .map((m) => m.orderId);
+        expect(ids).not.toContain(elsewhere);
+    });
+
+    it('reaches back through the days, like the number does', async () => {
+        const old = await at('4801 Rehearsal Way', '78235', { on: plus(-30) });
+        const ids = (await look(admin, { house: '4801', zip: '78235' })).body.matches
+            .map((m) => m.orderId);
+        expect(ids).toContain(old);
+    });
+
+    it('refuses a ZIP on its own, which is a filter and not a key', async () => {
+        /* 3.6% of scans would land on one address and 57% on ten or
+           more. Answering would hand a sorter a page of parcels. */
+        const res = await look(admin, { zip: '78213' });
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('sort.noPhone');
+    });
+
+    it('refuses a house number on its own', async () => {
+        const res = await look(admin, { house: '8812' });
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('sort.noPhone');
+    });
+
+    it('refuses a ZIP that is not five digits, or a house that is not digits', async () => {
+        expect((await look(admin, { house: '8812', zip: '782' })).status).toBe(400);
+        expect((await look(admin, { house: '46A7', zip: '78213' })).status).toBe(400);
+    });
+
+    it('takes the telephone number first when both are offered', async () => {
+        /* The better key where we hold the right number. The doorstep
+           is the way round the sheets where we do not. */
+        const byPhone = await at('4900 Rehearsal Way', '78236', { phone: '210-555-7301' });
+        const byDoor = await at('4901 Rehearsal Way', '78236');
+
+        const res = await look(admin, { phone: '210-555-7301', house: '4901', zip: '78236' });
+        const ids = res.body.matches.map((m) => m.orderId);
+        expect(ids).toContain(byPhone);
+        expect(ids).not.toContain(byDoor);
+    });
+
+    it('narrows by scope exactly as the number does', async () => {
+        /* The key changed; who may use it did not. */
+        const theirs = await at('4950 Rehearsal Way', '78237');
+        await carriedBy('sort.bo', [theirs]);
+
+        const ana = srv.agent();
+        await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
+        const res = await look(ana, { house: '4950', zip: '78237' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches).toEqual([]);
+        /* And the out-of-scope fallback answers, as it does for a
+           number, with the driver and nothing that names a patient. */
+        expect(res.body.otherRounds.map((m) => m.orderId)).toContain(theirs);
+        expect(JSON.stringify(res.body.otherRounds)).not.toContain('Door Patient');
+    });
+
+    it('records which key was used, and neither half of it', async () => {
+        /* A house number and a ZIP identify a household as surely as a
+           number identifies a patient. The rule is the same: that
+           somebody asked, never what they asked. */
+        await at('4999 Rehearsal Way', '78238');
+        await look(admin, { house: '4999', zip: '78238' });
+
+        const detail = String((await sql(
+            "SELECT detail FROM audit_events WHERE action = 'sort.lookup' ORDER BY id DESC LIMIT 1",
+        )).rows[0].detail);
+        expect(detail).toMatch(/"by":"door"/);
+        expect(detail).not.toMatch(/4999/);
+        expect(detail).not.toMatch(/78238/);
+        expect(detail).not.toMatch(/Door Patient/);
+    });
+});
+
 describe('what a courier may resolve', () => {
     /* ── THIS ROUTE WAS CLOSED TO COURIERS UNTIL 24 NOVEMBER 2026, and the
        test here asserted the 403. The objection was that it "would let them

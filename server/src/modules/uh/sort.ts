@@ -66,9 +66,51 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
  */
 const MIN_DIGITS = 4;
 
+/**
+ * One key off the sheet: a telephone number, or a doorstep.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * WHY THERE ARE TWO, WHICH IS A FACT ABOUT UNIVERSITY HEALTH'S PAPER.
+ *
+ * Their daily spreadsheet has ONE phone column -- all nine stored import
+ * mappings say so: "Phone", "Phone Number", "PHONE #", "phone#". Their
+ * printed label carries the patient's contact block. Where those two
+ * disagree, the number a sorter can see is a number we were never sent,
+ * no lookup can ever match it, and the bench gets the sentence that
+ * means a bad read about a parcel we are holding and could name the
+ * driver for. That is what 25 November went on.
+ *
+ * The doorstep is the way round it, and it was chosen by measuring the
+ * 5,515 deliveries in the November snapshot -- how often a key lands on
+ * exactly one address on the day it was scanned:
+ *
+ *     ZIP alone                    3.6%   (57% of scans hit 10+ doors)
+ *     house number alone          80.5%
+ *     house number + ZIP          90.2%   <- this
+ *     name alone                  83.6%
+ *     name + house number + ZIP   95.1%
+ *     the telephone number        95.3%
+ *
+ * Within five points of the phone, and free at the reader: both halves
+ * are digits, so the whitelist in web/src/lib/read-sheet.ts is
+ * unchanged. The name would have bought those five points at the cost
+ * of letters in the whitelist on every scan, including the ones that
+ * never needed it.
+ *
+ * ── A ZIP ON ITS OWN IS NOT ACCEPTED, and the table is why: it is not a
+ * key, it is a filter, and it would answer a scan with a page of
+ * parcels. A house number on its own is not accepted either, which is a
+ * closer call at 80.5% -- it is left out because the two are printed on
+ * the same line and a read that got one almost always got the other, so
+ * allowing the weaker key buys little and widens every answer.
+ */
 const Lookup = z.object({
     /** As read off the sheet or typed. Punctuation and spaces are fine. */
-    phone: z.string().trim().min(1).max(40),
+    phone: z.string().trim().max(40).optional(),
+    /** The digits an address starts with. */
+    house: z.string().trim().regex(/^\d{1,6}$/).optional(),
+    /** Five, always: every one of the 5,515 rows in the snapshot. */
+    zip: z.string().trim().regex(/^\d{5}$/).optional(),
 });
 
 export function createSortRouter({ client }: { client: Client }): Router {
@@ -125,12 +167,28 @@ export function createSortRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        const digits = normalizePhone(parsed.data.phone);
-        if (digits.length < MIN_DIGITS) {
+        const { phone, house, zip } = parsed.data;
+        /* WHICH KEY THIS IS. The phone first when there is one: it is
+           the better key where we hold the right number, and the
+           doorstep exists for where we do not. */
+        const by: 'phone' | 'door' = phone !== undefined && phone.trim() !== '' ? 'phone' : 'door';
+
+        const digits = by === 'phone' ? normalizePhone(phone ?? '') : '';
+        if (by === 'phone' && digits.length < MIN_DIGITS) {
             res.status(400).json({
                 error: `That is ${digits.length} ${digits.length === 1 ? 'digit' : 'digits'}. `
                     + `I need at least ${MIN_DIGITS} — the last four off the sheet will do.`,
                 code: 'sort.tooShort',
+            });
+            return;
+        }
+        /* NEITHER KEY. Same code as before so a handset holding an older
+           bundle gets the answer it was built to understand; half a
+           doorstep is the same nothing as an empty body. */
+        if (by === 'door' && (house === undefined || zip === undefined)) {
+            res.status(400).json({
+                error: 'Give me the telephone number from the sheet, or the house number and the ZIP.',
+                code: 'sort.noPhone',
             });
             return;
         }
@@ -171,7 +229,20 @@ export function createSortRouter({ client }: { client: Client }): Router {
            somebody else's delivery. The boundary rule is only sound when
            the stored length is itself a multiple of ten, which is exactly
            the case it is for. */
-        if (digits.length >= 10) {
+        if (by === 'door') {
+            /* ── THE DOORSTEP.
+               `zip` is exact: every one of the 5,515 rows in the
+               snapshot holds five digits, so there is nothing to
+               normalise. The house number is the digits an address
+               STARTS with, which is 5,479 of those rows written
+               "123 Street" and one written bare. LIKE rather than a
+               substring match, because "47 Oak" must not answer a scan
+               that read 4, and the trailing space is what stops "123 "
+               matching "1234 ". The value is digits by the schema
+               above, so it carries no LIKE wildcard to escape. */
+            base.push('o.zip = ? AND (o.address_line LIKE ? OR o.address_line = ?)');
+            baseArgs.push(zip as string, `${house as string} %`, house as string);
+        } else if (digits.length >= 10) {
             const ten = digits.slice(-10);
             base.push(`(o.recipient_phone = ?
                          OR (length(o.recipient_phone) > 10
@@ -380,6 +451,11 @@ export function createSortRouter({ client }: { client: Client }): Router {
            trail would want to know. The number itself would make this table
            a second copy of the contact list. */
         await req.audit('sort.lookup', 'project', String(project.id), {
+            /* WHICH KEY, NOT THE KEY. A house number and a ZIP identify
+               a household as surely as a telephone number identifies a
+               patient, so the same rule applies to both: this table
+               records that somebody asked, never what they asked. */
+            by,
             digits: digits.length,
             matched: matches.length,
             orderIds: matches.map((m) => m.orderId),

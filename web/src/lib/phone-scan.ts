@@ -61,6 +61,50 @@
  * handles it without guessing: see the note on that function.
  */
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * AND THE DOOR, WHICH IS THE OTHER THING THE PANEL SAYS.
+ *
+ * A telephone number only finds a delivery if it is the number
+ * University Health sent us, and on 25 November it turned out that is
+ * not always the number their label prints. Their sheets carry one
+ * phone column; their label carries the patient's contact block. Where
+ * those disagree no scan can ever match, and the bench gets the sentence
+ * that means a bad read about a parcel we are holding.
+ *
+ * So the same read also yields the DOORSTEP: the house number and the
+ * ZIP, which are printed two lines above the number and are in the green
+ * box already.
+ *
+ * ── WHY THAT PAIR AND NOT SOMETHING ELSE. Measured over the 5,515
+ * deliveries in the November snapshot, by how often a key lands on
+ * exactly one address on the day it was scanned:
+ *
+ *     ZIP alone                    3.6%   -- 57% of scans hit 10+ doors
+ *     house number alone          80.5%
+ *     house number + ZIP          90.2%   <- this
+ *     name alone                  83.6%
+ *     name + house number + ZIP   95.1%
+ *     the telephone number        95.3%
+ *
+ * The pair is within five points of the phone and, unlike the name,
+ * COSTS NOTHING AT THE READER: both halves are digits, so the whitelist
+ * in read-sheet.ts does not change. That whitelist is a real part of why
+ * this works at arm's length over a trolley in bad light, and widening
+ * it to A-Z to buy those five points would have been paid for in every
+ * scan rather than the few that need it.
+ *
+ * ── THE RESIDUAL IS SAFE IN A WAY A NAME'S IS NOT. When the pair lands
+ * on two doors the two cards carry two different patient names and the
+ * sorter is holding the sheet with the name on it, so there is something
+ * to choose on. Had the NAME been the key, every card would have said
+ * the same name and the sorter would have had nothing.
+ *
+ * ── TWO ADDRESSES ARE ON THE SHEET: ours at the top and the patient's
+ * in the RECIPIENT box. Both are offered rather than guessed between,
+ * the same way two telephone numbers are -- see findPhones. In the green
+ * box only one of them is usually in frame anyway.
+ */
+
 /** Numbers that belong to us and are printed on every sheet. */
 export const OUR_NUMBERS = [
     '8327158986',
@@ -280,4 +324,136 @@ export function findPhones(text: string): PhoneCandidate[] {
        printed. Array.prototype.sort is stable in every engine this runs
        on, so equal candidates keep their reading order. */
     return found.sort((a, b) => Number(b.near) - Number(a.near));
+}
+
+
+/**
+ * A doorstep the sheet gave up: the house number and the ZIP.
+ *
+ * Both are plain digits. Nothing here is unconfused -- see LOOKALIKE on
+ * why that is only ever done inside something already shaped like a
+ * telephone number. A house number is not a shape, so an O read for a 0
+ * in one is simply a scan that does not match, which is the right
+ * failure.
+ */
+export interface PlaceCandidate {
+    /** 1 to 6 digits, as printed. */
+    house: string;
+    /** Exactly five. */
+    zip: string;
+    /** "8812 ... 78213", for showing back to whoever scanned it. */
+    seen: string;
+}
+
+/**
+ * How far in front of a ZIP a house number may sit and still be its own.
+ *
+ * "1100 Rehearsal Way, SAN ANTONIO TX 78207" is thirty-six characters
+ * between the two; a sheet that spells the state out, or puts the city
+ * on its own line, runs longer. Past this the nearest digits in front of
+ * a ZIP are something else on the page -- a piece count, a zone, a date.
+ */
+const DOOR_REACH = 60;
+
+/** More than this and the box is holding the whole sheet, not a panel. */
+const MOST_PLACES = 2;
+
+/**
+ * Every doorstep this text plausibly contains, in the order printed.
+ *
+ * A ZIP is exactly five digits: there is no ZIP+4 branch, because
+ * "78207-1234" already arrives as a five and a four, and reading nine
+ * digits as a ZIP plus a route would turn every prescription number on
+ * the sheet into an address.
+ *
+ * The house number is the nearest run of digits in front of it that is
+ * not part of a telephone number. Those are excluded by span rather than
+ * by value: the last four of a mobile are a perfectly good house number
+ * and would otherwise be offered as one on every sheet.
+ */
+/**
+ * Exactly where in the text a telephone number sits.
+ *
+ * PIECE BY PIECE, NOT RUN BY RUN, and the difference is the whole
+ * reason this function exists rather than reusing boundedRuns' spans.
+ * A run stops at a newline but not at a space, so a panel that prints
+ * the ZIP and the mobile on one line arrives as a single run --
+ * "78213   210-555-0199" -- which readsAs correctly reports as one
+ * telephone number. Blanking the whole run would blank the ZIP with it,
+ * and the doorstep half of this file would go quiet on exactly the
+ * sheets it was built for.
+ */
+function phoneSpans(text: string): Array<readonly [number, number]> {
+    const out: Array<readonly [number, number]> = [];
+    for (const run of boundedRuns(text)) {
+        /* `raw` can start one character before `at` -- the opening
+           bracket of "(210) 555-0147". */
+        const base = run.at - (run.raw.length - (run.end - run.at));
+        const digits = unconfuse(run.raw).replace(/\D/g, '');
+        /* The whole run is one number, or two run together with the
+           separator lost. Either way every character of it is telephone. */
+        if (asTen(digits) !== null
+            || (digits.length >= 20 && digits.length % 10 === 0 && readsAs(run.raw).length > 0)) {
+            out.push([base, base + run.raw.length]);
+            continue;
+        }
+        /* Otherwise only the pieces that are themselves a number. The
+           split keeps its separators so the offsets stay true. */
+        let i = 0;
+        for (const piece of run.raw.split(/([\t ]+)/)) {
+            if (!/^[\t ]*$/.test(piece)
+                && asTen(unconfuse(piece).replace(/\D/g, '')) !== null) {
+                out.push([base + i, base + i + piece.length]);
+            }
+            i += piece.length;
+        }
+    }
+    return out;
+}
+
+export function findPlaces(text: string): PlaceCandidate[] {
+    const taken = phoneSpans(text);
+    const inPhone = (at: number, end: number) => taken.some(([a, b]) => at < b && end > a);
+
+    /* Maximal runs, so each one is already bounded by something that is
+       not a digit and there is no boundary check to make. */
+    const runs: Array<{ digits: string; at: number; end: number }> = [];
+    for (const m of text.matchAll(/\d+/g)) {
+        const at = m.index;
+        const end = at + m[0].length;
+        if (!inPhone(at, end)) runs.push({ digits: m[0], at, end });
+    }
+
+    /* ── FROM THE BOTTOM, WHICH IS WHERE THE PATIENT IS.
+       Our waybill prints the shipper block above the RECIPIENT block,
+       and our own address above both, so reading forwards offers the
+       pharmacy's door first and -- behind a cap of two -- can push the
+       patient's off the end entirely. That is a property of a sheet we
+       print ourselves, the same kind of thing OUR_NUMBERS is, and it
+       only decides the ORDER: where both survive the read, both are
+       still offered. In the green box there is usually only one. */
+    const out: PlaceCandidate[] = [];
+    const seen = new Set<string>();
+    for (let i = runs.length - 1; i >= 0; i -= 1) {
+        const zip = runs[i]!;
+        if (zip.digits.length !== 5) continue;
+        /* Walk back one run. Not further: the second run back is the
+           other half of something, and guessing which is the sort of
+           cleverness this file exists without. */
+        const house = runs[i - 1];
+        if (house === undefined) continue;
+        if (house.digits.length > 6) continue;
+        if (zip.at - house.end > DOOR_REACH) continue;
+
+        const k = `${house.digits}|${zip.digits}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push({
+            house: house.digits,
+            zip: zip.digits,
+            seen: `${house.digits} \u2026 ${zip.digits}`,
+        });
+        if (out.length === MOST_PLACES) break;
+    }
+    return out;
 }
