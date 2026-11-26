@@ -15,7 +15,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { Section } from '../../app/Section';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { todayRange } from '../../lib/when';
-import type { Site } from './Sites';
+import { PharmacyFilter, usePharmacies } from './PharmacyFilter';
 
 interface Totals {
     orders: number; delivered: number; notDelivered: number; cancelled: number;
@@ -105,18 +105,15 @@ export function Reports() {
      * measured on is the contract; a page that opened on one pharmacy would
      * quietly answer a different question from the one it is named after. */
     const siteId = params.get('siteId') ?? '';
-    const [sites, setSites] = useState<Site[]>([]);
+    /* Narrowed by the range above it: see PharmacyFilter. A counter with
+       nothing in the period cannot appear in this report, so offering it is
+       offering an empty page. */
+    const sites = usePharmacies(code, { from, to });
     /* ONE STRING, USED THREE TIMES: the report request, the reload, and the
        workbook link. The export inheriting the filter is the point -- a
        spreadsheet that silently covered nine counters when the screen above
        it showed one is the kind of mismatch that reaches a client meeting. */
     const query = `from=${from}&to=${to}&groupBy=${groupBy}${siteId === '' ? '' : `&siteId=${siteId}`}`;
-
-    useEffect(() => {
-        /* Silent on failure: without the list the filter offers nothing and
-           the report still builds, which is the behaviour it had before. */
-        void api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
-    }, [code]);
 
     const load = useCallback(async () => {
         setMsg(null);
@@ -190,12 +187,11 @@ export function Reports() {
                             {GROUPINGS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
                         </select>
                     </label>
-                    <label className="izy-field">Pharmacy
-                        <select value={siteId} onChange={(e) => set('siteId', e.target.value)}>
-                            <option value="">Every pharmacy</option>
-                            {sites.map((st) => <option key={st.id} value={String(st.id)}>{st.name}</option>)}
-                        </select>
-                    </label>
+                    <PharmacyFilter
+                        sites={sites}
+                        value={siteId}
+                        onChange={(v) => { set('siteId', v); }}
+                    />
                     {/* A plain link: the browser downloads it and no copy of
                         the workbook is held in the tab. */}
                     <a className="izy-btn" href={`/api/projects/${code}/uh/reports/sla.xlsx?${query}`}>

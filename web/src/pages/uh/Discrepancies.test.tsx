@@ -167,7 +167,7 @@ describe('narrowing the log', () => {
         { id: 9, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
     ];
     const withSites = (over = {}) => ({
-        'GET /api/projects/uh/uh/sites': sites,
+        'GET /api/projects/uh/uh/sites*': sites,
         ...over,
     });
 

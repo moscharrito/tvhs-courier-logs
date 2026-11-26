@@ -117,8 +117,43 @@ export function createSitesRouter({ client }: { client: Client }): Router {
         return site;
     }
 
+    /* ── A FILTER SHOULD ONLY OFFER WHAT IT CAN FIND ────────────────────
+     *
+     * Nine pharmacies are on this contract and most days only some of them
+     * released a list. A dropdown that offers all nine regardless makes the
+     * reader prove a negative one option at a time: choose a counter, wait
+     * for the request, read "nobody delivered in this range", choose the
+     * next one.
+     *
+     * So `from` and `to` are optional, and when BOTH are given each site
+     * comes back with `orders`: how many orders it had in that window,
+     * whatever their status. A caller that sends no window gets exactly what
+     * it got before, with no `orders` field at all -- which is deliberate,
+     * because the two kinds of caller want opposite things:
+     *
+     *   A FILTER asks "which counters have something to look at", and
+     *   narrowing it is the whole point.
+     *
+     *   A FORM -- new order, list import, handing over a drop -- asks "where
+     *   may I file this", and the answer is every open pharmacy. Narrowing
+     *   that one would make it impossible to be the first to use a counter.
+     *   Those screens pass no window and must keep not passing one.
+     *
+     * THE WINDOW IS NOT VALIDATED INTO AN ERROR. A malformed date is treated
+     * as no window, for the same reason driver-records treats an unreadable
+     * siteId as every pharmacy: these URLs are bookmarked and mailed around,
+     * and the safe failure is the full list rather than a 400 in front of
+     * somebody who only wanted a dropdown.
+     *
+     * COUNTED IN ONE QUERY, not one per site. Nine round trips to Turso
+     * behind Cloudflare to populate a <select> is a visible pause on a page
+     * that has not drawn yet. */
+    const ymd = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
     router.get('/', readers, wrap(async (req, res) => {
-        const { status, type } = req.query as { status?: string; type?: string };
+        const { status, type, from, to } = req.query as {
+            status?: string; type?: string; from?: string; to?: string;
+        };
         const where: string[] = ['project_id = ?'];
         const args: InValue[] = [req.project!.id];
         if (status) { where.push('status = ?'); args.push(String(status)); }
@@ -127,7 +162,22 @@ export function createSitesRouter({ client }: { client: Client }): Router {
             sql: `SELECT * FROM sites WHERE ${where.join(' AND ')} ORDER BY name`,
             args,
         });
-        res.json((rs.rows as unknown as SiteRow[]).map(present));
+        const sites = (rs.rows as unknown as SiteRow[]).map(present);
+
+        const window = ymd(from) && ymd(to) && from <= to ? { from, to } : null;
+        if (window === null) { res.json(sites); return; }
+
+        const counts = await client.execute({
+            sql: `SELECT o.site_id AS site, COUNT(*) AS orders
+                    FROM orders o
+                   WHERE o.project_id = ?
+                     AND o.service_date BETWEEN ? AND ?
+                     AND o.site_id IS NOT NULL
+                   GROUP BY o.site_id`,
+            args: [req.project!.id, window.from, window.to],
+        });
+        const had = new Map(counts.rows.map((r) => [Number(r['site']), Number(r['orders'])]));
+        res.json(sites.map((s) => ({ ...s, orders: had.get(s.id) ?? 0 })));
     }));
 
     router.post('/', manage, wrap(async (req, res) => {

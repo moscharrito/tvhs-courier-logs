@@ -46,7 +46,7 @@ const routes = (over = {}) => ({
     'GET /api/session': session,
     'GET /api/me/projects': projects,
     'GET /api/projects/uh/uh/reports/sla*': report(),
-    'GET /api/projects/uh/uh/sites': [
+    'GET /api/projects/uh/uh/sites*': [
         { id: 6, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
         { id: 7, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
     ],

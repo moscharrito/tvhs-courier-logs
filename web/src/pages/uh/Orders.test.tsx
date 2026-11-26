@@ -62,7 +62,7 @@ const page = (rows: unknown[], over: Record<string, unknown> = {}) => ({
 const baseRoutes = {
     'GET /api/session': session,
     'GET /api/me/projects': projects,
-    'GET /api/projects/uh/uh/sites': sites,
+    'GET /api/projects/uh/uh/sites*': sites,
     'GET /api/projects/uh/uh/orders': page([row(), row({ id: 13, status: 'delivered', sla: sla({ state: 'overdue', minutesToDue: -22 }) })]),
     'GET /api/projects/uh/uh/orders/summary': summary,
 };

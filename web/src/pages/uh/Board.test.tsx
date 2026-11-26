@@ -129,7 +129,7 @@ const boardData = (over = {}) => toWire(screenBoard(over));
 const routes = (over = {}) => ({
     'GET /api/session': session,
     'GET /api/me/projects': projects,
-    'GET /api/projects/uh/uh/sites': sites,
+    'GET /api/projects/uh/uh/sites*': sites,
     // Wildcard: the board refetches with a query string when filtered.
     'GET /api/projects/uh/uh/board*': boardData(),
     /* The requests card above the pool (ticket 8.2) is part of the board

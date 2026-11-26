@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import type { Site } from './Sites';
+import { PharmacyFilter, usePharmacies } from './PharmacyFilter';
 import { Link, useParams } from 'react-router-dom';
 import { api, why, type Discrepancy, type DiscrepancySummary } from '../../lib/api';
 import { momentFor, todayIn } from '../../lib/when';
@@ -73,7 +73,16 @@ export function Discrepancies() {
      * chasing. */
     const [filterDate, setFilterDate] = useState('');
     const [filterSite, setFilterSite] = useState<number | ''>('');
-    const [sites, setSites] = useState<Site[]>([]);
+    /* NARROWED BY THE DAY, WHEN A DAY IS CHOSEN. With no day chosen there
+       is no window to narrow by and every pharmacy is offered, which is the
+       behaviour this filter had before. See PharmacyFilter. */
+    const sites = usePharmacies(
+        code,
+        filterDate === '' ? undefined : { from: filterDate, to: filterDate },
+        /* Only the reviewer sees this filter, and only the reviewer asked
+           for the list before. */
+        canReview,
+    );
 
     const [list, setList] = useState<Discrepancy[] | null>(null);
     const [summary, setSummary] = useState<DiscrepancySummary | null>(null);
@@ -116,13 +125,6 @@ export function Discrepancies() {
         }
     }, [base, canReview, filterDate, filterSite]);
     useEffect(() => { void load(); }, [load]);
-
-    useEffect(() => {
-        if (!canReview) return;
-        /* Silent on failure: without the sites the pharmacy filter simply
-           offers nothing, and the log still works. */
-        void api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
-    }, [code, canReview]);
 
     const report = (e: FormEvent) => {
         e.preventDefault();
@@ -301,15 +303,11 @@ export function Discrepancies() {
                                 onChange={(e) => setFilterDate(e.target.value)}
                             />
                         </label>
-                        <label className="izy-field">Pharmacy
-                            <select
-                                value={filterSite}
-                                onChange={(e) => setFilterSite(e.target.value === '' ? '' : Number(e.target.value))}
-                            >
-                                <option value="">Every pharmacy</option>
-                                {sites.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
-                            </select>
-                        </label>
+                        <PharmacyFilter
+                            sites={sites}
+                            value={filterSite === '' ? '' : String(filterSite)}
+                            onChange={(v) => { setFilterSite(v === '' ? '' : Number(v)); }}
+                        />
                         {(filterDate !== '' || filterSite !== '') && (
                             <button
                                 type="button"

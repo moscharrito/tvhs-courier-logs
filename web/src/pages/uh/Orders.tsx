@@ -16,7 +16,7 @@ import { clockFor, todayRange } from '../../lib/when';
 import { Loading } from '../../app/Loading';
 import { Pager, usePaged } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
-import type { Site } from './Sites';
+import { PharmacyFilter, usePharmacies } from './PharmacyFilter';
 import { displayName } from '../../lib/people';
 import { CourierPhone } from '../../lib/CourierPhone';
 
@@ -117,7 +117,6 @@ export function Orders() {
 
     const [orders, setOrders] = useState<OrderRow[] | null>(null);
     const [summary, setSummary] = useState<Summary | null>(null);
-    const [sites, setSites] = useState<Site[]>([]);
     const [error, setError] = useState<string | null>(null);
     /* How many exist against how many are loaded, and where to continue from.
        University Health run up to 1,500 deliveries a day; this screen used to
@@ -160,6 +159,9 @@ export function Orders() {
     const day = params.get('serviceDate') ?? '';
     const from = (params.get('from') ?? '') || day || opening.from;
     const to = (params.get('to') ?? '') || day || opening.to;
+    /* Narrowed by the dates above it, so a counter that had nothing in the
+       range is not offered as a way to find nothing. See PharmacyFilter. */
+    const sites = usePharmacies(code, { from, to });
     /* The same filters the bundle route understands, under the names it
        reads them by. It shares none of this screen's vocabulary beyond the
        four below, so anything else -- the courier, the one search box, the
@@ -244,9 +246,6 @@ export function Orders() {
     }, [base, query, searchingFor, cursor, loadingMore]);
 
     useEffect(() => { void load(); }, [load]);
-    useEffect(() => {
-        api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
-    }, [code]);
 
     /* Above the early returns: it holds state, so it has to run every render
        whether or not this member can see the project. */
@@ -318,12 +317,12 @@ export function Orders() {
                     <label className="izy-field">To
                         <input type="date" value={to} onChange={(e) => set('to', e.target.value)} />
                     </label>
-                    <label className="izy-field">Pharmacy
-                        <select value={get('siteId')} onChange={(e) => set('siteId', e.target.value)}>
-                            <option value="">any</option>
-                            {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                    </label>
+                    <PharmacyFilter
+                        sites={sites}
+                        value={get('siteId')}
+                        onChange={(v) => { set('siteId', v); }}
+                        anyLabel="any"
+                    />
                     <label className="izy-field">Status
                         <select value={get('status')} onChange={(e) => set('status', e.target.value)}>
                             <option value="">any</option>

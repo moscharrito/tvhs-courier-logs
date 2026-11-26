@@ -2160,7 +2160,19 @@ body {
 /* The sort bench owning up to a tie it broke by street name. Quieter
    than a warning, because nothing is wrong: it is the screen saying
    which of two cards it chose and offering the other. */
-.izy-sort-narrowed {
+/* A row that is on the list only because somebody asked to see the whole
+   roster: on the contract, nothing in this range. Dimmed rather than
+   hidden, and never so dim it fails a contrast check -- it is still a
+   person's name on a payroll screen. */
+.izy-row-quiet > td {
+    color: var(--izy-muted);
+}
+
+/* A line under a list saying what is NOT in it, with the button that puts
+   it back. Two screens now: the sort bench's set-aside cards, and the
+   drivers record's roster. One rule rather than two that drift. */
+.izy-sort-narrowed,
+.izy-rownote {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;

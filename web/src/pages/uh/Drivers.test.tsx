@@ -68,10 +68,17 @@ const everyone = (over = {}) => ({
        A fixture that left this out would let the banner tests pass against
        `undefined` and prove nothing. */
     siteId: null,
+    /* TWO LISTS, WHICH IS THE SHAPE THE SERVER SENDS. `drivers` is who
+       worked in the range and the pharmacy asked for; `idle` is the rest of
+       the contract's couriers. A fixture that put Bo in the first one would
+       let the split be deleted without a test noticing. */
     drivers: [
         { username: 'pay.ada', name: 'Ada Pay', daysWorked: 12, ...totals() },
+    ],
+    idle: [
         { username: 'pay.bo', name: 'Bo Pay', daysWorked: 0, delivered: 0, failed: 0, payCents: 0, rateSet: true, basis: 'serviceType', lines: {} },
     ],
+    bonusInPay: true,
     totals: totals(),
     ...over,
 });
@@ -96,7 +103,7 @@ function renderDrivers(over = {}) {
         'GET /api/session': admin,
         'GET /api/me/projects': asAdmin,
         'GET /api/projects/uh/uh/drivers*': everyone(),
-        'GET /api/projects/uh/uh/sites': [
+        'GET /api/projects/uh/uh/sites*': [
             { id: 6, code: 'discharge', name: 'University Hospital Discharge Pharmacy' },
             { id: 7, code: 'green', name: 'University Health Robert B. Green Pharmacy' },
         ],
@@ -152,11 +159,51 @@ describe('every driver', () => {
         expect(screen.getAllByText('$18.50').length).toBeGreaterThanOrEqual(1);
     });
 
-    it('keeps a driver who delivered nothing, so the list matches the roster', async () => {
-        /* A payment run that silently omitted somebody is a run nobody can
-           check. */
+    it('shows who worked, and keeps the rest of the roster one click away', async () => {
+        /* A FILTER THAT CHANGES EVERY NUMBER AND NOT ONE ROW IS NOT A
+           FILTER. One counter on one day used to come back headed "106
+           drivers, 71 delivered", because 104 of those rows were people who
+           had not worked it.
+
+           The reason the old list held everybody is still good -- a payment
+           run nobody can check against the roster is not much of a payment
+           run -- so the roster is not dropped. It is counted out loud and
+           offered, which is the same bargain the sort bench strikes with
+           the cards its tie-breaker sets aside. */
         renderDrivers();
+        expect(await screen.findByRole('link', { name: 'Ada Pay' })).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Bo Pay' }), 'not mixed in').toBeNull();
+
+        const offer = screen.getByText(/One more driver is on this contract/);
+        expect(offer).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Show them too' }));
         expect(await screen.findByRole('link', { name: 'Bo Pay' })).toBeInTheDocument();
+
+        /* And back again, because somebody who opened it to check a name
+           wants their short list afterwards. */
+        fireEvent.click(screen.getByRole('button', { name: /Show only the 1 who worked/ }));
+        await waitFor(() => { expect(screen.queryByRole('link', { name: 'Bo Pay' })).toBeNull(); });
+    });
+
+    it('counts the drivers who worked, not the drivers on the contract', async () => {
+        /* "106 drivers" beside "71 delivered" is the confident wrong number
+           this screen exists to avoid, pointed at the roster instead of at
+           the money: it reads as a contract running four deliveries a head.
+           The tile counts the list it stands over. */
+        renderDrivers();
+        const tile = (await screen.findByText('drivers who worked')).closest('div');
+        expect(tile).toHaveTextContent('1');
+    });
+
+    it('does not offer a roster that is not there', async () => {
+        /* An older server sends one list with everybody already in it. The
+           screen shows what it is given and offers nothing, which is the
+           old behaviour rather than a broken page. */
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({ idle: undefined }),
+        });
+        expect(await screen.findByRole('link', { name: 'Ada Pay' })).toBeInTheDocument();
+        expect(screen.queryByText(/more driver/i)).toBeNull();
     });
 
     it('says once, at the top, that the rates are missing', async () => {
@@ -238,6 +285,41 @@ describe('narrowed to one pharmacy', () => {
         await waitFor(() => {
             expect(mocked.calls.some((c) => c.includes('/uh/drivers?') && c.includes('siteId=7'))).toBe(true);
         });
+    });
+
+    it('names the completion bonus the filter kept out, rather than letting it vanish', async () => {
+        /* A bonus is earned by finishing a whole day across every counter,
+           so it is not charged to one of them -- the server leaves it out
+           of a filtered pay figure and says so with `bonusInPay: false`.
+
+           SAYING NOTHING WOULD BE THE OTHER WAY TO BE WRONG. A reader who
+           finds no bonus anywhere concludes none was earned, and this is
+           the screen somebody is disbursed from. */
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({
+                siteId: 7,
+                bonusInPay: false,
+                /* THE FIGURE COMES FROM THE TOTALS, which is where the
+                   server puts it: `bonusInPay` says only whether it is in
+                   the money beside it. A fixture with a field of its own
+                   let this test pass against a screen reading something the
+                   server has never sent. */
+                totals: totals({ bonusDays: 2, bonusCents: 30000 }),
+            }),
+        });
+        const note = await screen.findByText(/\$300\.00 of completion bonus is not/);
+        expect(note).toBeInTheDocument();
+        expect(note.closest('.izy-alert')).toHaveTextContent('2 days');
+    });
+
+    it('says nothing about a bonus nobody earned', async () => {
+        renderDrivers({
+            'GET /api/projects/uh/uh/drivers*': everyone({
+                siteId: 7, bonusInPay: false, totals: totals({ bonusDays: 0, bonusCents: 0 }),
+            }),
+        });
+        await screen.findByRole('heading', { name: 'Drivers' });
+        expect(screen.queryByText(/completion bonus is not/)).toBeNull();
     });
 
     it('says in as many words that a filtered total is not a payment run', async () => {

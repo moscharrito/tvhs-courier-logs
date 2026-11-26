@@ -99,17 +99,53 @@ describe('what each driver delivered', () => {
         expect(ada.failed).toBe(1);
     });
 
-    it('names every driver on the contract, including one who did nothing', async () => {
+    it('keeps a driver who did nothing on the roster, apart from the ones who worked', async () => {
         /* A payment run that silently omitted somebody who did no work is a
-           run nobody can check against the roster. */
+           run nobody can check against the roster -- so they are still sent.
+           They are sent in `idle` rather than mixed into `drivers`, because
+           a list of 106 people beside a count of 71 deliveries is what the
+           filters were being ignored FOR. Nobody is dropped; the two
+           questions are simply answered separately. */
         await admin.post('/api/users').send({
             username: 'pay.idle', name: 'Idle Pay', password: 'pay-pass-11', role: 'driver',
         });
         await admin.put('/api/users/pay.idle/memberships/uh').send({ role: 'courier', settings: {} });
         const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
-        const idle = res.body.drivers.find((d) => d.username === 'pay.idle');
-        expect(idle, 'a driver with no deliveries should still be listed').toBeTruthy();
+
+        expect(res.body.drivers.some((d) => d.username === 'pay.idle'),
+            'not among the drivers who worked').toBe(false);
+        const idle = res.body.idle.find((d) => d.username === 'pay.idle');
+        expect(idle, 'but still on the roster the page can show').toBeTruthy();
         expect(idle.delivered).toBe(0);
+        expect(idle.failed).toBe(0);
+        expect(idle.daysWorked).toBe(0);
+    });
+
+    it('puts nobody in both lists, and everybody in one of them', async () => {
+        /* The split is only safe if it is a partition. A name in both is a
+           driver counted twice by anybody who concatenates them; a name in
+           neither is the silent omission the test above exists to stop. */
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        const worked = res.body.drivers.map((d) => d.username);
+        const idle = res.body.idle.map((d) => d.username);
+        expect(worked.filter((u) => idle.includes(u)), 'in both lists').toEqual([]);
+        expect(new Set([...worked, ...idle]).size).toBe(worked.length + idle.length);
+        for (const d of res.body.drivers) {
+            expect(d.delivered + d.failed, `${d.username} is on the worked list`).toBeGreaterThan(0);
+        }
+        for (const d of res.body.idle) {
+            expect(d.delivered + d.failed, `${d.username} is on the idle list`).toBe(0);
+        }
+    });
+
+    it('counts the stops under the drivers who worked, not under the roster', async () => {
+        /* The totals are reduced over `drivers` alone now. If an idle row
+           ever carried a figure, this is where it would show up. */
+        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        const sum = (rows, key) => rows.reduce((n, d) => n + d[key], 0);
+        expect(sum(res.body.drivers, 'delivered')).toBe(res.body.totals.delivered);
+        expect(sum(res.body.drivers, 'failed')).toBe(res.body.totals.failed);
+        expect(sum(res.body.idle, 'delivered') + sum(res.body.idle, 'failed')).toBe(0);
     });
 
     it('says which pharmacy the work was for, which is what the question asked', async () => {
@@ -170,10 +206,13 @@ describe('the completion bonus', () => {
         return username;
     }
 
+    /* BOTH LISTS. `drivers` is who worked in the range and `idle` is the
+       rest of the roster; which of the two somebody lands in is the subject
+       of its own tests below, and is not what these ones are asking. */
     const payOf = async (username) => {
         const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
         expect(res.status).toBe(200);
-        return res.body.drivers.find((d) => d.username === username);
+        return [...res.body.drivers, ...res.body.idle].find((d) => d.username === username);
     };
 
     afterAll(async () => { await setBonus(0, null); });
@@ -307,20 +346,35 @@ describe('the completion bonus', () => {
         expect(one.body.totals.payCents, 'and the total with it').toBe(list.payCents);
     });
 
-    it('is not withheld by a pharmacy filter', async () => {
-        /* "Finished everything" is a fact about the whole day. Asking it of
-           one counter would award a bonus to somebody who cleared Wheatley
-           and left four stops at Vida -- or withhold one from somebody who
-           finished everywhere. */
+    it("does not add a whole day's completion bonus to one counter's pay", async () => {
+        /* A bonus is earned by finishing every stop assigned that day,
+           across every pharmacy. Putting it in a pharmacy-filtered pay
+           column charges the same bonus to each counter the driver touched,
+           and -- worse -- gives real money to somebody with nought
+           deliveries at the counter being looked at.
+
+           The FACT is still reported, because withholding it would hide a
+           bonus from somebody who finished everywhere. Only the money is
+           kept out, and `bonusInPay` says which it is. */
         await setRates({ scheduled: 700, stat: 700, adhoc: 700 });
         await setBonus(15000, '2000-01-01');
         const who = await freshDriver();
-        await deliveredBy(who);
-        await deliveredBy(who, { siteId: green.id, serviceType: 'adhoc' });
-        const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
-        const d = res.body.drivers.find((x) => x.username === who);
-        expect(d.delivered, 'only the Green delivery is counted').toBe(1);
-        expect(d.bonusDays, 'but the day was still completed').toBe(1);
+        await deliveredBy(who, { siteId: green.id });
+
+        const all = await admin.get(`${DRIVERS}?from=${day}&to=${day}`);
+        expect(all.body.bonusInPay, 'unfiltered, the bonus is the money').toBe(true);
+        const whole = all.body.drivers.find((d) => d.username === who);
+        expect(whole.payCents).toBe(700 + 15000);
+
+        const one = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
+        expect(one.body.bonusInPay, 'filtered, it is not').toBe(false);
+        const slice = one.body.drivers.find((d) => d.username === who);
+        expect(slice.delivered).toBe(1);
+        expect(slice.bonusDays, 'the day was still completed').toBe(1);
+        expect(slice.bonusCents, 'and it is still reported').toBe(15000);
+        expect(slice.payCents, 'but the pay is this counter only').toBe(700);
+
+        await setBonus(0, null);
     });
 
     /* ───────────────────────────────── withdrawing it, which is not the
@@ -431,15 +485,24 @@ describe('narrowed to one pharmacy', () => {
         expect(ada.failed).toBe(0);
     });
 
-    it('still lists a driver who worked a different pharmacy, at nought', async () => {
-        /* THE FILTER NARROWS THE DELIVERIES, NEVER THE ROSTER. Bo worked
-           Discharge only. Dropping Bo from the Green list would make a total
-           that cannot be checked against the roster -- the same reason the
-           unfiltered list keeps the drivers who delivered nothing. */
+    it('moves a driver who worked a different pharmacy off the list, but not out of the answer', async () => {
+        /* THE FILTER NARROWS THE DELIVERIES AND THE ROSTER WITH THEM. Bo
+           worked Discharge only, so Bo is not one of the drivers who worked
+           Green and does not belong among them -- that was the bug: a
+           pharmacy filter that changed every number on the page and not one
+           of the rows.
+
+           Bo is still in the answer, in `idle`, so the screen can offer the
+           whole roster in a click and the workbook can keep listing
+           everybody. Dropped is different from set aside. */
         const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${green.id}`);
-        const bo = res.body.drivers.find((d) => d.username === 'pay.bo');
-        expect(bo, 'Bo should still be on the list').toBeTruthy();
+        expect(res.body.drivers.some((d) => d.username === 'pay.bo'),
+            'Bo did not work Green').toBe(false);
+        const bo = res.body.idle.find((d) => d.username === 'pay.bo');
+        expect(bo, 'but Bo is still on the contract').toBeTruthy();
         expect(bo.delivered).toBe(0);
+        /* And Ada, who did work Green, stays where the question put her. */
+        expect(res.body.drivers.some((d) => d.username === 'pay.ada')).toBe(true);
     });
 
     it('tells the screen which pharmacy it answered, so a slice cannot read as a payment run', async () => {
@@ -479,7 +542,8 @@ describe('narrowed to one pharmacy', () => {
         const res = await admin.get(`${DRIVERS}?from=${day}&to=${day}&siteId=${quiet.id}`);
         expect(res.status).toBe(200);
         expect(res.body.totals.delivered).toBe(0);
-        expect(res.body.drivers.length, 'the roster is still there').toBeGreaterThan(0);
+        expect(res.body.drivers, 'nobody worked this counter').toEqual([]);
+        expect(res.body.idle.length, 'and the roster is still there').toBeGreaterThan(0);
     });
 });
 
@@ -576,6 +640,12 @@ describe('what the site manager may see of the drivers record', () => {
            three shapes -- the totals, each driver, and the lines inside
            them -- and a strip applied to two of the three is a leak in the
            third. */
+        /* FOUR SHAPES NOW, and the fourth is the reason this is asserted
+           rather than assumed: `idle` was added later, carries exactly the
+           pay fields `drivers` does, and a strip written for three shapes
+           is a leak in the fourth. Proven non-empty first, or the sweep
+           below passes over an array that was never there. */
+        expect(res.body.idle.length, 'there is an idle list to leak from').toBeGreaterThan(0);
         const body = JSON.stringify(res.body);
         expect(body).not.toMatch(/payCents/);
         expect(body).not.toMatch(/rateCents/);

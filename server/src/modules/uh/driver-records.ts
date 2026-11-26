@@ -108,8 +108,13 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
         const out = { ...body } as Record<string, unknown>;
         delete out['currency'];
         delete out['rateSet'];
-        if (Array.isArray(out['drivers'])) {
-            out['drivers'] = (out['drivers'] as Money[]).map(stripMoney);
+        /* `idle` is the same shape as `drivers` and carries the same pay
+           fields. It was added after this function was written, which is
+           exactly how a strip applied to two of three shapes becomes a leak
+           in the third -- so it is listed here beside the other two rather
+           than anywhere else. */
+        for (const key of ['drivers', 'idle']) {
+            if (Array.isArray(out[key])) out[key] = (out[key] as Money[]).map(stripMoney);
         }
         if (Array.isArray(out['periods'])) {
             out['periods'] = (out['periods'] as Money[]).map(stripMoney);
@@ -408,37 +413,73 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
 
     /* ------------------------------------------------- every driver, summarised */
 
-    router.get('/', dispatchOnly, wrap(async (req, res) => {
-        const project = req.project!;
-        const window = windowOf(req, res);
-        if (!window) return;
-        const rates = resolveSettings(project.settings).driverPay;
+    /* ── WHO BELONGS ON THE LIST, GIVEN THE FILTERS ──────────────────────
+     *
+     * THIS USED TO READ "THE FILTER NARROWS THE DELIVERIES, NEVER THE
+     * ROSTER", and the reasoning was that a list which quietly drops people
+     * is one nobody can check against the roster. The reasoning is sound and
+     * the result was not: on 25 November one counter for one day came back
+     * as 106 drivers, 71 delivered, because 104 of those rows were people
+     * who had not worked that pharmacy that day and were carrying nought.
+     *
+     * A FILTER THAT CHANGES ONLY THE NUMBERS AND NOT THE ROWS IS NOT A
+     * FILTER. Worse, the count of drivers is itself a figure somebody reads:
+     * "106 drivers / 71 delivered" is the confident wrong number this file
+     * opens by saying it exists to avoid, and it is wrong in the direction
+     * that makes a contract look overstaffed.
+     *
+     * SO THE ROSTER IS SPLIT RATHER THAN TRIMMED. `worked` is everybody with
+     * a delivered or failed stop inside the window AND the pharmacy asked
+     * for; `idle` is the rest of the contract's couriers and leads, sent in
+     * full so the screen can offer them in one click and the workbook can
+     * keep listing everybody. Nobody is dropped; they are simply no longer
+     * mixed in with the people the question was about.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * AND THE COMPLETION BONUS STOPS LEAKING ACROSS THE PHARMACY FILTER.
+     *
+     * `completedDays` is deliberately not narrowed by site, because
+     * "finished everything assigned" is a fact about a driver's whole day
+     * across every counter. That is right. What was wrong was then ADDING
+     * that whole-day bonus to a single counter's slice: a driver who cleared
+     * their day at Wheatley and delivered nothing at the Pavilion appeared
+     * under the Pavilion filter with nought deliveries and real money beside
+     * them, in a pay column the page had just promised was that pharmacy's.
+     *
+     * Under a pharmacy filter the bonus is therefore kept OUT OF THE MONEY
+     * while the FACT of it is still reported: `bonusDays` and `bonusCents`
+     * carry what the driver earned by finishing whole days, and `payCents`
+     * does not include it. Withholding the fact as well would be the other
+     * way to be wrong -- it would hide a bonus from somebody who finished
+     * everywhere, and a reader who cannot see one anywhere concludes none
+     * was earned. `bonusInPay` is how the screen and the workbook know
+     * which of the two states they are describing, and both say so out
+     * loud. Unfiltered, nothing changes: the bonus is in `payCents` as
+     * before, which is the figure anybody is actually disbursed from.
+     */
+    type DriverLine = PayTotals & { username: string; name: string; daysWorked: number };
 
-        /* THE FILTER NARROWS THE DELIVERIES, NEVER THE ROSTER.
-         *
-         * `driversOf` is deliberately not given the site. Everybody on the
-         * contract stays on the list with nought beside them when they did
-         * not work that counter, for the same reason the unfiltered list
-         * keeps the drivers who delivered nothing: a list that quietly
-         * dropped people is one nobody can check against the roster.
-         *
-         * AND THE MONEY BECOMES A SLICE. Pay here is per delivery, so pay
-         * for one pharmacy is a real figure about that pharmacy and NOT what
-         * anybody is owed. The screen says so in as many words whenever this
-         * is set; `siteId` goes back in the response so it cannot show the
-         * filtered total without knowing the total is filtered. */
-        const siteId = siteOf(req);
+    interface Assembled {
+        worked: DriverLine[];
+        idle: DriverLine[];
+        totals: PayTotals;
+        /** Whether `payCents` anywhere above includes the completion bonus.
+         *  False under a pharmacy filter: the bonus is still reported in
+         *  `bonusDays` and `bonusCents`, but it is not in the money. */
+        bonusInPay: boolean;
+    }
 
-        /* NOT NARROWED BY PHARMACY, deliberately. "Finished everything
-           assigned" is a fact about a driver's whole day; asking it of one
-           counter would award the bonus to somebody who cleared Wheatley
-           and left four stops standing at Vida. The pharmacy filter
-           narrows which deliveries are COUNTED, never whether the day was
-           completed. */
+    async function assemble(
+        projectId: number, window: { from: string; to: string },
+        rates: ReturnType<typeof resolveSettings>['driverPay'], siteId: number | null,
+    ): Promise<Assembled> {
         const [stops, names, finished] = await Promise.all([
-            stopsIn(project.id, window.from, window.to, null, siteId),
-            driversOf(project.id),
-            completedDays(project.id, window.from, window.to, null),
+            stopsIn(projectId, window.from, window.to, null, siteId),
+            driversOf(projectId),
+            /* NOT narrowed by pharmacy, deliberately: see above. Asking it of
+               one counter would award the bonus to somebody who cleared
+               Wheatley and left four stops standing at Vida. */
+            completedDays(projectId, window.from, window.to, null),
         ]);
 
         const byDriver = new Map<string, StopRow[]>();
@@ -448,39 +489,77 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
             if (list) list.push(stop); else byDriver.set(username, [stop]);
         }
 
-        /* Every driver on the contract, including the ones who delivered
-           nothing in this window. A payment run that silently omitted
-           somebody who did no work is a payment run nobody can check against
-           the roster. */
         const earned = (username: string) => bonusFor(finished.get(username) ?? [], rates);
 
-        const drivers = [...names.entries()].map(([username, name]) => {
-            const theirs = byDriver.get(username) ?? [];
-            const totals = withBonus(payFor(payable(theirs), rates), earned(username));
-            byDriver.delete(username);
-            return { username, name, ...totals, daysWorked: new Set(theirs.map((s) => s.service_date)).size };
+        /* THE FACT IS REPORTED EITHER WAY; THE MONEY IS NOT ADDED TO A SLICE.
+         *
+         * Unfiltered, `withBonus` as before: the bonus is part of what the
+         * driver is owed and `payCents` is the figure somebody disburses.
+         *
+         * Filtered, the days and the amount are still carried -- a whole-day
+         * fact is not made false by looking at one counter, and withholding
+         * it would hide a bonus from somebody who finished everywhere -- but
+         * it is NOT added into `payCents`, because that column has just been
+         * captioned as this pharmacy's. Adding it there double-counts: the
+         * same completed day appears whole under each of the nine counters
+         * the driver touched, and a driver who delivered nothing here at all
+         * turns up with nought deliveries and real money beside them. */
+        const put = siteId === null
+            ? withBonus
+            : (totals: PayTotals, e: { bonusDays: number; bonusCents: number }): PayTotals =>
+                ({ ...totals, bonusDays: e.bonusDays, bonusCents: e.bonusCents });
+
+        const line = (username: string, name: string, theirs: StopRow[]): DriverLine => ({
+            username,
+            name,
+            ...put(payFor(payable(theirs), rates), earned(username)),
+            daysWorked: new Set(theirs.map((s) => s.service_date)).size,
         });
+
+        const worked: DriverLine[] = [];
+        const idle: DriverLine[] = [];
+
+        for (const [username, name] of names.entries()) {
+            const theirs = byDriver.get(username) ?? [];
+            byDriver.delete(username);
+            (theirs.length > 0 ? worked : idle).push(line(username, name, theirs));
+        }
 
         /* Anybody who delivered in this window but holds no courier
            membership now: a driver who left, or a dispatcher who recorded a
            delivery against their own name. Named rather than dropped, because
-           a total that does not add up to the stops is a total nobody
-           trusts. */
+           a total that does not add up to the stops is a total nobody trusts.
+           They always worked -- having a stop here is how they got onto this
+           list at all. */
         for (const [username, theirs] of byDriver.entries()) {
-            const totals = withBonus(payFor(payable(theirs), rates), earned(username));
-            drivers.push({
-                username,
-                name: `${username} (no longer a courier on this contract)`,
-                ...totals,
-                daysWorked: new Set(theirs.map((s) => s.service_date)).size,
-            });
+            worked.push(line(username, `${username} (no longer a courier on this contract)`, theirs));
         }
 
-        drivers.sort((a, b) => b.delivered - a.delivered || a.name.localeCompare(b.name));
-        const totals = drivers.reduce<PayTotals>((into, d) => addTotals(into, d), noPay(rates.basis));
+        const order = (a: DriverLine, b: DriverLine) =>
+            b.delivered - a.delivered || a.name.localeCompare(b.name);
+        worked.sort(order);
+        idle.sort(order);
+
+        /* Over `worked` alone, which is the whole set that carries a figure:
+           an idle row is nought deliveries, nought failures and, now that the
+           bonus cannot leak into it, nought pay. */
+        const totals = worked.reduce<PayTotals>((into, d) => addTotals(into, d), noPay(rates.basis));
+        return { worked, idle, totals, bonusInPay: siteId === null };
+    }
+
+    router.get('/', dispatchOnly, wrap(async (req, res) => {
+        const project = req.project!;
+        const window = windowOf(req, res);
+        if (!window) return;
+        const rates = resolveSettings(project.settings).driverPay;
+
+        /* The pharmacy asked for, echoed back below so the screen cannot show
+           a filtered total without knowing the total is filtered. */
+        const siteId = siteOf(req);
+        const { worked, idle, totals, bonusInPay } = await assemble(project.id, window, rates, siteId);
 
         await req.audit('drivers.records', 'report', `${window.from}..${window.to}`, {
-            drivers: drivers.length, delivered: totals.delivered,
+            drivers: worked.length, idle: idle.length, delivered: totals.delivered,
             ...(siteId === null ? {} : { siteId }),
         });
 
@@ -493,7 +572,18 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                client that sent a filter and got back numbers with no mark
                on them has no way to tell a slice from a payment run. */
             siteId,
-            drivers,
+            drivers: worked,
+            /* Everybody on the contract with nothing in this range. Sent
+               rather than counted so the screen can offer them without a
+               second request, and kept in its own field rather than folded
+               into `drivers` so nothing can accidentally mix them back in. */
+            idle,
+            /* WHETHER THE MONEY ABOVE INCLUDES THE BONUS. Sent always and
+               not only when false: a screen that has to infer this from the
+               presence of a field is a screen that gets it wrong against an
+               older server, and the field it would infer from is money,
+               which the site manager never receives. */
+            bonusInPay,
             totals,
         }));
     }));
@@ -537,21 +627,23 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
            mailed to a bookkeeper and summed in a spreadsheet, so a bonus
            on the screen and not in the file is the worst of the three
            places to leave it out: the discrepancy is found after the
-           payment run, by somebody who was not in the room. */
-        const [stops, names, finished] = await Promise.all([
-            stopsIn(project.id, window.from, window.to, null, siteId),
-            driversOf(project.id),
-            completedDays(project.id, window.from, window.to, null),
-        ]);
+           payment run, by somebody who was not in the room.
 
-        const byDriver = new Map<string, StopRow[]>();
-        for (const stop of stops) {
-            const username = String(stop.assigned_to_username);
-            const list = byDriver.get(username);
-            if (list) list.push(stop); else byDriver.set(username, [stop]);
-        }
-        const everyone = new Set([...names.keys(), ...byDriver.keys()]);
-        if (tooManyRows(res, everyone.size, 'drivers')) return;
+           BUILT BY THE SAME `assemble` THE SCREEN USES, for the same reason
+           the filter is taken from the same query string: two copies of the
+           arithmetic is how a workbook comes to disagree with the page it
+           was downloaded from. In particular the bonus is withheld from a
+           pharmacy-filtered file exactly as it is withheld from a
+           pharmacy-filtered screen.
+
+           THE FILE STILL LISTS EVERYBODY, worked and idle alike. The screen
+           may fold the idle rows away because a person is scanning it; a
+           payroll file is checked against the roster line by line, and a
+           name missing from it is a question nobody thinks to ask. The
+           About sheet says so, and the rows are ordered so the people with
+           deliveries come first. */
+        const { worked, idle, totals, bonusInPay } = await assemble(project.id, window, rates, siteId);
+        if (tooManyRows(res, worked.length + idle.length, 'drivers')) return;
 
         /* Money as a decimal, because this file is opened in a spreadsheet
            and summed there. Cents are how it is held and added; a column of
@@ -559,28 +651,21 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
            rate is left BLANK rather than written as zero, for the same reason
            the screen says "rate not set": a nought in a pay column is an
            answer somebody would pay. */
-        const rows = [...everyone].map((username) => {
-            const theirs = byDriver.get(username) ?? [];
-            const totals = withBonus(
-                payFor(payable(theirs), rates),
-                bonusFor(finished.get(username) ?? [], rates),
-            );
-            return {
-                driver: names.get(username) ?? `${username} (no longer a courier on this contract)`,
-                username,
-                daysWorked: new Set(theirs.map((s) => s.service_date)).size,
-                delivered: totals.delivered,
-                failed: totals.failed,
-                /* Its own columns, not folded into Pay. Somebody checking a
-                   payment run has to be able to see which part is
-                   deliveries and which is the bonus without recomputing
-                   it, and `pay` below already includes both. */
-                bonusDays: totals.bonusDays,
-                bonus: totals.bonusCents / 100,
-                pay: totals.payCents === null ? '' : totals.payCents / 100,
-                rateSet: totals.rateSet ? 'yes' : 'no, a rate is missing',
-            };
-        }).sort((a, b) => b.delivered - a.delivered || a.driver.localeCompare(b.driver));
+        const rows = [...worked, ...idle].map((d) => ({
+            driver: d.name,
+            username: d.username,
+            daysWorked: d.daysWorked,
+            delivered: d.delivered,
+            failed: d.failed,
+            /* Its own columns, not folded into Pay. Somebody checking a
+               payment run has to be able to see which part is
+               deliveries and which is the bonus without recomputing
+               it, and `pay` below already includes both. */
+            bonusDays: d.bonusDays ?? 0,
+            bonus: (d.bonusCents ?? 0) / 100,
+            pay: d.payCents === null ? '' : d.payCents / 100,
+            rateSet: d.rateSet ? 'yes' : 'no, a rate is missing',
+        }));
 
         await sendSpreadsheet(req, res, {
             sheetName: 'Drivers',
@@ -610,7 +695,20 @@ export function createDriverRecordsRouter({ client }: { client: Client }): Route
                     'Not a payment run',
                     'These figures cover one pharmacy only. What a driver is owed is their work across every pharmacy: export again with no pharmacy chosen.',
                 ] as [string, string]]),
-                ['Pay', 'Per completed delivery, PLUS the completion bonus where it was earned. The two are also in their own columns.'],
+                ['Who is listed', 'Every courier and lead on the contract. The ones with deliveries in the range come first; the rest are below them with nought, so this file can be checked against the roster line by line.'],
+                /* THE BONUS IS WITHHELD FROM A FILTERED FILE AND SAYING SO
+                   IS NOT OPTIONAL. A completion bonus is earned by
+                   finishing a whole day across every counter, so it cannot
+                   honestly be charged to one of them -- but a bookkeeper
+                   who finds no bonus column filled in will conclude none
+                   was earned. This row names the figure that was left out. */
+                ...(!bonusInPay && totals.bonusCents > 0 ? [[
+                    'Bonus is NOT in the Pay column',
+                    `A pharmacy was chosen, so the Pay column is this pharmacy's deliveries only. The Bonus column still shows what each driver earned by finishing whole days -- ${(totals.bonusCents / 100).toFixed(2)} ${rates.currency} over ${totals.bonusDays} completed ${totals.bonusDays === 1 ? 'day' : 'days'} among the drivers listed -- but a day is finished across every pharmacy, so adding it here would charge the same bonus to each counter the driver touched. Export with no pharmacy chosen to get Pay with the bonus in it.`,
+                ] as [string, string]] : []),
+                ['Pay', bonusInPay
+                    ? 'Per completed delivery, PLUS the completion bonus where it was earned. The two are also in their own columns.'
+                    : 'Per completed delivery at the pharmacy named above. The completion bonus is NOT in it: see the row below.'],
                 ...(rates.completionBonusCents > 0 ? [[
                     'Completion bonus',
                     `${(rates.completionBonusCents / 100).toFixed(2)} ${rates.currency} for each day on which the driver finished every stop assigned to them`

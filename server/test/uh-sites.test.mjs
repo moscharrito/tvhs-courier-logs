@@ -246,3 +246,123 @@ describe('audit', () => {
         expect(JSON.parse(created.detail)).toEqual({ name: 'University Health Palo Alto Hospital', type: 'hospital', zip: '78224' });
     });
 });
+
+/* ──────────────────────────────────────────────────────────────────────
+ * A FILTER SHOULD ONLY OFFER WHAT IT CAN FIND.
+ *
+ * Nine counters are on this contract and most ranges involve a handful.
+ * Giving each site an order count FOR A WINDOW is what lets the dropdowns
+ * on the portal stop offering the reader a way to find nothing.
+ *
+ * The important half of these tests is the half about NOT narrowing: a
+ * form that asks where to file a new order has to keep offering every open
+ * pharmacy, or the first order at a counter can never be recorded.
+ */
+describe('counting what a pharmacy had in a window', () => {
+    const DAY = '2026-11-20';
+    const OTHER = '2026-11-21';
+    let wheatley;
+    let vida;
+
+    beforeAll(async () => {
+        const sites = (await admin.get(UH)).body;
+        wheatley = sites.find((s) => s.code === 'wheatley');
+        vida = sites.find((s) => s.code === 'vida');
+        const make = async (siteId, serviceDate, ref) => {
+            const res = await admin.post(ORDERS).send({
+                siteId, serviceDate, serviceType: 'adhoc', recipientName: 'Someone',
+                addressLine: '1 Rehearsal Way', zip: '78215',
+                description: 'Oral solids', quantity: 1, externalRef: ref,
+            });
+            expect(res.status, JSON.stringify(res.body)).toBe(201);
+        };
+        await make(wheatley.id, DAY, 'SITE-WINDOW-1');
+        await make(wheatley.id, DAY, 'SITE-WINDOW-2');
+        await make(vida.id, OTHER, 'SITE-WINDOW-3');
+    });
+
+    it('says nothing at all about counts when no window is asked for', async () => {
+        /* THE FORMS DEPEND ON THIS. New order, list import and the drop
+           hand-over all read this endpoint to ask "where may I file this",
+           and the answer is every open pharmacy whether or not it has ever
+           had an order. They pass no window, so they must get no counts --
+           and the absence of the field, rather than a flag, is what keeps
+           them immune to the narrowing below. */
+        const res = await admin.get(UH);
+        expect(res.status).toBe(200);
+        expect(res.body.length).toBeGreaterThan(1);
+        for (const s of res.body) {
+            expect(s, `${s.code} should carry no count`).not.toHaveProperty('orders');
+        }
+    });
+
+    it('counts a pharmacy\'s orders inside the window and nobody else\'s', async () => {
+        const res = await admin.get(`${UH}?from=${DAY}&to=${DAY}`);
+        expect(res.status).toBe(200);
+        const by = Object.fromEntries(res.body.map((s) => [s.code, s.orders]));
+        expect(by['wheatley'], 'two on the day').toBe(2);
+        expect(by['vida'], 'its order is the day after').toBe(0);
+    });
+
+    it('still returns every pharmacy, counted at nought', async () => {
+        /* THE SERVER NARROWS NOTHING. It reports; the screen decides what
+           to show. A pharmacy missing from the response would be
+           indistinguishable from one removed from the contract, and the
+           client could not keep an already-chosen counter in the list --
+           which is what stops a filter going blank under a reader who
+           moved the dates. */
+        const all = (await admin.get(UH)).body;
+        const res = await admin.get(`${UH}?from=${DAY}&to=${DAY}`);
+        expect(res.body).toHaveLength(all.length);
+        for (const s of res.body) {
+            expect(typeof s.orders, `${s.code}`).toBe('number');
+        }
+    });
+
+    it('widens with the window rather than being about one day', async () => {
+        const res = await admin.get(`${UH}?from=${DAY}&to=${OTHER}`);
+        const by = Object.fromEntries(res.body.map((s) => [s.code, s.orders]));
+        expect(by['wheatley']).toBe(2);
+        expect(by['vida']).toBe(1);
+    });
+
+    it('treats half a window, or a nonsense one, as no window', async () => {
+        /* These URLs are bookmarked and pasted into chat. A 400 in front of
+           somebody who only wanted a dropdown is the wrong failure; the
+           full list is the safe one, and it is the same call driver-records
+           makes about an unreadable siteId. */
+        for (const q of [`?from=${DAY}`, `?to=${DAY}`, '?from=yesterday&to=today',
+            `?from=${OTHER}&to=${DAY}`, '?from=&to=']) {
+            const res = await admin.get(`${UH}${q}`);
+            expect(res.status, q).toBe(200);
+            expect(res.body.length, q).toBeGreaterThan(1);
+            expect(res.body[0], q).not.toHaveProperty('orders');
+        }
+    });
+
+    it('keeps the status and type filters working beside the window', async () => {
+        const res = await admin.get(`${UH}?type=pharmacy&from=${DAY}&to=${DAY}`);
+        expect(res.status).toBe(200);
+        expect(res.body.every((s) => s.type === 'pharmacy')).toBe(true);
+        expect(res.body.find((s) => s.code === 'wheatley').orders).toBe(2);
+    });
+
+    it('counts an order whatever became of it, because a filter is about where to look', async () => {
+        /* Not delivered-only. The question a dropdown answers is "is there
+           anything to see at this counter in this range", and a cancelled
+           or still-open order is very much something to see -- the
+           discrepancy log and the board are two of the screens reading
+           this. */
+        const made = await admin.post(ORDERS).send({
+            siteId: vida.id, serviceDate: DAY, serviceType: 'adhoc', recipientName: 'Someone',
+            addressLine: '2 Rehearsal Way', zip: '78215',
+            description: 'Oral solids', quantity: 1, externalRef: 'SITE-WINDOW-4',
+        });
+        expect(made.status).toBe(201);
+        await sql("UPDATE orders SET status = 'cancelled' WHERE external_ref = 'SITE-WINDOW-4'");
+
+        const res = await admin.get(`${UH}?from=${DAY}&to=${DAY}`);
+        const by = Object.fromEntries(res.body.map((s) => [s.code, s.orders]));
+        expect(by['vida'], 'cancelled is still a reason to look here').toBe(1);
+    });
+});

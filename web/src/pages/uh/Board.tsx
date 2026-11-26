@@ -26,7 +26,7 @@ import { Section } from '../../app/Section';
 import { Pager, usePaged, PAGE_SIZE } from '../../app/Pager';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { slaLabel, type Sla } from './Orders';
-import type { Site } from './Sites';
+import { PharmacyFilter, usePharmacies } from './PharmacyFilter';
 import { mergeBoard, type BoardView, type BoardWire, type SiteRef } from '../../lib/board';
 /* Shared with the take-an-order panel, so the warning before something
    unrecoverable is worded once. See DeleteOrder.tsx. */
@@ -186,7 +186,6 @@ export function Board() {
     const [params, setParams] = useSearchParams();
 
     const [data, setData] = useState<BoardData | null>(null);
-    const [sites, setSites] = useState<Site[]>([]);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string; details?: string[] } | null>(null);
     const [busy, setBusy] = useState(false);
     const [dragging, setDragging] = useState<number | null>(null);
@@ -273,9 +272,6 @@ export function Board() {
         };
     }, [load]);
 
-    useEffect(() => {
-        api<Site[]>(`${base}/sites`).then(setSites).catch(() => setSites([]));
-    }, [base]);
 
     /* Above every early return: hooks run in the same order every render.
        The feed only. The pool groups and the lanes hold a page each of their
@@ -349,6 +345,19 @@ export function Board() {
     const laneElsewhere = (data?.lanes ?? []).length - lanesOnBoard.length;
     const pagedLanes = usePaged(laneMatches);
 
+    /* NARROWED BY THE DAY THE BOARD IS SHOWING, which is the one in the box
+       until the first response names it. Undefined until then, so the first
+       list is every pharmacy and the second is the day's -- the board is
+       already a screen that fills in as answers arrive, and a filter that
+       waited for a date would be empty at the moment somebody reaches for
+       it. See PharmacyFilter.
+
+       ABOVE THE EARLY RETURN, like every other hook on this screen: below
+       it, a member without this project renders one fewer hook than the
+       render before and React tears the component down. */
+    const onDay = (params.get('serviceDate') ?? '') || data?.serviceDate || '';
+    const sites = usePharmacies(code, onDay === '' ? undefined : { from: onDay, to: onDay });
+
     if (!project) {
         return (<><h1>Project not available</h1><Link className="izy-btn secondary" to="/">Back to projects</Link></>);
     }
@@ -359,6 +368,7 @@ export function Board() {
         setParams(next, { replace: true });
     };
     const get = (key: string) => params.get(key) ?? '';
+
 
     async function act(fn: () => Promise<unknown>, ok: string) {
         setBusy(true);
@@ -592,12 +602,12 @@ export function Board() {
                     <label className="izy-field">Day
                         <input type="date" value={get('serviceDate') || data.serviceDate} onChange={(e) => set('serviceDate', e.target.value)} />
                     </label>
-                    <label className="izy-field">Pharmacy
-                        <select value={get('siteId')} onChange={(e) => set('siteId', e.target.value)}>
-                            <option value="">any</option>
-                            {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-                        </select>
-                    </label>
+                    <PharmacyFilter
+                        sites={sites}
+                        value={get('siteId')}
+                        onChange={(v) => { set('siteId', v); }}
+                        anyLabel="any"
+                    />
                     <label className="izy-field">Service
                         <select value={get('serviceType')} onChange={(e) => set('serviceType', e.target.value)}>
                             <option value="">any</option>

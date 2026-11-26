@@ -30,7 +30,7 @@ import { Pager, usePaged } from '../../app/Pager';
 import { handleUnder } from '../../lib/people';
 import { useAuth, useProjectTimezone } from '../../app/auth';
 import { todayRange } from '../../lib/when';
-import type { Site } from './Sites';
+import { PharmacyFilter, usePharmacies } from './PharmacyFilter';
 
 interface PayLine {
     label: string; delivered: number; rateCents: number; payCents: number | null;
@@ -157,7 +157,29 @@ interface Everyone {
      *  at all. See `narrowed` below for why that distinction is not
      *  academic. */
     siteId?: number | null;
+    /** Everybody with a delivered or failed stop inside the chosen range
+     *  AND the chosen pharmacy. This is the list the filters describe. */
     drivers: DriverRow[];
+    /** The rest of the contract's couriers and leads: on the roster, nothing
+     *  in this range. Sent in full rather than counted so the screen can
+     *  offer them without a second request.
+     *
+     *  OPTIONAL, because a server that predates the split sends one list
+     *  with everybody already mixed into it. The screen then shows what it
+     *  is given and offers nothing, which is the old behaviour rather than
+     *  a broken page. */
+    idle?: DriverRow[];
+    /** Whether `payCents` anywhere in this response includes the completion
+     *  bonus. False under a pharmacy filter: a bonus is earned by finishing
+     *  a whole day across every counter, so it cannot be charged to one of
+     *  them, and `totals.bonusCents` then names money that is NOT in the
+     *  figures beside it.
+     *
+     *  OPTIONAL, because a server that predates this put the bonus in the
+     *  money unconditionally. Absent is read as true, which describes that
+     *  server exactly -- the dangerous default would be the other way
+     *  round, captioning a correct total as incomplete. */
+    bonusInPay?: boolean;
     totals: Totals;
 }
 
@@ -189,8 +211,14 @@ export function Drivers() {
     const siteId = params.get('siteId') ?? '';
 
     const [data, setData] = useState<Everyone | null>(null);
-    const [sites, setSites] = useState<Site[]>([]);
     const [msg, setMsg] = useState<string | null>(null);
+
+    /* THE DROPDOWN IS NARROWED BY THE DATES ABOVE IT. Nine counters are on
+       this contract and a single day usually involves a handful; offering
+       all nine makes the reader prove a negative one option at a time. See
+       PharmacyFilter for what happens to a pharmacy that is already chosen
+       when the range moves out from under it. */
+    const sites = usePharmacies(code, { from, to });
 
     /* One string for the request and the workbook link, so the file is what
        is on screen -- including which pharmacy. */
@@ -206,19 +234,24 @@ export function Drivers() {
     }, [code, query]);
     useEffect(() => { void load(); }, [load]);
 
-    useEffect(() => {
-        /* Silent on failure: without the list the filter offers nothing and
-           the payment run still loads, which is what matters on this page. */
-        void api<Site[]>(`/api/projects/${code}/uh/sites`).then(setSites).catch(() => setSites([]));
-    }, [code]);
-
     const set = (key: string, value: string) => {
         const next = new URLSearchParams(params);
         if (value === '') next.delete(key); else next.set(key, value);
         setParams(next, { replace: true });
     };
 
-    const paged = usePaged(data?.drivers ?? []);
+    /* THE ROSTER IS A SECOND SCREENFUL, NOT THE DEFAULT ONE.
+     *
+     * Reset whenever the filters move, because "show the other 104" is an
+     * answer to the range that was on screen when it was clicked. Keyed on
+     * `query`, which is the one string the request is built from, so a
+     * change of pharmacy and a change of date are treated alike. */
+    const [showIdle, setShowIdle] = useState(false);
+    useEffect(() => { setShowIdle(false); }, [query]);
+
+    const worked = data?.drivers ?? [];
+    const idle = data?.idle ?? [];
+    const paged = usePaged(showIdle ? [...worked, ...idle] : worked);
 
     /* ADMIN AND LEAD, which is what the server allows.
      *
@@ -261,6 +294,16 @@ export function Drivers() {
         ? sites.find((st) => st.id === data.siteId)?.name ?? `pharmacy ${data.siteId}`
         : null;
 
+    /* IS THERE A BONUS BESIDE THE MONEY THAT IS NOT IN IT? Asked once, here,
+       and read by both the banner and the tile -- the two must never
+       disagree about whether a figure is included. Derived from what the
+       server said rather than from `narrowed`: it is the server that
+       decides, and a client that re-derives the rule is the copy that
+       drifts. */
+    const bonusOut = data.bonusInPay === false
+        && (data.totals.bonusCents ?? 0) > 0
+        && hasMoney(data);
+
     return (
         <>
             <h1>Drivers</h1>
@@ -294,12 +337,11 @@ export function Drivers() {
                         EMPTY IS THE DEFAULT AND MUST STAY SO. Read the
                         banner below for what choosing one does to the pay
                         column. */}
-                    <label className="izy-field">Pharmacy
-                        <select value={siteId} onChange={(e) => set('siteId', e.target.value)}>
-                            <option value="">Every pharmacy</option>
-                            {sites.map((st) => <option key={st.id} value={String(st.id)}>{st.name}</option>)}
-                        </select>
-                    </label>
+                    <PharmacyFilter
+                        sites={sites}
+                        value={siteId}
+                        onChange={(v) => { set('siteId', v); }}
+                    />
                     <button className="izy-btn secondary" type="button" onClick={() => { void load(); }}>
                         Refresh
                     </button>
@@ -335,13 +377,38 @@ export function Drivers() {
                 </div>
             )}
 
+            {/* AND WHAT THE FILTER TOOK OUT, NAMED.
+                A completion bonus is earned by finishing a whole day across
+                every counter, so it is not charged to one of them -- the
+                figures above exclude it. Saying nothing would be the other
+                way to be wrong: a reader who finds no bonus anywhere
+                concludes none was earned. */}
+            {bonusOut && (
+                <div className="izy-alert warn" role="status">
+                    <b>{money(data.totals.bonusCents ?? 0, data.currency!)} of completion bonus is not
+                    in these figures.</b>{' '}
+                    It was earned over {data.totals.bonusDays}{' '}
+                    {data.totals.bonusDays === 1 ? 'day' : 'days'} on which a driver finished
+                    every stop assigned to them &mdash; across every pharmacy, which is why it cannot
+                    be charged to one. Choose every pharmacy to see it.
+                </div>
+            )}
+
             <div className="izy-card">
                 <h2>
                     {from} to {to}
                     {narrowed && <> &middot; {narrowedTo}</>}
                 </h2>
                 <div className="izy-stats">
-                    <div><b>{data.drivers.length}</b><span>drivers</span></div>
+                    {/* WHO WORKED, NOT HOW MANY ARE ON THE CONTRACT.
+                        This read `data.drivers.length` when that list was the
+                        whole roster, so one counter on one day was headed
+                        "106 drivers / 71 delivered" and read as a contract
+                        running four deliveries a head. The roster is still a
+                        number somebody wants, so it is beside it rather than
+                        instead of it -- but it is labelled, and it is not the
+                        one standing next to the delivery count. */}
+                    <div><b>{worked.length}</b><span>drivers who worked</span></div>
                     <div><b>{data.totals.delivered}</b><span>delivered</span></div>
                     <div className={data.totals.failed > 0 ? 'izy-stat-bad' : undefined}>
                         <b>{data.totals.failed}</b><span>not delivered</span>
@@ -352,7 +419,16 @@ export function Drivers() {
                     {hasMoney(data) && (data.totals.bonusDays ?? 0) > 0 && (
                         <div>
                             <b>{money(data.totals.bonusCents ?? 0, data.currency!)}</b>
-                            <span>completion bonus · {data.totals.bonusDays} {data.totals.bonusDays === 1 ? 'day' : 'days'}</span>
+                            <span>
+                                completion bonus · {data.totals.bonusDays} {data.totals.bonusDays === 1 ? 'day' : 'days'}
+                                {/* The tile beside this one is the pay. If
+                                    the bonus is not in it, this tile is the
+                                    place that has to say so: a reader adding
+                                    the two together is the mistake, and they
+                                    will do it here rather than in the
+                                    banner. */}
+                                {bonusOut ? ' · not in the figure beside it' : ''}
+                            </span>
                         </div>
                     )}
                     {hasMoney(data) && (
@@ -371,7 +447,32 @@ export function Drivers() {
 
             <div className="izy-card">
                 <h2>By driver</h2>
-                {data.drivers.length === 0 ? (
+
+                {/* THE ROSTER IS STILL ONE CLICK AWAY, AND IT SAYS SO.
+                    The old list showed everybody always, on the principle
+                    that a payment run has to be checkable against the
+                    roster. That principle is kept here rather than dropped:
+                    the people with nothing in this range are counted out
+                    loud and offered, so the absence is visible instead of
+                    being something a reader has to notice. */}
+                {idle.length > 0 && (
+                    <p className="izy-rownote" role="status">
+                        <span>
+                            {idle.length === 1
+                                ? 'One more driver is on this contract and has nothing in this range.'
+                                : `${idle.length} more drivers are on this contract and have nothing in this range.`}
+                        </span>
+                        <button
+                            className="izy-btn secondary"
+                            type="button"
+                            onClick={() => { setShowIdle(!showIdle); }}
+                        >
+                            {showIdle ? `Show only the ${worked.length} who worked` : 'Show them too'}
+                        </button>
+                    </p>
+                )}
+
+                {paged.total === 0 ? (
                     <p className="izy-muted">Nobody delivered in this range.</p>
                 ) : (
                     <>
@@ -393,7 +494,12 @@ export function Drivers() {
                             </thead>
                             <tbody>
                                 {paged.rows.map((d) => (
-                                    <tr key={d.username}>
+                                    /* Marked rather than merely sorted to the
+                                       bottom: once the two lists are shown
+                                       together, a row of noughts is
+                                       indistinguishable from a driver who
+                                       worked and delivered nothing. */
+                                    <tr key={d.username} className={idle.includes(d) ? 'izy-row-quiet' : undefined}>
                                         <td>
                                             {/* Through to their own record, which is where
                                                 the dates and pharmacies are. */}
