@@ -129,7 +129,50 @@ export function scanSupported(): boolean {
 
 interface Recogniser {
     recognize: (image: unknown) => Promise<{ data: { text: string } }>;
+    setParameters: (params: Record<string, string>) => Promise<unknown>;
 }
+
+/**
+ * DIGITS AND WHAT SEPARATES THEM, nothing else. The reader is far less
+ * likely to offer an S where a 5 is when S is not a character it may
+ * return. phone-scan.ts still forgives the substitutions, because this
+ * only narrows the alphabet and does not guarantee it.
+ *
+ * THE COMMA AND THE SLASH EARN THEIR PLACE, added 25 November. A
+ * RECIPIENT panel often carries two numbers written
+ * "210-555-0147, 210-555-0199" or with a slash between them. Neither
+ * character was on this list, so the reader returned its best guess at a
+ * digit instead -- or nothing, leaving a space -- and phone-scan.ts saw
+ * one twenty-digit run and threw the pair away. They are separators
+ * between numbers, never characters inside one, which is exactly how
+ * phone-scan.ts treats them.
+ */
+const DIGITS = '0123456789()-./, ';
+
+/**
+ * Letters as well, for ONE job: the street name, when a doorstep tie
+ * needs breaking.
+ *
+ * ── THIS IS THE ALPHABET THE WHOLE DESIGN AVOIDS, and it is used here
+ * on purpose and narrowly. A reader allowed the whole alphabet confuses
+ * 5 with S, 0 with O, 1 with I and 8 with B, which is why the scan that
+ * matters runs on DIGITS above. Measured over the November snapshot, the
+ * patient's name would have bought five points of accuracy by widening
+ * this on every scan, including the eighty-five in a hundred that never
+ * needed it, and that trade was refused.
+ *
+ * What makes this one acceptable is that nothing read with it is ever a
+ * KEY. The house number and the ZIP have already been read with DIGITS
+ * and the lookup has already happened; this read only chooses between
+ * cards that lookup returned, and street-match.ts on the server refuses
+ * to choose at all unless the choice is clear. A bad read here loses a
+ * tie-break. It cannot find the wrong delivery.
+ *
+ * THE DIGITS STAY IN IT so the house number can still be found in this
+ * read -- that is how findStreet locates which line of the label is the
+ * address rather than the phone.
+ */
+const WORDS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,-#';
 
 async function reader(): Promise<Recogniser> {
     if (worker !== null) return worker as Recogniser;
@@ -158,25 +201,18 @@ async function reader(): Promise<Recogniser> {
                     /* Nothing to a console in a warehouse. */
                     logger: () => {},
                 });
-            /* DIGITS AND WHAT SEPARATES THEM, nothing else. The reader is
-               far less likely to offer an S where a 5 is when S is not a
-               character it may return. phone-scan.ts still forgives the
-               substitutions, because this only narrows the alphabet and
-               does not guarantee it.
+            /* THE WHITELIST IS SET PER READ NOW, NOT HERE -- see DIGITS
+               and WORDS above and readWith() below. It moved because the
+               street tie-breaker needs letters for one read out of
+               roughly fifteen, and a second worker to hold a second
+               alphabet would mean a second copy of a multi-megabyte
+               WebAssembly core on a warehouse handset.
 
-               THE COMMA AND THE SLASH EARN THEIR PLACE, added 25 November.
-               A RECIPIENT panel often carries two numbers written
-               "210-555-0147, 210-555-0199" or with a slash between them.
-               Neither character was on this list, so the reader returned
-               its best guess at a digit instead -- or nothing, leaving a
-               space -- and phone-scan.ts saw one twenty-digit run and
-               threw the pair away. They are separators between numbers,
-               never characters inside one, which is exactly how
-               phone-scan.ts treats them. */
-                stage = 'setting the reader up';
-                await made.setParameters({
-                    tessedit_char_whitelist: '0123456789()-./, ',
-                });
+               tessedit_char_whitelist is safe to change on a running
+               worker: tesseract.js only refuses the parameters on its
+               own initParamNames list, which is the dawg loaders and the
+               engine mode, and this is not one of them. It goes through
+               SetVariable like any other. */
                 return made;
             } catch (e) {
                 /* The cause is kept, not swallowed: a SecurityError from a
@@ -242,11 +278,63 @@ function strip(el: HTMLVideoElement): HTMLCanvasElement {
  * out of forty others -- can be tested without a camera, a worker or
  * four megabytes of WebAssembly.
  */
+async function readWith(canvas: HTMLCanvasElement, whitelist: string): Promise<string> {
+    const r = await reader();
+    /* Every time, not only when it changed. The alternative is tracking
+       which alphabet the worker is currently holding, and a stale belief
+       about that would show up as a digits scan that quietly returned
+       letters -- a bug that looks exactly like bad recognition. The call
+       is a SetVariable inside a worker that is already running. */
+    await r.setParameters({ tessedit_char_whitelist: whitelist });
+    const got = await r.recognize(canvas);
+    return got.data.text;
+}
+
+/**
+ * The pixels the last scan actually read.
+ *
+ * Kept so the street tie-breaker can have a second look at THE SAME
+ * FRAME. It cannot re-read the camera: by the time the lookup has been
+ * to the server and come back the sorter has moved the handset, and
+ * reading a different frame would mean the street came off one sheet and
+ * the doorstep off another. Which would be undetectable and wrong.
+ *
+ * One canvas, replaced each scan, and dropped on reset() -- the frame
+ * holds a patient's details and does not want keeping any longer than
+ * the question it answers.
+ */
+let lastStrip: HTMLCanvasElement | null = null;
+
 export async function readDigits(el: HTMLVideoElement): Promise<string> {
     if (el.videoWidth === 0 || el.videoHeight === 0) {
         throw new Error('The camera has not sent a picture yet. Give it a moment and scan again.');
     }
     const canvas = strip(el);
-    const got = await (await reader()).recognize(canvas);
-    return got.data.text;
+    lastStrip = canvas;
+    return readWith(canvas, DIGITS);
+}
+
+/**
+ * The same strip again, with letters allowed, for the street name.
+ *
+ * Returns '' rather than throwing when there is nothing to read or the
+ * reader fails. EVERY failure here is a non-event by design: the caller
+ * is holding an answer it can already show, and the only thing a street
+ * read can add is to narrow it. So a reader that will not start, a strip
+ * that was dropped, or a read that comes back as noise all end the same
+ * way -- the sorter sees the cards the doorstep found, which is what
+ * they saw before this existed.
+ */
+export async function readStreet(): Promise<string> {
+    if (lastStrip === null) return '';
+    try {
+        return await readWith(lastStrip, WORDS);
+    } catch {
+        return '';
+    }
+}
+
+/** Let go of the frame. Called when the scanner closes or is cleared. */
+export function forgetStrip(): void {
+    lastStrip = null;
 }

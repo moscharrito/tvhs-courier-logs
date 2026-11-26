@@ -769,3 +769,190 @@ describe('what it writes down', () => {
         expect((await sql('SELECT COUNT(*) AS n FROM runs')).rows[0].n).toBe(runsBefore);
     });
 });
+
+/* ───────────────── THE STREET NAME, WHEN THE DOORSTEP WAS NOT ENOUGH ──
+ *
+ * A house number and a ZIP hand back exactly one card 78.8% of the time
+ * over the November snapshot. Where they hand back several, the sorter's
+ * camera can have a second look at the same pixels with letters allowed.
+ *
+ * Whether a given street name SHOULD decide a given tie is measured in
+ * uh-street-match.test.mjs, over the real collisions. What belongs here
+ * is the route's half of it: that the street only ever narrows, that it
+ * cannot become a key of its own, that it never empties an answer, and
+ * that it is not written down.
+ */
+describe('narrowing a doorstep by the street name', () => {
+    let seqq = 0;
+    async function at(addressLine, zip) {
+        seqq += 1;
+        const r = await admin.post(`${UH}/orders`).send({
+            siteId,
+            serviceType: 'adhoc',
+            recipientName: `Street Patient ${seqq}`,
+            recipientPhone: '',
+            addressLine,
+            zip,
+            description: 'Oral solids',
+            quantity: 1,
+        });
+        expect(r.status, r.text).toBe(201);
+        return r.body.id;
+    }
+
+    /**
+     * Two deliveries, same house number and ZIP, different streets.
+     *
+     * A ZIP OF ITS OWN PER TEST, because orders cannot be deleted --
+     * custody_events is append-only by the trigger in drizzle/0009, see
+     * the beforeEach at the top of this file -- so a shared doorstep
+     * accumulates every earlier test's parcels behind it. The first run
+     * of this block found eleven.
+     */
+    async function tie(zip) {
+        return {
+            rehearsal: await at('8812 Rehearsal Way', zip),
+            peverell: await at('8812 Peverell Ct', zip),
+        };
+    }
+
+    const ids = (r) => r.body.matches.map((m) => m.orderId).sort((a, b) => a - b);
+    const sorted = (xs) => [...xs].sort((a, b) => a - b);
+
+    it('returns both when no street is offered', async () => {
+        /* The behaviour before any of this, and the behaviour the bench
+           falls back to whenever the camera cannot read a street. */
+        const { rehearsal, peverell } = await tie('78301');
+        const r = await look(admin, { house: '8812', zip: '78301' });
+        expect(r.status).toBe(200);
+        expect(ids(r)).toEqual(sorted([rehearsal, peverell]));
+        expect(r.body.narrowedBy).toBe(null);
+    });
+
+    it('narrows to the street the camera read', async () => {
+        const { rehearsal } = await tie('78302');
+        const r = await look(admin, { house: '8812', zip: '78302', street: 'Rehearsal Way' });
+        expect(r.status).toBe(200);
+        expect(ids(r)).toEqual([rehearsal]);
+        expect(r.body.narrowedBy).toBe('street');
+        expect(r.body.narrowedFrom).toBe(2);
+    });
+
+    it('narrows on a read the camera mangled', async () => {
+        const { rehearsal } = await tie('78303');
+        const r = await look(admin, { house: '8812', zip: '78303', street: 'REHEARSAI WAV' });
+        expect(ids(r)).toEqual([rehearsal]);
+        expect(r.body.narrowedBy).toBe('street');
+    });
+
+    it('forgives a city left on the end of a one-line address', async () => {
+        /* findStreet cuts the ZIP and the state and leaves the city,
+           because the city has no shape to cut it by. The street comes
+           first, which is what makes that safe. */
+        const { rehearsal } = await tie('78304');
+        const r = await look(admin, {
+            house: '8812', zip: '78304', street: 'Rehearsal Way SAN ANTONIO',
+        });
+        expect(ids(r)).toEqual([rehearsal]);
+    });
+
+    it('returns both when the two streets are too alike to separate', async () => {
+        /* 29 of the 130 real ties look like this. A refusal must read
+           exactly like never having asked. */
+        const a = await at('8812 Oakhurst Dr', '78214');
+        const b = await at('8812 Oakhurst Ct', '78214');
+        const r = await look(admin, { house: '8812', zip: '78214', street: 'Oakhurst Dr' });
+        expect(ids(r)).toEqual(sorted([a, b]));
+        expect(r.body.narrowedBy).toBe(null);
+    });
+
+    it('returns both when the read was too poor to trust', async () => {
+        const { rehearsal, peverell } = await tie('78305');
+        const r = await look(admin, { house: '8812', zip: '78305', street: 'IIWNXQ' });
+        expect(ids(r)).toEqual(sorted([rehearsal, peverell]));
+        expect(r.body.narrowedBy).toBe(null);
+    });
+
+    it('keeps both parcels when one door holds two', async () => {
+        /* 372 of the 502 real collisions. Two prescriptions for one
+           patient on one day are two packages, same driver, same stop,
+           and narrowing to one of them is losing one. */
+        const a = await at('8812 Rehearsal Way', '78215');
+        const b = await at('8812 Rehearsal Way', '78215');
+        const r = await look(admin, { house: '8812', zip: '78215', street: 'Rehearsal Way' });
+        expect(ids(r)).toEqual(sorted([a, b]));
+        expect(r.body.narrowedBy).toBe(null);
+    });
+
+    it('never narrows a single answer away', async () => {
+        /* A street that matches NOTHING must not empty an answer the
+           doorstep found. The otherRounds fallback keys off an empty
+           result, and a tie-breaker that could empty one would reach
+           into a question it has no business answering. */
+        const id = await at('8812 Wrenfield Ln', '78216');
+        const r = await look(admin, { house: '8812', zip: '78216', street: 'Peverell Ct' });
+        expect(ids(r)).toEqual([id]);
+        expect(r.body.otherRounds).toEqual([]);
+    });
+
+    it('does not record a narrowing when there was nothing to narrow', async () => {
+        /* THE GATE ON found.length, WHICH NOTHING WAS WATCHING. Running
+           the tie-breaker over a single card is harmless -- it collapses
+           to one street and declines -- so breaking the gate changed no
+           answer anywhere. What it changed is the trail: every ordinary
+           one-card lookup would start recording a narrowing that never
+           happened, and a reviewer asking "was a card set aside here"
+           would be reading noise. */
+        await at('8812 Fennimore Dr', '78309');
+        await look(admin, { house: '8812', zip: '78309', street: 'Fennimore Dr' });
+        const rows = await sql(
+            "SELECT detail FROM audit_events WHERE action = 'sort.lookup' ORDER BY id DESC LIMIT 1",
+        );
+        const d = JSON.parse(String(rows.rows[0].detail));
+        expect(d.matched).toBe(1);
+        expect(d.narrowedFrom).toBe(null);
+        expect(d.narrowedBy).toBe(null);
+        /* The street was still offered, and that is still worth knowing. */
+        expect(d.street).toBe('Fennimore Dr'.length);
+    });
+
+    it('is not a key on its own', async () => {
+        /* Half a doorstep is the same nothing as an empty body, and a
+           street is less than half. */
+        await tie('78306');
+        const r = await look(admin, { street: 'Rehearsal Way' });
+        expect(r.status).toBe(400);
+        expect(r.body.code).toBe('sort.noPhone');
+    });
+
+    it('does not return the address it scored', async () => {
+        /* It is selected for the tie-breaker and dropped. The caller is
+           holding the sheet it is printed on; an address in a payload is
+           an address in a log, a cache and a screenshot. */
+        await tie('78307');
+        const r = await look(admin, { house: '8812', zip: '78307', street: 'Rehearsal Way' });
+        const sent = JSON.stringify(r.body);
+        expect(sent).not.toContain('Rehearsal');
+        expect(sent).not.toContain('address');
+    });
+
+    it('writes down the length of the street and never the street', async () => {
+        /* A street name is a patient's address. The rule that was
+           already true of the telephone number and of the doorstep is
+           true of this one: the table records that somebody asked,
+           never what they asked. */
+        await tie('78308');
+        await look(admin, { house: '8812', zip: '78308', street: 'Rehearsal Way' });
+        const rows = await sql(
+            "SELECT detail FROM audit_events WHERE action = 'sort.lookup' ORDER BY id DESC LIMIT 1",
+        );
+        const detail = String(rows.rows[0].detail);
+        expect(detail).not.toContain('Rehearsal');
+        expect(detail).not.toContain('8812');
+        expect(detail).not.toContain('78308');
+        const d = JSON.parse(detail);
+        expect(d.street).toBe('Rehearsal Way'.length);
+        expect(d.narrowedBy).toBe('decided');
+        expect(d.narrowedFrom).toBe(2);
+    });
+});

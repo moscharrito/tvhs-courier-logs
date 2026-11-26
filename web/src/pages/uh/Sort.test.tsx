@@ -14,9 +14,18 @@ import { Sort } from './Sort';
 import { mockFetch } from '../../test/setup';
 
 const readDigits = vi.fn();
+/* The second pass over the same strip, with letters allowed, that the
+   street tie-breaker runs. Defaults to reading nothing, so every test
+   written before it existed behaves as it did. */
+const readStreet = vi.fn(async () => '');
+const forgetStrip = vi.fn();
 const scanSupported = vi.fn(() => true);
 vi.mock('../../lib/read-sheet', () => ({
     readDigits: (...a: unknown[]) => readDigits(...a),
+    /* No arguments, either of them: readStreet re-reads the strip the
+       last readDigits kept, which is the whole point of it. */
+    readStreet: () => readStreet(),
+    forgetStrip: () => forgetStrip(),
     scanSupported: () => scanSupported(),
     GUIDE: { x: 0.03, y: 0.38, w: 0.94, h: 0.24 },
 }));
@@ -87,6 +96,9 @@ function withCamera(ok = true) {
 
 beforeEach(() => {
     readDigits.mockReset();
+    readStreet.mockReset();
+    readStreet.mockResolvedValue('');
+    forgetStrip.mockReset();
     scanSupported.mockReturnValue(true);
     /* THE PAGE STARTS ITS OWN CAMERA. There is no Start button in the
        ordinary case and no Stop button at all: this page is the camera,
@@ -662,5 +674,175 @@ describe('when the camera will not play', () => {
         await screen.findByRole('status');
         view.unmount();
         expect(track.stop).toHaveBeenCalled();
+    });
+});
+
+/* ────────────────── BREAKING A DOORSTEP TIE BY STREET NAME ───────────
+ *
+ * A house number and a ZIP find exactly one delivery 78.8% of the time
+ * over the November snapshot. Where they find several, the street is on
+ * the same line of the label and read-sheet.ts still has the pixels.
+ *
+ * WHAT THESE COVER IS THE SPENDING AND THE OWNING UP. Whether a street
+ * name should decide a tie at all is street-match.ts's question and is
+ * measured there; what matters here is that the second read is paid for
+ * only when there is a tie, that the street goes up with the pair it
+ * narrows, that a failure anywhere in it is a non-event, and that a
+ * sorter is told when a card was put aside for them.
+ */
+describe('breaking a doorstep tie with the street name', () => {
+    const DOOR = '8812 Rehearsal Way SAN ANTONIO TX 78213';
+    const TWO = [match({ orderId: 51 }), match({ orderId: 52, patient: 'Test Patient Beta' })];
+
+    /** First ask answers with a tie; the one carrying a street narrows it. */
+    const tieThenNarrow = (narrowed = true) => ({
+        [LOOKUP]: (_url: string, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? '{}'));
+            if (typeof body.street === 'string' && body.street !== '') {
+                return narrowed
+                    ? { matches: [TWO[0]], narrowedBy: 'street', narrowedFrom: 2 }
+                    : { matches: TWO, narrowedBy: null, narrowedFrom: null };
+            }
+            return { matches: TWO };
+        },
+    });
+
+    it('does not read the street when the doorstep found one delivery', async () => {
+        /* THE WHOLE COST CONTROL. A second pass of the reader is about a
+           second on a warehouse handset, and fourteen scans in fifteen
+           have nothing to disambiguate. */
+        readDigits.mockResolvedValue(DOOR);
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(readStreet).not.toHaveBeenCalled();
+    });
+
+    it('does not read the street for a number, however many it found', async () => {
+        /* The street narrows a DOORSTEP. Two deliveries on one telephone
+           number are two prescriptions for one patient, and the street
+           they share cannot tell them apart. */
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        mockFetch({ [LOOKUP]: { matches: TWO } });
+        open();
+
+        /* Both cards, so by name: they share a driver. */
+        await screen.findByText('Test Patient Beta');
+        expect(readStreet).not.toHaveBeenCalled();
+    });
+
+    it('reads the street once the doorstep came back with a tie', async () => {
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue(DOOR);
+        mockFetch(tieThenNarrow());
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(readStreet).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends the street alongside the house number and the ZIP', async () => {
+        /* Never on its own: the street is not a key and the route would
+           refuse it as half a doorstep. */
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue(DOOR);
+        const { bodies } = mockFetch(tieThenNarrow());
+        open();
+
+        await screen.findByText('Ana Driver');
+        /* THE CITY IS STILL ON IT, and that is right. Some labels print
+           the whole address on one line; findStreet cuts the ZIP and the
+           state off the end because both have a shape worth recognising,
+           and leaves the city because it has none -- there is nothing in
+           "SAN ANTONIO" that says it is not more street. What forgives
+           it is street-match.ts scoring the stored street against the
+           OPENING of this read, since the street comes first. Trimming
+           it here by guesswork would be the version that eats a street
+           name on the labels that print two words. */
+        expect(bodies[LOOKUP]).toEqual({
+            house: '8812', zip: '78213', street: 'Rehearsal Way SAN ANTONIO',
+        });
+    });
+
+    it('shows the card the street chose, and says what it set aside', async () => {
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue(DOOR);
+        mockFetch(tieThenNarrow());
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(screen.queryByText('Test Patient Beta')).not.toBeInTheDocument();
+        await screen.findByText(/One other delivery shares this house number and ZIP/i);
+    });
+
+    it('shows the one it set aside, without asking again', async () => {
+        /* IT CAME BACK WITH THE FIRST LOOKUP. A sorter who wants to see
+           the other card is stood at a bench holding a parcel, and a
+           round trip to show them something already downloaded is a
+           round trip spent on nothing. */
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue(DOOR);
+        const { calls } = mockFetch(tieThenNarrow());
+        open();
+
+        const button = await screen.findByRole('button', { name: /Show it too/i });
+        const before = calls.filter((c) => c.includes('/sort/lookup')).length;
+        fireEvent.click(button);
+
+        await screen.findByText('Test Patient Beta');
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(before);
+        expect(screen.queryByText(/shares this house number/i)).not.toBeInTheDocument();
+    });
+
+    it('leaves the answer alone when the server declined to narrow', async () => {
+        /* 29 of the 130 real ties carry street names too alike to
+           separate. The server refuses those, and a refusal must read
+           exactly like never having asked. */
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue(DOOR);
+        mockFetch(tieThenNarrow(false));
+        open();
+
+        await screen.findByText('Test Patient Beta');
+        expect(screen.queryByText(/shares this house number/i)).not.toBeInTheDocument();
+    });
+
+    it('leaves the answer alone when the street could not be read', async () => {
+        /* readStreet returns '' for a reader that will not start or a
+           strip that was dropped. Nothing about that should reach the
+           bench: they get the cards the doorstep found. */
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue('');
+        const { calls } = mockFetch(tieThenNarrow());
+        open();
+
+        await screen.findByText('Test Patient Beta');
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(1);
+    });
+
+    it('leaves the answer alone when no line carried the house number', async () => {
+        /* findStreet finds the address line BY the house number. A
+           letters read that lost it cannot say which line is the street,
+           and guessing would risk sending the patient's name as one. */
+        readDigits.mockResolvedValue(DOOR);
+        readStreet.mockResolvedValue('TEST PATIENT ALPHA\nSOME WARD');
+        const { calls } = mockFetch(tieThenNarrow());
+        open();
+
+        await screen.findByText('Test Patient Beta');
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(1);
+    });
+
+    it('lets go of the frame on Clear', async () => {
+        /* The strip is a photograph of a patient's address and the
+           question it was kept for is over. */
+        readDigits.mockResolvedValue(DOOR);
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        expect(forgetStrip).toHaveBeenCalled();
     });
 });

@@ -66,8 +66,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, why } from '../../lib/api';
 import { cameraAdvice } from '../../lib/browser';
-import { findPhones, findPlaces } from '../../lib/phone-scan';
-import { readDigits, scanSupported } from '../../lib/read-sheet';
+import { findPhones, findPlaces, findStreet } from '../../lib/phone-scan';
+import { readDigits, readStreet, forgetStrip, scanSupported } from '../../lib/read-sheet';
 
 interface Match {
     orderId: number;
@@ -171,6 +171,19 @@ export function Sort({ projectCode }: { projectCode: string }) {
     /** Whether any of them was a doorstep, which changes what we say
      *  when nothing comes back. */
     const [askedDoor, setAskedDoor] = useState(false);
+    /**
+     * The cards the street name ruled out, kept so they can be shown.
+     *
+     * NOT DISCARDED, AND THAT IS THE POINT. A doorstep that found three
+     * deliveries and a street name that chose one of them is the machine
+     * making a judgement on a camera read of a word. It is a good
+     * judgement -- street-match.ts refuses the close ones and was
+     * measured setting aside the wrong card zero times in 1,082 -- but
+     * the sorter is the one holding the sheet, and a screen that silently
+     * showed one card of three would give them no way to notice. They are
+     * one press away and already downloaded.
+     */
+    const [aside, setAside] = useState<Match[]>([]);
     const [matches, setMatches] = useState<Match[] | null>(null);
     /** Held, but on somebody else's round. Driver only -- no patient. */
     const [otherRounds, setOtherRounds] = useState<OtherRound[]>([]);
@@ -270,6 +283,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
         setToday('');
         setAsked(wanted.map((k) => (isPhone(k) ? pretty(k.phone) : `no. ${k.house} · ${k.zip}`)));
         setAskedDoor(wanted.some((k) => !isPhone(k)));
+        setAside([]);
         try {
             /* A POST, and the number is in the BODY. A telephone number
                identifies a patient, and a patient's identifier in a URL
@@ -281,8 +295,57 @@ export function Sort({ projectCode }: { projectCode: string }) {
                 `/api/projects/${projectCode}/uh/sort/lookup`,
                 { method: 'POST', json: key },
             )));
+            /* ─────────────── AND THE STREET NAME, IF THERE IS A TIE.
+             *
+             * A house number and a ZIP find exactly one delivery 78.8%
+             * of the time. This is the rest: the street is printed on
+             * the same line of the label, read-sheet.ts still has the
+             * pixels, and street-match.ts on the server either picks a
+             * card outright or declines.
+             *
+             * ── A SECOND ROUND TRIP, AND ONLY HERE. Reading letters is
+             * a second pass of the reader over the strip -- about a
+             * second on a warehouse handset -- and the wrong design is
+             * to pay it on every scan to save a request on one in
+             * fifteen. So it is spent only once the server has said
+             * the doorstep was not enough.
+             *
+             * ── THE SAME PIXELS, NOT A SECOND LOOK AT THE CAMERA. By
+             * now the sorter has moved the handset. See lastStrip in
+             * read-sheet.ts: a street off one sheet and a doorstep off
+             * another would be undetectable and wrong.
+             *
+             * ── AND NOTHING HERE CAN FAIL LOUDLY. readStreet returns ''
+             * for a reader that will not start, findStreet returns ''
+             * when it cannot tell which line is the address, and both
+             * leave `rounds` exactly as it was. The sorter gets the
+             * cards the doorstep found, which is what they got before
+             * this existed. */
+            let rounds = got;
+            const tieAt = wanted.findIndex((k, i) => !isPhone(k)
+                && (got[i]?.matches.length ?? 0) > 1);
+            if (tieAt >= 0) {
+                const door = wanted[tieAt] as { house: string; zip: string };
+                const street = findStreet(await readStreet(), door.house);
+                if (street !== '') {
+                    const again = await api<{
+                        matches: Match[]; today?: string; otherRounds?: OtherRound[];
+                        narrowedBy?: string | null;
+                    }>(
+                        `/api/projects/${projectCode}/uh/sort/lookup`,
+                        { method: 'POST', json: { ...door, street } },
+                    );
+                    if (again.narrowedBy === 'street') {
+                        const kept = new Set(again.matches.map((m) => m.orderId));
+                        setAside((got[tieAt]?.matches ?? [])
+                            .filter((m) => !kept.has(m.orderId)));
+                        rounds = got.map((g, i) => (i === tieAt ? again : g));
+                    }
+                }
+            }
+
             const byOrder = new Map<number, Match>();
-            for (const one of got) for (const m of one.matches) byOrder.set(m.orderId, m);
+            for (const one of rounds) for (const m of one.matches) byOrder.set(m.orderId, m);
             /* NEWEST FIRST ACROSS BOTH NUMBERS. Each lookup comes back in
                date order, but a mobile and a landline are two lookups and
                merging them by order id would interleave the dates. The
@@ -297,12 +360,12 @@ export function Sort({ projectCode }: { projectCode: string }) {
                is empty, which is the server's contract and is enforced
                again at the render below. */
             const byOther = new Map<number, OtherRound>();
-            for (const one of got) {
+            for (const one of rounds) {
                 for (const m of one.otherRounds ?? []) byOther.set(m.orderId, m);
             }
             setOtherRounds([...byOther.values()]
                 .sort((a, b) => b.serviceDate.localeCompare(a.serviceDate)));
-            setToday(got.find((g) => typeof g.today === 'string')?.today ?? '');
+            setToday(rounds.find((g) => typeof g.today === 'string')?.today ?? '');
         } catch (e) {
             setErr(why(e, 'That number could not be looked up.'));
         } finally {
@@ -381,7 +444,10 @@ export function Sort({ projectCode }: { projectCode: string }) {
 
     const clear = () => {
         setMatches(null); setOtherRounds([]); setToday(''); setAsked([]);
-        setAskedDoor(false); setErr(''); setMissed(false);
+        setAskedDoor(false); setAside([]); setErr(''); setMissed(false);
+        /* The frame held a patient's address and the question it was
+           kept for is over. */
+        forgetStrip();
     };
 
     return (
@@ -501,6 +567,42 @@ export function Sort({ projectCode }: { projectCode: string }) {
                     {matches.map((m) => (
                         <Found key={m.orderId} m={m} otherDay={today !== '' && m.serviceDate !== today} />
                     ))}
+
+                    {/* ── AND SAY SO WHEN THE STREET NAME DID THE CHOOSING.
+                        A doorstep that found three deliveries and a street
+                        name that picked one of them is the machine making a
+                        judgement on a camera read of a word. It is a good
+                        judgement and it was measured -- see street-match.ts
+                        -- but the person holding the sheet is the one who
+                        can check it, and a screen that quietly showed one
+                        card of three would give them nothing to check
+                        against. So it owns up, and the others are one press
+                        away and already downloaded. */}
+                    {aside.length > 0 && (
+                        <p className="izy-sort-narrowed" role="status">
+                            <span className="izy-muted">
+                                {aside.length === 1
+                                    ? 'One other delivery shares this house number and ZIP. '
+                                    : `${aside.length} other deliveries share this house number and ZIP. `}
+                                The street name on the sheet matched this one.
+                            </span>
+                            {' '}
+                            <button
+                                type="button"
+                                className="izy-btn secondary small"
+                                onClick={() => {
+                                    /* Appended, not re-fetched: these came
+                                       back with the first lookup and the
+                                       sorter is stood waiting. */
+                                    setMatches((was) => [...(was ?? []), ...aside]
+                                        .sort((a, b) => b.serviceDate.localeCompare(a.serviceDate)));
+                                    setAside([]);
+                                }}
+                            >
+                                {aside.length === 1 ? 'Show it too' : `Show all ${aside.length + matches.length}`}
+                            </button>
+                        </p>
+                    )}
 
                     {/* ONLY WHEN THEIR OWN ROUND HAD NOTHING. The server
                         does not send any in that case either, and this is

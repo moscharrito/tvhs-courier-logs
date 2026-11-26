@@ -2156,3 +2156,18 @@ body {
     overflow-wrap: anywhere;
 }
 .izy-side.is-collapsed .izy-build-stamp { display: none; }
+
+/* The sort bench owning up to a tie it broke by street name. Quieter
+   than a warning, because nothing is wrong: it is the screen saying
+   which of two cards it chose and offering the other. */
+.izy-sort-narrowed {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.5rem 0 0;
+    padding: 0.5rem 0.65rem;
+    border-left: 3px solid var(--izy-border, rgba(0, 0, 0, 0.18));
+    font-size: 0.9rem;
+    line-height: 1.35;
+}

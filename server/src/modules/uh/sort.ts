@@ -51,6 +51,7 @@ import { scopeFor } from './client-portal';
 import { normalizePhone } from './import-parse';
 import { todayIn } from '../../core/dates';
 import { presentHandling, handlingFlags, handlingColumns, type HandlingRow } from './handling';
+import { narrowByStreet } from './street-match';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -111,6 +112,20 @@ const Lookup = z.object({
     house: z.string().trim().regex(/^\d{1,6}$/).optional(),
     /** Five, always: every one of the 5,515 rows in the snapshot. */
     zip: z.string().trim().regex(/^\d{5}$/).optional(),
+    /**
+     * The street name, when the camera managed a second look.
+     *
+     * NOT A KEY, AND THE SCHEMA SAYS SO BY BEING USELESS ALONE: a body
+     * carrying only this is `by: 'door'` with no house and no ZIP, which
+     * is refused below like any other half a doorstep. It arrives only
+     * alongside the pair it narrows, and street-match.ts is where the
+     * measurements and the refusals live.
+     *
+     * Free text because it is a camera read of a word, so it cannot be
+     * validated into anything -- only bounded. Nothing is interpolated
+     * into SQL from it; it never reaches the database at all.
+     */
+    street: z.string().trim().max(60).optional(),
 });
 
 export function createSortRouter({ client }: { client: Client }): Router {
@@ -167,7 +182,7 @@ export function createSortRouter({ client }: { client: Client }): Router {
             return;
         }
 
-        const { phone, house, zip } = parsed.data;
+        const { phone, house, zip, street } = parsed.data;
         /* WHICH KEY THIS IS. The phone first when there is one: it is
            the better key where we hold the right number, and the
            doorstep exists for where we do not. */
@@ -332,8 +347,14 @@ export function createSortRouter({ client }: { client: Client }): Router {
          * what a caller gets about a package outside their own scope,
          * which is its driver and nothing that names a patient. */
         const find = (extra: string[], extraArgs: InValue[], limit: number) => client.execute({
+            /* o.address_line IS SELECTED FOR THE TIE-BREAKER AND FOR
+               NOTHING ELSE. It is scored in street-match.ts against what
+               the camera read and then dropped: present() does not carry
+               it out and thin() does not either. See the note at the top
+               of street-match.ts for why an address in a payload is an
+               address in a log, a cache and a screenshot. */
             sql: `SELECT o.id, o.external_ref, o.recipient_name, o.service_date, o.service_type,
-                         o.status, o.zone, ${handlingColumns('o')},
+                         o.status, o.zone, ${handlingColumns('o')}, o.address_line,
                          s.name AS site_name,
                          r.id AS run_id, r.label AS run_label, r.status AS run_status,
                          rs2.sequence AS stop_number,
@@ -389,7 +410,44 @@ export function createSortRouter({ client }: { client: Client }): Router {
             };
         };
 
-        const matches = rs.rows.map((r) => present(r as unknown as Record<string, unknown>));
+        const found = rs.rows.map((r) => present(r as unknown as Record<string, unknown>));
+
+        /* ───────────────────── THE STREET NAME, WHEN THERE IS A TIE TO BREAK.
+         *
+         * A house number and a ZIP hand back exactly one card 78.8% of
+         * the time. Where they hand back several, the sorter is holding a
+         * sheet with the street printed on it two lines above the number,
+         * and the camera can have a second look at the same pixels with
+         * letters allowed. street-match.ts scores that read against the
+         * candidates and either picks one outright or declines.
+         *
+         * IT RUNS LAST, AFTER SCOPE, AND ONLY NARROWS. That ordering is
+         * the safety property: this cannot widen an answer, cannot reach
+         * past a lead's counters or a courier's own runs, and cannot
+         * return a card the query above did not already return. It is a
+         * filter over rows the caller was entitled to see.
+         *
+         * IT ALSO DOES NOT RUN WHEN THERE IS NOTHING TO DECIDE -- one
+         * card, or none. The `otherRounds` fallback below keys off an
+         * empty result, and a tie-breaker that could empty a result would
+         * reach into a question it has no business answering.
+         *
+         * 372 of the 502 real collisions are one door with several
+         * parcels, where the right answer is every card; narrowByStreet
+         * collapses by street first and leaves those alone. 29 of the
+         * remaining 130 carry street names too alike to separate, and it
+         * declines those rather than guessing. Both cases come back
+         * exactly as they would have without a street at all. */
+        const tie = street !== undefined && street !== '' && found.length > 1
+            ? narrowByStreet(
+                found.map((m, i) => ({
+                    item: m,
+                    address: String((rs.rows[i] as unknown as Record<string, unknown>)['address_line'] ?? ''),
+                })),
+                street,
+            )
+            : null;
+        const matches = tie === null ? found : tie.kept;
 
         /* ───────────────────── AND WHOSE PILE IT GOES IN WHEN IT IS NOT YOURS.
          *
@@ -459,6 +517,17 @@ export function createSortRouter({ client }: { client: Client }): Router {
             digits: digits.length,
             matched: matches.length,
             orderIds: matches.map((m) => m.orderId),
+            /* THE TIE-BREAKER'S OWN TRAIL. A reviewer looking at a
+               one-card answer needs to be able to tell a doorstep that
+               was unique from a doorstep that was not and had a card
+               set aside -- and, when one was set aside, that the street
+               decided it rather than a coincidence. `street` is a
+               LENGTH, for the same reason `digits` is: it is a word off
+               a patient's address and this table records that somebody
+               asked, never what they asked. */
+            street: street === undefined ? null : street.length,
+            narrowedFrom: tie === null ? null : found.length,
+            narrowedBy: tie === null ? null : tie.why,
             /* COUNTED SEPARATELY, because it is a different act: a read
                of something outside the caller's own scope, answered in
                part. A trail that folded it into `matched` would make the
@@ -470,7 +539,21 @@ export function createSortRouter({ client }: { client: Client }): Router {
         /* `today` is for marking, not filtering: the screen puts a date on
            any card that is not today's so a sorter cannot mistake an old
            delivery for the one in their hand. */
-        res.json({ today, matches, otherRounds });
+        /* `narrowedBy` SO THE SCREEN CAN OWN UP TO IT. A sorter who
+           scanned a sheet and got one card back is entitled to know
+           whether the doorstep was unique or whether the machine put
+           other cards aside on the strength of a street name -- that is
+           the difference between "this is the package" and "this is
+           probably the package, and here is how to see the rest". Only
+           true when a card was actually set aside; a decline reads the
+           same as never having asked, which is what it is. */
+        res.json({
+            today,
+            matches,
+            otherRounds,
+            narrowedBy: tie !== null && tie.used ? 'street' : null,
+            narrowedFrom: tie !== null && tie.used ? found.length : null,
+        });
     }));
 
     return router;

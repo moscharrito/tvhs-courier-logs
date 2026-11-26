@@ -457,3 +457,76 @@ export function findPlaces(text: string): PlaceCandidate[] {
     }
     return out;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * THE STREET NAME, FOR BREAKING A TIE AND FOR NOTHING ELSE.
+ *
+ * A house number and a ZIP find exactly one delivery 78.8% of the time
+ * over the November snapshot. Where they find several, the street is
+ * printed on the same line of the label, and read-sheet.ts can look at
+ * the same pixels again with letters allowed.
+ *
+ * WHICH LINE IS THE ADDRESS IS THE WHOLE PROBLEM HERE. The guide strip
+ * holds two to four lines of a label -- the address, the contact line,
+ * whatever sits between them -- and the letters read of all of it is one
+ * blob of text. Guessing at "the longest wordy line" was the first idea
+ * and it is the wrong one: on a RECIPIENT panel that is as likely to be
+ * the patient's name, which is not the street and must never be sent as
+ * one.
+ *
+ * So the line is found by the house number, which is ALREADY KNOWN from
+ * the digits read that produced the lookup in the first place. The line
+ * that starts with the number we looked the delivery up by is the line
+ * the street is on. If no line does, this returns nothing and the tie
+ * goes unbroken, which is the answer the bench had anyway.
+ */
+
+/**
+ * The street name on the line that starts with this house number.
+ *
+ * `house` comes from findPlaces, so it has already been read once with
+ * the digits-only alphabet; this only has to find it again in a read of
+ * the same pixels. Returns '' when it cannot, and '' means the server is
+ * not asked to narrow anything.
+ */
+export function findStreet(text: string, house: string): string {
+    for (const line of text.split(/[\r\n]+/)) {
+        /* ANCHORED AT THE START OF THE LINE, past any label or stray
+           mark the reader put in front. The house number is the first
+           number on an address line -- a match further in would be the
+           ZIP, a suite, or part of the contact line. */
+        const at = line.match(/\d+/);
+        if (at === null || at[0] !== house) continue;
+
+        let rest = line.slice((at.index ?? 0) + at[0].length);
+        /* THE TAIL OF A ONE-LINE ADDRESS. Some labels print
+           "8812 Rehearsal Way SAN ANTONIO TX 78213" on a single line, so
+           the ZIP and the state are cut off the end where they are
+           recognisable. The city is NOT cut, because there is no shape
+           to recognise it by -- the server's prefix-anchored comparison
+           is what forgives it, since the street comes first. */
+        /* ── THE STATE IS ONLY EVER CUT TOGETHER WITH THE ZIP, and a
+           test is the reason that is written as one pattern. Cutting a
+           trailing two-letter token on its own ate the "Ct" off
+           "101 Peverell Ct" -- because a street TYPE is two letters as
+           often as a state is, and the type is exactly the token the
+           tie-breaker leans on: it is frequently the only difference
+           between the two streets that collided. streetOf on the server
+           keeps it for the same reason.
+
+           "TX" before five digits is a state. "Ct" at the end of a line
+           is a street. Nothing else is cut. */
+        rest = rest.replace(/\s+[A-Za-z]{2}\s*,?\s*\d{5}(?:-\d{4})?\s*$/, '');
+        rest = rest.replace(/\s*,?\s*\d{5}(?:-\d{4})?\s*$/, '');
+        /* Letters and single spaces. Everything else is punctuation the
+           two sides of the comparison disagree about anyway, and
+           street-match.ts strips it again on arrival. */
+        const street = rest.replace(/[^A-Za-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+        /* TWO LETTERS IS NOT A STREET NAME. A read that produced only
+           that found the line and little else, and sending it would ask
+           the server to choose on nothing. */
+        if (street.replace(/ /g, '').length < 3) return '';
+        return street;
+    }
+    return '';
+}

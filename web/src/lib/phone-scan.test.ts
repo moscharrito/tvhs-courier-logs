@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { findPhones, findPlaces, OUR_NUMBERS } from './phone-scan';
+import { findPhones, findPlaces, findStreet, OUR_NUMBERS } from './phone-scan';
 
 /** Roughly what a reader returns for the whole sheet. */
 const SHEET = `
@@ -340,5 +340,100 @@ describe('finding the doorstep', () => {
         const text = 'DELIVERY ADDRESS 1100 Rehearsal Way, SAN ANTONIO TX 78207\nMobile: 210-555-0147';
         expect(findPhones(text).map((c) => c.digits)).toEqual(['2105550147']);
         expect(findPlaces(text).map((c) => c.zip)).toEqual(['78207']);
+    });
+});
+
+/* ────────────────────── THE STREET NAME OFF THE SAME STRIP ───────────
+ *
+ * Read with letters allowed, and only ever to break a tie between cards
+ * a house number and a ZIP already found. The hard part is not the
+ * letters -- it is knowing WHICH LINE of a label is the address, because
+ * the guide strip holds two to four lines and the letters read of all of
+ * them is one blob. The house number is already known from the digits
+ * read, so that is what finds the line.
+ *
+ * Street names below are invented. Each was grepped against backups/
+ * first; "Rehearsal Way" is the seeded demo street, which is why it
+ * matches there and nowhere real.
+ */
+describe('findStreet', () => {
+    it('takes the street off the line the house number starts', () => {
+        const read = 'TEST PATIENT ALPHA\n8812 Rehearsal Way\nSAN ANTONIO TX 78213\nMobile 210-555-0147';
+        expect(findStreet(read, '8812')).toBe('Rehearsal Way');
+    });
+
+    it('does not mistake the patient name for a street', () => {
+        /* THE REASON IT GOES BY THE HOUSE NUMBER. "The longest wordy
+           line" was the first idea, and on a RECIPIENT panel that is as
+           likely to be the patient's name as the address -- which is not
+           a street and must never be sent as one. */
+        const read = 'WRENFIELD THORNBECK OAKHURST\n8812 Rehearsal Way';
+        expect(findStreet(read, '8812')).toBe('Rehearsal Way');
+    });
+
+    it('cuts the ZIP and the state off a one-line address', () => {
+        /* Together, as one shape, and only that way. */
+        expect(findStreet('8812 Rehearsal Way SAN ANTONIO TX 78213', '8812'))
+            .toBe('Rehearsal Way SAN ANTONIO');
+    });
+
+    it('keeps a two-letter street type, which is not a state', () => {
+        /* THE BUG THIS CAUGHT, and it was the damaging kind. Cutting a
+           trailing two-letter token ate the "Ct" -- and the street type
+           is frequently the ONLY difference between the two streets that
+           collided on house number and ZIP, which is to say the only
+           thing the tie-breaker had to work with. A state abbreviation
+           appears in front of a ZIP; a street type ends a line. */
+        expect(findStreet('101 Peverell Ct', '101')).toBe('Peverell Ct');
+        expect(findStreet('101 Oakhurst Dr', '101')).toBe('Oakhurst Dr');
+        expect(findStreet('101 Thornbeck Ln TX 78213', '101')).toBe('Thornbeck Ln');
+    });
+
+    it('cuts a nine-digit ZIP too', () => {
+        expect(findStreet('8812 Rehearsal Way TX 78213-4412', '8812'))
+            .toBe('Rehearsal Way');
+    });
+
+    it('leaves the city on, because there is no shape to cut it by', () => {
+        /* Not an oversight. Nothing in "SAN ANTONIO" says it is not more
+           street, and a rule that cut two trailing words would eat
+           "Rehearsal Way" off the labels that print the address alone.
+           street-match.ts forgives the tail by scoring the stored street
+           against the OPENING of this read. */
+        expect(findStreet('8812 Rehearsal Way SAN ANTONIO', '8812'))
+            .toContain('Rehearsal Way');
+    });
+
+    it('ignores a line where the number is not the first number', () => {
+        /* A match further into a line is the ZIP, a suite, or part of
+           the contact line -- not a house number. */
+        expect(findStreet('Suite 4 at 8812 Rehearsal Way', '8812')).toBe('');
+    });
+
+    it('gives nothing when no line carries the house number', () => {
+        /* Which is a refusal, not a failure: the tie goes unbroken and
+           the bench sees the cards it would have seen anyway. */
+        expect(findStreet('TEST PATIENT ALPHA\nSOME WARD', '8812')).toBe('');
+    });
+
+    it('gives nothing for a line that is the number and little else', () => {
+        /* Sending two stray letters would ask the server to choose on
+           nothing. */
+        expect(findStreet('8812 W', '8812')).toBe('');
+        expect(findStreet('8812', '8812')).toBe('');
+    });
+
+    it('drops the punctuation the two sides disagree about', () => {
+        expect(findStreet('8812  REHEARSAL  WAY.', '8812')).toBe('REHEARSAL WAY');
+    });
+
+    it('is not fooled by a different house number on another line', () => {
+        /* The shipper's door is printed above the recipient's on our
+           waybill, and findPlaces reads from the bottom for that reason.
+           This is asked about ONE house number and must answer about
+           that one. */
+        const read = '101 Peverell Ct\n8812 Rehearsal Way';
+        expect(findStreet(read, '8812')).toBe('Rehearsal Way');
+        expect(findStreet(read, '101')).toBe('Peverell Ct');
     });
 });
