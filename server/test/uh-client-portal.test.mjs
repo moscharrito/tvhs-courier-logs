@@ -1072,166 +1072,18 @@ describe('a date range with only one end filled in', () => {
     });
 });
 
-/* ───────────────── WHO IS CARRYING THIS COUNTER'S WORK ──────────────────
+/* ───────── WHO IS CARRYING THIS COUNTER'S WORK: REMOVED ─────────
  *
- * Asked for on 24 November 2026: a pharmacist could see who had each
- * delivery only by opening the deliveries one at a time, and what they
- * wanted was the dispatch board's lane list -- the drivers, and how far
- * along each one is.
+ * Eight tests held GET /client/drivers to the things that would have
+ * been disclosures if they regressed: counts over the caller's own
+ * orders rather than the driver's whole day, a first name, no last-seen
+ * clock, an unscoped viewer getting nothing rather than everything.
  *
- * WHAT THESE TESTS ARE FOR IS THE DIFFERENCE BETWEEN THAT LIST AND THIS
- * ONE. The board's "19 of 23 done" is a driver's whole day across every
- * counter, and handing that to one pharmacy tells them how much the other
- * eight sent. The counts here are over the caller's own orders, the name is
- * a first name, and there is no last-seen clock. Each of those is a
- * disclosure if it regresses, and none of them would make a page look
- * broken -- so none of them would be noticed without a test.
+ * The route and the section it fed came off on 25 November -- the
+ * counters reported back that they do not need it -- and these went with
+ * it rather than being left asserting a route nobody serves.
+ *
+ * DO NOT WRITE THEM AGAIN WITHOUT ASKING, and if the section ever does
+ * come back, these are the four properties to bring back with it. The
+ * reasoning is kept at /drivers in modules/uh/client-portal.ts.
  */
-describe('the drivers carrying a pharmacy\'s own deliveries', () => {
-    let bump = 0;
-
-    /** An order at a site, on a run for a courier, left open. */
-    async function waiting(siteId, courierUsername = 'ada.courier') {
-        bump += 1;
-        const created = await admin.post(ORDERS).send({
-            siteId, serviceType: 'stat', recipientName: `Waiting ${bump}`,
-            addressLine: `${bump} Rehearsal Way`, zip: '78215', description: 'Oral solids',
-            quantity: 1, externalRef: `RX-${8000 + bump}`,
-        });
-        expect(created.status, JSON.stringify(created.body)).toBe(201);
-        const run = await admin.post(RUNS).send({
-            courierUsername, label: 'Run', orderIds: [created.body.id],
-        });
-        return { order: created.body, run: run.body };
-    }
-
-    /* A driver gets a lane per run, exactly as they do on the board, so
-       every count here is read across their lanes rather than off one. */
-    const lanesOf = (body, name) => body.lanes.filter((l) => l.courier.name === name);
-    const sum = (body, name, field) =>
-        lanesOf(body, name).reduce((n, l) => n + l.counts[field], 0);
-    const stopsOf = (body, name) =>
-        lanesOf(body, name).flatMap((l) => l.stops);
-
-    it('names the driver by their first name and nothing more', async () => {
-        await waiting(discharge.id);
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-
-        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
-        expect(res.status, JSON.stringify(res.body)).toBe(200);
-
-        expect(lanesOf(res.body, 'Ada').length, JSON.stringify(res.body.lanes)).toBeGreaterThan(0);
-        /* The courier is "Ada Boleyn Fitzgerald" on the roster. */
-        expect(JSON.stringify(res.body)).not.toMatch(/Boleyn|Fitzgerald/);
-        /* And the handle they sign in with is not a client's to hold. */
-        expect(JSON.stringify(res.body)).not.toMatch(/ada\.courier/);
-    });
-
-    it('counts this pharmacy\'s deliveries, not the driver\'s whole round', async () => {
-        /* THE ONE THAT MATTERS. One van, two counters: if the total were
-           the run's, Discharge could read off how much Green sent today by
-           subtracting what it can see. */
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-        const before = sum((await client.get(`${CLIENT}/drivers?date=${today}`)).body, 'Ada', 'total');
-
-        await waiting(discharge.id);
-        await waiting(green.id);
-        await waiting(green.id);
-
-        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
-        expect(sum(res.body, 'Ada', 'total')).toBe(before + 1);
-    });
-
-    it('lists the stops themselves, and only this pharmacy\'s', async () => {
-        /* The section is the board's lane, so the rows inside it are the
-           point of it. A stop belonging to another counter appearing in
-           this list would hand over a patient's name and address. */
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-        const mine = await waiting(discharge.id);
-        const theirs = await waiting(green.id);
-
-        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
-        const ids = stopsOf(res.body, 'Ada').map((s) => s.order.id);
-        expect(ids).toContain(mine.order.id);
-        expect(ids).not.toContain(theirs.order.id);
-        /* Not merely absent from the list: absent from the payload. */
-        expect(JSON.stringify(res.body)).not.toContain(`Waiting ${bump}`);
-    });
-
-    it('gives each stop what a row needs and nothing that acts', async () => {
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-        const made = await waiting(discharge.id);
-
-        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
-        const stop = stopsOf(res.body, 'Ada').find((s) => s.order.id === made.order.id);
-        expect(stop, JSON.stringify(res.body.lanes)).toBeTruthy();
-        expect(typeof stop.sequence).toBe('number');
-        for (const field of ['recipientName', 'address', 'city', 'zip', 'status', 'serviceType', 'sla']) {
-            expect(stop.order, field).toHaveProperty(field);
-        }
-        /* Nothing a pharmacy could press, and no handle to press it with.
-           The screen draws no control; this is the other half of that. */
-        expect(JSON.stringify(res.body)).not.toMatch(/unassign|canAssign|allowMove|returnToPool/i);
-    });
-
-    it('says how many are still out, over those same orders', async () => {
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-        await waiting(discharge.id);
-        await delivered();
-
-        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
-        expect(sum(res.body, 'Ada', 'done') + sum(res.body, 'Ada', 'remaining'))
-            .toBe(sum(res.body, 'Ada', 'total'));
-        expect(sum(res.body, 'Ada', 'remaining')).toBeGreaterThan(0);
-        expect(sum(res.body, 'Ada', 'done')).toBeGreaterThan(0);
-    });
-
-    it('says whether they are working, and never when they were last seen', async () => {
-        /* "on shift · 11 min ago" on the dispatch board is a presence
-           trace. Whether somebody has started today is operational; where
-           they were eleven minutes ago is not a client's business. */
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-        await waiting(discharge.id);
-
-        const off = await client.get(`${CLIENT}/drivers?date=${today}`);
-        expect(lanesOf(off.body, 'Ada').every((l) => l.courier.onShift === false)).toBe(true);
-
-        const started = await admin.post('/api/projects/uh/uh/shifts/for/ada.courier/start').send({});
-        expect(started.status, JSON.stringify(started.body)).toBe(201);
-
-        const on = await client.get(`${CLIENT}/drivers?date=${today}`);
-        const lane = lanesOf(on.body, 'Ada')[0];
-        expect(lane.courier.onShift).toBe(true);
-        /* Not "no clock in this field" -- no such field at all, and no
-           position either. A map pin on a member of staff is a different
-           thing to hand a client than a list of their own parcels. */
-        expect(lane.courier).not.toHaveProperty('lastSeenAt');
-        expect(lane.courier).not.toHaveProperty('position');
-        expect(JSON.stringify(on.body)).not.toMatch(/lastSeen|minutesSince|shiftStarted|"lat"|"lng"/);
-    });
-
-    it('leaves out a driver who is carrying nothing of theirs', async () => {
-        await admin.post('/api/users').send({
-            username: 'bo.courier', name: 'Bo Courier', password: 'courier-pass-1', role: 'driver',
-        });
-        await admin.put('/api/users/bo.courier/memberships/uh').send({ role: 'courier', settings: {} });
-        await waiting(green.id, 'bo.courier');
-
-        const client = await agentFor('uh.pharmacist', 'client-pass-1');
-        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
-        expect(res.body.lanes.map((l) => l.courier.name)).not.toContain('Bo');
-
-        /* An admin sees both, so the line above is about scope and not
-           about the run being missing. */
-        const staff = await admin.get(`${CLIENT}/drivers?date=${today}`);
-        expect(staff.body.lanes.map((l) => l.courier.name)).toEqual(expect.arrayContaining(['Bo']));
-    });
-
-    it('tells an account with no pharmacies why it is empty', async () => {
-        const nobody = await agentFor('uh.newstarter', 'client-pass-2');
-        const res = await nobody.get(`${CLIENT}/drivers?date=${today}`);
-        expect(res.status).toBe(200);
-        expect(res.body.lanes).toEqual([]);
-        expect(res.body.notes.join(' ')).toMatch(/No pharmacies are assigned/);
-    });
-});

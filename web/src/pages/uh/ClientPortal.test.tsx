@@ -66,7 +66,6 @@ const routes = (over = {}) => ({
     /* Empty by default, so the section is absent from every other test on
        this page rather than appearing in all of them. Its own tests below
        override it. */
-    [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', lanes: [], notes: [] },
     ...over,
 });
 
@@ -833,135 +832,20 @@ describe('the proof of return', () => {
     });
 });
 
-/* ───────────────── WHO IS CARRYING IT ───────────────────────────────────
+/* ───────────────── WHO IS CARRYING IT: REMOVED ─────────────
  *
- * Asked for on 24 November 2026, and asked for a second time the same day
- * once the first answer came back as a summary table: the pharmacy wants
- * the dispatch board's lane, folding the same way, with the stops in it.
+ * Eight tests covered a "Drivers out with your deliveries" section here:
+ * the board's lane folded by run, the stops inside it, the shift pill,
+ * two waves folding apart, and -- the ones that mattered -- that nothing
+ * in the lane could be pressed.
  *
- * What it must NOT be is the dispatch board's lane -- no Return to pool,
- * no sequence buttons, no other counter's rows. The server is what keeps
- * the figures and the stop list honest (see the /drivers route); these
- * cover what this page does with them.
+ * The section came off both the client and the pharmacy view on
+ * 25 November because the counters reported back that they do not need
+ * it. The tests went with it rather than being left asserting a screen
+ * nobody has.
+ *
+ * DO NOT WRITE THEM AGAIN WITHOUT ASKING. See the note at the top of
+ * ClientPortal.tsx: it is the SECTION that is not wanted, not the way it
+ * was built.
  */
-describe('the drivers out with a pharmacy’s deliveries', () => {
-    const withLanes = (lanes: unknown[]) => routes({
-        [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', lanes, notes: [] },
-    });
 
-    const stop = (sequence: number, over = {}) => ({
-        sequence,
-        order: order({ id: 900 + sequence, zone: 3, status: 'assigned', ...over }),
-    });
-
-    const lane = (over = {}) => ({
-        run: { id: 41, label: 'Morning' },
-        courier: { name: 'Ada', onShift: true },
-        stops: [
-            stop(1, { recipientName: 'Thornbeck Ridley', address: '44 Bellwright Lane' }),
-            stop(4, { recipientName: 'Nerissa Quillane', address: '9 Copperfield Row' }),
-        ],
-        currentStopOrderId: 901,
-        counts: { total: 6, remaining: 2, done: 4, overdue: 0 },
-        ...over,
-    });
-
-    it('draws the lane with its stops inside it', async () => {
-        renderPortal(withLanes([lane()]));
-        await settled();
-        expect(screen.getByRole('heading', { name: /Drivers out with your deliveries/i }))
-            .toBeInTheDocument();
-
-        /* The lane is a region named by its own heading, which is how the
-           board's is reachable too. Scoped to it because "Ada" is also the
-           courier on every row of the deliveries table below. */
-        const region = screen.getByRole('region', { name: /Ada/ });
-        expect(within(region).getByText('Thornbeck Ridley')).toBeInTheDocument();
-        expect(within(region).getByText(/44 Bellwright Lane/)).toBeInTheDocument();
-        expect(within(region).getByText('Nerissa Quillane')).toBeInTheDocument();
-    });
-
-    it('keeps the run sequence, gaps and all', async () => {
-        /* A gap is another counter's stop. Renumbering 1, 4 to 1, 2 would
-           be tidier and would be a lie about where on the round it is. */
-        renderPortal(withLanes([lane()]));
-        await settled();
-        const region = screen.getByRole('region', { name: /Ada/ });
-        expect(region).toHaveTextContent('1.');
-        expect(region).toHaveTextContent('4.');
-    });
-
-    it('folds, and says how far along when folded', async () => {
-        renderPortal(withLanes([lane({ run: { id: 77, label: 'Morning' } })]));
-        await settled();
-        const region = screen.getByRole('region', { name: /Ada/ });
-        fireEvent.click(within(region).getByRole('button', { expanded: true }));
-
-        expect(region).toHaveTextContent('4 of 6 done');
-        /* The whole reason the fold is wanted: the header still answers
-           the question with the twenty rows out of the way. */
-        expect(within(region).queryByText('Thornbeck Ridley')).toBeNull();
-    });
-
-    it('gives a driver’s two runs two lanes that fold apart', async () => {
-        renderPortal(withLanes([
-            lane({ run: { id: 81, label: 'Morning' } }),
-            lane({ run: { id: 82, label: 'Afternoon' }, counts: { total: 3, remaining: 3, done: 0, overdue: 0 } }),
-        ]));
-        await settled();
-        expect(screen.getAllByRole('region', { name: /Ada/ })).toHaveLength(2);
-    });
-
-    it('says the counts are theirs, not the driver’s whole day', async () => {
-        /* Without this line "4 of 6 done" reads as the driver's round, and
-           a pharmacist concludes a driver with twenty stops has stopped
-           working. */
-        renderPortal(withLanes([lane()]));
-        await settled();
-        expect(screen.getByText(/your own deliveries only, not the driver/i))
-            .toBeInTheDocument();
-    });
-
-    it('shows whether they are working', async () => {
-        renderPortal(withLanes([
-            lane(),
-            lane({
-                run: { id: 42, label: 'Afternoon' },
-                courier: { name: 'Bo', onShift: false },
-                counts: { total: 2, remaining: 0, done: 2, overdue: 0 },
-            }),
-        ]));
-        await settled();
-        expect(screen.getByText('on shift')).toBeInTheDocument();
-        expect(screen.getByText('off shift')).toBeInTheDocument();
-    });
-
-    it('offers nothing to press: it is a view and not a console', async () => {
-        /* THE POINT OF THE WHOLE SECTION BEING READ ONLY. The board's lane
-           carries Return to pool and two buttons that resequence the run.
-           That run is carrying other counters' work, so a pharmacy
-           pressing one would reorder somebody else's afternoon. */
-        renderPortal(withLanes([lane()]));
-        await settled();
-        const region = screen.getByRole('region', { name: /Ada/ });
-        expect(within(region).queryByRole('button', { name: /return to pool/i })).toBeNull();
-        expect(within(region).queryByRole('button', { name: /sequence by/i })).toBeNull();
-        expect(within(region).queryByRole('combobox')).toBeNull();
-        /* The fold is the only control in the lane. */
-        expect(within(region).getAllByRole('button')).toHaveLength(1);
-    });
-
-    it('is absent entirely when nobody is carrying anything', async () => {
-        /* Not an empty lane list with a heading over it: on a counter
-           screen that reads as a fault. */
-        renderPortal();
-        await settled();
-        expect(screen.queryByRole('heading', { name: /Drivers out with your deliveries/i })).toBeNull();
-    });
-
-    it('asks for the day the page is showing', async () => {
-        const { calls } = renderPortal(withLanes([lane()]));
-        await settled();
-        expect(calls.some((c) => c.includes('/client/drivers?date='))).toBe(true);
-    });
-});
