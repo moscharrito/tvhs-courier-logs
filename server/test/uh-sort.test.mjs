@@ -326,6 +326,13 @@ describe('what a courier may resolve', () => {
        EMPTY, each paired with an admin lookup proving the delivery is there
        to be found. */
 
+    async function makeBo() {
+        await admin.post('/api/users').send({
+            username: 'sort.bo', name: 'Bo Courier', password: 'sort-pass-1', role: 'driver',
+        });
+        await admin.put('/api/users/sort.bo/memberships/uh').send({ role: 'courier', settings: {} });
+    }
+
     async function asAna() {
         const ana = srv.agent();
         const signed = await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
@@ -347,11 +354,8 @@ describe('what a courier may resolve', () => {
         expect(res.body.matches[0].driver.stop).toBe(1);
     });
 
-    it('says nothing at all about a package on another driver’s round', async () => {
-        await admin.post('/api/users').send({
-            username: 'sort.bo', name: 'Bo Courier', password: 'sort-pass-1', role: 'driver',
-        });
-        await admin.put('/api/users/sort.bo/memberships/uh').send({ role: 'courier', settings: {} });
+    it('does not put another driver’s package in their own list', async () => {
+        await makeBo();
 
         const mine = await order({ phone: '210-555-7021' });
         const theirs = await order({ phone: '210-555-7021' });
@@ -362,8 +366,13 @@ describe('what a courier may resolve', () => {
         expect(res.status, res.text).toBe(200);
         const ids = res.body.matches.map((m) => m.orderId);
         expect(ids).toContain(mine);
-        /* Not "it belongs to Bo". Not the patient's name. No row at all. */
         expect(ids).not.toContain(theirs);
+        /* AND NOT IN THE OTHER LIST EITHER, because their own round
+           answered. The wider query is a fallback and must not fire when
+           there is already something on the screen: Bo's parcel beside
+           Ana's own would be two cards for what is, as far as the bench
+           can see, the same patient. */
+        expect(res.body.otherRounds).toEqual([]);
 
         /* Scope, not absence: an admin asking the same question sees both. */
         const both = (await look(admin, { phone: '210-555-7021' })).body.matches.map((m) => m.orderId);
@@ -383,6 +392,160 @@ describe('what a courier may resolve', () => {
 
         const seen = (await look(admin, { phone: '210-555-7022' })).body.matches.map((m) => m.orderId);
         expect(seen).toContain(loose);
+    });
+});
+
+/* ── WHOSE PILE IT GOES IN WHEN IT IS NOT YOURS, FROM 25 NOVEMBER.
+ *
+ * The courier branch above is right about what a driver may READ and was
+ * wrong about what the page may SAY. A driver sorting the heap at the
+ * counter holds thirty-five drivers' packages, so "no delivery at all
+ * with that number" -- the sentence that otherwise means a bad read --
+ * was the answer to nearly every scan, on the one page whose entire
+ * purpose is to say whose pile a package goes in.
+ *
+ * So: when the caller's own scope finds nothing, the same question is
+ * asked once more with the scope dropped, and the answer is the driver
+ * and NOTHING THAT NAMES A PATIENT. These tests are mostly about that
+ * second half, because the first half is the easy half to get right.
+ */
+describe('a package we hold that the caller is not carrying', () => {
+    async function asAna() {
+        const ana = srv.agent();
+        const signed = await ana.post('/api/login').send({ username: 'sort.ana', password: 'sort-pass-1' });
+        expect(signed.status, signed.text).toBe(200);
+        return ana;
+    }
+
+    it('names the driver, the run and the stop', async () => {
+        await admin.post('/api/users').send({
+            username: 'sort.wren', name: 'Tamsin Wrenfield', password: 'sort-pass-1', role: 'driver',
+        });
+        await admin.put('/api/users/sort.wren/memberships/uh').send({ role: 'courier', settings: {} });
+
+        const theirs = await order({ phone: '210-555-7210' });
+        await carriedBy('sort.wren', [theirs]);
+
+        const res = await look(await asAna(), { phone: '210-555-7210' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches).toEqual([]);
+        expect(res.body.otherRounds).toHaveLength(1);
+        expect(res.body.otherRounds[0].orderId).toBe(theirs);
+        expect(res.body.otherRounds[0].driver.name).toBe('Tamsin Wrenfield');
+        expect(res.body.otherRounds[0].driver.stop).toBe(1);
+        expect(res.body.otherRounds[0].pharmacy).toBeTruthy();
+    });
+
+    it('carries no patient, no reference and no address', async () => {
+        /* THE WHOLE PRICE OF THE FEATURE, asserted on the wire rather
+           than trusted to a presenter. The driver is holding a sheet with
+           the patient's name, address and medication printed on it;
+           handing those back adds nothing and would make this screen a
+           way to ask about patients they are not carrying. */
+        const theirs = await order({ phone: '210-555-7211', name: 'Oakhurst Peverell' });
+        await carriedBy('sort.wren', [theirs]);
+
+        const res = await look(await asAna(), { phone: '210-555-7211' });
+        const body = JSON.stringify(res.body.otherRounds);
+        expect(res.body.otherRounds).toHaveLength(1);
+        expect(body).not.toContain('Oakhurst');
+        expect(body).not.toContain('Peverell');
+        expect(body).not.toContain('Rehearsal Way');
+        expect(res.body.otherRounds[0].patient).toBeUndefined();
+        expect(res.body.otherRounds[0].reference).toBeUndefined();
+    });
+
+    it('answers about one that is on no round yet, which is the other thing to know', async () => {
+        /* A courier's own list cannot contain it -- `r` is required there
+           -- so before this the unassigned pool was invisible to the
+           bench. "Nobody is carrying this one" is an instruction: leave
+           it out of the piles and tell dispatch. */
+        const loose = await order({ phone: '210-555-7212' });
+
+        const res = await look(await asAna(), { phone: '210-555-7212' });
+        expect(res.body.matches).toEqual([]);
+        expect(res.body.otherRounds.map((m) => m.orderId)).toContain(loose);
+        expect(res.body.otherRounds[0].driver).toBeNull();
+    });
+
+    it('does not fire for somebody who has no scope to be outside of', async () => {
+        /* An admin's first query already asks the whole contract. Running
+           it twice would be a second trip to the database for a list that
+           is guaranteed empty, and a second audit figure that means
+           nothing. */
+        const id = await order({ phone: '210-555-7213' });
+        expect((await look(admin, { phone: '210-555-7213' })).body.matches.map((m) => m.orderId))
+            .toContain(id);
+        expect((await look(admin, { phone: '210-555-7213' })).body.otherRounds).toEqual([]);
+        /* And on a number nothing has, so the empty list above is not
+           just the first query having answered. */
+        expect((await look(admin, { phone: '210-555-7214' })).body.otherRounds).toEqual([]);
+    });
+
+    it('stays shut for a pharmacy account with no counters on it', async () => {
+        /* `1 = 0` is the right answer to a misconfigured membership. If
+           the wider query ran for it, a setup mistake would become the
+           way round the scope -- the account that can see nothing would
+           be the one that can ask about everything. */
+        await admin.post('/api/users').send({
+            username: 'sort.nowhere', name: 'Unscoped', password: 'sort-pass-1', role: 'driver',
+        });
+        await admin.put('/api/users/sort.nowhere/memberships/uh')
+            .send({ role: 'pharmacy', settings: {} });
+
+        const id = await order({ phone: '210-555-7215' });
+        await carriedBy('sort.wren', [id]);
+
+        const nowhere = srv.agent();
+        await nowhere.post('/api/login').send({ username: 'sort.nowhere', password: 'sort-pass-1' });
+        const res = await look(nowhere, { phone: '210-555-7215' });
+        expect(res.status, res.text).toBe(200);
+        expect(res.body.matches).toEqual([]);
+        expect(res.body.otherRounds).toEqual([]);
+
+        /* There to be found, so the two empty lists are the guard and not
+           a missing delivery. */
+        expect((await look(admin, { phone: '210-555-7215' })).body.matches).toHaveLength(1);
+    });
+
+    it('tells one counter which other counter has it', async () => {
+        /* The same rule for the pharmacy role, which is the other scope.
+           A counter sorting a package that came off the wrong trolley
+           needs to know where it goes, and the site name is not a
+           patient. */
+        await admin.post('/api/users').send({
+            username: 'sort.desk', name: 'Desk', password: 'sort-pass-1', role: 'driver',
+        });
+        await admin.put('/api/users/sort.desk/memberships/uh')
+            .send({ role: 'pharmacy', settings: { siteIds: [siteId] } });
+
+        const next = await order({ phone: '210-555-7216', at: otherSiteId });
+
+        const desk = srv.agent();
+        await desk.post('/api/login').send({ username: 'sort.desk', password: 'sort-pass-1' });
+        const res = await look(desk, { phone: '210-555-7216' });
+        expect(res.body.matches).toEqual([]);
+        expect(res.body.otherRounds.map((m) => m.orderId)).toEqual([next]);
+        expect(res.body.otherRounds[0].pharmacy).toBeTruthy();
+        expect(JSON.stringify(res.body.otherRounds)).not.toContain('Sort Patient');
+    });
+
+    it('counts the wider answer in the trail, separately from the caller’s own', async () => {
+        /* A read of something outside the caller's scope is a different
+           act from a read inside it. Folded into `matched` it would be
+           invisible to anybody reviewing the trail. */
+        const theirs = await order({ phone: '210-555-7217' });
+        await carriedBy('sort.wren', [theirs]);
+
+        await look(await asAna(), { phone: '210-555-7217' });
+        const detail = String((await sql(
+            "SELECT detail FROM audit_events WHERE action = 'sort.lookup' ORDER BY id DESC LIMIT 1",
+        )).rows[0].detail);
+        expect(detail).toMatch(/"matched":0/);
+        expect(detail).toMatch(/"otherRounds":1/);
+        /* STILL NOT THE NUMBER AND STILL NOT THE PATIENT. */
+        expect(detail).not.toMatch(/5557217/);
+        expect(detail).not.toMatch(/Sort Patient/);
     });
 });
 

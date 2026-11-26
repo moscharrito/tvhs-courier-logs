@@ -82,6 +82,22 @@ interface Match {
 }
 
 /**
+ * A delivery we hold that the person asking is not carrying.
+ *
+ * Deliberately not a Match with fields missing: there is no patient, no
+ * reference and no address in it, and a shared type would let one grow
+ * back in by accident. See the second query in modules/uh/sort.ts for
+ * why the line is drawn exactly here.
+ */
+interface OtherRound {
+    orderId: number;
+    serviceDate: string;
+    pharmacy: string;
+    status: string;
+    driver: { name: string; run: string; stop: number | null } | null;
+}
+
+/**
  * Between one read and the next.
  *
  * A read is most of a second on a bench handset, so this is not the rate
@@ -122,6 +138,8 @@ export function Sort({ projectCode }: { projectCode: string }) {
     /** Every number the sheet gave up, in the order they were asked. */
     const [asked, setAsked] = useState<string[]>([]);
     const [matches, setMatches] = useState<Match[] | null>(null);
+    /** Held, but on somebody else's round. Driver only -- no patient. */
+    const [otherRounds, setOtherRounds] = useState<OtherRound[]>([]);
     /** The project's today, for marking cards that are not it. */
     const [today, setToday] = useState('');
     /** A read came back with no number in it. Guidance, never an error. */
@@ -214,6 +232,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
         setBusy('looking');
         setErr('');
         setMatches(null);
+        setOtherRounds([]);
         setToday('');
         setAsked(wanted);
         try {
@@ -222,7 +241,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
                reaches browser history, proxies and every log that keeps a
                request line. See modules/uh/search.ts on the server. */
             const got = await Promise.all(wanted.map((phone) => api<{
-                matches: Match[]; today?: string;
+                matches: Match[]; today?: string; otherRounds?: OtherRound[];
             }>(
                 `/api/projects/${projectCode}/uh/sort/lookup`,
                 { method: 'POST', json: { phone } },
@@ -235,6 +254,19 @@ export function Sort({ projectCode }: { projectCode: string }) {
                package in somebody's hand is the most likely to be recent,
                so that one goes at the top. */
             setMatches([...byOrder.values()].sort((a, b) => b.serviceDate.localeCompare(a.serviceDate)));
+            /* ── AND THE ONES THAT ARE NOT THIS DRIVER'S, deduped the
+               same way and for the same reason: a mobile and a landline
+               are two lookups and usually one patient, so the same
+               package comes back on both. Nothing is filtered against
+               `byOrder` here -- these are only ever drawn when that one
+               is empty, which is the server's contract and is enforced
+               again at the render below. */
+            const byOther = new Map<number, OtherRound>();
+            for (const one of got) {
+                for (const m of one.otherRounds ?? []) byOther.set(m.orderId, m);
+            }
+            setOtherRounds([...byOther.values()]
+                .sort((a, b) => b.serviceDate.localeCompare(a.serviceDate)));
             setToday(got.find((g) => typeof g.today === 'string')?.today ?? '');
         } catch (e) {
             setErr(why(e, 'That number could not be looked up.'));
@@ -302,7 +334,8 @@ export function Sort({ projectCode }: { projectCode: string }) {
     }, [live, settled, err, look]);
 
     const clear = () => {
-        setMatches(null); setToday(''); setAsked([]); setErr(''); setMissed(false);
+        setMatches(null); setOtherRounds([]); setToday(''); setAsked([]);
+        setErr(''); setMissed(false);
     };
 
     return (
@@ -398,11 +431,15 @@ export function Sort({ projectCode }: { projectCode: string }) {
                         <button type="button" className="izy-btn secondary small" onClick={clear}>Clear</button>
                     </div>
 
-                    {/* NO DATE IN THIS SENTENCE ANY MORE, because there is
-                        no date in the question. Nothing we hold with that
-                        number means a bad read or the wrong package, and
-                        those are the only two things left for it to be. */}
-                    {matches.length === 0 && (
+                    {/* ONLY WHEN BOTH LISTS ARE EMPTY, and that condition is
+                        the point of this release. It used to fire whenever
+                        the caller's own scope found nothing, which for a
+                        driver sorting a heap of other people's packages was
+                        nearly every scan -- so the sentence that means "bad
+                        read" was being shown about deliveries we hold and
+                        could name the driver for. Now it means what it says:
+                        nothing in the contract carries that number. */}
+                    {matches.length === 0 && otherRounds.length === 0 && (
                         <p className="izy-alert warn" role="status">
                             We have no delivery at all with
                             {' '}{asked.length === 1 ? 'that number' : 'either number'} on
@@ -413,9 +450,63 @@ export function Sort({ projectCode }: { projectCode: string }) {
                     {matches.map((m) => (
                         <Found key={m.orderId} m={m} otherDay={today !== '' && m.serviceDate !== today} />
                     ))}
+
+                    {/* ONLY WHEN THEIR OWN ROUND HAD NOTHING. The server
+                        does not send any in that case either, and this is
+                        the belt to its braces: a sorter looking at the
+                        delivery they are carrying must not also be looking
+                        at somebody else's, because at a bench those read as
+                        two packages for one patient. */}
+                    {matches.length === 0 && otherRounds.map((m) => (
+                        <OnAnotherRound
+                            key={m.orderId}
+                            m={m}
+                            otherDay={today !== '' && m.serviceDate !== today}
+                        />
+                    ))}
                 </div>
             )}
         </div>
+    );
+}
+
+/**
+ * A package we hold that this person is not carrying.
+ *
+ * THE WHOLE CARD IS THE DRIVER'S NAME, because that is the only thing
+ * the sorter cannot read off the sheet in their other hand. There is no
+ * patient on it and no reference, on purpose and not for want of room:
+ * see the second query in modules/uh/sort.ts.
+ *
+ * It says so in words as well as by being a different card. A sorter who
+ * takes this for their own work puts a package on their own trolley, and
+ * "not yours" is a cheaper thing to print than that is to unwind.
+ */
+function OnAnotherRound({ m, otherDay = false }: { m: OtherRound; otherDay?: boolean }) {
+    return (
+        <article className={`izy-sort-card is-elsewhere${otherDay ? ' is-other-day' : ''}`}>
+            <p className="izy-sort-when">
+                <span className="izy-pill">not your round</span>
+                {otherDay && <>{' '}<span className="izy-pill warn">not today</span></>}
+                {otherDay && <>{' '}{m.serviceDate}</>}
+            </p>
+            {m.driver ? (
+                <strong className="izy-sort-driver">{m.driver.name}</strong>
+            ) : (
+                <strong className="izy-sort-driver none">Not assigned yet</strong>
+            )}
+            {m.driver && m.driver.stop !== null && (
+                <span className="izy-muted">{m.driver.run} · stop {m.driver.stop}</span>
+            )}
+            {!m.driver && (
+                <span className="izy-muted">
+                    Nobody is carrying this one. Leave it out of the piles and tell dispatch.
+                </span>
+            )}
+            {/* The counter, so a sorter working two of them knows which
+                trolley. Not the patient: that is on the sheet. */}
+            {m.pharmacy !== '' && <span className="izy-muted">{m.pharmacy}</span>}
+        </article>
     );
 }
 

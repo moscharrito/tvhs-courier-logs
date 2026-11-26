@@ -92,11 +92,23 @@ export function createSortRouter({ client }: { client: Client }): Router {
 
        THE SECOND HALF IS STILL TRUE AND IS ANSWERED BY SCOPE RATHER THAN BY
        EXCLUSION. The branch below pins a courier to runs that are theirs,
-       so the question they can ask is "is this one mine, and where does it
-       sit in my round" -- never "whose is it". Somebody else's package
-       comes back as no match at all, which is the same answer they would
-       get for a parcel from another contract and tells them nothing they
-       were not already holding. */
+       so a delivery they are carrying comes back whole and one they are
+       not does not.
+
+       ── AND "NOT AT ALL" WAS THE WRONG ANSWER TO THE SECOND CASE, which
+       took until the evening of 25 November to see. A driver sorting the
+       heap holds thirty-five drivers' packages, so nearly every scan fell
+       into it, and the sentence they got was the one that means a bad
+       read. The page that exists to say whose pile a package goes in
+       could not say it to the person holding the pile.
+
+       So there is a second query, further down, and it runs only when the
+       first found nothing: same contract, same number, scope dropped,
+       answering with the driver, the run, the day and the counter and
+       NOTHING ELSE. No patient name, no reference, no address. The driver
+       is holding a sheet with all of those printed on it; what the sheet
+       does not say is whose van it goes in, and that is the whole of what
+       this hands back. */
     const sorters = requireProjectRole('admin', 'lead', 'pharmacy', 'courier');
 
     const roleOf = (req: Request) => req.membership?.role ?? '';
@@ -128,8 +140,13 @@ export function createSortRouter({ client }: { client: Client }): Router {
            Nothing is filtered by it. */
         const today = todayIn(project.timezone);
 
-        const where: string[] = ['o.project_id = ?'];
-        const args: InValue[] = [project.id];
+        /* THE QUESTION, AND THE CALLER'S REACH, KEPT APART.
+           `base` is what was asked: this contract, this number, not
+           cancelled. `scope` is who is asking. They are built separately
+           because the answer below is different when the first finds
+           something and the second hides it -- see the second query. */
+        const base: string[] = ['o.project_id = ?'];
+        const baseArgs: InValue[] = [project.id];
 
         /* TEN DIGITS IS THE WHOLE NUMBER AND MATCHES EXACTLY. Anything
            shorter is the tail of one, which is what the manual fallback
@@ -156,27 +173,30 @@ export function createSortRouter({ client }: { client: Client }): Router {
            the case it is for. */
         if (digits.length >= 10) {
             const ten = digits.slice(-10);
-            where.push(`(o.recipient_phone = ?
+            base.push(`(o.recipient_phone = ?
                          OR (length(o.recipient_phone) > 10
                              AND length(o.recipient_phone) % 10 = 0
                              AND instr(o.recipient_phone, ?) > 0
                              AND (instr(o.recipient_phone, ?) - 1) % 10 = 0))`);
-            args.push(ten, ten, ten);
+            baseArgs.push(ten, ten, ten);
         } else {
-            where.push('o.recipient_phone LIKE ?');
-            args.push(`%${digits}`);
+            base.push('o.recipient_phone LIKE ?');
+            baseArgs.push(`%${digits}`);
         }
 
         /* A cancelled delivery is not in anybody's pile. */
-        where.push("o.status != 'cancelled'");
+        base.push("o.status != 'cancelled'");
 
         /* ── AND THE CALLER'S OWN SCOPE, LAST.
            A lead gets their counters, a pharmacy gets the sites its
            membership names and an unscoped pharmacy gets NOTHING rather
            than everything. Applied after every other clause so none of
            them can reach past it. */
+        const scope: string[] = [];
+        const scopeArgs: InValue[] = [];
+
         const lead = leadScope(req);
-        if (lead) { where.push(lead.sql); args.push(...lead.args); }
+        if (lead) { scope.push(lead.sql); scopeArgs.push(...lead.args); }
 
         /* ── A COURIER IS PINNED TO THEIR OWN ROUND, AND THIS BRANCH IS WHAT
            MAKES THE ROLE SAFE TO ADMIT AT ALL.
@@ -196,16 +216,23 @@ export function createSortRouter({ client }: { client: Client }): Router {
            question a driver ever asked, for ever, with a button on their
            screen to ask it. A 403 would have been kinder: it at least says
            something is wrong. */
+        /* AND WHETHER THE SECOND QUESTION MAY BE ASKED AT ALL. A
+           membership that names no sites is misconfigured, not permissive:
+           `1 = 0` is the right answer to the first question and silence is
+           the right answer to the second. Widening for that account would
+           turn a setup mistake into a way round the scope. */
+        let mayAskWider = true;
+
         if (isCourier(req)) {
-            where.push('r.courier_username = ?');
-            args.push(actorOf(req));
+            scope.push('r.courier_username = ?');
+            scopeArgs.push(actorOf(req));
         } else {
             const portal = scopeFor(req.membership?.role, req.membership?.settings ?? {});
             if (!portal.wholeProject) {
-                if (portal.siteIds.length === 0) where.push('1 = 0');
+                if (portal.siteIds.length === 0) { scope.push('1 = 0'); mayAskWider = false; }
                 else {
-                    where.push(`o.site_id IN (${portal.siteIds.map(() => '?').join(',')})`);
-                    args.push(...portal.siteIds);
+                    scope.push(`o.site_id IN (${portal.siteIds.map(() => '?').join(',')})`);
+                    scopeArgs.push(...portal.siteIds);
                 }
             }
         }
@@ -229,9 +256,11 @@ export function createSortRouter({ client }: { client: Client }): Router {
          *
          * WHAT STILL NARROWS IT is scope and nothing else: a lead's
          * counters, a pharmacy's sites, a courier's own runs. Those are
-         * about whose data it is, not about when it happened, and they
-         * are applied below exactly as before. */
-        const find = (extra: string[], extraArgs: InValue[], order: string, limit: number) => client.execute({
+         * about whose data it is, not about when it happened. They still
+         * decide which answers come back WHOLE; see the second query for
+         * what a caller gets about a package outside their own scope,
+         * which is its driver and nothing that names a patient. */
+        const find = (extra: string[], extraArgs: InValue[], limit: number) => client.execute({
             sql: `SELECT o.id, o.external_ref, o.recipient_name, o.service_date, o.service_type,
                          o.status, o.zone, ${handlingColumns('o')},
                          s.name AS site_name,
@@ -243,16 +272,16 @@ export function createSortRouter({ client }: { client: Client }): Router {
                     LEFT JOIN run_stops rs2 ON rs2.order_id = o.id
                     LEFT JOIN runs r ON r.id = rs2.run_id AND r.status != 'cancelled'
                     LEFT JOIN users u ON u.username = r.courier_username
-                   WHERE ${[...where, ...extra].join(' AND ')}
-                   ORDER BY ${order}
+                   WHERE ${[...base, ...extra].join(' AND ')}
+                   ORDER BY o.service_date DESC, o.id DESC
                    LIMIT ${limit}`,
-            args: [...args, ...extraArgs],
+            args: [...baseArgs, ...extraArgs],
         });
 
         /* Newest first, so the package most likely to be in somebody's
            hand is the first card and a patient with a year of deliveries
            does not bury today's under March's. */
-        const rs = await find([], [], 'o.service_date DESC, o.id DESC', 25);
+        const rs = await find(scope, scopeArgs, 25);
 
         /* ONE PRESENTER, because the second query below returns the same
            rows and a client that got a different shape from the fallback
@@ -291,6 +320,61 @@ export function createSortRouter({ client }: { client: Client }): Router {
 
         const matches = rs.rows.map((r) => present(r as unknown as Record<string, unknown>));
 
+        /* ───────────────────── AND WHOSE PILE IT GOES IN WHEN IT IS NOT YOURS.
+         *
+         * THE PROBLEM THIS ANSWERS, which cost most of 25 November. A
+         * driver sorting the heap at the counter is a `courier`, and the
+         * branch above pins a courier to their own round. Every package
+         * in the pile belonging to one of the other thirty-four drivers
+         * came back as "we have no delivery at all with that number" --
+         * the same sentence as a bad read, on a page whose entire purpose
+         * is to say whose pile a package goes in. The feature could not
+         * do its job for the people holding the packages.
+         *
+         * So when the caller's own scope has nothing, we ask the contract
+         * the same question once more with the scope dropped, and answer
+         * with the ONE FACT the bench needs: which driver, which run,
+         * which day, which counter.
+         *
+         * WHAT IS DELIBERATELY NOT IN IT. No patient name, no reference,
+         * no address, no service type, no handling. `thin()` below builds
+         * the row by hand for that reason rather than reusing present()
+         * minus a few fields, because a presenter that grows a field
+         * later would grow it here too and nobody would notice.
+         *
+         * WHY THAT IS THE RIGHT LINE. A driver who scans a waybill is
+         * already holding the patient's name, address and medication --
+         * it is printed on the sheet in their hand. Telling them the name
+         * back adds nothing and makes this screen a way to ask about
+         * patients they are not carrying. Telling them "Bo Courier, run
+         * B, stop 7" adds the only thing the sheet does not say.
+         *
+         * IT IS ONLY EVER THE FALLBACK. A delivery the caller is entitled
+         * to see comes back whole, through present(), as it always did.
+         * This query does not run at all unless the first found nothing. */
+        const thin = (o: Record<string, unknown>) => ({
+            orderId: Number(o['id']),
+            serviceDate: String(o['service_date']),
+            pharmacy: String(o['site_name'] ?? ''),
+            status: String(o['status'] ?? ''),
+            driver: o['courier_username'] === null || o['courier_username'] === undefined
+                ? null
+                : {
+                    name: String(o['courier_name'] ?? '') || String(o['courier_username']),
+                    run: String(o['run_label'] ?? ''),
+                    stop: o['stop_number'] === null || o['stop_number'] === undefined
+                        ? null : Number(o['stop_number']),
+                },
+        });
+
+        /* Fewer than the first query returns on purpose: this is "whose is
+           it", and a patient with a year of history is not a question
+           anybody asked. */
+        const otherRounds = matches.length === 0 && scope.length > 0 && mayAskWider
+            ? (await find([], [], 5)).rows
+                .map((r) => thin(r as unknown as Record<string, unknown>))
+            : [];
+
         /* DIGITS, NOT THE NUMBER. How many were offered says whether this
            was a scan or a typed tail, which is what anybody reviewing the
            trail would want to know. The number itself would make this table
@@ -299,12 +383,18 @@ export function createSortRouter({ client }: { client: Client }): Router {
             digits: digits.length,
             matched: matches.length,
             orderIds: matches.map((m) => m.orderId),
+            /* COUNTED SEPARATELY, because it is a different act: a read
+               of something outside the caller's own scope, answered in
+               part. A trail that folded it into `matched` would make the
+               wider query invisible to anybody reviewing it. */
+            otherRounds: otherRounds.length,
+            otherRoundIds: otherRounds.map((m) => m.orderId),
         });
 
         /* `today` is for marking, not filtering: the screen puts a date on
            any card that is not today's so a sorter cannot mistake an old
            delivery for the one in their hand. */
-        res.json({ today, matches });
+        res.json({ today, matches, otherRounds });
     }));
 
     return router;

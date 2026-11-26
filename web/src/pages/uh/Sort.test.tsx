@@ -36,6 +36,17 @@ const match = (over: Record<string, unknown> = {}) => ({
     ...over,
 });
 
+/** What comes back about a package the person asking is not carrying.
+ *  No patient on it, no reference, no address -- see modules/uh/sort.ts. */
+const elsewhere = (over: Record<string, unknown> = {}) => ({
+    orderId: 77,
+    serviceDate: '2026-11-21',
+    pharmacy: 'UH Pavilion Pharmacy',
+    status: 'assigned',
+    driver: { name: 'Tamsin Wrenfield', run: 'Wheatley 3', stop: 9 },
+    ...over,
+});
+
 const open = () => render(<Sort projectCode="uh" />);
 
 /** Longer than the loop's own gap, so "it did not read again" means it. */
@@ -120,7 +131,7 @@ describe('looking a number up', () => {
     });
 
     it('says when nothing matched at all', async () => {
-        mockFetch({ [LOOKUP]: { matches: [] } });
+        mockFetch({ [LOOKUP]: { matches: [], otherRounds: [] } });
         scanned('Mobile: 210-555-0199');
 
         /* No date in the sentence, because there is no date in the
@@ -231,6 +242,115 @@ describe('looking a number up', () => {
 
         const card = (await screen.findByText('Ana Driver')).closest('article')!;
         expect(within(card).getByText('Fridge')).toBeInTheDocument();
+    });
+});
+
+/* ── A PACKAGE WE HOLD THAT THIS DRIVER IS NOT CARRYING.
+ *
+ * The bench is drivers, and a driver's own scope is their own round, so
+ * for most of the heap in front of them the first list is empty. Until
+ * 25 November that produced the sentence that means "bad read", on the
+ * page whose one job is to say whose pile a package goes in. The server
+ * answers a second time with the driver and nothing that names a
+ * patient; these are about the screen not wasting that.
+ */
+describe('a package on somebody else’s round', () => {
+    it('names the driver instead of saying we have never heard of it', async () => {
+        mockFetch({ [LOOKUP]: { today: '2026-11-21', matches: [], otherRounds: [elsewhere()] } });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Tamsin Wrenfield');
+        expect(screen.queryByText(/no delivery at all/i)).not.toBeInTheDocument();
+    });
+
+    it('says on its face that it is not theirs', async () => {
+        /* A sorter who takes this for their own work puts the package on
+           their own trolley. The pill is cheaper to print than that is
+           to unwind. */
+        mockFetch({ [LOOKUP]: { today: '2026-11-21', matches: [], otherRounds: [elsewhere()] } });
+        scanned('Mobile: 210-555-0147');
+
+        const card = (await screen.findByText('Tamsin Wrenfield')).closest('article')!;
+        expect(within(card).getByText('not your round')).toBeInTheDocument();
+        expect(card).toHaveTextContent('Wheatley 3');
+        expect(card).toHaveTextContent('stop 9');
+    });
+
+    it('keeps quiet about it when their own round answered', async () => {
+        /* The server does not send one in this case either. Belt and
+           braces on the half that renders: two cards for what the bench
+           reads as one patient is a wrong pile waiting to happen. */
+        mockFetch({
+            [LOOKUP]: {
+                today: '2026-11-21',
+                matches: [match()],
+                otherRounds: [elsewhere({ driver: { name: 'Tamsin Wrenfield', run: 'x', stop: 1 } })],
+            },
+        });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Ana Driver');
+        expect(screen.queryByText('Tamsin Wrenfield')).not.toBeInTheDocument();
+        expect(screen.queryByText('not your round')).not.toBeInTheDocument();
+    });
+
+    it('shows one card when both numbers answered with the same package', async () => {
+        /* A mobile and a landline are two lookups and usually one
+           patient, so the same delivery comes back twice. Two identical
+           cards read as two packages. */
+        mockFetch({
+            [LOOKUP]: { today: '2026-11-21', matches: [], otherRounds: [elsewhere()] },
+        });
+        scanned('Mobile: 210-555-0147, 210-555-0199');
+
+        await screen.findByText('Tamsin Wrenfield');
+        expect(document.querySelectorAll('.izy-sort-card')).toHaveLength(1);
+    });
+
+    it('marks one from another day as well, so it cannot go in today’s pile', async () => {
+        mockFetch({
+            [LOOKUP]: {
+                today: '2026-11-25',
+                matches: [],
+                otherRounds: [elsewhere({ serviceDate: '2026-09-02' })],
+            },
+        });
+        scanned('Mobile: 210-555-0147');
+
+        const card = (await screen.findByText('Tamsin Wrenfield')).closest('article')!;
+        expect(within(card).getByText('not today')).toBeInTheDocument();
+        expect(card).toHaveTextContent('2026-09-02');
+    });
+
+    it('tells the bench when nobody is carrying it yet', async () => {
+        /* A driver's own list can never contain an unassigned delivery,
+           so before this the loose pool was invisible at the bench. */
+        mockFetch({
+            [LOOKUP]: { today: '2026-11-21', matches: [], otherRounds: [elsewhere({ driver: null })] },
+        });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Not assigned yet');
+        expect(screen.getByText(/Leave it out of the piles/)).toBeInTheDocument();
+    });
+
+    it('still renders against a server that has never heard of the field', async () => {
+        /* A bench phone holding a cached bundle outlives the server that
+           grew the field, and the other way round. A page that throws
+           here is worse than one missing a line. */
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Ana Driver');
+    });
+
+    it('forgets it on Clear, like everything else on the page', async () => {
+        mockFetch({ [LOOKUP]: { today: '2026-11-21', matches: [], otherRounds: [elsewhere()] } });
+        scanned('Mobile: 210-555-0147');
+
+        await screen.findByText('Tamsin Wrenfield');
+        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        expect(screen.queryByText('Tamsin Wrenfield')).not.toBeInTheDocument();
     });
 });
 

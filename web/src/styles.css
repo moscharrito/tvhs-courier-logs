@@ -2104,6 +2104,17 @@ body {
 .izy-sort-card.is-other-day { border-style: dashed; opacity: 0.88; }
 .izy-sort-when { margin: 0 0 8px; font-size: 0.9rem; }
 .izy-sort-card.is-other-day .izy-sort-driver { font-size: 1.4rem; }
+/* ── A PACKAGE WE HOLD THAT THIS PERSON IS NOT CARRYING.
+   A driver sorting the heap scans thirty-four other drivers' packages
+   for every one of their own, so this is the common card and not the
+   exception. It carries the driver's name and no patient -- see the
+   second query in modules/uh/sort.ts -- and the left edge is what tells
+   a sorter at arm's length, before they have read a word, that the name
+   they are looking at is not theirs. */
+.izy-sort-card.is-elsewhere {
+    border-left: 4px solid var(--izy-accent, #2f6f4f);
+    background: var(--izy-soft, rgba(0, 0, 0, 0.02));
+}
 .izy-sort-driver { display: block; font-size: 2rem; line-height: 1.15; }
 .izy-sort-driver.none { font-size: 1.4rem; opacity: 0.75; }
 .izy-sort-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 12px 0 0; }
