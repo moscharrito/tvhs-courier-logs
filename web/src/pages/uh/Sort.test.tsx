@@ -61,6 +61,20 @@ const open = () => render(<Sort projectCode="uh" />);
 /** Longer than the loop's own gap, so "it did not read again" means it. */
 const quiet = () => new Promise((r) => { setTimeout(r, 500); });
 
+/**
+ * Wait until the loop has looked at the box again.
+ *
+ * NOT A SLEEP, and that matters now that the loop keeps running behind
+ * an answer. The gap while a result is up is deliberately the slow one
+ * (HOLD in Sort.tsx), so a fixed wait tuned to it is a test that goes
+ * red when somebody tunes the handset's battery life. Waiting for the
+ * read itself says what these tests actually mean: the camera looked
+ * again, and here is what did or did not follow from it.
+ */
+const readAgain = async (was: number) => {
+    await waitFor(() => { expect(readDigits.mock.calls.length).toBeGreaterThan(was); });
+};
+
 /** Put this on the sheet in front of the camera. The page does the rest. */
 function scanned(text: string) {
     readDigits.mockResolvedValue(text);
@@ -356,12 +370,24 @@ describe('a package on somebody else’s round', () => {
         await screen.findByText('Ana Driver');
     });
 
-    it('forgets it on Clear, like everything else on the page', async () => {
-        mockFetch({ [LOOKUP]: { today: '2026-11-21', matches: [], otherRounds: [elsewhere()] } });
+    it('goes away when the next parcel is held up, like everything else on the page', async () => {
+        /* THIS IS THE ONE THAT USED TO BE A BUTTON PRESS. A driver
+           sorting a heap of other people's packages gets this card most
+           of the time, so "somebody else has it" is the state the bench
+           spends longest in and the one the hand-over has to work from. */
+        mockFetch({
+            [LOOKUP]: (_url: string, init?: RequestInit) => {
+                const body = JSON.parse(String(init?.body ?? '{}'));
+                return body.phone === '2105550147'
+                    ? { today: '2026-11-21', matches: [], otherRounds: [elsewhere()] }
+                    : { today: '2026-11-21', matches: [match()] };
+            },
+        });
         scanned('Mobile: 210-555-0147');
 
         await screen.findByText('Tamsin Wrenfield');
-        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        readDigits.mockResolvedValue('Mobile: 210-555-0199');
+        await screen.findByText('Ana Driver');
         expect(screen.queryByText('Tamsin Wrenfield')).not.toBeInTheDocument();
     });
 });
@@ -471,13 +497,17 @@ describe('reading the doorstep off the same panel', () => {
         await screen.findByText(/no delivery at all with that number on this account/i);
     });
 
-    it('forgets the doorstep on Clear', async () => {
+    it('stops saying the old doorstep once a different panel is in the box', async () => {
+        /* "Looked up" is what a sorter checks a surprising answer
+           against, so it has to belong to the sheet in their hand and
+           not to the one before it. */
         readDigits.mockResolvedValue(PANEL);
         mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
-        await screen.findByText('Ana Driver');
-        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        await screen.findByText(/no\. 8812/);
+        readDigits.mockResolvedValue('3177 Rehearsal Way SAN ANTONIO TX 78215');
+        await screen.findByText(/no\. 3177/);
         expect(screen.queryByText(/no\. 8812/)).not.toBeInTheDocument();
     });
 });
@@ -570,33 +600,104 @@ describe('scanning the sheet', () => {
         await screen.findByText('Ana Driver');
     });
 
-    it('stops reading once there is an answer on the screen', async () => {
-        /* Otherwise the next sheet on the bench is read over the answer
-           the sorter is still looking at.
-
-           THE TOTAL, not the count either side of a wait. Sampling after
-           the answer appears is too late to catch this: the effect that
-           restarts a loop has already run by then, so a page that failed
-           to stop still showed the same number before and after. One
-           read for one answer is the thing that is actually true. */
+    it('keeps reading once there is an answer, so the next parcel needs no press', async () => {
+        /* The loop used to stop dead here and start again on Clear.
+           Everything below is what now has to be true instead. */
         readDigits.mockResolvedValue('Mobile: 210-555-0147');
         mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
         await screen.findByText('Ana Driver');
-        await quiet();
-        expect(readDigits).toHaveBeenCalledTimes(1);
+        await readAgain(readDigits.mock.calls.length);
     });
 
-    it('starts reading again on Clear', async () => {
+    it('does not look the same sheet up again, however many times it reads it', async () => {
+        /* THE WHOLE OF WHAT REPLACED THE CLEAR BUTTON. The camera stays
+           pointed at the parcel for as long as the sorter is reading the
+           name off the screen, and every one of those reads finds the
+           number that was already answered. One request, and nothing on
+           screen moves -- a page that re-asked would draw the same card
+           again and look identical, which is why the count of requests
+           is the thing asserted and not the card. */
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        const { calls } = mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        await readAgain(readDigits.mock.calls.length);
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(1);
+        expect(screen.getByText('Ana Driver')).toBeInTheDocument();
+    });
+
+    it('treats a half-read of the same panel as the same parcel, not a new one', async () => {
+        /* A panel gives up a number and a doorstep, and the next read of
+           it may give up only one of them because a line went blurred.
+           Matching on equality would call that a hand-over, and the
+           answer would flicker between two readings of one sheet. One
+           key in common is what "still this one" has to mean. */
+        readDigits.mockResolvedValue('8812 Rehearsal Way SAN ANTONIO TX 78213\nMobile: 210-555-0147');
+        const { calls } = mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        const asked = calls.filter((c) => c.includes('/sort/lookup')).length;
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        await readAgain(readDigits.mock.calls.length);
+        expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(asked);
+    });
+
+    it('replaces the answer by itself when a different parcel comes up', async () => {
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        mockFetch({
+            [LOOKUP]: (_url: string, init?: RequestInit) => {
+                const body = JSON.parse(String(init?.body ?? '{}'));
+                return body.phone === '2105550147'
+                    ? { matches: [match()] }
+                    : {
+                        matches: [match({
+                            orderId: 60,
+                            driver: { username: 'bo', name: 'Bo Courier', run: 'Vida 2', stop: 1 },
+                        })],
+                    };
+            },
+        });
+        open();
+
+        await screen.findByText('Ana Driver');
+        readDigits.mockResolvedValue('Mobile: 210-555-0199');
+        await screen.findByText('Bo Courier');
+        expect(screen.queryByText('Ana Driver')).not.toBeInTheDocument();
+    });
+
+    it('leaves the answer alone when the camera is pointed at nothing', async () => {
+        /* The sorter tilts the phone to read the name and the box fills
+           with bench. That is not a hand-over, and an answer that
+           vanished whenever the sheet left the frame would be unreadable
+           by the person it is for. */
         readDigits.mockResolvedValue('Mobile: 210-555-0147');
         mockFetch({ [LOOKUP]: { matches: [match()] } });
         open();
 
         await screen.findByText('Ana Driver');
-        const stopped = readDigits.mock.calls.length;
-        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
-        await waitFor(() => { expect(readDigits.mock.calls.length).toBeGreaterThan(stopped); });
+        readDigits.mockResolvedValue('nothing here at all');
+        await readAgain(readDigits.mock.calls.length);
+        expect(screen.getByText('Ana Driver')).toBeInTheDocument();
+        /* And it does not start coaching somebody who has what they came
+           for and is looking straight at it. */
+        expect(screen.queryByText(/Fill the green box/)).not.toBeInTheDocument();
+    });
+
+    it('has nothing on it to press', async () => {
+        /* No Scan, no Start, no Stop, and from 26 November no Clear. The
+           one button this page can still grow is the camera-failed retry
+           and that lives behind a refused permission. */
+        readDigits.mockResolvedValue('Mobile: 210-555-0147');
+        mockFetch({ [LOOKUP]: { matches: [match()] } });
+        open();
+
+        await screen.findByText('Ana Driver');
+        expect(screen.queryByRole('button')).not.toBeInTheDocument();
+        expect(screen.getByText('Hold the next package in the box.')).toBeInTheDocument();
     });
 
     it('will not fire a request for every number a bad read invented', async () => {
@@ -834,15 +935,21 @@ describe('breaking a doorstep tie with the street name', () => {
         expect(calls.filter((c) => c.includes('/sort/lookup'))).toHaveLength(1);
     });
 
-    it('lets go of the frame on Clear', async () => {
-        /* The strip is a photograph of a patient's address and the
-           question it was kept for is over. */
+    it('lets go of the frame when the page closes', async () => {
+        /* The strip is a photograph of a patient's address kept in
+           module memory for this tie-breaker, and the question it was
+           kept for ends when the page does.
+
+           IT USED TO HANG ON CLEAR, which meant a sorter who simply
+           walked away left it sitting there. The camera and the frame go
+           together now, which is the stronger of the two promises. */
         readDigits.mockResolvedValue(DOOR);
         mockFetch({ [LOOKUP]: { matches: [match()] } });
-        open();
+        const { unmount } = open();
 
         await screen.findByText('Ana Driver');
-        fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        expect(forgetStrip, 'not while the bench is still working').not.toHaveBeenCalled();
+        unmount();
         expect(forgetStrip).toHaveBeenCalled();
     });
 });

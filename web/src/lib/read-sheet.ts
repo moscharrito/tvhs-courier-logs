@@ -334,7 +334,7 @@ export async function readStreet(): Promise<string> {
     }
 }
 
-/** Let go of the frame. Called when the scanner closes or is cleared. */
+/** Let go of the frame. Called when the scanner page closes. */
 export function forgetStrip(): void {
     lastStrip = null;
 }

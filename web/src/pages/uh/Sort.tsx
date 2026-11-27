@@ -33,16 +33,59 @@
  *
  * So the page reads continuously. Hold the panel in the box and the
  * answer arrives; a blurred frame is simply the one before the next one.
- * Reading stops the moment there is something on screen to act on, and
- * starts again on Clear, because a page that kept scanning would read
- * the next sheet over the answer the sorter is still looking at.
  *
- * WHAT THAT COSTS, SAID PLAINLY. It is the camera and a megabyte of
- * WebAssembly working the whole time the page is open rather than for a
- * second per press, which is warm in the hand and real on a battery. It
- * is the right trade for a bench phone on a charger doing one job, and
- * the wrong one for a page left open all day -- which is why the loop
- * stops dead on a result and does not poll behind it.
+ * ──────────────────────────────────────────────────────────────────────────
+ * AND FROM 26 NOVEMBER THE ANSWER CLEARS ITSELF.
+ *
+ * Reading used to stop on a result and start again on Clear, and the
+ * reason was sound as far as it went: a page that kept scanning would
+ * read the next sheet over the answer the sorter is still looking at.
+ * But Clear was the Scan button wearing a different hat. It is pressed
+ * once per parcel, with the hand that is holding the parcel, and what it
+ * announces -- "this one is done, here comes another" -- is something the
+ * camera can see for itself.
+ *
+ * SO THE LOOP NEVER STOPS, AND WHAT STOPS INSTEAD IS THE REPLACING. A
+ * read may displace the answer on screen only if NOT ONE of the keys it
+ * found was a key that answer came from. Present the same sheet again --
+ * steady, tilted, half-read, read twice a second while the sorter reads
+ * the name off it -- and every one of those reads overlaps, so nothing
+ * moves and no request is sent. Put the next parcel in the box and the
+ * keys are wholly different, which is the page seeing the hand-over the
+ * Clear press used to have to announce.
+ *
+ * WHY OVERLAP AND NOT EQUALITY. A panel gives up a number and a doorstep;
+ * the next read of the same panel may give up only one of them, because a
+ * line went blurred. Equality would call that a new parcel, and the
+ * answer would flicker between two readings of one sheet. One key in
+ * common is enough to mean "still this one" -- and two parcels that
+ * genuinely share a key share a patient, so the card already on screen is
+ * already the right card for both.
+ *
+ * AND AN EMPTY READ CHANGES NOTHING. The sorter tilts the phone to read
+ * the name and the box fills with bench. That is not a new parcel and it
+ * is not a reason to take the answer away: an answer goes when another
+ * answer replaces it, and otherwise it stays until the page is closed.
+ *
+ * WHAT IS GIVEN UP, SAID PLAINLY. The page can now be wrong about which
+ * parcel is in the box -- catch a neighbouring sheet's panel for one
+ * frame and the screen moves on to that delivery. It is self-correcting,
+ * because the next read of the parcel in hand brings it back, and the
+ * patient's name is on every card for exactly this reason. The old
+ * design could not be wrong this way; it simply cost a press every time,
+ * which is the trade that was asked for and taken.
+ *
+ * ──────────────────────────────────────────────────────────────────────────
+ * WHAT IT COSTS, ALSO SAID PLAINLY. The camera and a megabyte of
+ * WebAssembly work the whole time the page is open rather than for a
+ * second per press, which is warm in the hand and real on a battery --
+ * and from today the loop no longer stops dead on a result, so that is
+ * the whole session rather than bursts of it. Reading drops to half rate
+ * while an answer is up (see HOLD), which is the stretch where nobody is
+ * waiting on it: the sorter is reading a name and walking a parcel to a
+ * pile. It is the right trade for a bench phone on a charger doing one
+ * job and the wrong one for a page left open all day, so the page wants
+ * closing when the heap is sorted.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * THE PICTURE NEVER LEAVES THE HANDSET.
@@ -117,6 +160,16 @@ type LookupKey = { phone: string } | { house: string; zip: string };
 const isPhone = (k: LookupKey): k is { phone: string } => 'phone' in k;
 
 /**
+ * One key, written so two of them can be compared.
+ *
+ * The prefix is not decoration. Without it a doorstep at no. 2105 in ZIP
+ * 550147 and the telephone number 210-555-0147 are the same string, and
+ * the page would decide a parcel was the previous one on the strength of
+ * a coincidence.
+ */
+const sig = (k: LookupKey): string => (isPhone(k) ? `p:${k.phone}` : `d:${k.house}:${k.zip}`);
+
+/**
  * Between one read and the next.
  *
  * A read is most of a second on a bench handset, so this is not the rate
@@ -126,6 +179,18 @@ const isPhone = (k: LookupKey): k is { phone: string } => 'phone' in k;
  * for it on purpose.
  */
 const GAP = 350;
+
+/**
+ * Between one read and the next, while an answer is on the screen.
+ *
+ * SLOWER ON PURPOSE, AND THIS IS THE ONLY THING PAYING FOR THE LOOP THAT
+ * NO LONGER STOPS. Nobody is waiting during this stretch: the sorter is
+ * reading a name off the screen, finding the pile and putting the parcel
+ * in it, which is seconds. Halving the read rate across it halves the
+ * handset's share of the work for a delay that cannot be noticed against
+ * a parcel being carried across a bench.
+ */
+const HOLD = 700;
 
 /**
  * How many of the numbers on a panel get looked up.
@@ -191,6 +256,19 @@ export function Sort({ projectCode }: { projectCode: string }) {
     const [today, setToday] = useState('');
     /** A read came back with no number in it. Guidance, never an error. */
     const [missed, setMissed] = useState(false);
+    /**
+     * The keys the answer currently on screen was found by.
+     *
+     * This is how the page knows a hand-over happened without being told.
+     * Empty means nothing has been looked up yet.
+     *
+     * A REF AND NOT STATE, which is load-bearing: the reading loop is the
+     * only thing that reads it, and as state it would be in the loop
+     * effect's dependencies and restart the loop on every lookup --
+     * cancelling the read in flight and firing a fresh one at a sheet
+     * that has already been answered.
+     */
+    const shown = useRef<Set<string>>(new Set());
 
     /* THE CAMERA IS STOPPED WHEN THE PAGE GOES, and only then. There is
        no Stop button: this page is the camera, and a control whose whole
@@ -205,6 +283,14 @@ export function Sort({ projectCode }: { projectCode: string }) {
         stream.current?.getTracks().forEach((t) => t.stop());
         stream.current = null;
         setLive(false);
+        /* AND THE FRAME GOES WITH THE CAMERA. The strip kept for the
+           street tie-breaker is a photograph of a patient's address
+           sitting in module memory, and the question it was kept for
+           ends when the page does. It used to be let go of on Clear,
+           which meant the sorter who simply walked away left it there --
+           so this is a stronger promise than the button made, not a
+           weaker one. */
+        forgetStrip();
     }, []);
     useEffect(() => stop, [stop]);
 
@@ -276,8 +362,19 @@ export function Sort({ projectCode }: { projectCode: string }) {
      */
     const look = useCallback(async (keys: LookupKey[]) => {
         const wanted = keys.slice(0, MOST_KEYS);
+        /* WHAT THIS ANSWER IS ABOUT, written down before the first
+           request goes out, so that the loop can recognise the same
+           sheet coming round again while this one is still loading.
+
+           EVERY key the sheet gave up, not only the ones that fitted
+           under MOST_KEYS. The cap is about round trips on warehouse
+           wifi; a number dropped for being the fourth is still perfectly
+           good evidence that the sheet in the box is this sheet. */
+        shown.current = new Set(keys.map(sig));
         setBusy('looking');
         setErr('');
+        /* The green-box advice belongs to an empty screen. */
+        setMissed(false);
         setMatches(null);
         setOtherRounds([]);
         setToday('');
@@ -373,9 +470,10 @@ export function Sort({ projectCode }: { projectCode: string }) {
         }
     }, [projectCode]);
 
-    /* THERE IS SOMETHING ON SCREEN TO ACT ON, so reading stops. Without
-       this the next sheet on the bench would be read over the answer the
-       sorter is still reading, and the page would be a slot machine. */
+    /* There is something on screen to act on. Reading does NOT stop for
+       it -- see the loop below, which keeps reading and simply refuses to
+       replace an answer with another reading of the sheet that produced
+       it. This only chooses what the status line says. */
     const settled = matches !== null;
 
     /* ─────────────────────────── THE READING LOOP.
@@ -391,7 +489,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
      * lookup must not fire for a page nobody is on.
      */
     useEffect(() => {
-        if (!live || settled || err !== '' || !scanSupported()) return undefined;
+        if (!live || err !== '' || !scanSupported()) return undefined;
         let cancelled = false;
 
         const run = async () => {
@@ -418,11 +516,26 @@ export function Sort({ projectCode }: { projectCode: string }) {
                         ...findPhones(text).slice(0, MOST_NUMBERS).map((c) => ({ phone: c.digits })),
                         ...findPlaces(text).map((d) => ({ house: d.house, zip: d.zip })),
                     ];
-                    /* ANYTHING AT ALL GOES STRAIGHT THROUGH, however
-                       many there were. See look() for why two numbers
-                       are no longer a question put to the sorter. */
-                    if (keys.length > 0) { await look(keys); return; }
-                    setMissed(true);
+                    /* ── THE ONE DECISION THIS PAGE MAKES ON ITS OWN.
+                       Anything the sheet gave up goes straight through,
+                       however many there were -- see look() for why two
+                       numbers are no longer a question put to the
+                       sorter -- but only when it is a DIFFERENT sheet.
+
+                       A read sharing even one key with the answer
+                       already up is the same parcel still in the box,
+                       and the right response is to do nothing at all:
+                       no request, no flicker, and above all no clearing
+                       of a name somebody is halfway through reading. */
+                    if (keys.length > 0 && !keys.some((k) => shown.current.has(sig(k)))) {
+                        await look(keys);
+                    } else if (keys.length === 0 && shown.current.size === 0) {
+                        /* Guidance only while the screen is otherwise
+                           blank. "Fill the green box" is poor advice to
+                           somebody who has what they came for and is
+                           looking straight at it. */
+                        setMissed(true);
+                    }
                 } catch (e) {
                     if (cancelled) return;
                     /* A READER THAT WILL NOT START DOES NOT GET TRIED
@@ -434,21 +547,13 @@ export function Sort({ projectCode }: { projectCode: string }) {
                     setErr(why(e, 'The reader could not start.'));
                     return;
                 }
-                await pause(GAP);
+                await pause(shown.current.size > 0 ? HOLD : GAP);
             }
         };
 
         void run();
         return () => { cancelled = true; };
-    }, [live, settled, err, look]);
-
-    const clear = () => {
-        setMatches(null); setOtherRounds([]); setToday(''); setAsked([]);
-        setAskedDoor(false); setAside([]); setErr(''); setMissed(false);
-        /* The frame held a patient's address and the question it was
-           kept for is over. */
-        forgetStrip();
-    };
+    }, [live, err, look]);
 
     return (
         <div className="izy-sort">
@@ -501,7 +606,7 @@ export function Sort({ projectCode }: { projectCode: string }) {
                         {busy === 'looking'
                             ? 'Looking that number up…'
                             : settled
-                                ? 'Press Clear for the next package.'
+                                ? 'Hold the next package in the box.'
                                 : missed
                                     ? 'Fill the green box with the RECIPIENT panel, hold the sheet '
                                         + 'flat, and keep it still.'
@@ -535,10 +640,13 @@ export function Sort({ projectCode }: { projectCode: string }) {
                             answered. A sorter checking a surprising
                             result needs to see what the camera took off
                             the sheet, and a panel with two numbers on it
-                            is now two lookups behind one answer. */}
+                            is now two lookups behind one answer.
+
+                            AND NOTHING TO PRESS BESIDE IT. There was a
+                            Clear button here until 26 November; the next
+                            parcel in the box is what clears this now. */}
                         <span className="izy-muted">Looked up</span>
                         {' '}{asked.join(' · ')}
-                        <button type="button" className="izy-btn secondary small" onClick={clear}>Clear</button>
                     </div>
 
                     {/* ONLY WHEN BOTH LISTS ARE EMPTY, and that condition is
