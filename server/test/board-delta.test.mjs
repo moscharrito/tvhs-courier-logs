@@ -109,10 +109,38 @@ describe('a poll with a cursor', () => {
         const second = await board(`&since=${encodeURIComponent(first.cursor)}`);
 
         expect(second.complete).toBe(false);
-        /* Exactly the overlap, and nothing else. 1 of 120 rather than 750. */
+        /* Exactly the overlap, and nothing else. A handful of 120 rather
+           than 750. */
         const overlap = await atTheMark(first.cursor);
         expect(new Set(Object.keys(second.orders))).toEqual(overlap);
-        expect(Object.keys(second.orders).length).toBeLessThan(5);
+        /* ── AND THE DELTA DID NOT DEGENERATE INTO A WHOLE BOARD.
+         *
+         * The line above pins the set exactly, so this is not a second
+         * look at the same thing: it is the guard against `atTheMark`
+         * itself going wrong. If the cursor logic ever sent everything,
+         * both sides of that equality would be all 120 cards and it
+         * would pass while the saving had quietly disappeared. Strictly
+         * fewer than the board catches that and nothing else.
+         *
+         * IT USED TO READ `toBeLessThan(5)` AND THAT WAS A CLOCK, NOT AN
+         * ASSERTION. `atTheMark` counts the seeded orders whose stamp is
+         * exactly the cursor millisecond, so the number it produces is a
+         * measurement of how many of the 120 inserts the machine landed
+         * inside one millisecond. One or two on an idle box; exactly
+         * five, twice running, under three vitest forks on two cores --
+         * a red suite that said "expected 5 to be less than 5" while the
+         * equality above it passed, and that went green every time the
+         * file was run on its own. A test that reports the load on the
+         * machine as a defect in the endpoint teaches whoever sees it to
+         * press rerun.
+         *
+         * No absolute count can be written here honestly: if a fast
+         * machine ever batched all 120 inserts into one millisecond then
+         * returning all 120 is the CORRECT answer, and any number would
+         * be a false red again. Degeneracy is the only thing worth
+         * naming, so it is the only thing named. */
+        expect(overlap.size, 'a moment at the end of the wave, not the wave')
+            .toBeLessThan(membership(first).size);
 
         /* The point. Nothing about the board got smaller except the cards. */
         expect(membership(second)).toEqual(membership(first));
