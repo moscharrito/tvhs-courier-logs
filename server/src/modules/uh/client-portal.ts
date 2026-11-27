@@ -1309,26 +1309,208 @@ export function createClientPortalRouter(
         });
     }));
 
-    /* ---------------------------------------------- drivers: REMOVED, 25 Nov
+    /* ------------------------------------------------------------- drivers */
 
-       GET /client/drivers used to return the dispatch board's lane list,
-       folded the same way, with every stop this pharmacy had sent inside
-       it and the counts done over the caller's own orders rather than the
-       driver's whole round. It was built on 24 November, rebuilt the same
-       day as a copy of the board's lane rather than a summary table, and
-       taken out on the 25th: the counters reported back that they do not
-       need it.
+    /**
+     * Who is carrying this pharmacy's deliveries today, and every stop of
+     * theirs that this pharmacy sent.
+     *
+     * ──────────────────────────────────────────────────────────────────────
+     * BUILT ON THE 24TH, TAKEN OFF ON THE 25TH, BACK ON THE 26TH FOR
+     * COUNTERS ONLY -- AND THE NARROWING IS THE WHOLE OF WHAT CHANGED.
+     *
+     * The note that stood here said not to rebuild it without asking, and
+     * kept the reason: a client does not want a roster of which of our
+     * staff is carrying their parcels. That reading was right about who
+     * was looking. The accounts that rejected it oversee nine counters
+     * between them -- the contract manager and billing -- and for them it
+     * is exactly a staff roster. A PHARMACY is not in that position: four
+     * of its parcels are in one van this afternoon and the question "who
+     * has them" is about its own work.
+     *
+     * So the route is back and `forCounter` is the whole of the gate:
+     *
+     *   overseesContract -- the contract manager and the billing staff.
+     *   The same setting already takes the two counter panels off their
+     *   screen, asked for on 12 November; portal-capability.ts sets out
+     *   why it is a written setting and not a guess at "watches more than
+     *   one pharmacy".
+     *
+     *   wholeProject -- our own staff, reading the portal through to
+     *   check it. There is no one counter to do the arithmetic over, so
+     *   every figure here would quietly become the whole contract's,
+     *   which is the dispatch board they already have.
+     *
+     * A viewer who is neither gets an empty lane list and the flag rather
+     * than a 403. Nothing here is forbidden to them; it is simply not
+     * theirs, and a portal that errors for a staff member is a portal
+     * nobody checks. The query does not run at all in that case.
+     *
+     * ──────────────────────────────────────────────────────────────────────
+     * IT IS THE DISPATCH BOARD'S LANE LIST, MINUS EVERY CONTROL.
+     *
+     * Asked for on 24 November, and asked for again the same day once the
+     * first answer turned out to be a summary table: a counter wants the
+     * board's lane, folded the same way, with the stops inside it, and
+     * with nothing on it they can press.
+     *
+     * WHAT CAME OUT. Return to pool is gone, which is what was asked.
+     * Sequence by distance and sequence by deadline are gone too, and that
+     * is a decision rather than an omission: both rewrite the order of a
+     * run that is carrying other counters' work as well, so a pharmacy
+     * pressing one would reorder somebody else's afternoon. "View only"
+     * was the standing instruction and it outranks "copy it as it is" on
+     * the two buttons that write. Dragging between lanes went with them.
+     * The courier's last position is also not here; a map pin on a member
+     * of staff is a different thing to hand a client than a list of their
+     * own parcels.
+     *
+     * WHAT STAYED, AND IS THE POINT. The collapsible lane keyed by run, so
+     * one driver's two waves fold separately. Every stop as a row, in run
+     * sequence, with the stop they are working marked. The pager inside
+     * the lane. The shift pill.
+     *
+     * ── THE COUNTS ARE OVER THIS PHARMACY'S OWN ORDERS, NOT THE ROUND.
+     *
+     * The board says "19 of 23 done" meaning the driver's whole day. A
+     * driver carries Wheatley's work and Robert B. Green's in one van, so
+     * that number would tell Wheatley how much Green sent. Here the
+     * arithmetic is done over the caller's scoped sites only, and the
+     * stops listed are that pharmacy's stops: "3 of 5 done" means five of
+     * YOUR deliveries, and a counter cannot size another counter's day by
+     * subtraction. It also means the sequence numbers have gaps in them.
+     * They are the real positions on the run, and a gap is another
+     * pharmacy's stop, which is the honest way to show it.
+     *
+     * ── A FIRST NAME, through the same displayNames() every other route
+     * in this file uses. Not an exception made for this screen: the
+     * deliveries list directly below the lane has shown a first name since
+     * the portal was built, and a lane headed with a surname would
+     * disagree with the row under it.
+     *
+     * ── AND NO LAST-SEEN CLOCK. The dispatch board carries one beside
+     * the shift pill. Whether somebody is working today is operationally
+     * fair to tell the counter whose parcels they are holding; roughly
+     * where a member of our staff was eleven minutes ago is not, and the
+     * field is not sent rather than not drawn.
+     */
+    router.get('/drivers', viewer, wrap(async (req, res) => {
+        const project = req.project!;
+        const { scope, sites } = await scopedSites(req);
+        const serviceDate = typeof req.query['date'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query['date'])
+            ? req.query['date']
+            : todayIn(project.timezone);
 
-       DO NOT REBUILD IT WITHOUT ASKING. It is not that the lane was
-       wrong -- it was asked for twice and shipped twice. It is that a
-       client does not want a list of which of our staff is carrying their
-       parcels, and the second build is what established that.
+        /* WHO THIS PANEL IS FOR, decided before anything is read. See the
+           header. An unscoped viewer falls out of this too: no sites, no
+           counter, nothing -- which is the fourth of the disclosure
+           properties and is here rather than in a 1 = 0 WHERE clause. */
+        const forCounter = !scope.wholeProject
+            && !oversees(req.membership?.settings ?? {})
+            && sites.length > 0;
+        if (!forCounter) {
+            res.json({
+                serviceDate,
+                timezone: project.timezone,
+                lanes: [],
+                forCounter: false,
+                notes: scopeNote(sites, scope),
+            });
+            return;
+        }
 
-       What a counter does want is below and above: their own deliveries,
-       each with the driver on it. That was always there.
+        /* THROUGH THE RUN, not through orders.assigned_to_username. The run
+           is what dispatch actually built and what the driver's phone is
+           reading; the column on the order is a denormalisation of it. A
+           cancelled run carries nobody.
 
-       The page that called this went with it -- see the matching note in
-       web/src/pages/uh/ClientPortal.tsx. */
+           One row per stop, ordered so the grouping below is a single pass:
+           driver, then run, then position on that run. */
+        const rs = await client.execute({
+            sql: `SELECT o.*, s.name AS site_name,
+                         st.sequence AS seq,
+                         r.id AS run_id, r.label AS run_label,
+                         r.courier_username AS courier_username,
+                         u.name AS courier_name,
+                         CASE WHEN sh.id IS NULL THEN 0 ELSE 1 END AS on_shift
+                    FROM orders o
+                    JOIN sites s ON s.id = o.site_id
+                    JOIN run_stops st ON st.order_id = o.id
+                    JOIN runs r ON r.id = st.run_id AND r.status != 'cancelled'
+                    LEFT JOIN users u ON u.username = r.courier_username
+                    LEFT JOIN shifts sh ON sh.courier_username = r.courier_username
+                                       AND sh.project_id = ? AND sh.ended_at IS NULL
+                   WHERE o.project_id = ? AND o.site_id IN (${sites.map(() => '?').join(',')})
+                     AND o.service_date = ? AND o.status != 'cancelled'
+                   ORDER BY u.name, r.courier_username, r.id, st.sequence, o.id`,
+            args: [project.id, project.id, ...sites.map((s) => s.id), serviceDate] as InValue[],
+        });
+
+        const rows = rs.rows as unknown as Array<OrderRow & {
+            site_name: string; seq: number; run_id: number; run_label: string;
+            courier_username: string; courier_name: string | null; on_shift: number;
+        }>;
+        /* The same first-name map the deliveries list is built from, so the
+           lane header and the rows under it say one name between them. */
+        const names = await displayNames(project.id, rows.map((r) => r.courier_username));
+
+        interface PortalLane {
+            run: { id: number; label: string };
+            courier: { name: string; onShift: boolean };
+            stops: Array<{ sequence: number; order: ReturnType<typeof present> }>;
+            currentStopOrderId: number | null;
+            counts: { total: number; remaining: number; done: number; overdue: number };
+        }
+        const byRun = new Map<number, PortalLane>();
+        for (const r of rows) {
+            const person = names.get(r.courier_username);
+            let lane = byRun.get(Number(r.run_id));
+            if (!lane) {
+                lane = {
+                    run: { id: Number(r.run_id), label: String(r.run_label ?? '') },
+                    courier: {
+                        /* No username. It is the handle our staff sign in
+                           with and it is not a client's to hold. */
+                        name: person?.label || courierFirstName(r.courier_name, 'A courier'),
+                        onShift: Number(r.on_shift) === 1,
+                    },
+                    stops: [],
+                    currentStopOrderId: null,
+                    counts: { total: 0, remaining: 0, done: 0, overdue: 0 },
+                };
+                byRun.set(Number(r.run_id), lane);
+            }
+            /* Through the same presenter as every other delivery this
+               pharmacy is shown, so a stop in a lane and the same stop in
+               the list below cannot drift apart. */
+            const order = present(r, r.site_name, person?.label ?? '', person?.phone ?? '');
+            lane.stops.push({ sequence: Number(r.seq), order });
+            lane.counts.total += 1;
+            if ((OPEN_STATUSES as readonly string[]).includes(order.status)) {
+                lane.counts.remaining += 1;
+                /* The first stop still to do, which is where they are
+                   working -- of THIS pharmacy's stops. The driver may well
+                   be standing at somebody else's door in between. */
+                if (lane.currentStopOrderId === null) lane.currentStopOrderId = order.id;
+            } else {
+                lane.counts.done += 1;
+            }
+            if (order.sla.state === 'overdue') lane.counts.overdue += 1;
+        }
+        const lanes = [...byRun.values()];
+
+        await req.audit('client.drivers', 'order', serviceDate, {
+            sites: sites.length, lanes: lanes.length, stops: rows.length,
+        });
+
+        res.json({
+            serviceDate,
+            timezone: project.timezone,
+            lanes,
+            forCounter: true,
+            notes: scopeNote(sites, scope),
+        });
+    }));
 
     /* ------------------------------------------------------------- detail */
 

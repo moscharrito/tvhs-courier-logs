@@ -617,6 +617,8 @@ const MATRIX = [
        scoped to the pharmacies their membership names. */
     ['GET', `${UH}/client/reports`, UH_CLIENT_VIEW, ''],
     ['GET', `${UH}/client/summary`, UH_CLIENT_VIEW, ''],
+    ['GET', `${UH}/client/drivers`, UH_CLIENT_VIEW,
+        'who is carrying this counter’s own deliveries, and which stops: first names, their own stops and their own counts, nothing to press. Answered for every viewer in this column, but with lanes only for a counter -- the contract manager, billing and our own staff get an empty list and forCounter false'],
     ['GET', `${UH}/client/orders`, UH_CLIENT_VIEW, ''],
     /* The same reach as the list it mirrors, and that is the point: it is the
        same query through gatherOrders. It carries patient names and addresses

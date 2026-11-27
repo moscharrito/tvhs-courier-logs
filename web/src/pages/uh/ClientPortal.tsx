@@ -188,28 +188,108 @@ function Count({ n, label, onPick }: { n: number; label: string; onPick: () => v
     );
 }
 
-/* ─── WHO IS CARRYING TODAY'S WORK: REMOVED, 25 NOVEMBER.
+/* ─── WHO IS CARRYING TODAY'S WORK.
  *
- * A "Drivers out with your deliveries" section sat here. It was the
- * dispatch board's lane list with every control stripped off it: one
- * collapsible lane per run, this counter's stops inside it in run
- * sequence, an on/off shift pill, counts done over the caller's own
- * orders rather than the driver's whole round.
+ * The dispatch board's lane, with every control taken off it. What the
+ * server will and will not put in here -- this counter's stops only, a
+ * first name, no last-seen, no position -- is decided in the /drivers
+ * route in modules/uh/client-portal.ts, and nothing on this page can
+ * widen it: a field the server does not send cannot be drawn.
  *
- * It was asked for on 24 November, rebuilt the same day when the first
- * answer turned out to be a summary table rather than the board's lane,
- * and taken off both the client and the pharmacy view on the 25th. The
- * counters reported back that they do not need it.
+ * TAKEN OFF ON 25 NOVEMBER AND BACK ON THE 26TH, FOR COUNTERS ONLY. The
+ * accounts that rejected it oversee nine pharmacies between them -- the
+ * contract manager and billing -- and for them it really was a roster of
+ * which of our staff is carrying somebody's parcels. A counter is not in
+ * that position: the four parcels in that van this afternoon are its
+ * own. `forCounter` on the response is the gate and the server is the
+ * one that decides it; see the note at /drivers. */
+interface PortalLane {
+    run: { id: number; label: string };
+    courier: { name: string; onShift: boolean };
+    /** In run sequence. The numbers have gaps: a gap is another counter's stop. */
+    stops: Array<{ sequence: number; order: ClientOrder }>;
+    /** The next one of THIS pharmacy's stops still to do. */
+    currentStopOrderId: number | null;
+    counts: { total: number; remaining: number; done: number; overdue: number };
+}
+
+interface DriversResponse {
+    serviceDate: string;
+    lanes: PortalLane[];
+    /**
+     * Whether this account is a counter, and so whether the section is
+     * drawn at all.
+     *
+     * READ STRICTLY AS `=== true`, never for absence. A response without
+     * it is a server that does not know about the distinction, and the
+     * safe reading of that is "do not draw", not "draw for everybody":
+     * the three accounts this keeps it from are exactly the ones who
+     * asked for it off.
+     */
+    forCounter?: boolean;
+    notes: string[];
+}
+
+/**
+ * The stops inside one lane, paged.
  *
- * DO NOT REBUILD IT WITHOUT ASKING. The lane was not wrong -- it was
- * asked for twice and shipped twice. What the second build established
- * is that a client does not want a roster of which of our staff is
- * carrying their parcels. The thing they do want is the deliveries list
- * below, which names the driver on each row and always has.
- *
- * The route it read went with it: see the matching note at /drivers in
- * modules/uh/client-portal.ts.
+ * Its own pager, like the board's, because one page number shared across
+ * every lane would turn "page 2" into a different driver's second page.
  */
+function PortalLaneStops({ lane, clock }: { lane: PortalLane; clock: (iso: string | null) => string }) {
+    const paged = usePaged(lane.stops);
+    if (lane.stops.length === 0) return <div className="izy-muted">No stops yet.</div>;
+    return (
+        <>
+            {paged.rows.map((stop) => (
+                <PortalStopRow
+                    key={stop.order.id}
+                    order={stop.order}
+                    sequence={stop.sequence}
+                    current={lane.currentStopOrderId === stop.order.id}
+                    clock={clock}
+                />
+            ))}
+            <Pager of={paged} noun="stops" />
+        </>
+    );
+}
+
+/**
+ * One stop, as a row, in the board's own shape and classes.
+ *
+ * TWO COLUMNS WHERE THE BOARD HAS THREE. The third is the board's control
+ * cell, and there is no control to put in it. The row is not a link
+ * either: #9047 on the board opens our staff order page, which is not a
+ * page a pharmacy has. Their way into a delivery is the Proof button on
+ * the list below, which is already theirs.
+ */
+function PortalStopRow({ order, sequence, current, clock }: {
+    order: ClientOrder;
+    sequence: number;
+    current: boolean;
+    clock: (iso: string | null) => string;
+}) {
+    const label = slaLabel(order.sla);
+    return (
+        <div className={`izy-stop-row is-view-only${current ? ' is-current' : ''}`}>
+            <div className="izy-stop-row-what">
+                <b>{sequence}. </b>
+                #{order.id}
+                {' '}<span className="izy-muted">{order.serviceType}</span>
+                {order.zone === null
+                    ? <> <span className="izy-pill warn">out of area</span></>
+                    : <> <span className="izy-pill muted">zone {order.zone}</span></>}
+                {label.text && <> <span className={`izy-pill ${label.tone === 'muted' ? 'muted' : label.tone}`}>{label.text}</span></>}
+            </div>
+            <div className="izy-stop-row-who">
+                <div>{order.recipientName}</div>
+                <div className="izy-muted">{order.address}, {order.city} {order.zip}</div>
+                <div className="izy-muted">due {clock(order.dueAt)} · {order.status}</div>
+            </div>
+        </div>
+    );
+}
 
 export function ClientPortal() {
     const { code = '' } = useParams();
@@ -225,6 +305,7 @@ export function ClientPortal() {
 
     const [summary, setSummary] = useState<SummaryResponse | null>(null);
     const [list, setList] = useState<ListResponse | null>(null);
+    const [drivers, setDrivers] = useState<DriversResponse | null>(null);
     const [open, setOpen] = useState<number | null>(null);
     const [msg, setMsg] = useState<string | null>(null);
     /* Whether this reader has asked for the whole range rather than the first
@@ -273,12 +354,28 @@ export function ClientPortal() {
     const load = useCallback(async () => {
         setMsg(null);
         try {
-            const [s, l] = await Promise.all([
+            const [s, l, d] = await Promise.all([
                 api<SummaryResponse>(`${base}/summary`),
                 api<ListResponse>(`${base}/orders${listQs ? `?${listQs}` : ''}`),
+                /* The day being looked at, not today: a pharmacist who has
+                   put yesterday in the date box is asking who carried
+                   yesterday's work, and a driver list stuck on today would
+                   be the one thing on the screen describing a different
+                   day. `from` is the opening today-range when nobody has
+                   touched the boxes.
+
+                   AND ITS OWN FAILURE, SWALLOWED. This section is not
+                   served to three of the thirteen accounts and was absent
+                   from every build before the 26th, so a 404 or an error
+                   from it is an ordinary state of the world -- and it
+                   must not be able to take the deliveries list down with
+                   it, which is what the page is actually for. */
+                api<DriversResponse>(`${base}/drivers?date=${encodeURIComponent(from)}`)
+                    .catch(() => null),
             ]);
             setSummary(s);
             setList(l);
+            setDrivers(d);
         } catch (err) {
             setMsg(err instanceof ApiError ? err.message : 'Could not load your deliveries.');
         }
@@ -571,6 +668,90 @@ export function ClientPortal() {
                     browser history, proxies and server logs.
                 </p>
             </div>
+
+            {/* ──────────────────────────────────────────────────────────
+                WHO IS CARRYING IT. Above the deliveries, because "is anyone
+                out with my work" is the question asked first, and "where is
+                delivery 9047" is asked second and answered by the table
+                below.
+
+                THE DISPATCH BOARD'S LANE, which is what was asked for: the
+                same fold, the same stop rows, the same pager inside it.
+                What is not here is everything that writes -- Return to
+                pool, the two sequence buttons, and dragging a stop between
+                drivers. All three would let one counter rearrange a run
+                that is carrying another counter's work. The server sends no
+                control either, so this is not a screen that could be made
+                live by someone editing only this file.
+
+                The stops are this pharmacy's stops. See the /drivers route
+                in modules/uh/client-portal.ts for why, and for why the
+                sequence numbers therefore have gaps in them.
+
+                THREE CONDITIONS AND EACH EARNS ITS PLACE. `forCounter` is
+                the server saying this account is a counter rather than the
+                contract manager, billing, or one of us checking the page.
+                The null is the request having failed or never been served.
+                The empty list is a quiet day, and an empty heading reading
+                "Drivers out with your deliveries" over nothing would be
+                read as drivers having gone missing.
+                ────────────────────────────────────────────────────────── */}
+            {drivers !== null && drivers.forCounter === true && drivers.lanes.length > 0 && (
+                <>
+                    <h2 id="portal-drivers-heading">Drivers out with your deliveries</h2>
+                    <p className="izy-muted">
+                        {drivers.serviceDate}
+                        {' · '}
+                        {/* SAID OUT LOUD, because a pharmacist who knows a
+                            driver has twenty stops will otherwise read "4 of
+                            6 done" as the driver's whole day and conclude
+                            they have stopped working. */}
+                        every figure here is your own deliveries only, not the driver’s whole round
+                    </p>
+                    <div className="izy-board-lanes">
+                        {drivers.lanes.map((lane) => (
+                            <Section
+                                /* Keyed by run, like the board, so one
+                                   driver's second wave folds separately --
+                                   and so a counter that only watches the
+                                   morning run can fold the rest once and
+                                   have it stay. */
+                                key={lane.run.id}
+                                id={`uh.portal.lane.${lane.run.id}`}
+                                className="izy-lane"
+                                title={lane.courier.name}
+                                summary={(
+                                    <>
+                                        {lane.counts.done} of {lane.counts.total} done
+                                        {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
+                                    </>
+                                )}
+                                actions={(
+                                    /* The bare pill is already the green one;
+                                       `muted` is the grey. There is no `ok`
+                                       modifier, and asking for one would have
+                                       rendered green and looked right.
+
+                                       No last-seen clock beside it, unlike
+                                       the board's. Whether somebody is
+                                       working today is operationally fair to
+                                       tell a client; roughly where our staff
+                                       were eleven minutes ago is not. */
+                                    <span className={lane.courier.onShift ? 'izy-pill' : 'izy-pill muted'}>
+                                        {lane.courier.onShift ? 'on shift' : 'off shift'}
+                                    </span>
+                                )}
+                            >
+                                <p className="izy-muted">
+                                    {lane.run.label.trim() || 'Run'} {lane.run.id} · {lane.counts.done} of {lane.counts.total} done
+                                    {lane.counts.overdue > 0 && <span className="izy-stat-bad"> · {lane.counts.overdue} overdue</span>}
+                                </p>
+                                <PortalLaneStops lane={lane} clock={clock} />
+                            </Section>
+                        ))}
+                    </div>
+                </>
+            )}
 
             <div className="izy-card">
                 {/* WHAT THIS LIST IS, SAID IN WORDS, for somebody who got

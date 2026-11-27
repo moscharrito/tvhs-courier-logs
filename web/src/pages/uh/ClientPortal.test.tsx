@@ -63,9 +63,12 @@ const routes = (over = {}) => ({
        `orders*` would otherwise answer the detail request with the list. */
     [`GET ${BASE}/orders/21`]: detail(),
     [`GET ${BASE}/orders*`]: list(),
-    /* Empty by default, so the section is absent from every other test on
-       this page rather than appearing in all of them. Its own tests below
-       override it. */
+    /* A COUNTER WITH NOBODY OUT, by default, so the drivers section is
+       absent from every other test on this page rather than appearing in
+       all of them. Its own tests below override it. `forCounter` is true
+       here on purpose: the default must not be the thing that hides the
+       section, or a bug in the gate would pass every test but its own. */
+    [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', lanes: [], forCounter: true, notes: [] },
     ...over,
 });
 
@@ -832,20 +835,181 @@ describe('the proof of return', () => {
     });
 });
 
-/* ───────────────── WHO IS CARRYING IT: REMOVED ─────────────
+/* ────────────────── WHO IS CARRYING IT ───────────────────────
  *
- * Eight tests covered a "Drivers out with your deliveries" section here:
- * the board's lane folded by run, the stops inside it, the shift pill,
- * two waves folding apart, and -- the ones that mattered -- that nothing
- * in the lane could be pressed.
+ * Asked for on 24 November 2026, and asked for a second time the same day
+ * once the first answer came back as a summary table: the pharmacy wants
+ * the dispatch board's lane, folding the same way, with the stops in it.
+ * What it must NOT be is the dispatch board's lane -- no Return to pool,
+ * no sequence buttons, no other counter's rows. The server is what keeps
+ * the figures and the stop list honest (see the /drivers route); these
+ * cover what this page does with them.
  *
- * The section came off both the client and the pharmacy view on
- * 25 November because the counters reported back that they do not need
- * it. The tests went with it rather than being left asserting a screen
- * nobody has.
- *
- * DO NOT WRITE THEM AGAIN WITHOUT ASKING. See the note at the top of
- * ClientPortal.tsx: it is the SECTION that is not wanted, not the way it
- * was built.
+ * TAKEN OFF ON THE 25TH AND BACK ON THE 26TH FOR COUNTERS ONLY. The last
+ * three tests here are that gate, and they are the ones that would go
+ * unnoticed: a section served to the contract manager again draws a
+ * perfectly correct screen that three people have said they do not want.
  */
+describe('the drivers out with a pharmacy’s deliveries', () => {
+    const withLanes = (lanes: unknown[], over = {}) => routes({
+        [`GET ${BASE}/drivers*`]: {
+            serviceDate: '2026-09-14', lanes, forCounter: true, notes: [], ...over,
+        },
+    });
+
+    const stop = (sequence: number, over = {}) => ({
+        sequence,
+        order: order({ id: 900 + sequence, zone: 3, status: 'assigned', ...over }),
+    });
+
+    const lane = (over = {}) => ({
+        run: { id: 41, label: 'Morning' },
+        courier: { name: 'Ada', onShift: true },
+        stops: [
+            stop(1, { recipientName: 'Thornbeck Ridley', address: '44 Bellwright Lane' }),
+            stop(4, { recipientName: 'Nerissa Quillane', address: '9 Copperfield Row' }),
+        ],
+        currentStopOrderId: 901,
+        counts: { total: 6, remaining: 2, done: 4, overdue: 0 },
+        ...over,
+    });
+
+    const heading = () => screen.queryByRole('heading', { name: /Drivers out with your deliveries/i });
+
+    it('draws the lane with its stops inside it', async () => {
+        renderPortal(withLanes([lane()]));
+        await settled();
+        expect(heading()).toBeInTheDocument();
+
+        /* The lane is a region named by its own heading, which is how the
+           board's is reachable too. Scoped to it because "Ada" is also the
+           courier on every row of the deliveries table below. */
+        const region = screen.getByRole('region', { name: /Ada/ });
+        expect(within(region).getByText('Thornbeck Ridley')).toBeInTheDocument();
+        expect(within(region).getByText(/44 Bellwright Lane/)).toBeInTheDocument();
+        expect(within(region).getByText('Nerissa Quillane')).toBeInTheDocument();
+    });
+
+    it('keeps the run sequence, gaps and all', async () => {
+        /* A gap is another counter's stop. Renumbering 1, 4 to 1, 2 would
+           be tidier and would be a lie about where on the round it is. */
+        renderPortal(withLanes([lane()]));
+        await settled();
+        const region = screen.getByRole('region', { name: /Ada/ });
+        expect(region).toHaveTextContent('1.');
+        expect(region).toHaveTextContent('4.');
+    });
+
+    it('folds, and says how far along when folded', async () => {
+        renderPortal(withLanes([lane({ run: { id: 77, label: 'Morning' } })]));
+        await settled();
+        const region = screen.getByRole('region', { name: /Ada/ });
+        fireEvent.click(within(region).getByRole('button', { expanded: true }));
+
+        expect(region).toHaveTextContent('4 of 6 done');
+        /* The whole reason the fold is wanted: the header still answers
+           the question with the twenty rows out of the way. */
+        expect(within(region).queryByText('Thornbeck Ridley')).toBeNull();
+    });
+
+    it('gives a driver’s two runs two lanes that fold apart', async () => {
+        renderPortal(withLanes([
+            lane({ run: { id: 81, label: 'Morning' } }),
+            lane({ run: { id: 82, label: 'Afternoon' }, counts: { total: 3, remaining: 3, done: 0, overdue: 0 } }),
+        ]));
+        await settled();
+        expect(screen.getAllByRole('region', { name: /Ada/ })).toHaveLength(2);
+    });
+
+    it('says the counts are theirs, not the driver’s whole day', async () => {
+        /* Without this line "4 of 6 done" reads as the driver's round, and
+           a pharmacist concludes a driver with twenty stops has stopped
+           working. */
+        renderPortal(withLanes([lane()]));
+        await settled();
+        expect(screen.getByText(/your own deliveries only, not the driver/i))
+            .toBeInTheDocument();
+    });
+
+    it('shows whether they are working', async () => {
+        renderPortal(withLanes([
+            lane(),
+            lane({
+                run: { id: 42, label: 'Afternoon' },
+                courier: { name: 'Bo', onShift: false },
+                counts: { total: 2, remaining: 0, done: 2, overdue: 0 },
+            }),
+        ]));
+        await settled();
+        expect(screen.getByText('on shift')).toBeInTheDocument();
+        expect(screen.getByText('off shift')).toBeInTheDocument();
+    });
+
+    it('offers nothing to press: it is a view and not a console', async () => {
+        /* THE POINT OF THE WHOLE SECTION BEING READ ONLY. The board's lane
+           carries Return to pool and two buttons that resequence the run.
+           That run is carrying other counters' work, so a pharmacy
+           pressing one would reorder somebody else's afternoon. */
+        renderPortal(withLanes([lane()]));
+        await settled();
+        const region = screen.getByRole('region', { name: /Ada/ });
+        expect(within(region).queryByRole('button', { name: /return to pool/i })).toBeNull();
+        expect(within(region).queryByRole('button', { name: /sequence by/i })).toBeNull();
+        expect(within(region).queryByRole('combobox')).toBeNull();
+        /* The fold is the only control in the lane. */
+        expect(within(region).getAllByRole('button')).toHaveLength(1);
+    });
+
+    it('is absent entirely when nobody is carrying anything', async () => {
+        /* Not an empty lane list with a heading over it: on a counter
+           screen that reads as a fault. */
+        renderPortal();
+        await settled();
+        expect(heading()).toBeNull();
+    });
+
+    it('asks for the day the page is showing', async () => {
+        const { calls } = renderPortal(withLanes([lane()]));
+        await settled();
+        expect(calls.some((c) => c.includes('/client/drivers?date='))).toBe(true);
+    });
+
+    /* ─────────────────── AND WHO IT IS NOT FOR ────────────────── */
+
+    it('is not drawn for the contract manager or billing, lanes or no lanes', async () => {
+        /* THE SERVER SENDS NO LANES TO THEM, so this is the belt to its
+           braces -- and it is worth having, because the one way this
+           section comes back for the three accounts that rejected it is
+           somebody later reading `lanes.length > 0` as the whole test. */
+        renderPortal(withLanes([lane()], { forCounter: false }));
+        await settled();
+        expect(heading()).toBeNull();
+        expect(screen.queryByRole('region', { name: /Ada/ })).toBeNull();
+    });
+
+    it('stays away when the server says nothing about who it is for', async () => {
+        /* FAILING CLOSED ON PURPOSE. A response with no `forCounter` is a
+           server that does not know the distinction, and the safe reading
+           of that is "do not draw" -- the accounts this keeps it from are
+           exactly the ones who asked for it off. */
+        renderPortal(routes({
+            [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', lanes: [lane()], notes: [] },
+        }));
+        await settled();
+        expect(heading()).toBeNull();
+    });
+
+    it('cannot take the deliveries list down with it', async () => {
+        /* A section three accounts do not get, which did not exist at all
+           before the 26th, must not be able to turn the page a pharmacist
+           rings us about into an error banner. */
+        renderPortal(routes({
+            [`GET ${BASE}/drivers*`]: { status: 500, body: { error: 'nope' } },
+        }));
+        await settled();
+        expect(heading()).toBeNull();
+        expect(screen.getByText('Ines Vargas')).toBeInTheDocument();
+        expect(screen.queryByText(/Could not load your deliveries/)).toBeNull();
+    });
+});
 
