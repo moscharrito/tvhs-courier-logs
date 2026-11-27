@@ -976,27 +976,48 @@ describe('the drivers out with a pharmacy’s deliveries', () => {
 
     /* ─────────────────── AND WHO IT IS NOT FOR ────────────────── */
 
-    it('is not drawn for the contract manager or billing, lanes or no lanes', async () => {
-        /* THE SERVER SENDS NO LANES TO THEM, so this is the belt to its
-           braces -- and it is worth having, because the one way this
-           section comes back for the three accounts that rejected it is
-           somebody later reading `lanes.length > 0` as the whole test. */
-        renderPortal(withLanes([lane()], { forCounter: false }));
+    it('is not drawn for the contract manager or billing', async () => {
+        /* THE GATE IS THE SERVER SENDING NO LANES, and the page draws
+           nothing from nothing. Written as its own test rather than
+           folded into the quiet-day one above because the two look
+           identical on screen and are not the same promise: one is a
+           counter with nobody out, the other is an account that asked
+           never to see this. */
+        renderPortal(withLanes([], { forCounter: true }));
         await settled();
         expect(heading()).toBeNull();
         expect(screen.queryByRole('region', { name: /Ada/ })).toBeNull();
     });
 
-    it('stays away when the server says nothing about who it is for', async () => {
-        /* FAILING CLOSED ON PURPOSE. A response with no `forCounter` is a
-           server that does not know the distinction, and the safe reading
-           of that is "do not draw" -- the accounts this keeps it from are
-           exactly the ones who asked for it off. */
+    it('does not call the whole contract somebody\u2019s own deliveries', async () => {
+        /* OUR OWN STAFF READING THE PORTAL THROUGH. They see lanes over
+           every pharmacy, so the counter's sentence would be false in
+           the one direction that matters -- it invites a reader to take
+           nine counters' work for theirs. */
+        renderPortal(withLanes([lane()], { forCounter: false }));
+        await settled();
+        expect(screen.getByRole('heading', { name: /Drivers out across the contract/i }))
+            .toBeInTheDocument();
+        expect(screen.getByText(/not what one\s+counter sees/i)).toBeInTheDocument();
+        expect(screen.queryByText(/your own deliveries only/i)).toBeNull();
+        /* The lanes themselves are drawn exactly as a counter's are. */
+        expect(screen.getByRole('region', { name: /Ada/ })).toBeInTheDocument();
+    });
+
+    it('takes the cautious reading when the server does not say whose figures these are', async () => {
+        /* THE TWO MISTAKES ARE NOT EQUAL, which is why `=== true` and
+           never an absence check. Calling the contract "your own
+           deliveries" misleads a pharmacist about whose work they are
+           looking at; calling one counter "the whole contract" only
+           overstates the scope. So a silent server falls to the
+           second. */
         renderPortal(routes({
             [`GET ${BASE}/drivers*`]: { serviceDate: '2026-09-14', lanes: [lane()], notes: [] },
         }));
         await settled();
-        expect(heading()).toBeNull();
+        expect(screen.getByRole('heading', { name: /Drivers out across the contract/i }))
+            .toBeInTheDocument();
+        expect(screen.queryByText(/your own deliveries only/i)).toBeNull();
     });
 
     it('cannot take the deliveries list down with it', async () => {

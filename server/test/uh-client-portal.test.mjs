@@ -1267,28 +1267,35 @@ describe('the drivers carrying a pharmacy\'s own deliveries', () => {
         const res = await nobody.get(`${CLIENT}/drivers?date=${today}`);
         expect(res.status).toBe(200);
         expect(res.body.lanes).toEqual([]);
-        expect(res.body.forCounter, 'no pharmacies, no counter').toBe(false);
+        /* forCounter STAYS TRUE, and that is not a slip. It answers
+           "are these figures this caller's own counters' work", not
+           "may this caller see anything" -- and for a client account
+           with no pharmacies the honest answer is yes, there just are
+           not any. The empty lane list above is what the page acts on.
+           Asserted rather than left implied because the field was a
+           permission for the first hour of its life and the next reader
+           will assume it still is. */
+        expect(res.body.forCounter, 'a client, however few sites').toBe(true);
         expect(res.body.notes.join(' ')).toMatch(/No pharmacies are assigned/);
     });
 
     /* ─────────────────── AND WHO IT IS NOT FOR ──────────────────
      *
-     * These two are the whole reason the section could come back. It was
-     * shipped to everybody on 24 November and rejected on the 25th by the
-     * accounts that oversee nine counters, for whom it is a roster of our
-     * staff and not a list of their own parcels.
+     * One kind of account, and it is the whole reason the section could
+     * come back: it was shipped to everybody on 24 November and rejected
+     * on the 25th by the three accounts that oversee nine counters
+     * between them, for whom it is a roster of our staff rather than a
+     * list of their own parcels.
      *
-     * BOTH ARE EMPTY ANSWERS AND NOT REFUSALS, which is deliberate: a 403
-     * on a portal route is a page that errors for a member of staff
-     * checking it, and nothing here is actually forbidden to either of
-     * them. They are simply not the reader this is written for.
+     * AN EMPTY ANSWER AND NOT A REFUSAL, deliberately: a 403 on a portal
+     * route is a page that errors, and nothing here is forbidden to
+     * them. They are simply not the reader it is written for.
      */
     it('is not for the contract manager or billing, who asked for it off', async () => {
         await waiting(discharge.id);
 
         const res = await oversight.get(`${CLIENT}/drivers?date=${today}`);
         expect(res.status).toBe(200);
-        expect(res.body.forCounter).toBe(false);
         expect(res.body.lanes).toEqual([]);
         /* NOT EMPTY FOR WANT OF WORK. This account is scoped to all nine
            pharmacies including the one that has a driver out on it right
@@ -1299,19 +1306,46 @@ describe('the drivers carrying a pharmacy\'s own deliveries', () => {
             .toBeGreaterThan(0);
     });
 
-    it('is not for our own staff reading the portal through', async () => {
-        /* Everywhere else in this file an admin sees the whole project
-           here, because a portal nobody can check is a portal nobody
-           trusts. This one route is the exception and the reason is
-           arithmetic rather than secrecy: every figure in a lane is "of
-           YOUR deliveries", and a viewer with no counter silently turns
-           that into the whole contract -- which is the dispatch board,
-           and they already have it. */
-        await waiting(discharge.id);
+    it('shows our own staff the whole contract, and says that is what it is', async () => {
+        /* THIS WAS AN EMPTY ANSWER FOR THE FIRST HOUR OF THE SECTION'S
+           LIFE AND THAT WAS A MISTAKE. It was gated on wholeProject too,
+           reasoning that "3 of 5 of YOUR deliveries" is meaningless to a
+           viewer with no counter. True -- but it made the section
+           invisible to the only people who could check it, and the first
+           thing that happened was somebody opening the portal as an
+           administrator, seeing nothing, and reporting it broken.
+
+           So staff get lanes, over the project rather than a counter,
+           and `forCounter` is what stops the page claiming otherwise. */
+        const mine = await waiting(discharge.id);
+        const elsewhere = await waiting(green.id);
 
         const res = await admin.get(`${CLIENT}/drivers?date=${today}`);
         expect(res.status).toBe(200);
-        expect(res.body.forCounter).toBe(false);
-        expect(res.body.lanes).toEqual([]);
+        expect(res.body.forCounter, 'these figures are not one counter\'s').toBe(false);
+        expect(res.body.lanes.length).toBeGreaterThan(0);
+
+        /* AND IT REALLY IS THE WHOLE PROJECT, not the caller's sites --
+           an admin has no sites, so a scoped query would have returned
+           nothing and still satisfied the line above. Two counters'
+           stops have to be in there. */
+        const ids = res.body.lanes.flatMap((l) => l.stops.map((s) => s.order.id));
+        expect(ids).toContain(mine.order.id);
+        expect(ids).toContain(elsewhere.order.id);
+    });
+
+    it('still narrows a counter to its own stops, now that staff are not narrowed', async () => {
+        /* The branch added for staff is one `if` away from widening
+           every caller to the project, which would hand one pharmacy
+           another's patient names and would look entirely normal. */
+        const mine = await waiting(discharge.id);
+        const theirs = await waiting(green.id);
+
+        const client = await agentFor('uh.pharmacist', 'client-pass-1');
+        const res = await client.get(`${CLIENT}/drivers?date=${today}`);
+        expect(res.body.forCounter).toBe(true);
+        const ids = res.body.lanes.flatMap((l) => l.stops.map((s) => s.order.id));
+        expect(ids).toContain(mine.order.id);
+        expect(ids).not.toContain(theirs.order.id);
     });
 });

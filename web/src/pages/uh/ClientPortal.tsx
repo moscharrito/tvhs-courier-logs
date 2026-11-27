@@ -217,14 +217,21 @@ interface DriversResponse {
     serviceDate: string;
     lanes: PortalLane[];
     /**
-     * Whether this account is a counter, and so whether the section is
-     * drawn at all.
+     * Whether the figures below are this account's OWN counters' work.
      *
-     * READ STRICTLY AS `=== true`, never for absence. A response without
-     * it is a server that does not know about the distinction, and the
-     * safe reading of that is "do not draw", not "draw for everybody":
-     * the three accounts this keeps it from are exactly the ones who
-     * asked for it off.
+     * NOT A PERMISSION. Whether the section appears at all is decided by
+     * whether the server sent any lanes -- the contract manager and
+     * billing get none, which is the gate. This only decides what the
+     * heading and the caption claim about the arithmetic.
+     *
+     * False is our own staff, reading the portal through: there is no
+     * one counter to narrow to, so the lanes are the whole contract.
+     *
+     * READ AS `=== true` AND NEVER FOR ABSENCE, because the two mistakes
+     * are not equal. Calling the contract "your own deliveries" invites
+     * a pharmacist to read nine counters' work as theirs; calling one
+     * counter "the whole contract" merely overstates what they are
+     * looking at. So a response that does not say falls to the second.
      */
     forCounter?: boolean;
     notes: string[];
@@ -688,17 +695,27 @@ export function ClientPortal() {
                 in modules/uh/client-portal.ts for why, and for why the
                 sequence numbers therefore have gaps in them.
 
-                THREE CONDITIONS AND EACH EARNS ITS PLACE. `forCounter` is
-                the server saying this account is a counter rather than the
-                contract manager, billing, or one of us checking the page.
-                The null is the request having failed or never been served.
-                The empty list is a quiet day, and an empty heading reading
-                "Drivers out with your deliveries" over nothing would be
-                read as drivers having gone missing.
+                LANES ARE THE WHOLE CONDITION, and that is deliberate. Who
+                may see this is the server's business -- the contract
+                manager and billing are sent none -- so a page that also
+                tried to decide it would be a second copy of a rule that
+                has already changed once. The null is the request having
+                failed or never been served. An empty list is a quiet day,
+                and a heading over nothing would be read as drivers having
+                gone missing.
                 ────────────────────────────────────────────────────────── */}
-            {drivers !== null && drivers.forCounter === true && drivers.lanes.length > 0 && (
+            {drivers !== null && drivers.lanes.length > 0 && (
                 <>
-                    <h2 id="portal-drivers-heading">Drivers out with your deliveries</h2>
+                    {/* THE HEADING MOVES WITH THE ARITHMETIC. "your
+                        deliveries" over the whole contract would be
+                        wrong in the one direction that matters, so the
+                        two readers get two sentences rather than one
+                        that is true for neither. */}
+                    <h2 id="portal-drivers-heading">
+                        {drivers.forCounter === true
+                            ? 'Drivers out with your deliveries'
+                            : 'Drivers out across the contract'}
+                    </h2>
                     <p className="izy-muted">
                         {drivers.serviceDate}
                         {' · '}
@@ -706,7 +723,17 @@ export function ClientPortal() {
                             driver has twenty stops will otherwise read "4 of
                             6 done" as the driver's whole day and conclude
                             they have stopped working. */}
-                        every figure here is your own deliveries only, not the driver’s whole round
+                        {drivers.forCounter === true
+                            ? <>every figure here is your own deliveries only,
+                                not the driver’s whole round</>
+                            /* And the staff reading: no counter to narrow
+                               to, so these ARE the driver's whole rounds.
+                               Said just as plainly, because somebody
+                               checking a pharmacy's screen needs to know
+                               they are not looking at what the pharmacy
+                               looks at. */
+                            : <>every pharmacy on the contract — this is not what one
+                                counter sees</>}
                     </p>
                     <div className="izy-board-lanes">
                         {drivers.lanes.map((lane) => (

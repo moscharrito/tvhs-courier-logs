@@ -1328,23 +1328,33 @@ export function createClientPortalRouter(
      * of its parcels are in one van this afternoon and the question "who
      * has them" is about its own work.
      *
-     * So the route is back and `forCounter` is the whole of the gate:
+     * So the route is back, and exactly one kind of account is kept out:
      *
      *   overseesContract -- the contract manager and the billing staff.
      *   The same setting already takes the two counter panels off their
      *   screen, asked for on 12 November; portal-capability.ts sets out
      *   why it is a written setting and not a guess at "watches more than
-     *   one pharmacy".
+     *   one pharmacy". They get an empty lane list rather than a 403:
+     *   nothing here is forbidden to them, it is simply not theirs, and a
+     *   portal that errors is a portal nobody checks. The query does not
+     *   run at all for them.
      *
-     *   wholeProject -- our own staff, reading the portal through to
-     *   check it. There is no one counter to do the arithmetic over, so
-     *   every figure here would quietly become the whole contract's,
-     *   which is the dispatch board they already have.
+     * ── AND OUR OWN STAFF SEE IT, WHICH THEY DID NOT FOR THE FIRST HOUR
+     * OF ITS LIFE. I shipped this gated on `wholeProject` as well, on the
+     * reasoning that every figure in a lane means "of YOUR deliveries"
+     * and a viewer with no counter silently turns that into the whole
+     * contract. The reasoning was sound and the decision was wrong: it
+     * made the section invisible to the only people who could check it,
+     * and the first thing that happened was somebody looking at the
+     * portal as an administrator, seeing nothing, and reporting the
+     * feature broken. The note this route carried before it was removed
+     * said staff see the portal "because a portal they cannot check is a
+     * portal nobody trusts", and that was the better judgement.
      *
-     * A viewer who is neither gets an empty lane list and the flag rather
-     * than a 403. Nothing here is forbidden to them; it is simply not
-     * theirs, and a portal that errors for a staff member is a portal
-     * nobody checks. The query does not run at all in that case.
+     * So staff get lanes over the whole project, and `forCounter` says
+     * which of the two things the figures are. The caption on the page
+     * is written from it, so the screen never claims one counter's
+     * arithmetic over the contract's.
      *
      * ──────────────────────────────────────────────────────────────────────
      * IT IS THE DISPATCH BOARD'S LANE LIST, MINUS EVERY CONTROL.
@@ -1382,6 +1392,11 @@ export function createClientPortalRouter(
      * They are the real positions on the run, and a gap is another
      * pharmacy's stop, which is the honest way to show it.
      *
+     * For a member of our staff there is no counter to narrow to, so the
+     * same arithmetic runs over the whole project and the gaps close up.
+     * That is the dispatch board's own figure, and `forCounter` is false
+     * so the page says as much above it.
+     *
      * ── A FIRST NAME, through the same displayNames() every other route
      * in this file uses. Not an exception made for this screen: the
      * deliveries list directly below the lane has shown a first name since
@@ -1401,23 +1416,41 @@ export function createClientPortalRouter(
             ? req.query['date']
             : todayIn(project.timezone);
 
-        /* WHO THIS PANEL IS FOR, decided before anything is read. See the
-           header. An unscoped viewer falls out of this too: no sites, no
-           counter, nothing -- which is the fourth of the disclosure
-           properties and is here rather than in a 1 = 0 WHERE clause. */
-        const forCounter = !scope.wholeProject
-            && !oversees(req.membership?.settings ?? {})
-            && sites.length > 0;
-        if (!forCounter) {
+        /* WHOSE ARITHMETIC THE FIGURES ARE, which is not the same
+           question as who may see them. A counter's lane says "3 of 5 of
+           YOUR deliveries"; the same lane for a member of our staff is
+           the whole contract. Both are honest as long as the page is
+           told which it is holding, and this is what tells it. */
+        const forCounter = !scope.wholeProject;
+
+        /* AND WHO IS NOT SHOWN LANES AT ALL. The contract manager and
+           billing asked for this off on 25 November -- see the header --
+           and an unscoped viewer has no counter to count over, which is
+           the fourth of the disclosure properties and is handled here
+           rather than by a 1 = 0 WHERE clause. Neither case runs a
+           query. */
+        const noLanes = oversees(req.membership?.settings ?? {})
+            || (!scope.wholeProject && sites.length === 0);
+        if (noLanes) {
             res.json({
                 serviceDate,
                 timezone: project.timezone,
                 lanes: [],
-                forCounter: false,
+                forCounter,
                 notes: scopeNote(sites, scope),
             });
             return;
         }
+
+        /* Staff see the project; a counter sees its own sites. The
+           branch is here and nowhere else, so there is one place to read
+           when asking what a given account's figures cover. */
+        const where = scope.wholeProject
+            ? { sql: 'o.project_id = ?', args: [project.id] as InValue[] }
+            : {
+                sql: `o.project_id = ? AND o.site_id IN (${sites.map(() => '?').join(',')})`,
+                args: [project.id, ...sites.map((s) => s.id)] as InValue[],
+            };
 
         /* THROUGH THE RUN, not through orders.assigned_to_username. The run
            is what dispatch actually built and what the driver's phone is
@@ -1440,10 +1473,10 @@ export function createClientPortalRouter(
                     LEFT JOIN users u ON u.username = r.courier_username
                     LEFT JOIN shifts sh ON sh.courier_username = r.courier_username
                                        AND sh.project_id = ? AND sh.ended_at IS NULL
-                   WHERE o.project_id = ? AND o.site_id IN (${sites.map(() => '?').join(',')})
+                   WHERE ${where.sql}
                      AND o.service_date = ? AND o.status != 'cancelled'
                    ORDER BY u.name, r.courier_username, r.id, st.sequence, o.id`,
-            args: [project.id, project.id, ...sites.map((s) => s.id), serviceDate] as InValue[],
+            args: [project.id, ...where.args, serviceDate] as InValue[],
         });
 
         const rows = rs.rows as unknown as Array<OrderRow & {
@@ -1507,7 +1540,7 @@ export function createClientPortalRouter(
             serviceDate,
             timezone: project.timezone,
             lanes,
-            forCounter: true,
+            forCounter,
             notes: scopeNote(sites, scope),
         });
     }));
