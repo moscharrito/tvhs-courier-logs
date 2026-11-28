@@ -2183,3 +2183,20 @@ body {
     font-size: 0.9rem;
     line-height: 1.35;
 }
+
+/* ── A PATIENT'S OWN WORDS, which is the only thing on the card a
+   dispatcher cannot guess, so it is the largest thing on it. */
+.izy-reply-body {
+    margin: 8px 0 12px;
+    padding: 10px 14px;
+    border-left: 3px solid var(--izy-line, #ddd);
+    font-size: 1.15rem;
+    /* Preserved: patients write in short lines and a reply reflowed into a
+       paragraph reads as one run-on sentence. */
+    white-space: pre-wrap;
+}
+/* Dealt with, but still readable: it stays on the page under "show the
+   handled ones too" and a greyed-out card nobody can read is no use for
+   checking what was already answered. */
+.izy-reply.is-handled { opacity: 0.72; }
+.izy-reply.is-handled .izy-reply-body { border-left-color: var(--izy-muted, #888); }

@@ -432,6 +432,17 @@ const MATRIX = [
        pinned in uh-list-drops.test.mjs. */
     ['POST', `${UH}/list-drops`, UH_LIST_UPLOAD, 'hand a spreadsheet over without importing it'],
     ['GET', `${UH}/list-drops`, UH_LIST_UPLOAD, 'what has been handed over'],
+    /* WHAT PATIENTS HAVE TEXTED BACK. Dispatch and an administrator, and
+       deliberately NOT a pharmacy -- which is the one row in this file
+       where a counter is refused something about its own deliveries.
+       A reply is a patient's unprompted free text, addressed to the courier
+       who texted them rather than to the counter, and it can contain
+       anything they chose to put in it. A site-scoped version would also
+       silently drop the replies we cannot place against an order, which are
+       the ones most likely to need a person. See the header of
+       modules/uh/patient-replies.ts. */
+    ['GET', `${UH}/patient-replies`, UH_DISPATCH, 'what patients texted back, and what is still outstanding'],
+    ['POST', `${UH}/patient-replies/999999/handled`, UH_DISPATCH, 'mark one dealt with, reversibly'],
     ['GET', `${UH}/list-drops/999999/file`, UH_LIST_UPLOAD, 'a pharmacy may re-download its own'],
     /* Dispatch's word about our own work: a pharmacy saying "you have dealt
        with this" would be reporting on us rather than on them. */

@@ -119,6 +119,13 @@ export function ProjectHome() {
                     answering a question about the contract rather than
                     while running a day. In practice the people answering
                     those questions are the people on the desk. */}
+                {/* WHAT PATIENTS HAVE TEXTED BACK, up here with the things
+                    done during a shift rather than among the reports. A
+                    reply is somebody waiting for an answer, and a link that
+                    has to be scrolled to is a link nobody presses. */}
+                {canDispatch && (
+                    <Link className="izy-btn secondary" to={`/projects/${project.code}/patient-replies`}>Patient replies</Link>
+                )}
                 {canDispatch && (
                     <Link className="izy-btn secondary" to={`/projects/${project.code}/reports`}>Performance</Link>
                 )}

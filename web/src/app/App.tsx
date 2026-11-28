@@ -26,6 +26,7 @@ import { Drivers } from '../pages/uh/Drivers';
 import { Roster } from '../pages/uh/Roster';
 import { DriverRecord } from '../pages/uh/DriverRecord';
 import { Discrepancies } from '../pages/uh/Discrepancies';
+import { PatientReplies } from '../pages/uh/PatientReplies';
 import { Reports } from '../pages/uh/Reports';
 import { Invoices } from '../pages/uh/Invoices';
 import { OrderDetail } from '../pages/uh/OrderDetail';
@@ -156,6 +157,12 @@ export function App() {
                 <Route path="/projects/:code/drivers/:username" element={<DriverRoutesOnly><DriverRecord /></DriverRoutesOnly>} />
                 <Route path="/projects/:code/reports" element={<DriverRoutesOnly><Reports /></DriverRoutesOnly>} />
                 <Route path="/projects/:code/discrepancies" element={<Discrepancies />} />
+                {/* Guarded like the rest of the dispatch console: a courier
+                    sent here would get a 403 and a blank. The page itself
+                    also refuses a pharmacy in words, because a counter CAN
+                    reach the app and should be told why not rather than
+                    bounced. */}
+                <Route path="/projects/:code/patient-replies" element={<DriverRoutesOnly><PatientReplies /></DriverRoutesOnly>} />
                 <Route path="/projects/:code/invoices" element={<DriverRoutesOnly><Invoices /></DriverRoutesOnly>} />
                 {/* NOT GUARDED, deliberately. This page checks the role itself and
                     answers "Not yours to see" with a sentence about somebody's

@@ -55,6 +55,7 @@ import { createSitesRouter } from './modules/uh/sites';
 import { createPricingRouter } from './modules/uh/pricing-routes';
 import { createImportsRouter, MAX_UPLOAD_BYTES } from './modules/uh/imports';
 import { createListDropsRouter, MAX_DROP_BYTES } from './modules/uh/list-drops';
+import { createPatientRepliesRouter } from './modules/uh/patient-replies';
 import { createOrdersRouter } from './modules/uh/orders';
 import { createReattemptRouter } from './modules/uh/reattempt';
 import { createStopRouter } from './modules/uh/stop';
@@ -470,6 +471,14 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         }),
         requireProject,
         createListDropsRouter({ client: database.client, storage: fileStorage }),
+    );
+    /* What patients have texted back, for dispatch to read and clear. Not
+       scoped by site and not offered to a pharmacy: see the header of
+       modules/uh/patient-replies.ts. */
+    legacy.app.use(
+        '/api/projects/:pid/uh/patient-replies',
+        requireProject,
+        createPatientRepliesRouter({ client: database.client }),
     );
     // Stop flow first: its /:id/arrive and friends must be matched before
     // the orders router's /:id, which would otherwise swallow them.
