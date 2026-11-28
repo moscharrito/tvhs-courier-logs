@@ -34,6 +34,7 @@ import { startScheduler, type Scheduler } from './core/scheduler';
 import { createMailer } from './core/notify/ses';
 import { createTexter } from './core/notify/twilio';
 import { createSesWebhookRouter } from './core/notify/suppressions';
+import { createTwilioWebhookRouter } from './core/notify/twilio-webhooks';
 import { startOptimize } from './db/optimize';
 import { createGoogleProvider } from './core/geo/google';
 import { createAwsLocationProvider } from './core/geo/aws-location';
@@ -189,6 +190,19 @@ export function bootLegacy(config: Config, database: Database, logger: Logger = 
         client: database.client,
         logger,
         topicArn: config.mail.snsTopicArn,
+    }));
+
+    /* Delivery receipts and patient replies from Twilio. Public for the same
+       reason the SES hook above is, verified the same way in code, and
+       mounted in the same place and for the same reason: before any session
+       middleware, because a carrier carries no session.
+       See core/notify/twilio-webhooks.ts. It installs its own form parser --
+       Twilio posts urlencoded, which express.json() leaves alone. */
+    legacy.app.use(createTwilioWebhookRouter({
+        client: database.client,
+        logger,
+        authToken: config.sms.twilio?.authToken,
+        publicBaseUrl: config.sms.publicBaseUrl,
     }));
 
     /* The planner's statistics, as of the last optimise.

@@ -498,6 +498,13 @@
       "when": 1794450399000,
       "tag": "0070_notification_prefs",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1794536799000,
+      "tag": "0071_patient_sms_receipts",
+      "breakpoints": true
     }
   ]
 }

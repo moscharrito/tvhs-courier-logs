@@ -310,6 +310,24 @@ const MATRIX = [
        https, and the topic is ours. See core/notify/sns.ts. Reaching this
        route proves nothing; a stranger gets a 403 from the verifier. */
     ['POST', '/api/webhooks/ses', EVERYONE, 'SNS carries no session: the gate is signature verification, not a role'],
+    /* Twilio delivery receipts and patient replies. Public for exactly the
+       reason the SES row above is: a carrier posts from the internet with
+       no credential of ours, so there is no session to check and no role
+       to require.
+       THE GATE IS NOT HERE EITHER, and on these two it is load bearing in a
+       way worth spelling out. The status route writes the delivery evidence
+       a dispute turns on; the inbound route writes an OPT-OUT, so one forged
+       STOP would silence texting to any number a stranger chose and the
+       silence would read as the patient's own decision. Every request is
+       refused unless an HMAC-SHA1 over the CONFIGURED url -- never
+       req.host, which is a header -- verifies against the Twilio auth
+       token. A server with no PUBLIC_BASE_URL refuses both outright rather
+       than accept what it cannot check. See core/notify/twilio-webhooks.ts
+       and twilio-signature.ts. */
+    ['POST', '/api/webhooks/twilio/status', EVERYONE,
+        'Twilio carries no session: the gate is signature verification, not a role'],
+    ['POST', '/api/webhooks/twilio/inbound', EVERYONE,
+        'a patient reply carries no session: the gate is signature verification, not a role'],
     ['GET', `${UH_PROJECT}/driver-applications`, UH_STAFF, 'the application queue'],
     /* Named before '/:id' in this list for the same reason it is mounted
        before it: the report is not an application and must not be reachable

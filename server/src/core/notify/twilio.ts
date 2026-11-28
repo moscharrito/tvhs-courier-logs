@@ -28,6 +28,7 @@
  */
 
 import type { Config } from '../../config';
+import { STATUS_PATH } from './twilio-webhooks';
 
 /** Twilio's code for "this number has opted out". */
 export const OPTED_OUT = 21610;
@@ -94,6 +95,19 @@ export function createTexter(config: Config): Texter {
     const { accountSid, authToken, from } = t.twilio;
     const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`;
     const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    /* ── WHERE TO TELL US WHAT HAPPENED TO IT.
+     *
+     * Without this parameter Twilio never calls back, and `sent_at` means
+     * only "Twilio accepted it" -- which is what it meant for the first
+     * 112 messages this system sent. A disconnected number, a landline
+     * that cannot receive SMS, and a text read at a kitchen table were
+     * all the same row.
+     *
+     * Per message rather than configured once on a Messaging Service,
+     * because this account sends from a bare number and adding a
+     * Messaging Service would change the sending identity that the 10DLC
+     * campaign was registered against. */
+    const statusCallback = t.publicBaseUrl ? `${t.publicBaseUrl}${STATUS_PATH}` : '';
 
     return {
         available: true,
@@ -104,6 +118,10 @@ export function createTexter(config: Config): Texter {
             assertMinimal(text.body);
 
             const form = new URLSearchParams({ To: text.to, From: from, Body: text.body });
+            /* Omitted rather than sent empty when no public URL is set:
+               Twilio rejects a StatusCallback it cannot parse, which would
+               turn "no receipts" into "no texts at all". */
+            if (statusCallback !== '') form.set('StatusCallback', statusCallback);
             let res: Response;
             try {
                 res = await fetch(url, {

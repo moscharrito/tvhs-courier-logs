@@ -139,6 +139,26 @@ export interface Config {
             /** The sending number, in E.164. */
             from: string;
         } | undefined;
+        /**
+         * Where Twilio posts back to, with no trailing slash. Undefined
+         * disables both webhooks.
+         *
+         * ──────────────────────────────────────────────────────────────
+         * IT IS CONFIGURED RATHER THAN READ OFF THE REQUEST, AND THAT IS
+         * THE SECURITY PROPERTY, NOT A CONVENIENCE.
+         *
+         * Twilio signs the exact URL it posted to. Rebuilding that from
+         * req.protocol and req.host means rebuilding it from headers --
+         * behind Cloudflare and Render every one of them is attacker
+         * controlled, so the attacker would be choosing the string the
+         * HMAC is taken over and a valid signature would prove nothing.
+         *
+         * So it is stated once, here, and it is the same string pasted
+         * into the Twilio console. A mismatch fails closed: every
+         * callback is refused and says so, which is noisy and safe, where
+         * the alternative silently accepts forged ones.
+         */
+        publicBaseUrl: string | undefined;
     };
     /** Server-side session lifetimes, in minutes. Staff = admin, ops manager,
      *  dispatcher, client viewer. Courier = drivers on the road all day. */
@@ -274,6 +294,9 @@ const EnvSchema = z.object({
     TWILIO_ACCOUNT_SID: optionalString,
     TWILIO_AUTH_TOKEN: optionalString,
     TWILIO_FROM: optionalString,
+    /* The public origin Twilio posts its callbacks to, e.g.
+       https://logs.izyglobalservices.com -- see sms.publicBaseUrl. */
+    PUBLIC_BASE_URL: optionalString,
     /* ───────────────────── a shift, not half an hour (14 October) ───────
      *
      * Thirty minutes was the right number for an office and the wrong one
@@ -474,6 +497,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
     }
 
+    /* ── THE CALLBACK ORIGIN, CHECKED BUT NOT REQUIRED.
+     *
+     * Not a boot refusal, deliberately, unlike the Twilio values above.
+     * Texting works without it -- that is exactly how it has worked since
+     * September -- and what is lost is delivery receipts and inbound
+     * replies. Refusing to start over a missing callback URL would take
+     * production down to add a feature, which is the wrong trade.
+     *
+     * A malformed one IS refused, because the failure it causes is
+     * invisible: every signature would mismatch, every callback would be
+     * rejected as forged, and the symptom is "replies stopped arriving"
+     * with nothing in the logs tying it to a typo in a setting. */
+    let publicBaseUrl: string | undefined;
+    if (e.PUBLIC_BASE_URL) {
+        const trimmed = (e.PUBLIC_BASE_URL as string).replace(/\/+$/, '');
+        if (!/^https:\/\/[^\s/]+$/.test(trimmed)) {
+            problems.push(
+                'PUBLIC_BASE_URL must be an https origin with no path, '
+                + 'for example https://logs.izyglobalservices.com',
+            );
+        } else {
+            publicBaseUrl = trimmed;
+        }
+    }
+
     /* Same shape as the file store above, and refused the same way. A server
        that boots with MAIL_ENABLED and no credentials would silently stop
        notifying a hospital, which is the kind of failure nobody notices for a
@@ -599,7 +647,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             portalUrl: (e.MAIL_PORTAL_URL ?? '').replace(/\/+$/, ''),
             snsTopicArn: e.SES_SNS_TOPIC_ARN,
         },
-        sms: { enabled: e.SMS_ENABLED, twilio },
+        sms: { enabled: e.SMS_ENABLED, twilio, publicBaseUrl },
         webDist: e.WEB_DIST ? path.resolve(SERVER_DIR, e.WEB_DIST) : path.resolve(SERVER_DIR, '..', 'web', 'dist'),
         log: {
             level: e.LOG_LEVEL,
