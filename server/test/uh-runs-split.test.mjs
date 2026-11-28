@@ -655,7 +655,13 @@ describe('the texts a round sends when it is built', () => {
     /** Switch patient texts on for this project, since they ship paused. */
     async function smsOn(over = {}) {
         const res = await admin.patch('/api/projects/uh/settings').send({
-            patientSms: { paused: false, ...over },
+            /* A DISPATCH NUMBER COMES WITH THE UNPAUSE, and the server
+               refuses the patch without one: since 26 November every
+               switched-on stage quotes a phone number, and these drivers
+               have none on the roster, so without this the texts below
+               would be skipped as `noContact` and every count would read
+               zero for a reason that has nothing to do with rounds. */
+            patientSms: { paused: false, dispatchPhone: '(210) 555-0100', ...over },
         });
         expect(res.status, res.text).toBe(200);
     }
@@ -685,7 +691,13 @@ describe('the texts a round sends when it is built', () => {
             /* The sender's own name leads. Not a regex on one word: the
                default company is three of them. */
             expect(body, body).toContain('has a delivery for you today');
-            expect(body, body).toContain('will call about');
+            /* ── A NUMBER, NOT A PROMISE TO CALL, SINCE 26 NOVEMBER 2026.
+               Both would not fit under 160 characters and the number is
+               the half a patient can act on. It is the dispatch line
+               here because these drivers have none on the roster, which
+               is also true of all 41 on the live contract. */
+            expect(body, body).toMatch(/is bringing it: \(210\) 555-0100\./);
+            expect(body, body).not.toContain('will call about');
             /* No opt-out line since 22 November. STOP still works -- Twilio
                suppresses the number at their end and sendQueued records it
                -- it is simply no longer advertised. See the note where the

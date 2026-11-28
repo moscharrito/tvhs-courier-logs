@@ -19,7 +19,7 @@ import type { Client } from '@libsql/client';
 import { requireProjectRole } from './middleware';
 import {
     SettingsPatch, DEFAULT_PROJECT_SETTINGS, resolveSettings, mergeSettings,
-    changedPaths, settingValue, dueTimesFor, type ServiceType,
+    changedPaths, settingsRefusals, settingValue, dueTimesFor, type ServiceType,
 } from './settings';
 import {
     validateTemplate, windowText, segmentsFor, STAGES, STAGE_NAMES, type Stage,
@@ -133,6 +133,11 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
             time: '2:15 PM',
             driver: 'Alex',
             by: '2:00 PM',
+            /* The SAVED dispatch number where there is one, so the preview
+               shows the characters that will actually be sent and the
+               segment count beside it is the real one. A sample would make
+               a 161-character message look like 160. */
+            driverPhone: current.dispatchPhone || '(210) 555-0143',
         };
         try {
             const text = validateTemplate(template, vars, stage);
@@ -188,6 +193,7 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
                         /* Samples, as above: a driver and a deadline exist
                            per delivery and not while a template is read. */
                         driver: 'Alex',
+                        driverPhone: current.dispatchPhone || '(210) 555-0143',
                         by: '2:00 PM',
                     }, name);
                 } catch (err) {
@@ -227,6 +233,15 @@ export function createProjectSettingsRouter({ client }: { client: Client }): Rou
         const before = resolveSettings(stored);
         const merged = mergeSettings(stored, patch);
         const after = resolveSettings(merged);
+
+        /* BEFORE ANYTHING IS WRITTEN, and against the merged result rather
+           than the patch: see settingsRefusals. A rule that reads only what
+           was sent can be walked around in two requests. */
+        const refusals = settingsRefusals(after);
+        if (refusals.length > 0) {
+            res.status(400).json({ error: 'Invalid request', details: refusals });
+            return;
+        }
 
         const nextTz = patch.timezone ?? currentTz;
         const paths = changedPaths(before, after);

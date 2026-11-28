@@ -31,13 +31,22 @@ beforeAll(async () => {
         username: DRIVER, name: DRIVER_NAME, password: 'sms-pass-1', role: 'driver',
     });
     await admin.put(`/api/users/${DRIVER}/memberships/uh`).send({ role: 'courier', settings: {} });
+    /* A NUMBER ON THE ROSTER, so this file exercises the primary path. The
+       dispatch fallback has tests of its own below; without this line it
+       would be the only path covered and the driver's own number would go
+       out untested. */
+    await admin.put(`${UH}/roster/${DRIVER}/contact`).send({ phone: DRIVER_PHONE });
     /* UNPAUSED FOR THE FILE. queueMorningNotices ignored the pause when it
        was handed no settings, which is how the blocks below ever queued
        anything -- the project ships paused and nothing here switched it on.
        queueRoundNotices refuses without settings and obeys the pause in
        them, correctly, so it has to be said out loud. The `paused` describe
        sets and restores it for itself. */
-    await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+    /* AND A DISPATCH NUMBER WITH IT. Unpausing is refused without one now:
+       the switched-on stages ask the patient to ring a number, and a
+       project that cannot name one would send them a blank. */
+    await admin.patch('/api/projects/uh/settings')
+        .send({ patientSms: { paused: false, dispatchPhone: DISPATCH } });
 });
 afterAll(async () => { await srv.stop(); });
 
@@ -114,6 +123,15 @@ const clear = async () => {
  *  person, and this repository is public. Grep before inventing a name. */
 const DRIVER = 'sms.courier';
 const DRIVER_NAME = 'Nerissa Quillane';
+/* ── THE TWO NUMBERS EVERY MESSAGE NOW CARRIES ONE OF.
+ *
+ * Since 26 November 2026 every stage but `returned` quotes a phone number,
+ * resolved as the driver's own first and the project's dispatch line
+ * second. Both are fixtures here because both are real paths: on the day
+ * this shipped, none of the 41 couriers on the contract had a number, so
+ * the fallback is what production actually used. */
+const DRIVER_PHONE = '(210) 555-0188';
+const DISPATCH = '(210) 555-0100';
 
 /** An order the round path will actually text about. */
 async function textable(over = {}) {
@@ -171,7 +189,7 @@ describe('what a patient is told', () => {
            screen saying so. */
         expect(DELIVERY_TODAY).toBe(
             'Izy Global Services has a delivery for you today, arriving by 2:00 PM. '
-            + 'Alex will call about 20 min before.',
+            + 'Alex is bringing it: (210) 555-0143.',
         );
         expect(DELIVERY_TODAY.length).toBeLessThanOrEqual(160);
     });
@@ -407,7 +425,7 @@ describe('a text at each stage', () => {
            same as being ready to send several hundred a day with wording
            nobody has signed off. These tests are about what happens when it
            is running, so they turn it on. */
-        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false, dispatchPhone: DISPATCH } });
         await admin.post('/api/users').send({
             username: 'stage.courier', name: 'Stage Courier', password: 'courier-pass-9', role: 'driver',
         });
@@ -650,7 +668,7 @@ describe('paused', () => {
         await clear();
     });
     afterAll(async () => {
-        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false, dispatchPhone: DISPATCH } });
     });
 
     it('is the default for a project nobody has configured', async () => {
@@ -683,7 +701,7 @@ describe('paused', () => {
            waiting on wording or on a campaign, and throwing the queue away
            would mean that morning's patients are never told at all once it
            resumes. */
-        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false, dispatchPhone: DISPATCH } });
         await textable();
         const before = await roundNotices();
         expect(before.queued).toBeGreaterThan(0);
@@ -901,7 +919,88 @@ describe('the skips that used to be invisible', () => {
             username: DRIVER, name: 'Nerissa Quillane', password: 'sms-pass-1', role: 'driver',
         });
         await admin.put(`/api/users/${DRIVER}/memberships/uh`).send({ role: 'courier', settings: {} });
-        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false } });
+        await admin.patch('/api/projects/uh/settings').send({ patientSms: { paused: false, dispatchPhone: DISPATCH } });
+    });
+
+    /* ──────────── A NUMBER THE PATIENT CAN RING ────────────────
+     *
+     * Asked for on 26 November 2026: the assigned driver's number in every
+     * message, so patient and driver have a contact point at each stage.
+     *
+     * THE FALLBACK IS NOT AN EDGE CASE. On the day this was written, none
+     * of the 41 active couriers on this contract had a number on their
+     * roster row, so the dispatch line is what production actually sent.
+     * All three paths are covered because all three are reachable, and the
+     * third one -- neither number -- is the one that would put a sentence
+     * ending in a bare full stop in front of several hundred people.
+     */
+    it('quotes the driver\'s own number when the roster has one', async () => {
+        await clear();
+        /* Set here rather than relied on from the outer fixture: this
+           describe re-creates the driver in its own beforeAll, which
+           clears the roster number. A test about the number puts it there. */
+        await admin.put(`${UH}/roster/${DRIVER}/contact`).send({ phone: DRIVER_PHONE });
+        const o = await readyToText();
+        expect((await run(o.id)).queued).toBe(1);
+        const [row] = await rows('SELECT body FROM patient_messages WHERE order_id = ?', [o.id]);
+        expect(String(row.body)).toContain(DRIVER_PHONE);
+        expect(String(row.body)).not.toContain(DISPATCH);
+    });
+
+    it('falls back to the dispatch line when the driver has no number', async () => {
+        await clear();
+        await admin.put(`${UH}/roster/${DRIVER}/contact`).send({ phone: '' });
+        try {
+            const o = await readyToText();
+            expect((await run(o.id)).queued).toBe(1);
+            const [row] = await rows('SELECT body FROM patient_messages WHERE order_id = ?', [o.id]);
+            expect(String(row.body)).toContain(DISPATCH);
+        } finally {
+            await admin.put(`${UH}/roster/${DRIVER}/contact`).send({ phone: DRIVER_PHONE });
+        }
+    });
+
+    it('sends nothing, and says so, when there is no number of either kind', async () => {
+        /* A SKIP AND A COUNT, NEVER A BLANK AND NEVER A THROW. The sentence
+           is written around a number, so an empty one reads as a broken
+           message; and one unreachable driver must not abort the notices
+           for everybody else on the round, which is why this is counted
+           beside noDriver and noDeadline rather than raised. */
+        await clear();
+        await admin.put(`${UH}/roster/${DRIVER}/contact`).send({ phone: '' });
+        await client.execute({
+            sql: `UPDATE projects SET settings = json_set(settings, '$.patientSms.dispatchPhone', '')
+                   WHERE code = 'uh'`,
+        });
+        try {
+            const o = await readyToText();
+            const out = await run(o.id);
+            expect(out.queued).toBe(0);
+            expect(out.noContact).toBe(1);
+            expect(await rows('SELECT id FROM patient_messages WHERE order_id = ?', [o.id])).toHaveLength(0);
+        } finally {
+            await client.execute({
+                sql: `UPDATE projects SET settings = json_set(settings, '$.patientSms.dispatchPhone', ?)
+                       WHERE code = 'uh'`,
+                args: [DISPATCH],
+            });
+            await admin.put(`${UH}/roster/${DRIVER}/contact`).send({ phone: DRIVER_PHONE });
+        }
+    });
+
+    it('will not let a project be unpaused with no number to quote', async () => {
+        /* THE RULE THAT MAKES "never blank" TRUE RATHER THAN HOPED FOR, and
+           it is checked against the MERGED settings: a patch that only says
+           `paused: false` says nothing about dispatchPhone, so a refine over
+           the patch alone could be walked around in two requests. */
+        const res = await admin.patch('/api/projects/uh/settings')
+            .send({ patientSms: { paused: false, dispatchPhone: '' } });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(res.body)).toMatch(/dispatchPhone/);
+
+        /* And the project is untouched by the refusal. */
+        const after = await settingsNow();
+        expect(after.patientSms.dispatchPhone).toBe(DISPATCH);
     });
 
     it('counts a driver this project has no name for', async () => {

@@ -31,7 +31,9 @@
 import { assertMinimal } from './twilio';
 
 /** What may appear in braces. Anything else is a typo, not a variable. */
-export const PLACEHOLDERS = ['company', 'window', 'callMinutes', 'time', 'driver', 'by'] as const;
+export const PLACEHOLDERS = [
+    'company', 'window', 'callMinutes', 'time', 'driver', 'by', 'driverPhone',
+] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
 export type TemplateVars = Record<Placeholder, string>;
@@ -48,6 +50,29 @@ export const SAMPLE_VARS: TemplateVars = {
     driver: 'Alex',
     /* The deadline already on the order, not an invented arrival time. */
     by: '2:00 PM',
+    /* ── A NUMBER THE PATIENT CAN RING, AND IT IS A REAL PERSON'S.
+     *
+     * Asked for on 26 November 2026: "always include the assigned driver's
+     * phone number in every message so patient and driver have a starting
+     * communication point at each stage".
+     *
+     * IT RESOLVES TO THE DRIVER'S MOBILE WHERE WE HAVE ONE, AND TO THE
+     * OFFICE WHERE WE DO NOT -- never to an empty string, because the
+     * sentences below are written around a number and a blank one reads as
+     * a broken message to several hundred people at once. patient-sms.ts
+     * does the resolving; settings.ts refuses to unpause a project with no
+     * dispatchPhone set, which is what makes "never empty" true rather
+     * than hoped for.
+     *
+     * WHAT THIS GIVES AWAY, SAID ONCE. A driver's personal mobile reaches
+     * every patient on their round and cannot be recalled. That was the
+     * decision, taken knowingly, and the alternative that does not require
+     * it -- Twilio Proxy, a masked number per conversation -- was
+     * considered and set aside as a larger build. If a driver's number
+     * ever has to be withdrawn, clearing users.phone stops it appearing in
+     * anything sent after that and does nothing about what was already
+     * sent. */
+    driverPhone: '(210) 555-0143',
 };
 
 /**
@@ -101,7 +126,7 @@ export const STAGES = {
          * It fires when a round is built now. By then the order has a
          * driver, so the text can name them. */
         when: 'Once, when the round carrying the delivery is built.',
-        placeholders: ['company', 'by', 'driver', 'callMinutes', 'window'],
+        placeholders: ['company', 'by', 'driver', 'callMinutes', 'window', 'driverPhone'],
         enabledByDefault: true,
         /* ── UNDER 160 CHARACTERS, WHICH IS A PRICE AND NOT A STYLE.
          *
@@ -119,52 +144,69 @@ export const STAGES = {
          * patient. The due time is already computed, already the commitment
          * made to University Health, and is the only honest narrow number
          * available. */
+        /* THE NUMBER REPLACED THE PROMISE TO CALL RATHER THAN JOINING IT.
+           "{driver} will call about {callMinutes} min before" and a number
+           to ring is 140 characters before the company name, and says two
+           things where the patient only acts on one. Naming the driver and
+           giving their number says who is coming and how to reach them,
+           which is what was asked for. */
         template:
             '{company} has a delivery for you today, arriving by {by}. '
-            + '{driver} will call about {callMinutes} min before.',
+            + '{driver} is bringing it: {driverPhone}.',
     },
     picked_up: {
         label: 'On the way',
         when: 'When the driver collects the item and sets off.',
-        placeholders: ['company', 'callMinutes'],
+        placeholders: ['company', 'callMinutes', 'driver', 'driverPhone'],
         enabledByDefault: false,
         template:
-            '{company}: your delivery is on its way. '
-            + 'The driver will call you about {callMinutes} minutes before arriving.',
+            '{company}: your delivery is on its way with {driver}, {driverPhone}.',
     },
     arrived: {
         label: 'Driver is here',
         when: 'When the driver reaches your address.',
-        placeholders: ['company'],
+        placeholders: ['company', 'driver', 'driverPhone'],
         enabledByDefault: false,
         template:
-            '{company}: our driver is at your address with your delivery now.',
+            '{company}: {driver} is at your address with your delivery now. {driverPhone}',
     },
     delivered: {
         label: 'Delivered',
         when: 'When the handover is recorded.',
-        placeholders: ['company', 'time'],
+        placeholders: ['company', 'time', 'driver', 'driverPhone'],
         /* On at University Health's request, 30 September 2026. The two
            chosen are the ones that close a delivery: a person who was told a
            courier is coming is told how it ended, and nothing in between. */
         enabledByDefault: true,
+        /* A NUMBER ON THIS ONE TOO, which looks redundant and is not: the
+           message somebody disputes is this one. "It says delivered and I
+           never got it" is the call that follows, and it should reach the
+           person who was standing at the door rather than the office the
+           next morning. */
         template:
-            '{company}: your delivery was completed at {time}. Thank you.',
+            '{company}: your delivery was completed at {time}. Questions: {driverPhone}.',
     },
     attempted: {
         label: 'Could not deliver',
         when: 'When a delivery is attempted and fails.',
-        placeholders: ['company'],
+        placeholders: ['company', 'driver', 'driverPhone'],
         /* The other half of the pair above. A failed attempt is the message
            somebody actually needs: they waited in, and nobody came. */
         enabledByDefault: true,
+        /* AND THE ONE WHERE A NUMBER IS WORTH MOST. The driver may still be
+           three streets away; "we will be in touch" means tomorrow. */
         template:
-            '{company}: we tried to deliver today and could not complete it. '
-            + 'We will be in touch to arrange another time.',
+            '{company}: {driver} tried to deliver today and could not complete it. '
+            + 'Call {driverPhone} to arrange another time.',
     },
     returned: {
         label: 'Returned to sender',
         when: 'When the item goes back to where it came from.',
+        /* NO {driverPhone} HERE, AND IT IS THE ONE DELIBERATE EXCEPTION TO
+           "every message". The item is back with the sender and the driver
+           can do nothing about it; a number that cannot help is worse than
+           no number, because it is rung first. The sentence already says
+           who to contact. */
         placeholders: ['company'],
         enabledByDefault: false,
         /* NOT "returned to the pharmacy". The forbidden-word check would

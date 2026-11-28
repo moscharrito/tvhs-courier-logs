@@ -494,6 +494,22 @@ export interface PatientSmsSettings {
     callMinutes: number;
     /** What the message calls us. Never the pharmacy: see the module header. */
     company: string;
+    /**
+     * The number a patient rings when we have none for the driver.
+     *
+     * ──────────────────────────────────────────────────────────────
+     * IT IS NOT A NICETY. Every message now reads "{driver} is bringing it:
+     * {driverPhone}", and on 26 November 2026 not one of the 41 active
+     * couriers on this contract had a number on their roster row. Without
+     * a fallback the sentence ships with a full stop where the number
+     * should be, to several hundred people in one morning.
+     *
+     * So the resolution is driver's mobile, then this, and there is no
+     * third step: `unpausing` is refused while this is empty. A project
+     * that cannot name a number anybody answers has no business texting
+     * patients to ring one.
+     */
+    dispatchPhone: string;
 }
 
 /**
@@ -689,6 +705,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
         windowEnd: '17:00',
         callMinutes: 20,
         company: 'Izy Global Services',
+        /* Empty, and unpausing is refused until it is not. A default number
+           here would be a number somebody has to notice is wrong. */
+        dispatchPhone: '',
     },
 };
 
@@ -841,6 +860,12 @@ export const SettingsPatch = z.object({
            driver is held up at the previous stop. */
         callMinutes: z.number().int().min(5).max(120).optional(),
         company: z.string().trim().min(1).max(60).optional(),
+        /* Loose on format and strict on emptiness. "(210) 555-0143" and
+           "210-555-0143 ext 2" are both things an office answers on, and a
+           regex that insisted on one shape would be a support ticket; what
+           actually matters is that there is something there, which the
+           unpause rule below enforces. */
+        dispatchPhone: z.string().trim().max(40).optional(),
     }).strict()
         .refine((o) => !(o.windowStart && o.windowEnd) || o.windowStart < o.windowEnd, {
             message: 'the window has to end after it starts',
@@ -898,6 +923,7 @@ function patientSmsSection(raw: unknown): PatientSmsSettings {
         windowEnd: defaults.windowEnd,
         callMinutes: defaults.callMinutes,
         company: defaults.company,
+        dispatchPhone: defaults.dispatchPhone,
     });
 
     const source = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
@@ -1064,6 +1090,50 @@ export function mergeSettings(stored: Record<string, unknown>, patch: SettingsPa
         }
     }
     return next;
+}
+
+/**
+ * Rules that need the WHOLE of the settings, checked after a patch is merged.
+ *
+ * ──────────────────────────────────────────────────────────────────────────
+ * WHY NOT A ZOD REFINE, WHICH IS WHERE THIS LOOKS LIKE IT BELONGS. The patch
+ * is a partial: every field is optional, and `{ paused: false }` on its own
+ * is a valid patch that says nothing about dispatchPhone. A refine over the
+ * patch could only see what was sent, so unpausing in one request and
+ * clearing the number in the next would pass both times. The rule is about
+ * the state the project ends up in, so it is checked against that.
+ *
+ * Returns the reasons rather than throwing, so a caller can put all of them
+ * in one 400 instead of a conversation.
+ */
+export function settingsRefusals(after: ProjectSettings): string[] {
+    const out: string[] = [];
+    const sms = after.patientSms;
+
+    /* ── A MESSAGE THAT TELLS SOMEBODY TO RING A NUMBER MUST HAVE ONE.
+     *
+     * Since 26 November every stage but `returned` carries {driverPhone},
+     * which resolves to the driver's mobile and falls back to this. On that
+     * date not one of the 41 active couriers on this contract had a number
+     * on their roster row, so the fallback is the ordinary path and not the
+     * exception -- unpausing without it would send several hundred people a
+     * sentence ending in a full stop where a phone number should be.
+     *
+     * Only when something is actually being sent. A paused project may be
+     * configured in any half-finished state anybody likes; that is what
+     * paused is for. */
+    const usesPhone = STAGE_NAMES.some(
+        (name) => sms.stages[name].enabled && sms.stages[name].template.includes('{driverPhone}'),
+    );
+    if (!sms.paused && usesPhone && sms.dispatchPhone.trim() === '') {
+        out.push(
+            'patientSms.dispatchPhone is empty. The messages that are switched on ask the patient '
+            + 'to ring a number, and most drivers have none on the roster, so that number would be '
+            + 'blank. Set a dispatch number, or switch off the stages that quote one.',
+        );
+    }
+
+    return out;
 }
 
 /** Dotted leaf paths whose resolved value actually moved, for the audit row. */

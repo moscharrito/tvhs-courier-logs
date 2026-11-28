@@ -64,7 +64,14 @@ export const DELIVERY_TODAY = noticeFor(
      * of texting it to eight hundred people. It is no longer a fallback
      * body, because a sender without settings cannot know whether the
      * project is paused and must send nothing at all. */
-    { driver: 'Alex', by: '2:00 PM' },
+    /* AND A SAMPLE NUMBER, for the same reason as the other two and with
+       one extra consequence worth naming: without it this throws at IMPORT,
+       because the default settings carry no dispatchPhone and the default
+       wording asks for a number. That is not a hypothetical -- it took the
+       server down on first run, through order-events to assign to
+       escalation, which is how it was found. The throw is right for a real
+       send and wrong for a sample, so the sample is given a value. */
+    { driver: 'Alex', by: '2:00 PM', driverPhone: '(210) 555-0143' },
 );
 
 /* A sanity check that runs at import rather than at send: if somebody edits
@@ -98,9 +105,31 @@ export function noticeFor(
      * Both are optional and both render empty when absent, because every
      * other stage uses this function and none of them has a driver or a
      * deadline to talk about. */
-    per?: { driver?: string; by?: string },
+    per?: { driver?: string; by?: string; driverPhone?: string },
 ): string {
     const s = settings.patientSms;
+    /* ── THE DRIVER'S MOBILE, OR THE OFFICE, AND NEVER NEITHER.
+     *
+     * The templates are written around a number -- "{driver} is bringing
+     * it: {driverPhone}" -- so an empty one is not a missing detail, it is
+     * a sentence that ends in a full stop with nothing before it, sent to
+     * everybody on the list. On 26 November not one of the 41 couriers on
+     * this contract had a number on their roster row, so the fallback is
+     * the ordinary path today rather than the exception.
+     *
+     * Blank is still reachable in theory, from a project that was unpaused
+     * before dispatchPhone existed. assertMinimal will not catch that --
+     * an empty string breaks no rule about PHI -- so it is caught here,
+     * and loudly: queueStageNotice treats a throw as "do not send", which
+     * is the right outcome for a message nobody can act on. */
+    const phone = (per?.driverPhone ?? '').trim() || s.dispatchPhone.trim();
+    const wantsPhone = s.stages[stage].template.includes('{driverPhone}');
+    if (wantsPhone && phone === '') {
+        throw new Error(
+            `The "${stage}" message asks for a phone number and there is none: the driver `
+            + 'has no number on the roster and no dispatch number is set for this project.',
+        );
+    }
     const body = renderTemplate(s.stages[stage].template, {
         company: s.company,
         window: windowText(s.windowStart, s.windowEnd),
@@ -108,6 +137,7 @@ export function noticeFor(
         time: at ? clockIn(at.when, at.timezone) : '',
         driver: per?.driver ?? '',
         by: per?.by ?? '',
+        driverPhone: phone,
     });
     /* Checked again here, not only on save. A row stored before this
        validation existed, or edited around the endpoint, must still not go
@@ -199,6 +229,21 @@ export interface QueueResult {
     noDriver: number;
     /** No due_at, so there is no honest "arriving by" to quote. */
     noDeadline: number;
+    /**
+     * No number for the driver AND no dispatch number for the project, so
+     * the text would have carried a contact point that was blank.
+     *
+     * COUNTED RATHER THAN THROWN, for the reason the two above are: this
+     * runs over a whole round, and one unreachable driver must not abort
+     * the notices for everybody else on it. Counted rather than ignored
+     * for the reason given at the skips below -- a silent skip is how the
+     * first live test of this feature ended with nobody able to say why.
+     *
+     * It should read zero in production: settings refuse to unpause a
+     * project with no dispatchPhone. A non-zero here means somebody
+     * unpaused before that rule existed.
+     */
+    noContact: number;
 }
 
 /**
@@ -246,7 +291,7 @@ export async function queueRoundNotices(
         orderIds?: number[];
     },
 ): Promise<QueueResult> {
-    const result: QueueResult = { queued: 0, noPhone: 0, noDriver: 0, noDeadline: 0 };
+    const result: QueueResult = { queued: 0, noPhone: 0, noDriver: 0, noDeadline: 0, noContact: 0 };
     /* NO SETTINGS MEANS NO MESSAGE. A caller that cannot supply them cannot
        have checked whether this project is paused, and "send the built-in
        default" is the wrong answer to that: the pause is the only thing
@@ -288,14 +333,15 @@ export async function queueRoundNotices(
         const usernames = [...new Set(rs.rows
             .map((r) => String(r['assigned_to_username'] ?? ''))
             .filter((u) => u !== ''))];
-        const firstNames = await driverFirstNames(client, opts.projectId, usernames);
+        const contacts = await driverContacts(client, opts.projectId, usernames);
 
         for (const row of rs.rows) {
             const phone = String(row['recipient_phone'] ?? '').trim();
             if (phone === '') { result.noPhone += 1; continue; }
 
             const due = String(row['due_at'] ?? '');
-            const driver = firstNames.get(String(row['assigned_to_username'] ?? '')) ?? '';
+            const contact = contacts.get(String(row['assigned_to_username'] ?? ''));
+            const driver = contact?.first ?? '';
             /* NO DRIVER NAME AND NO DEADLINE MEANS NO MESSAGE, rather than a
                message with a hole where a name should be. "  will call about
                20 min before" is worse than silence, and a deadline this
@@ -311,10 +357,26 @@ export async function queueRoundNotices(
             if (driver === '') { result.noDriver += 1; continue; }
             if (due === '') { result.noDeadline += 1; continue; }
 
-            const body = noticeFor(opts.settings, 'delivery_today', undefined, {
-                driver,
-                by: clockIn(new Date(due), opts.timezone),
-            });
+            /* THE SAME RULE AS THE NAME AND THE DEADLINE, applied to the
+               number: a hole in the sentence is worse than silence. The
+               message now reads "{driver} is bringing it: {driverPhone}",
+               so an unresolved number ends it on a full stop with nothing
+               in front of it. noticeFor throws rather than rendering that;
+               here the throw is turned into a skip and a count, because
+               one driver with no number must not take down the notices for
+               the rest of the round. */
+            const driverPhone = contact?.phone ?? '';
+            let body: string;
+            try {
+                body = noticeFor(opts.settings, 'delivery_today', undefined, {
+                    driver,
+                    by: clockIn(new Date(due), opts.timezone),
+                    driverPhone,
+                });
+            } catch {
+                result.noContact += 1;
+                continue;
+            }
             try {
                 await client.execute({
                     sql: `INSERT INTO patient_messages
@@ -342,20 +404,41 @@ export async function queueRoundNotices(
  *  surname -- the same line the client portal draws, for the same reason. An
  *  account with no name on it returns nothing and the caller sends no text
  *  rather than a nameless one. */
-async function driverFirstNames(
+export interface DriverContact {
+    /** A first name, which is all a patient is told. */
+    first: string;
+    /** Their mobile as the roster has it, or '' when it has none. */
+    phone: string;
+}
+
+/**
+ * Who is carrying it and how to reach them.
+ *
+ * ONE QUERY FOR BOTH, because the alternative is two round trips per round
+ * built and because a name and a number that came from different reads of
+ * the same table can disagree -- a driver swapped between them puts one
+ * person's name beside another's mobile in a text to a patient.
+ *
+ * The number is `users.phone`, the same column the pharmacy's "call the
+ * courier" button reads in client-portal.ts. Nothing new is collected here;
+ * what changed on 26 November is who it is shown to.
+ */
+async function driverContacts(
     client: Client, projectId: number, usernames: string[],
-): Promise<Map<string, string>> {
-    const out = new Map<string, string>();
+): Promise<Map<string, DriverContact>> {
+    const out = new Map<string, DriverContact>();
     if (usernames.length === 0) return out;
     const rs = await client.execute({
-        sql: `SELECT u.username, u.name FROM users u
+        sql: `SELECT u.username, u.name, u.phone FROM users u
                 JOIN memberships m ON m.user_id = u.id AND m.project_id = ?
                WHERE u.username IN (${usernames.map(() => '?').join(',')})`,
         args: [projectId, ...usernames],
     });
     for (const r of rs.rows) {
         const first = String(r['name'] ?? '').trim().split(/\s+/)[0] ?? '';
-        if (first !== '') out.set(String(r['username']), first);
+        if (first !== '') {
+            out.set(String(r['username']), { first, phone: String(r['phone'] ?? '').trim() });
+        }
     }
     return out;
 }

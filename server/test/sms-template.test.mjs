@@ -24,7 +24,11 @@ describe('the default wording', () => {
          * now, so the order has a driver and a deadline of its own and the
          * text can say both. Most of a working day became a time. */
         expect(DELIVERY_TODAY).toContain('arriving by 2:00 PM');
-        expect(DELIVERY_TODAY).toMatch(/Alex will call about 20 min before/);
+        /* ── AND THE NUMBER REPLACED THE PROMISE TO CALL, 26 November 2026.
+           Both would not fit under 160 characters, and of the two, a number
+           the patient can ring is the one they can act on. */
+        expect(DELIVERY_TODAY).toMatch(/Alex is bringing it: \(210\) 555-0143\./);
+        expect(DELIVERY_TODAY).not.toMatch(/will call about/);
         /* And the window is gone rather than merely unused: a template that
            still carried it would be promising 9-to-5 beside a real time. */
         expect(DELIVERY_TODAY).not.toContain('9:00 AM');
@@ -68,19 +72,22 @@ describe('the default wording', () => {
         /* The constant and the settings default are the same sentence, so
            they cannot drift into two different promises. */
         expect(noticeFor(resolveSettings({}), 'delivery_today', undefined, {
-            driver: 'Alex', by: '2:00 PM',
+            driver: 'Alex', by: '2:00 PM', driverPhone: '(210) 555-0143',
         })).toBe(DELIVERY_TODAY);
     });
 
-    it('renders nothing readable when the per-delivery words are missing', () => {
-        /* NOT A STYLE POINT. An unfilled render reads "arriving by .  will
-           call about 20 min before", which assertMinimal passes happily
-           because there is nothing disclosing about it. queueRoundNotices
-           sends no text at all rather than that one, and this is the shape
-           it is refusing. */
-        const bare = noticeFor(resolveSettings({}), 'delivery_today');
-        expect(bare).toContain('arriving by .');
-        expect(bare).not.toBe(DELIVERY_TODAY);
+    it('refuses outright when the per-delivery words are missing', () => {
+        /* NOT A STYLE POINT, AND IT USED TO BE WEAKER THAN THIS. An unfilled
+           render read "arriving by .  will call about 20 min before", which
+           assertMinimal passes happily because there is nothing disclosing
+           about it -- so the only thing standing between that sentence and a
+           patient was queueRoundNotices choosing to skip, and this test
+           asserted the shape of the bad string rather than its absence.
+
+           Since the message carries a phone number it is refused at the
+           source instead. A throw cannot be ignored by a future caller that
+           forgot to check; a funny-looking string can. */
+        expect(() => noticeFor(resolveSettings({}), 'delivery_today')).toThrow(/phone number/i);
     });
 });
 
