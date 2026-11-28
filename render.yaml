@@ -298,6 +298,44 @@ services:
       - key: TWILIO_FROM
         sync: false
 
+      # THE ORIGIN TWILIO POSTS BACK TO, AND IT IS DECLARED HERE RATHER THAN
+      # IN THE DASHBOARD FOR THREE SEPARATE REASONS.
+      #
+      # It is not a credential. By this file's own rule -- the note above
+      # MAIL_ENABLED -- non-secret settings belong where they can be diffed
+      # and explained, and a public hostname is about as non-secret as this
+      # service gets. MAIL_PORTAL_URL is the same hostname, declared the same
+      # way, a few lines up.
+      #
+      # It does not have to travel with the credentials. That is the whole
+      # reason the flags above are sync:false: a flag here and secrets there
+      # cannot change in one operation, and the intermediate state refuses to
+      # boot. This one has no such state. Absent, the server starts normally
+      # and the two webhook routes answer 503 "not configured" -- which is
+      # exactly where production sat from 27 November until this line.
+      #
+      # And it is load-bearing in a way a URL does not look. It is not only
+      # where Twilio is told to post; it is the string the signature is
+      # verified against. core/notify/twilio-signature.ts will not rebuild it
+      # from req.protocol and req.host, because behind Cloudflare and Render
+      # every one of those is a header an attacker sets, and an HMAC taken
+      # over a string of their choosing proves nothing. So this value is one
+      # half of the check that stops anyone writing to patient_messages and
+      # patient_replies by POSTing to a public URL.
+      #
+      # A MALFORMED VALUE FAILS THE DEPLOY, on purpose. config.ts requires an
+      # https origin with no path; a trailing slash, an /api, or http:// all
+      # throw at boot. The alternative was accepting it and having every
+      # callback refused as forged, where the symptom is "replies stopped
+      # arriving" and nothing in the log points at a typo in a setting.
+      #
+      # Being declared here means the dashboard can no longer change it: a
+      # blueprint value is re-applied on every sync. Moving this service to
+      # another hostname is therefore a commit, which is the right shape for
+      # a change that silently breaks signature verification if it is wrong.
+      - key: PUBLIC_BASE_URL
+        value: https://logs.izyglobalservices.com
+
       # --- Address lookup, and the test-phase exemption ---
       #
       # The key geocodes PHARMACY addresses, which are business addresses.
