@@ -23,7 +23,7 @@ import { mockFetch } from '../../test/setup';
 
 const BASE = '/api/projects/uh/uh/patient-replies';
 const session = { id: 4, username: 'lead.one', name: 'Lead One', role: 'staff', route: null };
-const asRole = (role) => [{
+const asRole = (role: string) => [{
     id: 2, code: 'uh', name: 'UH Pharmacy Courier', timezone: 'America/Chicago', role,
 }];
 
